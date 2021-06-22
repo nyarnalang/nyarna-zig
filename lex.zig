@@ -48,9 +48,9 @@ pub const Source = struct {
 
     fn next(w: *Walker) !u21 {
       w.before.byte_offset += w.recent_length;
-      const len = try std.unicode.utf8ByteSequenceLength(w.cur[0]);
-      w.recent_length += len;
-      switch (len) {
+      w.recent_length = try std.unicode.utf8ByteSequenceLength(w.cur[0]);
+      defer w.cur += w.recent_length;
+      switch (w.recent_length) {
         1 => {
           return @intCast(u21, w.cur[0]);
         },
@@ -390,6 +390,10 @@ pub const Lexer = struct {
     };
   }
 
+  pub fn deinit(l: *Lexer) void {
+    l.levels.deinit(l.context.allocator);
+  }
+
   /// assumes current character is '#'.
   /// Reads comment content according to [7.5.1].
   /// Returns true iff comment includes newline character.
@@ -484,19 +488,29 @@ pub const Lexer = struct {
     while (true) {
       switch (l.state) {
         .indent_capture => {
-          if (cur == '#') {
-            _ = l.readComment(&cur);
-            l.recent_end = l.walker.before;
-            return .comment;
-          }
-          const newlines = l.emptyLines(&cur);
-          l.state = .check_indent;
-          if (newlines > 0) {
-            l.recent_end = l.line_start;
-            return .space;
+          switch (cur) {
+            4 => {
+              return .end_source;
+            },
+            '#' => {
+              _ = l.readComment(&cur);
+              l.recent_end = l.walker.before;
+              return .comment;
+            },
+            else => {
+              const newlines = l.emptyLines(&cur);
+              l.state = .check_indent;
+              if (newlines > 0) {
+                l.recent_end = l.line_start;
+                return .space;
+              }
+            }
           }
         },
         .check_indent => {
+          if (cur == 4) {
+            return .end_source;
+          }
           l.state = if (l.colons_disabled_at == null) .check_block_name else .in_block;
           if (l.recent_end.byte_offset != l.walker.before.byte_offset) {
             l.recent_end = l.walker.before;
@@ -564,13 +578,18 @@ pub const Lexer = struct {
             l.recent_end = l.walker.before;
             return .space;
           }
-          if (cur == '=') {
-            l.cur_stored = l.walker.nextInline();
-            l.recent_end = l.walker.before;
-            l.state = .before_id_setter;
-            return .id_set;
+          switch (cur) {
+            4 => {
+              return .end_source;
+            },
+            '=' => {
+              l.cur_stored = l.walker.nextInline();
+              l.recent_end = l.walker.before;
+              l.state = .before_id_setter;
+              return .id_set;
+            },
+            else => l.state = .in_arg,
           }
-          l.state = .in_arg;
         },
         .before_id_setter => {
           if (try l.readDumpableSpace(&cur)) {
@@ -754,94 +773,95 @@ pub const Lexer = struct {
   /// return null for an unescaped line end since it may be part of a parsep.
   /// hit_line_end is true if the recently processed character was a line break.
   inline fn processContent(l: *Lexer, comptime ctx: Surrounding, cur: *u21) !ContentResult {
-    while (true) {
-      switch (cur.*) {
-        '\r' => {
-          l.cur_stored = l.walker.nextAfterCR();
-          l.newline_count = 1;
-          return ContentResult{.hit_line_end = true, .token = null};
-        },
-        '\n' => {
-          l.cur_stored = l.walker.nextAfterCR();
-          l.newline_count = 1;
-          return ContentResult{.hit_line_end = true, .token = null};
-        },
-        '#' => {
-          if (ctx == .block_name or ctx == .config) {
-            l.cur_stored = l.walker.nextInline();
-            return ContentResult{.hit_line_end = false, .token = .illegal_character_for_id};
-          }
-          if (l.comments_disabled_at != null) {
-            l.readLiteral(cur, ctx);
+    switch (cur.*) {
+      4 => {
+        return ContentResult{.hit_line_end = false, .token = .end_source};
+      },
+      '\r' => {
+        l.cur_stored = l.walker.nextAfterCR();
+        l.newline_count = 1;
+        return ContentResult{.hit_line_end = true, .token = null};
+      },
+      '\n' => {
+        l.cur_stored = l.walker.nextAfterLF();
+        l.newline_count = 1;
+        return ContentResult{.hit_line_end = true, .token = null};
+      },
+      '#' => {
+        if (ctx == .block_name or ctx == .config) {
+          l.cur_stored = l.walker.nextInline();
+          return ContentResult{.hit_line_end = false, .token = .illegal_character_for_id};
+        }
+        if (l.comments_disabled_at != null) {
+          l.readLiteral(cur, ctx);
+          return ContentResult{.hit_line_end = false, .token = .literal};
+        } else {
+          const line_end = l.readComment(cur);
+          l.newline_count = 0;
+          return ContentResult{.hit_line_end = line_end, .token = .comment};
+        }
+      },
+      't', ' ' => {
+        while (true) {
+          cur.* = l.walker.nextInline() catch |e| {
+            l.cur_stored = e;
+            return ContentResult{.hit_line_end = false, .token = .space};
+          };
+          if (cur.* != '\t' and cur.* != ' ') break;
+        }
+        l.cur_stored = cur.*;
+        return ContentResult{.hit_line_end = false, .token = .space};
+      },
+      0...3, 5...8, 11...12, 14...31 => {
+        return l.advanceAndReturn(.illegal_code_point, null);
+      },
+      '>' => if (ctx == .config) {
+        return l.advanceAndReturn(.diamond_close, .after_config);
+      },
+      ':' => switch (ctx) {
+        .block_name => return l.advanceAndReturn(.block_name_sep, .after_blocks_colon),
+        .args => {
+          cur.* = l.walker.nextInline() catch |e| {
+            l.cur_stored = e;
             return ContentResult{.hit_line_end = false, .token = .literal};
-          } else {
-            const line_end = l.readComment(cur);
-            l.newline_count = 0;
-            return ContentResult{.hit_line_end = line_end, .token = .comment};
+          };
+          if (cur.* == '=') {
+            return l.advanceAndReturn(.name_sep, null);
           }
         },
-        't', ' ' => {
-          while (true) {
-            cur.* = l.walker.nextInline() catch |e| {
-              l.cur_stored = e;
-              return ContentResult{.hit_line_end = false, .token = .space};
-            };
-            if (cur.* != '\t' and cur.* != ' ') break;
-          }
-          l.cur_stored = cur.*;
-          return ContentResult{.hit_line_end = false, .token = .space};
-        },
-        0...8, 11...12, 14...31 => {
-          return l.advanceAndReturn(.illegal_code_point, null);
-        },
-        '>' => if (ctx == .config) {
-          return l.advanceAndReturn(.diamond_close, .after_config);
-        },
-        ':' => switch (ctx) {
-          .block_name => return l.advanceAndReturn(.block_name_sep, .after_blocks_colon),
-          .args => {
-            cur.* = l.walker.nextInline() catch |e| {
-              l.cur_stored = e;
-              return ContentResult{.hit_line_end = false, .token = .literal};
-            };
-            if (cur.* == '=') {
-              return l.advanceAndReturn(.name_sep, null);
-            }
-          },
-          else => {},
-        },
-        ',' => if (ctx == .args or ctx == .config) {
-          return l.advanceAndReturn(.comma,
-              if (ctx == .config) .config_item_arg else .arg_start);
-        },
-        '=' => if (ctx == .args) {
-          return l.advanceAndReturn(.name_sep, null);
-        },
-        '(' => if (ctx == .args) {
-          return l.advanceAndReturn(.illegal_opening_parenthesis, null);
-        },
-        ')' => if (ctx == .args) {
-          l.paren_depth -= 1;
-          return l.advanceAndReturn(.list_end, .after_args);
-        },
-        else => {}
-      }
-      if (ctx == .config) {
-        const cat = unicode.category(cur.*);
-        if (unicode.MPS.contains(cat)) {
-          l.code_point = cur.*;
-          return l.advanceAndReturn(.ns_sym, null);
-        }
-      } else {
-        if (l.context.command_characters.contains(cur.*)) {
-          return l.genCommand(cur);
-        } else if (l.checkEndCommand(cur)) {
-          return l.genCommand(cur);
-        }
-      }
-      l.readLiteral(cur, ctx);
-      return ContentResult{.hit_line_end = false, .token = .literal};
+        else => {},
+      },
+      ',' => if (ctx == .args or ctx == .config) {
+        return l.advanceAndReturn(.comma,
+            if (ctx == .config) .config_item_arg else .arg_start);
+      },
+      '=' => if (ctx == .args) {
+        return l.advanceAndReturn(.name_sep, null);
+      },
+      '(' => if (ctx == .args) {
+        return l.advanceAndReturn(.illegal_opening_parenthesis, null);
+      },
+      ')' => if (ctx == .args) {
+        l.paren_depth -= 1;
+        return l.advanceAndReturn(.list_end, .after_args);
+      },
+      else => {}
     }
+    if (ctx == .config) {
+      const cat = unicode.category(cur.*);
+      if (unicode.MPS.contains(cat)) {
+        l.code_point = cur.*;
+        return l.advanceAndReturn(.ns_sym, null);
+      }
+    } else {
+      if (l.context.command_characters.contains(cur.*)) {
+        return l.genCommand(cur);
+      } else if (l.checkEndCommand(cur)) {
+        return l.genCommand(cur);
+      }
+    }
+    l.readLiteral(cur, ctx);
+    return ContentResult{.hit_line_end = false, .token = .literal};
   }
 
   inline fn advanceAndReturn(l: *Lexer, value: Token, comptime new_state: ?State) ContentResult {
@@ -1008,7 +1028,7 @@ pub const Lexer = struct {
       }
     }
     if (l.recent_end.byte_offset != l.walker.before.byte_offset) {
-      l.cur_stored = l.walker.nextInline();
+      l.cur_stored = cur.*;
       return true;
     } else return false;
   }
@@ -1153,9 +1173,23 @@ pub const Lexer = struct {
   }
 };
 
+fn testLexer(input: *Source, expected: []const Lexer.Token) !void {
+  var ctx = LexerContext{
+    .command_characters = .{},
+    .allocator = std.testing.allocator,
+  };
+  defer ctx.command_characters.deinit(ctx.allocator);
+  try ctx.command_characters.put(std.testing.allocator, '\\', 0);
+  var l = try Lexer.init(&ctx, input);
+  defer l.deinit();
+  for (expected) |t| {
+    std.debug.assert((try l.next()) == t);
+  }
+}
+
 test "empty source" {
   var src = Source{
-    .content = "\n",
+    .content = "\n\x04",
     .offsets = .{
       .line = 0, .column = 0,
     },
@@ -1163,11 +1197,5 @@ test "empty source" {
     .locator = ".doc.document",
     .locator_ctx = ".doc.",
   };
-  var ctx = LexerContext{
-    .command_characters = .{},
-    .allocator = std.testing.allocator,
-  };
-  try ctx.command_characters.put(std.testing.allocator, '\\', 0);
-  var l = try Lexer.init(&ctx, &src);
-  std.debug.assert((try l.next()) == .end_source);
+  try testLexer(&src, &[_]Lexer.Token{.space, .end_source});
 }
