@@ -162,7 +162,7 @@ const category_index = [_]u8{
   61, 61, 61, 61, 61, 61, 61, 61, 61, 61, 61, 61, 128
 };
 
-const category_block = [_][256].Category{
+const category_block = [_][256]Category{
   .{.Cc, .Cc, .Cc, .Cc, .Cc, .Cc, .Cc, .Cc, .Cc, .Cc, .Cc, .Cc, .Cc, .Cc, .Cc, .Cc, .Cc, .Cc, .Cc, .Cc, .Cc, .Cc, .Cc, .Cc, .Cc, .Cc, .Cc, .Cc, .Cc, .Cc, .Cc, .Cc, .Zs, .Po, .Po, .Po, .Sc, .Po, .Po, .Po, .Ps, .Pe, .Po, .Sm, .Po, .Pd, .Po, .Po, .Nd, .Nd, .Nd, .Nd, .Nd, .Nd, .Nd, .Nd, .Nd, .Nd, .Po, .Po, .Sm, .Sm, .Sm, .Po, .Po, .Lu, .Lu, .Lu, .Lu, .Lu, .Lu, .Lu, .Lu, .Lu, .Lu, .Lu, .Lu, .Lu, .Lu, .Lu, .Lu, .Lu, .Lu, .Lu, .Lu, .Lu, .Lu, .Lu, .Lu, .Lu, .Lu, .Ps, .Po, .Pe, .Sk, .Pc, .Sk, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ps, .Sm, .Pe, .Sm, .Cc, .Cc, .Cc, .Cc, .Cc, .Cc, .Cc, .Cc, .Cc, .Cc, .Cc, .Cc, .Cc, .Cc, .Cc, .Cc, .Cc, .Cc, .Cc, .Cc, .Cc, .Cc, .Cc, .Cc, .Cc, .Cc, .Cc, .Cc, .Cc, .Cc, .Cc, .Cc, .Cc, .Zs, .Po, .Sc, .Sc, .Sc, .Sc, .So, .Po, .Sk, .So, .Lo, .Pi, .Sm, .Cf, .So, .Sk, .So, .Sm, .No, .No, .Sk, .Ll, .Po, .Po, .Sk, .No, .Lo, .Pf, .No, .No, .No, .Po, .Lu, .Lu, .Lu, .Lu, .Lu, .Lu, .Lu, .Lu, .Lu, .Lu, .Lu, .Lu, .Lu, .Lu, .Lu, .Lu, .Lu, .Lu, .Lu, .Lu, .Lu, .Lu, .Lu, .Sm, .Lu, .Lu, .Lu, .Lu, .Lu, .Lu, .Lu, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Sm, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll},
   .{.Lu, .Ll, .Lu, .Ll, .Lu, .Ll, .Lu, .Ll, .Lu, .Ll, .Lu, .Ll, .Lu, .Ll, .Lu, .Ll, .Lu, .Ll, .Lu, .Ll, .Lu, .Ll, .Lu, .Ll, .Lu, .Ll, .Lu, .Ll, .Lu, .Ll, .Lu, .Ll, .Lu, .Ll, .Lu, .Ll, .Lu, .Ll, .Lu, .Ll, .Lu, .Ll, .Lu, .Ll, .Lu, .Ll, .Lu, .Ll, .Lu, .Ll, .Lu, .Ll, .Lu, .Ll, .Lu, .Ll, .Ll, .Lu, .Ll, .Lu, .Ll, .Lu, .Ll, .Lu, .Ll, .Lu, .Ll, .Lu, .Ll, .Lu, .Ll, .Lu, .Ll, .Ll, .Lu, .Ll, .Lu, .Ll, .Lu, .Ll, .Lu, .Ll, .Lu, .Ll, .Lu, .Ll, .Lu, .Ll, .Lu, .Ll, .Lu, .Ll, .Lu, .Ll, .Lu, .Ll, .Lu, .Ll, .Lu, .Ll, .Lu, .Ll, .Lu, .Ll, .Lu, .Ll, .Lu, .Ll, .Lu, .Ll, .Lu, .Ll, .Lu, .Ll, .Lu, .Ll, .Lu, .Ll, .Lu, .Ll, .Lu, .Lu, .Ll, .Lu, .Ll, .Lu, .Ll, .Ll, .Ll, .Lu, .Lu, .Ll, .Lu, .Ll, .Lu, .Lu, .Ll, .Lu, .Lu, .Lu, .Ll, .Ll, .Lu, .Lu, .Lu, .Lu, .Ll, .Lu, .Lu, .Ll, .Lu, .Lu, .Lu, .Ll, .Ll, .Ll, .Lu, .Lu, .Ll, .Lu, .Lu, .Ll, .Lu, .Ll, .Lu, .Ll, .Lu, .Lu, .Ll, .Lu, .Ll, .Ll, .Lu, .Ll, .Lu, .Lu, .Ll, .Lu, .Lu, .Lu, .Ll, .Lu, .Ll, .Lu, .Lu, .Ll, .Ll, .Lo, .Lu, .Ll, .Ll, .Ll, .Lo, .Lo, .Lo, .Lo, .Lu, .Lt, .Ll, .Lu, .Lt, .Ll, .Lu, .Lt, .Ll, .Lu, .Ll, .Lu, .Ll, .Lu, .Ll, .Lu, .Ll, .Lu, .Ll, .Lu, .Ll, .Lu, .Ll, .Lu, .Ll, .Ll, .Lu, .Ll, .Lu, .Ll, .Lu, .Ll, .Lu, .Ll, .Lu, .Ll, .Lu, .Ll, .Lu, .Ll, .Lu, .Ll, .Lu, .Ll, .Ll, .Lu, .Lt, .Ll, .Lu, .Ll, .Lu, .Lu, .Lu, .Ll, .Lu, .Ll, .Lu, .Ll, .Lu, .Ll},
   .{.Lu, .Ll, .Lu, .Ll, .Lu, .Ll, .Lu, .Ll, .Lu, .Ll, .Lu, .Ll, .Lu, .Ll, .Lu, .Ll, .Lu, .Ll, .Lu, .Ll, .Lu, .Ll, .Lu, .Ll, .Lu, .Ll, .Lu, .Ll, .Lu, .Ll, .Lu, .Ll, .Lu, .Ll, .Lu, .Ll, .Lu, .Ll, .Lu, .Ll, .Lu, .Ll, .Lu, .Ll, .Lu, .Ll, .Lu, .Ll, .Lu, .Ll, .Lu, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Lu, .Lu, .Ll, .Lu, .Lu, .Ll, .Ll, .Lu, .Ll, .Lu, .Lu, .Lu, .Lu, .Ll, .Lu, .Ll, .Lu, .Ll, .Lu, .Ll, .Lu, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Lo, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Ll, .Lm, .Lm, .Lm, .Lm, .Lm, .Lm, .Lm, .Lm, .Lm, .Lm, .Lm, .Lm, .Lm, .Lm, .Lm, .Lm, .Lm, .Lm, .Sk, .Sk, .Sk, .Sk, .Lm, .Lm, .Lm, .Lm, .Lm, .Lm, .Lm, .Lm, .Lm, .Lm, .Lm, .Lm, .Sk, .Sk, .Sk, .Sk, .Sk, .Sk, .Sk, .Sk, .Sk, .Sk, .Sk, .Sk, .Sk, .Sk, .Lm, .Lm, .Lm, .Lm, .Lm, .Sk, .Sk, .Sk, .Sk, .Sk, .Sk, .Sk, .Lm, .Sk, .Lm, .Sk, .Sk, .Sk, .Sk, .Sk, .Sk, .Sk, .Sk, .Sk, .Sk, .Sk, .Sk, .Sk, .Sk, .Sk, .Sk, .Sk},
@@ -302,13 +302,13 @@ pub const CategorySet = struct {
   content: u30,
 
   pub fn contains(s: CategorySet, c: Category) bool {
-    return s & (1 << @enumToInt(c)) != 0;
+    return (s.content & (@as(u30, 1) << @enumToInt(c))) != 0;
   }
 
   pub fn create(included: anytype) CategorySet {
     var ret = CategorySet{.content = 0};
     inline for (included) |c| {
-      ret.content |= 1 << @enumToInt(c);
+      ret.content |= 1 << @enumToInt(@as(Category, c));
     }
     return ret;
   }
