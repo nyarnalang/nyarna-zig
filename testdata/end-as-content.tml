@@ -1,0 +1,7 @@
+=== End as Content
+--- input
+\block:<nocommand>
+  \end(flock)
+\end(block)
+--- output
+\end(flock)

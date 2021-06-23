@@ -1,0 +1,19 @@
+=== Two lines of text
+--- input
+Foo \@
+\\Bar\: Baz
+--- tokens
+3:1[0] Text
+3:4[3] Space
+3:5[4] EscapeSequence
+3:7[6] LineEnd
+4:1[7] EscapeSequence
+4:3[9] Text
+4:6[12] EscapeSequence
+4:8[14] Space
+4:9[15] Text
+4:12[18] LineEnd
+5:1[19] InputEnd
+--- events
+3:1 Text "Foo @\n\\Bar: Baz"
+5:1 EndInput

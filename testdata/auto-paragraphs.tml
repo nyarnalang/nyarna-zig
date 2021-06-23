@@ -1,0 +1,74 @@
+=== Auto paragraphs
+--- input
+\declare:
+  Paragraph = \record:
+    content: \Text {primary}
+  \end(record)
+
+  Section = \record:
+    title: \Text
+    content: \list(\Paragraph) {}:<par auto>:>
+  \end(record)
+\end(declare)
+
+\fragment(type=\Section)
+
+\Section(First Section)
+
+Lorem ipsum
+
+Dolor sit
+amet
+
+\Paragraph:
+  consectetur adipiscing elit
+\end(Paragraph)
+--- ast
++ROOT "fragment"
+  >CONTENT
+  +CALL
+    +TARGET
+      =TYPE Section
+    -TARGET
+    +PARAM "title"
+      =TEXT Text "First Section"
+    -PARAM
+    +PARAM "content"
+      +CALL
+        +TARGET
+          +FUNC
+            =NAME "listOf"
+          -FUNC
+        -TARGET
+        +PARAM "items"
+          +VARARGS
+            +CALL
+              +TARGET
+                =TYPE Paragraph
+              -TARGET
+              +PARAM "content"
+                =TEXT Text "Lorem ipsum"
+              -PARAM
+            -CALL
+            +CALL
+              +TARGET
+                =TYPE Paragraph
+              -TARGET
+              +PARAM "content"
+                =TEXT Text "Dolor sit\namet"
+              -PARAM
+            -CALL
+            +CALL
+              +TARGET
+                =TYPE Paragraph
+              -TARGET
+              +PARAM "content"
+                =TEXT Text "consectetur adipiscing elit"
+              -PARAM
+            -CALL
+          -VARARGS
+        -PARAM
+      -CALL
+    -PARAM
+  -CALL
+-ROOT

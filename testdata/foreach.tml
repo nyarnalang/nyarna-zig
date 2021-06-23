@@ -1,0 +1,16 @@
+=== foreach
+--- input
+\declare:
+   foo = \func:
+     index: \Positive
+     item: \Raw
+   :body:
+     \index:,foo\item
+   \end(func)
+\end(declare)
+\var:
+  numbers = \listOf(3,1,4,1,5,9)
+:scope:>
+\numbers::foreach(\foo)
+--- output
+1foo32foo13foo44foo15foo56foo9

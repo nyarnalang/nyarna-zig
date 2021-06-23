@@ -1,0 +1,47 @@
+=== Simple Variables
+--- input
+\var:
+  foo: \Natural
+  bar: \Raw
+:scope:>
+
+\foo:=(42)
+\bar:=(Foobar)
+\foo:=(23)
+\bar\foo
+--- ast
++ROOT "standalone"
+  >CONTENT
+  +SCOPE
+    +CALL
+      +TARGET
+        +FUNC
+          =NAME "concatOf"
+        -FUNC
+      -TARGET
+      +PARAM "items"
+        +VARARGS
+          +ASSIGNMENT
+            =VARIABLE "foo"
+            >VALUE
+            =INT Natural "42"
+          -ASSIGNMENT
+          +ASSIGNMENT
+            =VARIABLE "bar"
+            >VALUE
+            =RAW Raw "Foobar"
+          -ASSIGNMENT
+          +ASSIGNMENT
+            =VARIABLE "foo"
+            >VALUE
+            =INT Natural "23"
+          -ASSIGNMENT
+          =VARIABLE "bar"
+          =VARIABLE "foo"
+        -VARARGS
+      -PARAM
+    -CALL
+  -SCOPE
+-ROOT
+--- document
+=RAW Raw "Foobar23"

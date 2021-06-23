@@ -1,0 +1,7 @@
+=== Command IDs and nocommand
+--- input
+\block(=hurr):<nocommand>
+\end(block)
+\end(hurr)
+--- output
+\end(block)

@@ -1,0 +1,36 @@
+=== Indirect Recursion (at compile time)
+--- input
+\declare:
+  foo = \func(comptime=true):
+    recurse: \Boolean;
+  :body:
+    foo\if(\recurse, \bar(false))
+  \end(func);
+
+  bar = \func(comptime=true):
+    recurse: \Boolean;
+  :body:
+    bar\if(\recurse, \foo(false))
+  \end(func);
+\end(declare)
+
+\foo(true)
+\bar(true)
+--- ast
++ROOT "standalone"
+  >CONTENT
+  +CALL
+    +TARGET
+      +FUNC
+        =NAME "concatOf"
+      -FUNC
+    -TARGET
+    +PARAM "items"
+      +VARARGS
+        =RAW Raw "foobar"
+        =RAW Space "\n"
+        =RAW Raw "barfoo"
+      -VARARGS
+    -PARAM
+  -CALL
+-ROOT

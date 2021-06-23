@@ -1,0 +1,29 @@
+=== Param mapping errors
+--- input
+\if(then=foo, true):
+  Lorem Ipsum
+:elst:
+  Dolor Sit Amet
+\end(if)
+\import(warbl=wirbl):<nocomment>
+  something
+#\end(import)
+\func(comptime=true,generics=T):
+  in: \T
+:body:
+  \in\in
+\end(func)(a)
+--- errors:ast
+3:15 - 3:19 UnnamedParamAfterNamedParam
+4:3 - 4:14 MultipleArgumentsForParameter
+  3:10 - 3:13 previous value defined here
+5:1 - 5:7 UnknownParameterName
+3:4 - 7:9 MissingArgumentForParameter
+  215:5 - 215:14 defined here
+8:9 - 8:15 UnknownParameterName
+8:23 - 10:2 CannotMapUnnamedBlock
+8:8 - 10:14 MissingArgumentForParameter
+  202:5 - 202:9 defined here
+11:21 - 11:31 FirstParameterAssignedTooLate
+12:7 - 12:9 UnknownSymbol
+  identifier is "T"

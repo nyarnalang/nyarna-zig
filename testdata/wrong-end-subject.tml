@@ -1,0 +1,24 @@
+=== Wrong end subject
+--- input
+\block:
+  foo
+\end(flock)
+
+\bar
+--- tokens
+3:1[0] Command
+3:7[6] BlockContentStart
+3:8[7] LineEnd
+4:1[8] Indentation
+4:3[10] Text
+4:6[13] LineEnd
+5:1[14] WrongEndSubject
+5:12[25] LineEnd
+6:1[26] EmptyLines
+7:1[27] Command
+7:5[31] LineEnd
+8:1[32] InputEnd
+--- errors:ast
+5:1 - 5:12 WrongEndSubject
+7:1 - 7:5 UnknownSymbol
+  identifier is "bar"

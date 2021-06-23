@@ -1,0 +1,60 @@
+=== if-Statement
+--- input
+\if(true):
+  foo
+\end(if)
+\if(false):
+  bar
+:else:
+  baz
+\end(if)
+--- ast
++ROOT "standalone"
+  >CONTENT
+  +CALL
+    +TARGET
+      +FUNC
+        =NAME "concatOf"
+      -FUNC
+    -TARGET
+    +PARAM "items"
+      +VARARGS
+        +CALL
+          +TARGET
+            +FUNC
+              =NAME "if"
+            -FUNC
+          -TARGET
+          +PARAM "condition"
+            =ENUM Boolean "true"
+          -PARAM
+          +PARAM "then"
+            =RAW Raw "foo"
+          -PARAM
+          +PARAM "else"
+            =NONE
+          -PARAM
+        -CALL
+        =RAW Space "\n"
+        +CALL
+          +TARGET
+            +FUNC
+              =NAME "if"
+            -FUNC
+          -TARGET
+          +PARAM "condition"
+            =ENUM Boolean "false"
+          -PARAM
+          +PARAM "then"
+            =RAW Raw "bar"
+          -PARAM
+          +PARAM "else"
+            =RAW Raw "baz"
+          -PARAM
+        -CALL
+      -VARARGS
+    -PARAM
+  -CALL
+-ROOT
+--- document
+=RAW Raw "foo\nbaz"

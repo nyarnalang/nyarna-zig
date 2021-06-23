@@ -1,0 +1,18 @@
+=== Declared Methods
+--- input
+\declare:
+  foo = \record:
+    a : \Boolean; b, c : \Raw
+  \end(record)
+\end(declare)
+
+\declare(\foo):
+  get = \func:
+  :body:
+    \if(\this::a, \this::b, \this::c)
+  \end(func);
+\end(declare)
+
+\foo(true, foo, bar)::get()\foo(false, foo, bar)::get()
+--- document
+=RAW Raw "foobar"

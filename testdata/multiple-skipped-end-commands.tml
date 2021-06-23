@@ -1,0 +1,25 @@
+=== Multiple skipped end commands
+--- input
+\declare:
+  foo = \func:
+    cond: \Boolean {primary}
+  :body:
+    \if(\cond):
+      foo
+    :else:
+      bar
+\end(declare)
+
+\foo:
+  true
+  \var:
+    x = \if(true):
+      42
+\end(foo)
+--- errors:ast
+11:1 - 11:14 SkippingEndSubject
+11:1 - 11:14 SkippingEndSubject
+18:1 - 18:10 SkippingEndSubject
+18:1 - 18:10 SkippingEndSubject
+15:7 - 18:10 MissingArgumentForParameter
+  193:5 - 193:10 defined here

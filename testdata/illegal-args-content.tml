@@ -1,0 +1,28 @@
+=== Illegal args content
+--- input
+\var:
+  a : \Raw
+:scope:>
+
+\if(\a:=, \block:
+  foo
+\end(block), \Raw:>)
+
+\block(content = a =)
+--- errors:ast
+7:7 - 7:9 IllegalAssignment
+7:17 - 7:18 IllegalColonInParamList
+9:1 - 9:12 InvalidEndCommand
+8:3 - 8:6 TypeCannotBeMixed
+  7:11 - 7:17 previous type: callable(Any) <comptime>
+9:18 - 9:19 IllegalColonInParamList
+9:19 - 9:20 TypeCannotBeMixed
+  9:14 - 9:18 previous type: Type
+9:14 - 9:20 TypeCannotBeMixed
+  7:11 - 8:6 previous type: callable(Any) <comptime>
+11:20 - 11:21 IllegalEqualsInParam
+11:18 - 11:19 TypeCannotBeMixed
+  7:4 - 9:21 previous type: callable(Any) <comptime>
+3:5 - 12:1 CannotAssignXToY
+  source type is `concat(intersection(Space, callable(Any) <comptime>))`
+  target type is `Raw`

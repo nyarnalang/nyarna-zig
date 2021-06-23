@@ -1,0 +1,37 @@
+=== Inline Schema
+--- input
+\declare:
+  Section = \record:
+    title : \Raw
+    content : \list(\Raw) {primary}:<par>
+  \end(record)
+\end(declare)
+\standalone(\schema(\concat(\Section)))
+
+\Section(First):
+  Lorem ipsum
+
+  dolor sit amet
+\end(Section)
+
+\Section(Second, \listOf(Foo))
+--- document
++CONCAT
+  +RECORD "Section"
+    >FIELD "title"
+    =RAW Raw "First"
+    >FIELD "content"
+    +LIST
+      =RAW Raw "Lorem ipsum"
+      =RAW Raw "dolor sit amet"
+    -LIST
+  -RECORD
+  +RECORD "Section"
+    >FIELD "title"
+    =RAW Raw "Second"
+    >FIELD "content"
+    +LIST
+      =RAW Raw "Foo"
+    -LIST
+  -RECORD
+-CONCAT

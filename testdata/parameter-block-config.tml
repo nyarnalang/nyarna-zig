@@ -1,0 +1,51 @@
+=== Parameter block config
+--- input
+\declare:
+  verbatim = \func(T, comptime=true):
+    content : \T {lazy,primary}:<nocolon,nocomment,nocommand>;
+  :body:
+    \content
+  \end(func);
+  nocommands = \func(T, comptime=true):
+    content: \T {lazy,primary}:<nocommand>;
+  :body:
+    \content
+  \end(func);
+  nocomments = \func(T, comptime=true):
+    content: \T {lazy,primary}:<nocomment>;
+  :body:
+    \content
+  \end(func);
+\end(declare)
+
+\nocomments:
+  This is # not a comment
+\end(nocomments)
+
+\nocommands:
+  This is \not a command # comment
+\end(nocommands)
+
+\verbatim:
+  This is \neither a command # nor a comment
+\end(verbatim)
+--- ast
++ROOT "standalone"
+  >CONTENT
+  +CALL
+    +TARGET
+      +FUNC
+        =NAME "concatOf"
+      -FUNC
+    -TARGET
+    +PARAM "items"
+      +VARARGS
+        =RAW Raw "This is # not a comment"
+        =RAW Space "\n\n"
+        =RAW Raw "This is \\not a command"
+        =RAW Space "\n\n"
+        =RAW Raw "This is \\neither a command # nor a comment"
+      -VARARGS
+    -PARAM
+  -CALL
+-ROOT

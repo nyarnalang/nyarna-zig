@@ -1,0 +1,17 @@
+=== Func with trailing whitespace
+--- input
+\declare:
+  ws = \func:
+    where: \Raw
+  :body:
+    I'm in \where
+
+    \
+  \end(func)
+\end(declare)
+
+\ws(space)!
+--- output
+I'm in space
+
+!

@@ -1,0 +1,40 @@
+=== Call Lists
+--- input
+\foo()
+\bar(one)
+\baz(one,two)
+\spam(egg,
+    \sausage(and), spam)
+--- tokens
+3:1[0] Command
+3:5[4] CallListStart
+3:6[5] CallListEnd
+3:7[6] LineEnd
+4:1[7] Command
+4:5[11] CallListStart
+4:6[12] Text
+4:9[15] CallListEnd
+4:10[16] LineEnd
+5:1[17] Command
+5:5[21] CallListStart
+5:6[22] Text
+5:9[25] CommaSep
+5:10[26] Text
+5:13[29] CallListEnd
+5:14[30] LineEnd
+6:1[31] Command
+6:6[36] CallListStart
+6:7[37] Text
+6:10[40] CommaSep
+6:11[41] LineEnd
+7:1[42] Indentation
+7:5[46] Command
+7:13[54] CallListStart
+7:14[55] Text
+7:17[58] CallListEnd
+7:18[59] CommaSep
+7:19[60] Space
+7:20[61] Text
+7:24[65] CallListEnd
+7:25[66] LineEnd
+8:1[67] InputEnd

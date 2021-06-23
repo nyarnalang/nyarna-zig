@@ -1,0 +1,19 @@
+=== Illegal Command in ID
+--- input {strip}
+\block(=\if(foo, one, two)):
+  derp
+\end(block)
+\block(=foo bar):
+  herp
+\end(foo)
+\block(=spam
+--- errors:ast
+3:9 - 3:12 IllegalCommand
+3:12 - 3:13 IllegalOpeningParenthesis
+3:13 - 3:16 IllegalContentAfterCommandId
+3:23 - 3:26 TooManyParameters
+5:1 - 5:12 InvalidEndCommand
+6:13 - 6:16 IllegalContentAfterCommandId
+9:13 - 9:13 MissingClosingParenthesis
+9:7 - 9:13 MissingArgumentForParameter
+  233:5 - 233:12 defined here

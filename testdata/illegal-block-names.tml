@@ -1,0 +1,16 @@
+=== Illegal Block Names
+--- input {strip}
+\if(true):
+:then
+  foo
+:\else:
+  bar
+:derp
+--- errors:ast
+4:6 - 4:6 MissingBlockNameEnd
+6:2 - 6:7 IllegalCommand
+6:7 - 6:8 MissingBlockName
+8:6 - 8:6 MissingBlockNameEnd
+8:1 - 8:6 UnknownParameterName
+8:6 - 8:6 MissingEndCommand
+  3:4 call started here

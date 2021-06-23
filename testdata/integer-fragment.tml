@@ -1,0 +1,18 @@
+=== Integer Fragment
+--- input
+\fragment(type=\Integer):
+:content:>
+
+\Integer(42)
+--- ast
++ROOT "fragment"
+  >CONTENT
+  +CALL
+    +TARGET
+      =TYPE Integer
+    -TARGET
+    +PARAM "value"
+      =RAW Raw "42"
+    -PARAM
+  -CALL
+-ROOT

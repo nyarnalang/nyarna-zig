@@ -1,0 +1,25 @@
+=== Definitions Errors
+--- input
+\declare:
+  , foo = \func:
+    spam egg
+  :body:
+    bar
+  \end(func)
+  bar
+\end
+
+\declare:
+  sausage = \func:
+    spam : \end(declare)
+--- errors:ast
+4:3 - 4:3 MissingSymbolName
+5:10 - 5:10 MissingCommaBetweenNames
+5:13 - 5:13 MissingLocationType
+9:6 - 9:6 MissingDefinitionValue
+10:1 - 10:5 InvalidEndCommand
+14:12 - 14:12 MissingSemicolon
+14:11 - 14:11 MissingLocationType
+14:12 - 14:25 SkippingEndSubject
+13:18 - 14:25 MissingArgumentForParameter
+  151:5 - 151:9 defined here

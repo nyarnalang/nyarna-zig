@@ -1,0 +1,6 @@
+=== Enforce last param
+--- input
+\var(,foo)
+\func(body=spam,return=\Raw)()
+--- errors:ast
+4:17 - 4:28 IllegalArgumentAfterLast

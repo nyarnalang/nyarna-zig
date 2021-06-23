@@ -1,0 +1,24 @@
+=== Block config resolved too late
+--- input
+\declare:
+  warbl = \func:
+    content : \Text {primary}:<nocomment>
+  :body:
+    \content
+  \end(func)
+  
+  wirbl = \func:
+    inner : \Text
+  :body:
+    \warbl:
+      \inner#
+    \end(warbl)
+    \warbl:
+    :content:
+      foo#
+    \end(warbl)
+  \end(func)
+\end(declare)
+--- errors:ast
+14:7 - 14:13 ParamWithBlockConfigResolvedTooLate
+18:7 - 18:10 ParamWithBlockConfigResolvedTooLate

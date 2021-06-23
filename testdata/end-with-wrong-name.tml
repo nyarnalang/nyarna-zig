@@ -1,0 +1,12 @@
+=== End command with wrong name
+--- input
+\declare:
+  foo = \func:
+  :body:
+    bar
+  \end(func)
+\end(declar)
+
+\foo()
+--- errors:ast
+8:1 - 8:13 WrongEndSubject

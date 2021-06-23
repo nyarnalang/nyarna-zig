@@ -1,0 +1,56 @@
+=== Diamond dependency
+--- lib:comparer
+\library:>
+\declare:
+  CompareResult = \integer(first=-1, last=1)
+  spaceship = \func:
+    left, right: \Integer
+  :body:
+    \CompareResult:
+      \if(\left::greater(\right)):
+        1
+      :else:
+        \if(\left::equals(\right), 0, -1)
+      \end(if)
+    \end(CompareResult)
+  \end(func)
+\end(declare)
+--- lib:printer
+\library:>
+\import(comparer)
+
+\declare:
+  printRelation = \func:
+    left, right: \Integer
+  :body:
+    \var:
+      res = \spaceship(\left, \right)
+    :scope:>
+    \if(\res::equals(-1)):
+      \left is smaller than \right
+    :else:
+      \if(\res::equals(0)):
+        \left is equal to \right
+      :else:
+        \left is greater than \right
+      \end(if)
+    \end(if)
+  \end(func)
+\end(declare)
+--- input
+\import(comparer)
+\import(printer)
+
+not pretty:
+  compare(13, 7)=\spaceship(13, 7)
+pretty:
+  \printRelation(23, 42)
+  \printRelation(47, 47)
+  \printRelation(9001, 7)
+--- output
+not pretty:
+  compare(13, 7)=1
+pretty:
+  23 is smaller than 42
+  47 is equal to 47
+  9001 is greater than 7

@@ -1,0 +1,29 @@
+=== Namespace symbol errors
+--- lib:foo
+\library:>
+\declare:
+  bar = \func:
+    input : \Text
+  :body:
+    \input::length()
+  \end(func)
+\end(declare)
+--- input
+\import(foo, %)
+
+\block:<\ to %>
+  %block:
+    ipsum
+  %end(block)
+\end(block)
+
+\block:<@ to $>
+  Lorem
+\end(block)
+--- errors:ast
+14:7 - 14:16 OccupiedNamespaceSymbol
+  namespace symbol is `%`
+15:3 - 15:9 UnknownSymbol
+  identifier is "block"
+20:7 - 20:16 UnknownNamespaceSymbol
+  namespace symbol is `@`

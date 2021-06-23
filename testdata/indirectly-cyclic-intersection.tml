@@ -1,0 +1,12 @@
+=== Indirectly Cyclic Intersection
+--- input
+\declare:
+  foo = \intersection(\bar)
+  
+  bar = \intersection(\foo)
+\end(declare)
+--- errors:ast
+4:3 - 4:6 CircularType
+  6:3 - 6:6 previous value defined here
+6:3 - 6:6 CircularType
+  4:3 - 4:6 previous value defined here

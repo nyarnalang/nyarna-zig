@@ -3,11 +3,11 @@
 /// A cursor inside a source file
 pub const Cursor = struct {
   /// The line of the position, 1-based.
-  at_line: u32,
+  at_line: usize,
   /// The column in front of which the cursor is positioned, 1-based.
-  before_column: u32,
+  before_column: usize,
   /// Number of bytes in front of this position.
-  byte_offset: u32,
+  byte_offset: usize,
 
   pub fn unknown() Cursor {
     return .{.at_line = 0, .before_column = 0, .byte_offset = 0};

@@ -1,0 +1,73 @@
+=== Simple Schema Backend
+--- lib:Document
+\standalone(Schema)
+
+\declare:
+  Section = \record:
+    title: \Raw
+    content: \concat(\Subsection) {primary}:1>
+  \end(record)
+
+  Subsection = \record:
+    title: \Raw
+    content: \Raw {primary}:2>
+  \end(record)
+\end(declare)
+
+\schema(root=\concat(\Section)):
+  \backend(Markdown):
+    \template(\Raw):
+      # in a real backend, this would do escaping.
+      \this
+    \end(template)
+
+    \template(\Subsection):
+      \#\# \this::title
+
+      \process(\this::content)
+      \
+    \end(template)
+
+    \template(\Section):
+      \# \this::title
+
+      \process(\this::content)
+      \
+    \end(template)
+  :actions:
+    \return(\subject::input::name:,.md):
+      \process(\subject::root)
+    \end(return)
+  \end(backend)
+\end(schema)
+--- input
+\standalone(Document)
+
+\Section(First Section)
+
+\Subsection(Foo)
+
+Lorem ipsum
+
+\Section(Second Section)
+
+\Subsection(Bar)
+
+Dolor
+
+Sit amet
+--- output:input.md
+# First Section
+
+## Foo
+
+Lorem ipsum
+
+# Second Section
+
+## Bar
+
+Dolor
+
+Sit amet
+

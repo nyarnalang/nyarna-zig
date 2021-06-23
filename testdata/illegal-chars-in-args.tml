@@ -1,0 +1,14 @@
+=== Illegal characters in args
+--- input
+\func(comptime==true(false):
+  foo: \Integer {bar{}}
+:body:
+  \foo
+\end(func)(42)
+--- errors:ast
+3:16 - 3:17 IllegalEqualsInParam
+3:21 - 3:22 IllegalOpeningParenthesis
+3:17 - 3:27 InvalidEnumValue
+4:21 - 4:22 IllegalOpeningBrace
+4:18 - 4:21 UnknownFlag
+4:23 - 4:24 IllegalContentAfterFlags

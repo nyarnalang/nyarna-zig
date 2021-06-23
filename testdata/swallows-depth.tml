@@ -1,0 +1,117 @@
+=== Swallows Depth
+--- input
+\declare:
+  Chapter = \record:
+    title: \Raw
+    content: \concat(\Section) {}:1>
+  \end(record)
+
+  Section = \record:
+    title: \Raw
+    content: \concat(\Subsection) {}:<nocolon>:2>
+  \end(record)
+
+  Subsection = \record:
+    title: \Raw
+    content: \Raw {}:3>
+  \end(record)
+\end(declare)
+
+\standalone(schema=\schema(\concat(\Chapter)))
+
+\Chapter(Introduction)
+
+\Section(Overview)
+
+\Subsection(How to read this document)
+
+:Lorem
+
+\Section(Scope)
+
+\Chapter(Content)
+
+\Section(Spam)
+
+\Subsection(Egg)
+
+ipsum
+
+\Subsection(Sausage)
+
+dolor
+
+\Chapter(Spam)
+
+\Section(Baked Beans)
+
+--- document
++CONCAT
+  +RECORD "Chapter"
+    >FIELD "title"
+    =RAW Raw "Introduction"
+    >FIELD "content"
+    +CONCAT
+      +RECORD "Section"
+        >FIELD "title"
+        =RAW Raw "Overview"
+        >FIELD "content"
+        +CONCAT
+          +RECORD "Subsection"
+            >FIELD "title"
+            =RAW Raw "How to read this document"
+            >FIELD "content"
+            =RAW Raw ":Lorem"
+          -RECORD
+        -CONCAT
+      -RECORD
+      +RECORD "Section"
+        >FIELD "title"
+        =RAW Raw "Scope"
+        >FIELD "content"
+        +CONCAT
+        -CONCAT
+      -RECORD
+    -CONCAT
+  -RECORD
+  +RECORD "Chapter"
+    >FIELD "title"
+    =RAW Raw "Content"
+    >FIELD "content"
+    +CONCAT
+      +RECORD "Section"
+        >FIELD "title"
+        =RAW Raw "Spam"
+        >FIELD "content"
+        +CONCAT
+          +RECORD "Subsection"
+            >FIELD "title"
+            =RAW Raw "Egg"
+            >FIELD "content"
+            =RAW Raw "ipsum"
+          -RECORD
+          +RECORD "Subsection"
+            >FIELD "title"
+            =RAW Raw "Sausage"
+            >FIELD "content"
+            =RAW Raw "dolor"
+          -RECORD
+        -CONCAT
+      -RECORD
+    -CONCAT
+  -RECORD
+  +RECORD "Chapter"
+    >FIELD "title"
+    =RAW Raw "Spam"
+    >FIELD "content"
+    +CONCAT
+      +RECORD "Section"
+        >FIELD "title"
+        =RAW Raw "Baked Beans"
+        >FIELD "content"
+        +CONCAT
+        -CONCAT
+      -RECORD
+    -CONCAT
+  -RECORD
+-CONCAT

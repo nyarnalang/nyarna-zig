@@ -1,0 +1,19 @@
+=== Unknown Symbol in Symbol Name
+--- input
+\declare:
+  \foo = \func:
+  :body:
+    bar
+  \end(func)
+  sp\bar:,am = \func:
+  :body:
+    bar2
+  \end(func)
+\end(declare)
+
+Lorem ipsum
+--- errors:ast
+4:3 - 4:7 UnknownSymbol
+  identifier is "foo"
+8:5 - 8:9 UnknownSymbol
+  identifier is "bar"

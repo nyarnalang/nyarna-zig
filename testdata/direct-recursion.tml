@@ -1,0 +1,15 @@
+=== Direct Recursion (at compile time)
+--- input
+\declare:
+  foo = \func:
+    recurse       : \Boolean
+    before, after : \Raw;
+  :body:
+    \before\if(\recurse, \foo(false, two, three))\after
+  \end(func);
+\end(declare)
+
+\foo(true, one, four)
+\foo(false, one, two)
+--- document
+=RAW Raw "onetwothreefour\nonetwo"

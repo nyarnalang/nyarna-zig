@@ -1,0 +1,34 @@
+=== Command IDs
+--- input
+\foo(=bar):
+  spam
+\end(bar)
+\bar(=foo):
+  egg
+\end(bar)
+--- tokens
+3:1[0] Command
+3:5[4] CallListStart
+3:6[5] Equals
+3:7[6] Identifier
+3:10[9] CallListEnd
+3:11[10] BlockContentStart
+3:12[11] LineEnd
+4:1[12] Indentation
+4:3[14] Text
+4:7[18] LineEnd
+5:1[19] EndCommand
+5:10[28] LineEnd
+6:1[29] Command
+6:5[33] CallListStart
+6:6[34] Equals
+6:7[35] Identifier
+6:10[38] CallListEnd
+6:11[39] BlockContentStart
+6:12[40] LineEnd
+7:1[41] Indentation
+7:3[43] Text
+7:6[46] LineEnd
+8:1[47] WrongEndSubject
+8:10[56] LineEnd
+9:1[57] InputEnd

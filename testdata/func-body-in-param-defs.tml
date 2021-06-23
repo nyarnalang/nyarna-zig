@@ -1,0 +1,16 @@
+=== Func Body in Param Defs
+--- input
+\declare(\Integer):
+  double = \func:
+    \this::mult(2)
+  \end(func)
+\end(declare)
+
+\Integer(42)::double()
+--- errors:ast
+5:10 - 5:19 CannotAssignXToY
+  source type is `Integer`
+  target type is `Identifier`
+5:19 - 5:19 MissingLocationType
+4:17 - 6:13 MissingArgumentForParameter
+  151:5 - 151:9 defined here

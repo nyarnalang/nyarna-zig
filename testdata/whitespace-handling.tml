@@ -1,0 +1,42 @@
+=== Whitespace Handling
+--- input
+
+Some text
+\command:
+  Indented
+  Text
+
+\end(command)
+\one
+
+\two
+
+  \three(  foo    = bar,   spam, egg  , sausage =spam
+ )
+--- events
+4:1 Text "Some text\n"
+5:1 StartCommand "command"
+5:9 StartBlocks
+6:3 Text "Indented\nText"
+9:1 EndBlocks
+9:14 EndCommand
+9:14 Space "\n"
+10:1 StartCommand "one"
+10:5 EndCommand
+10:5 ParagraphSep "\n\n"
+12:1 StartCommand "two"
+12:5 EndCommand
+12:5 ParagraphSep "\n\n  "
+14:3 StartCommand "three"
+14:9 StartInlineArgs
+14:12 StartNamedInlineArg "foo"
+14:21 Text "bar"
+14:28 StartUnnamedInlineArg
+14:28 Text "spam"
+14:34 StartUnnamedInlineArg
+14:34 Text "egg"
+14:41 StartNamedInlineArg "sausage"
+14:50 Text "spam"
+15:2 EndInlineArgs
+15:3 EndCommand
+16:1 EndInput

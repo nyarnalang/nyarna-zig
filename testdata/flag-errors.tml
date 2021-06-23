@@ -1,0 +1,21 @@
+=== Flag Errors
+--- input {strip}
+\func:
+  foo : \Integer {primary herp}spameggsausage
+  bar : \Integer {derp}:>  {primary}
+:body:
+  \foo::add(\bar)
+\end(func)(1, 2)
+\func:
+  baz : \Text {
+--- errors:ast
+4:19 - 4:31 InvalidTextualCharacter
+  identifier is " "
+4:32 - 4:46 IllegalContentAfterFlags
+5:19 - 5:23 UnknownFlag
+5:28 - 5:37 IllegalContentAfterFlags
+10:16 - 10:16 MissingEndFlags
+10:16 - 10:16 MissingEndCommand
+  9:6 call started here
+9:6 - 10:16 MissingArgumentForParameter
+  151:5 - 151:9 defined here

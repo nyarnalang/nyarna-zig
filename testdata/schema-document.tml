@@ -1,0 +1,66 @@
+=== Schema document
+--- lib:Document
+\standalone(Schema)
+
+\declare:
+  Author = \record:
+    surname: \Raw
+    familyName: \Raw
+  \end(record)
+
+  Chapter = \record:
+    title: \Raw
+    content: \list(\Raw) {primary}:<par>
+  \end(record)
+
+  Document = \record:
+    author: \Author
+    chapters: \concat(\Chapter) {primary}
+  \end(record)
+\end(declare)
+
+\schema(root=\Document)
+--- input
+\standalone(Document)
+
+\Document(\Author(Karl, Koch)):>
+
+\Chapter(First):
+  Lorem
+
+  ipsum
+\end(Chapter)
+
+\Chapter(Second):
+  Dolor sit amet
+\end(Chapter)
+--- document
++RECORD "Document"
+  >FIELD "author"
+  +RECORD "Author"
+    >FIELD "surname"
+    =RAW Raw "Karl"
+    >FIELD "familyName"
+    =RAW Raw "Koch"
+  -RECORD
+  >FIELD "chapters"
+  +CONCAT
+    +RECORD "Chapter"
+      >FIELD "title"
+      =RAW Raw "First"
+      >FIELD "content"
+      +LIST
+        =RAW Raw "Lorem"
+        =RAW Raw "ipsum"
+      -LIST
+    -RECORD
+    +RECORD "Chapter"
+      >FIELD "title"
+      =RAW Raw "Second"
+      >FIELD "content"
+      +LIST
+        =RAW Raw "Dolor sit amet"
+      -LIST
+    -RECORD
+  -CONCAT
+-RECORD

@@ -1,0 +1,11 @@
+=== Escaped Newlines
+--- input
+Foo \
+Bar # a comment
+Baz # a comment with escaped newline \
+Foz
+--- ast
++ROOT "standalone"
+  >CONTENT
+  =RAW Raw "Foo Bar\nBazFoz"
+-ROOT

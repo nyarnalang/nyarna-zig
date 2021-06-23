@@ -1,0 +1,68 @@
+=== Invalid end Commands
+--- input {strip}
+\block:
+  \Text:
+    Foo
+  \end
+\end(block)
+
+\block:
+  \Integer:
+    42
+  \end( Int eger )
+\end(block)
+
+\if(true):
+  2
+\end(if
+--- tokens
+3:1[0] Command
+3:7[6] BlockContentStart
+3:8[7] LineEnd
+4:1[8] Indentation
+4:3[10] Command
+4:8[15] BlockContentStart
+4:9[16] LineEnd
+5:1[17] Indentation
+5:5[21] Text
+5:8[24] LineEnd
+6:1[25] Indentation
+6:3[27] InvalidEndCommand
+6:7[31] LineEnd
+7:1[32] EndCommand
+7:12[43] LineEnd
+8:1[44] EmptyLines
+9:1[45] Command
+9:7[51] BlockContentStart
+9:8[52] LineEnd
+10:1[53] Indentation
+10:3[55] Command
+10:11[63] BlockContentStart
+10:12[64] LineEnd
+11:1[65] Indentation
+11:5[69] Text
+11:7[71] LineEnd
+12:1[72] Indentation
+12:3[74] WrongEndSubject
+12:19[90] LineEnd
+13:1[91] EndCommand
+13:12[102] LineEnd
+14:1[103] EmptyLines
+15:1[104] Command
+15:4[107] CallListStart
+15:5[108] Text
+15:9[112] CallListEnd
+15:10[113] BlockContentStart
+15:11[114] LineEnd
+16:1[115] Indentation
+16:3[117] Text
+16:4[118] LineEnd
+17:1[119] InvalidEndCommand
+17:8[126] InputEnd
+--- errors:ast
+6:3 - 6:7 InvalidEndCommand
+12:3 - 12:19 WrongEndSubject
+17:1 - 17:8 InvalidEndCommand
+10:11 - 12:19 IncompatibleScalarTypes
+  source type is `Text`
+  target type is `Integer`

@@ -1,0 +1,123 @@
+=== Schema extension
+--- lib:Document
+\standalone(Schema)
+
+\declare:
+  ChapterContent = \intersection(\Raw)
+
+  Chapter = \record:
+    title: \Raw
+    content: \concat(\ChapterContent) {primary}
+  \end(record)
+
+  Document = \record:
+    title:    \Raw
+    chapters: \concat(\Chapter) {primary}
+  \end(record)
+\end(declare)
+
+\schema(root=\Document):
+  \backend(html):
+    \template(\Raw):
+      # in a real backend, this would do escaping
+      \this
+    \end(template)
+
+    \template(\Chapter):
+      \
+
+          <section>
+            <h2>\process(\this::title)</h2>
+            \process(\this::content)
+          </section>
+    \end(template)
+
+    \template(\Document):
+      <html>
+        <head>
+          <title>\process(\this::title)</title>
+        </head>
+        <body>
+          <h1>\process(\this::title)</h1>
+          \process(\this::chapters)
+        </body>
+      </html>
+    \end(template)
+  :actions:
+    \return(\subject::input::name:,.html):
+      \process(\subject::root)
+    \end(return)
+  \end(backend)
+\end(schema)
+--- lib:Document-graphics
+\standalone(Extension)
+
+\declare:
+  Image = \record:
+    path:    \Raw
+    caption: \Raw
+  \end(record)
+\end(declare)
+
+\extension(Document):
+  \extend(\ChapterContent, \Image)
+:backends:
+  \backend(html):
+    \template(\Image):
+      \
+      
+            <figure>
+              <img src="\process(\this::path)" />
+              <figcaption>\process(\this::caption)</figcaption>
+            </figure>
+    \end(template)
+  \end(backend)
+\end(extension)
+--- input
+\standalone(Document, graphics)
+
+\Document(Article with graphics):
+  \Chapter(Text-only chapter):
+    Lorem ipsum dolor sit amet
+  \end(Chapter)
+
+  \Chapter(Image-only chapter):
+    \Image(diagram.png, some diagram)
+  \end(Chapter)
+
+  \Chapter(Mixed-content chapter):
+    consectetur adipiscing elit
+    \Image(diagram2.png, another diagram)
+  \end(Chapter)
+\end(Document)
+--- output:input.html
+<html>
+  <head>
+    <title>Article with graphics</title>
+  </head>
+  <body>
+    <h1>Article with graphics</h1>
+    
+    <section>
+      <h2>Text-only chapter</h2>
+      Lorem ipsum dolor sit amet
+    </section>
+    <section>
+      <h2>Image-only chapter</h2>
+      
+      <figure>
+        <img src="diagram.png" />
+        <figcaption>some diagram</figcaption>
+      </figure>
+    </section>
+    <section>
+      <h2>Mixed-content chapter</h2>
+      consectetur adipiscing elit
+
+      <figure>
+        <img src="diagram2.png" />
+        <figcaption>another diagram</figcaption>
+      </figure>
+    </section>
+  </body>
+</html>

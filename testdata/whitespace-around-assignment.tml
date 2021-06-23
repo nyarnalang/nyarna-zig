@@ -1,0 +1,13 @@
+=== Whitespace around assignment
+--- input
+\var:
+  foo : \Raw
+:scope:>
+
+one
+
+\foo:=(two)
+\foo
+--- output
+one
+two

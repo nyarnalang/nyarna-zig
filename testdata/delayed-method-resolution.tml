@@ -1,0 +1,46 @@
+=== Delayed method resolution
+--- input
+\declare:
+  foo = \record:
+    a, b: \Raw
+  \end(record)
+\end(declare)
+
+\declare(\foo):
+  double = \func:
+  :body:
+    \this::concat()\this::concat()
+  \end(func)
+  concat = \func:
+  :body:
+    \this::a\this::b
+  \end(func)
+\end(declare)
+
+\foo(foo, bar)::double()
+--- ast
++ROOT "standalone"
+  >CONTENT
+  +CALL
+    +TARGET
+      +FUNC
+        =NAME "double"
+      -FUNC
+    -TARGET
+    +PARAM "this"
+      +CALL
+        +TARGET
+          =TYPE foo
+        -TARGET
+        +PARAM "a"
+          =RAW Raw "foo"
+        -PARAM
+        +PARAM "b"
+          =RAW Raw "bar"
+        -PARAM
+      -CALL
+    -PARAM
+  -CALL
+-ROOT
+--- document
+=RAW Raw "foobarfoobar"

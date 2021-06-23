@@ -1,0 +1,15 @@
+=== Unicode Characters
+--- input
+Föö
+ꞷ omega
+🐉dragon
+--- tokens
+3:1[0] Text
+3:4[5] LineEnd
+4:1[6] Text
+4:2[9] Space
+4:3[10] Text
+4:8[15] LineEnd
+5:1[16] Text
+5:8[26] LineEnd
+6:1[27] InputEnd

@@ -1,0 +1,22 @@
+=== Assignment
+--- input
+\foo:=(bar)
+\spam:=:
+  egg, sausage
+\end(spam)
+--- events
+3:1 StartCommand "foo"
+3:5 Assignment
+3:7 StartInlineArgs
+3:8 StartUnnamedInlineArg
+3:8 Text "bar"
+3:11 EndInlineArgs
+3:12 EndCommand
+3:12 Space "\n"
+4:1 StartCommand "spam"
+4:6 Assignment
+4:8 StartBlocks
+5:3 Text "egg, sausage"
+6:1 EndBlocks
+6:11 EndCommand
+7:1 EndInput

@@ -1,0 +1,17 @@
+=== Swallowing
+--- input
+\direct:>
+\afterParens():>
+\at:
+:blockName:>
+--- events
+3:1 StartCommand "direct"
+3:8 Swallow
+4:1 StartCommand "afterParens"
+4:13 StartInlineArgs
+4:14 EndInlineArgs
+4:15 Swallow
+5:1 StartCommand "at"
+5:4 StartBlocks
+6:1 BlockNameSwallow "blockName"
+7:1 EndInput

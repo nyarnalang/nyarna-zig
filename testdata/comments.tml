@@ -1,0 +1,12 @@
+=== Comments
+--- input
+\if(# foo
+   true): # bar
+  lorem
+  # ipsum
+  dolor
+\end(if)  # aaand done
+--- output
+lorem
+
+dolor

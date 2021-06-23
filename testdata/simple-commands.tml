@@ -1,0 +1,16 @@
+=== Simple Commands
+--- input
+\foo
+\foo:,bar
+foo\bar
+--- tokens
+3:1[0] Command
+3:5[4] LineEnd
+4:1[5] Command
+4:5[9] CommandEnd
+4:7[11] Text
+4:10[14] LineEnd
+5:1[15] Text
+5:4[18] Command
+5:8[22] LineEnd
+6:1[23] InputEnd

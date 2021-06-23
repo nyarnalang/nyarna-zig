@@ -1,0 +1,13 @@
+=== First Parameter appears too late
+--- input
+\declare:
+  breakfast = \func:
+    cereal, milk : \Text
+  :body:
+    \cereal\milk
+  \end(func)
+:owner:
+  \Text
+\end(declare)
+--- errors:ast
+9:1 - 10:8 FirstParameterAssignedTooLate

@@ -1,0 +1,19 @@
+=== Illegal block config
+--- input {strip}
+\block:<foo,
+  bar
+\end(block)
+
+\block:<\ to b>
+  baz
+\end(block)
+
+\block:<\if
+--- errors:ast
+3:9 - 3:12 InvalidBlockDirective
+3:13 - 3:13 MissingBlockConfigEnd
+7:9 - 7:15 InvalidBlockDirective
+11:9 - 11:12 InvalidBlockDirective
+11:12 - 11:12 MissingBlockConfigEnd
+11:12 - 11:12 MissingEndCommand
+  11:7 call started here

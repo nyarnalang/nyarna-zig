@@ -1,0 +1,26 @@
+=== Illegal Control Characters
+--- input {chars}
+\func%0B:%04
+  foo :%03 \Integer%00
+:%0Ebody:
+  \foo
+\end(func)(42)
+--- errors:ast
+3:6 - 3:7 IllegalControlCharacter
+3:8 - 3:9 IllegalControlCharacter
+4:8 - 4:9 IllegalControlCharacter
+4:18 - 4:19 IllegalControlCharacter
+5:2 - 5:3 IllegalControlCharacter
+5:1 - 5:8 IllegalBlockNameAtRootBlock
+6:3 - 6:7 UnknownSymbol
+  identifier is "foo"
+7:1 - 7:11 InvalidEndCommand
+3:7 - 4:8 TypeCannotBeMixed
+  3:1 - 3:6 previous type: callable(list(GenericParameter), optional(Type), Boolean, concat(Locations), Any) <comptime>
+4:10 - 4:18 TypeCannotBeMixed
+  3:1 - 3:6 previous type: callable(list(GenericParameter), optional(Type), Boolean, concat(Locations), Any) <comptime>
+7:11 - 7:15 TypeCannotBeMixed
+  3:1 - 3:6 previous type: callable(list(GenericParameter), optional(Type), Boolean, concat(Locations), Any) <comptime>
+3:1 - 7:15 CannotAssignXToY
+  source type is `concat(intersection(Space, callable(list(GenericParameter), optional(Type), Boolean, concat(Locations), Any) <comptime>))`
+  target type is `Raw`

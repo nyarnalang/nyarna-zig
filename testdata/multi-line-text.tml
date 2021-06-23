@@ -1,0 +1,9 @@
+=== Multiple Lines of Text
+--- input
+Lorem ipsum
+dolor sit amet
+--- ast
++ROOT "standalone"
+  >CONTENT
+  =RAW Raw "Lorem ipsum\ndolor sit amet"
+-ROOT

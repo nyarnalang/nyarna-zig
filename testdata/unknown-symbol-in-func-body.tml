@@ -1,0 +1,13 @@
+=== Unknown symbol in func body
+--- input
+\declare:
+  foo = \func:
+    bar: \Raw;
+  :body:
+    \bar\baz
+  \end(func);
+\end(declare)
+\foo(bar)
+--- errors:ast
+7:9 - 7:13 UnknownSymbol
+  identifier is "baz"

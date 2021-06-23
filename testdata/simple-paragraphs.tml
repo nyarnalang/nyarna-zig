@@ -1,0 +1,110 @@
+=== Simple Paragraphs
+--- input
+\declare:
+  Section = \record:
+    title : \Raw;
+    content : \list(\Raw) {primary}:<par>;
+  \end(record);
+\end(declare)
+
+\fragment(type=\concat(\Section)):
+:content:
+  \Section(foo):
+    Lorem ipsum
+
+    Dolor sit amet
+  \end(Section)
+
+  \Section(bar):
+    consectetur adipiscing elit,
+    sed do eiusmod tempor
+
+  \end(Section)
+\end(fragment)
+--- ast
++ROOT "fragment"
+  >CONTENT
+  +SPACEREM
+    +CALL
+      +TARGET
+        +FUNC
+          =NAME "concatOf"
+        -FUNC
+      -TARGET
+      +PARAM "items"
+        +VARARGS
+          +CALL
+            +TARGET
+              =TYPE Section
+            -TARGET
+            +PARAM "title"
+              =RAW Raw "foo"
+            -PARAM
+            +PARAM "content"
+              +CALL
+                +TARGET
+                  +FUNC
+                    =NAME "listOf"
+                  -FUNC
+                -TARGET
+                +PARAM "items"
+                  +VARARGS
+                    =RAW Raw "Lorem ipsum"
+                    =RAW Raw "Dolor sit amet"
+                  -VARARGS
+                -PARAM
+              -CALL
+            -PARAM
+          -CALL
+          =RAW Space "\n\n"
+          +CALL
+            +TARGET
+              =TYPE Section
+            -TARGET
+            +PARAM "title"
+              =RAW Raw "bar"
+            -PARAM
+            +PARAM "content"
+              +CALL
+                +TARGET
+                  +FUNC
+                    =NAME "listOf"
+                  -FUNC
+                -TARGET
+                +PARAM "items"
+                  +VARARGS
+                    =RAW Raw "consectetur adipiscing elit,\nsed do eiusmod tempor"
+                  -VARARGS
+                -PARAM
+              -CALL
+            -PARAM
+          -CALL
+        -VARARGS
+      -PARAM
+    -CALL
+  -SPACEREM
+-ROOT
+--- disabled-document
++CONCAT
+  +RECORD "Section"
+    +FIELD "title"
+      =RAW Raw "foo"
+    -FIELD
+    +FIELD "content"
+      +LIST
+        =RAW Raw "Lorem ipsum"
+        =RAW Raw "Dolor sit amet"
+      -LIST
+    -FIELD
+  -RECORD
+  +RECORD "Section"
+    +FIELD "title"
+      =RAW Raw "bar"
+    -FIELD
+    +FIELD "content"
+      +LIST
+        =RAW Raw "consectetur adipiscing elit,\nsed do eiusmod tempor"
+      -LIST
+    -FIELD
+  -RECORD
+-CONCAT

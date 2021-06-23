@@ -1,0 +1,19 @@
+=== Block Config with Swallow
+--- input
+\block:
+:content:<nocolon>:1>
+
+:foo:
+
+\if(true):<nocomment>:1>
+
+# bar
+
+\if(false):
+  spam egg
+:else:<nocommand>:1>
+
+\sausage
+
+--- output
+:foo:# bar\sausage

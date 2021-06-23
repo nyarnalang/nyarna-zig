@@ -1,0 +1,12 @@
+=== Comptime reference of other declared function
+--- input
+\declare:
+  foo = \func(body=\Type)
+  idem = \func:
+    in : \intersection(\Raw, \foo())
+  :body:
+    \in
+  \end(func)
+\end(declare)
+--- errors:ast
+6:23 - 6:37 ComptimeCallMayNotReferenceUnfinishedSymbols

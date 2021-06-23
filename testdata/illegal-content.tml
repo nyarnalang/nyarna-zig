@@ -1,0 +1,7 @@
+=== Illegal content
+--- input
+\if(false): foo
+  bar
+\end(if)
+--- errors:ast
+3:13 - 3:16 IllegalContentAfterColon

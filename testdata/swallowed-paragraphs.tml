@@ -1,0 +1,15 @@
+=== Swallowed Paragraphs
+--- input
+\func:
+  items : \list(\Raw) {primary}
+:body:
+  \items::item(2)
+\end(func):<par>:>
+
+Lorem ipsum
+
+dolor sit
+
+amet
+--- output
+dolor sit

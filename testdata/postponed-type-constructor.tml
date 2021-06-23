@@ -1,0 +1,24 @@
+=== Postponed Type Constructor
+--- input
+\declare:
+  MyType = \record:
+    foo: \Natural
+    bar: \Text
+  \end(record)
+  sized = \func:
+    text: \Text
+  :body:
+    \MyType(\text::length(), \text)
+  \end(func)
+\end(declare)
+
+\declare(\MyType):
+  render = \func:
+  :body:
+    [\this::foo]\this::bar
+  \end(func)
+\end(declare)
+
+\sized(Thaumaturgy)::render()
+--- output
+[11]Thaumaturgy

@@ -1,0 +1,38 @@
+=== End Command
+--- input
+\foo:
+\bar:
+Test
+\end(bar)
+\end( foo )
+\baz(foo)(bar):
+  spam
+\end(baz)
+--- tokens
+3:1[0] Command
+3:5[4] BlockContentStart
+3:6[5] LineEnd
+4:1[6] Command
+4:5[10] BlockContentStart
+4:6[11] LineEnd
+5:1[12] Text
+5:5[16] LineEnd
+6:1[17] EndCommand
+6:10[26] LineEnd
+7:1[27] EndCommand
+7:12[38] LineEnd
+8:1[39] Command
+8:5[43] CallListStart
+8:6[44] Text
+8:9[47] CallListEnd
+8:10[48] CallListStart
+8:11[49] Text
+8:14[52] CallListEnd
+8:15[53] BlockContentStart
+8:16[54] LineEnd
+9:1[55] Indentation
+9:3[57] Text
+9:7[61] LineEnd
+10:1[62] EndCommand
+10:10[71] LineEnd
+11:1[72] InputEnd

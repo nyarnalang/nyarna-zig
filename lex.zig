@@ -9,8 +9,8 @@ pub const Source = struct {
   /// offsets if the source is part of a larger file.
   /// these will be added to line/column reporting.
   offsets: struct {
-    line: u8,
-    column: u8
+    line: usize,
+    column: usize
   },
   /// the name that is to be used for reporting errors.
   /// usually the path of the file.
@@ -109,7 +109,7 @@ pub const Source = struct {
       w.cur += std.unicode.utf8ByteSequenceLength(w.cur[0]) catch unreachable;
     }
 
-    pub fn contentFrom(w: *Walker, start: u32) []const u8 {
+    pub fn contentFrom(w: *Walker, start: usize) []const u8 {
       const len = w.before.byte_offset - start;
       return (w.cur - len)[0..len];
     }
@@ -1183,7 +1183,7 @@ fn testLexer(input: *Source, expected: []const Lexer.Token) !void {
   var l = try Lexer.init(&ctx, input);
   defer l.deinit();
   for (expected) |t| {
-    std.debug.assert((try l.next()) == t);
+    try std.testing.expectEqual(try l.next(), t);
   }
 }
 

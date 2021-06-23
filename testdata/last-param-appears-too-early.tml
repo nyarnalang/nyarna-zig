@@ -1,0 +1,7 @@
+=== Last param appears too early
+--- input
+\func(body=foo):
+  bar : \Text
+\end(func)()
+--- errors:ast
+3:17 - 4:14 IllegalArgumentAfterLast

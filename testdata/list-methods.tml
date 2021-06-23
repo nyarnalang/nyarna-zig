@@ -1,0 +1,14 @@
+=== List Methods
+--- input
+\declare:
+  test = \func:
+    l : \list(\Raw)
+  :body:
+    \l::length()
+    \l::item(2)
+  \end(func)
+\end(declare)
+
+\test(\listOf(foo, bar))
+--- document
+=RAW Raw "2\nbar"

@@ -1,0 +1,18 @@
+=== Field Assignment
+--- input
+\declare:
+  Person = \record:
+    name: \Text
+    age: \Integer
+  \end(record)
+\end(declare)
+
+\var:
+  p = \Person(name=Karl Koch, age=23)
+:scope:>
+
+\p::name:=(Radical Edward)
+
+\p::name
+--- output
+Radical Edward

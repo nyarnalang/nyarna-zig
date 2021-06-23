@@ -1,0 +1,26 @@
+=== Hello, world (calculated at compile time)
+--- input
+\declare:
+  hello = \func:
+    who : \Raw;
+  :body:
+    Hello, \who!
+  \end(func)
+\end(declare)
+\hello(World)
+--- ast
++ROOT "standalone"
+  >CONTENT
+  +CALL
+    +TARGET
+      +FUNC
+        =NAME "hello"
+      -FUNC
+    -TARGET
+    +PARAM "who"
+      =RAW Raw "World"
+    -PARAM
+  -CALL
+-ROOT
+--- document
+=RAW Raw "Hello, World!"

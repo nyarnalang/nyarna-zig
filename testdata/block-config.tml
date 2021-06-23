@@ -1,0 +1,71 @@
+=== Block Config
+--- input
+\foo:<nocolon>
+\end(foo)
+\bar:
+:baz:<\ to @, par auto>
+:raz:<par, par auto \spam>
+\end(bar)
+--- tokens
+3:1[0] Command
+3:5[4] BlockConfigStart
+3:7[6] Identifier
+3:14[13] BlockConfigEnd
+3:15[14] LineEnd
+4:1[15] EndCommand
+4:10[24] LineEnd
+5:1[25] Command
+5:5[29] BlockContentStart
+5:6[30] LineEnd
+6:1[31] BlockNameStart
+6:2[32] Identifier
+6:5[35] BlockConfigStart
+6:7[37] BlockConfigSymbol
+6:8[38] Space
+6:9[39] Identifier
+6:11[41] Space
+6:12[42] BlockConfigSymbol
+6:13[43] CommaSep
+6:14[44] Space
+6:15[45] Identifier
+6:18[48] Space
+6:19[49] Identifier
+6:23[53] BlockConfigEnd
+6:24[54] LineEnd
+7:1[55] BlockNameStart
+7:2[56] Identifier
+7:5[59] BlockConfigStart
+7:7[61] Identifier
+7:10[64] CommaSep
+7:11[65] Space
+7:12[66] Identifier
+7:15[69] Space
+7:16[70] Identifier
+7:20[74] Space
+7:21[75] BlockConfigSymbol
+7:26[80] BlockConfigEnd
+7:27[81] LineEnd
+8:1[82] EndCommand
+8:10[91] LineEnd
+9:1[92] InputEnd
+--- events
+3:1 StartCommand "foo"
+3:5 StartBlocksWithConfig
+3:7 BlockConfigDirective
+3:14 EndBlockConfig
+4:1 EndBlocks
+4:10 EndCommand
+4:10 Space "\n"
+5:1 StartCommand "bar"
+5:5 StartBlocks
+6:1 BlockNameWithConfig "baz"
+6:7 BlockConfigDirective
+6:15 BlockConfigDirective
+6:23 EndBlockConfig
+7:1 BlockNameWithConfig "raz"
+7:7 BlockConfigDirective
+7:12 BlockConfigDirective "spam"
+7:26 EndBlockConfig
+8:1 EndBlocks
+8:10 EndCommand
+9:1 EndInput

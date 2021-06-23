@@ -1,0 +1,30 @@
+=== Simple Swallow
+--- input
+\if(true):>
+foo
+--- ast
++ROOT "standalone"
+  >CONTENT
+  +CONVERT
+    =TYPE Raw
+    >CONTENT
+    +CALL
+      +TARGET
+        +FUNC
+          =NAME "if"
+        -FUNC
+      -TARGET
+      +PARAM "condition"
+        =ENUM Boolean "true"
+      -PARAM
+      +PARAM "then"
+        =RAW Raw "foo"
+      -PARAM
+      +PARAM "else"
+        =NONE
+      -PARAM
+    -CALL
+  -CONVERT
+-ROOT
+--- document
+=RAW Raw "foo"

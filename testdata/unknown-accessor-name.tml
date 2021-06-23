@@ -1,0 +1,6 @@
+=== Unknown accessor name
+--- input
+\Integer::foo
+--- errors:ast
+3:9 - 3:14 UnknownPropertyName
+  identifier is "foo"

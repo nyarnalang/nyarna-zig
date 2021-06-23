@@ -1,0 +1,43 @@
+=== Field access
+--- input
+\declare:
+  Data = \record:
+    a, b : \Raw;
+  \end(record)
+\end(declare)
+
+\declare:
+  foo = \func:
+    data : \Data;
+  :body:
+    (\data::a, \data::b)
+  \end(func)
+\end(declare)
+
+\foo(\Data(x, y))
+--- ast
++ROOT "standalone"
+  >CONTENT
+  +CALL
+    +TARGET
+      +FUNC
+        =NAME "foo"
+      -FUNC
+    -TARGET
+    +PARAM "data"
+      +CALL
+        +TARGET
+          =TYPE Data
+        -TARGET
+        +PARAM "a"
+          =RAW Raw "x"
+        -PARAM
+        +PARAM "b"
+          =RAW Raw "y"
+        -PARAM
+      -CALL
+    -PARAM
+  -CALL
+-ROOT
+--- document
+=RAW Raw "(x, y)"

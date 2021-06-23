@@ -1,0 +1,52 @@
+=== Inline Block Config
+--- input
+\block:
+:content:<nocolon>
+  lorem ipsum
+  :dolor sit amet
+\end(block)
+
+\if(true):<nocomment>
+  this is # not a comment
+:else:<nocommand>
+  \this is not a command # but this is a comment
+\end(if)
+
+\block:<\ to @>
+  \this is not a command @if(true, but this is)
+\end(block)
+--- ast
++ROOT "standalone"
+  >CONTENT
+  +CALL
+    +TARGET
+      +FUNC
+        =NAME "concatOf"
+      -FUNC
+    -TARGET
+    +PARAM "items"
+      +VARARGS
+        =RAW Raw "lorem ipsum\n:dolor sit amet"
+        =RAW Space "\n\n"
+        +CALL
+          +TARGET
+            +FUNC
+              =NAME "if"
+            -FUNC
+          -TARGET
+          +PARAM "condition"
+            =ENUM Boolean "true"
+          -PARAM
+          +PARAM "then"
+            =RAW Raw "this is # not a comment"
+          -PARAM
+          +PARAM "else"
+            =RAW Raw "\\this is not a command"
+          -PARAM
+        -CALL
+        =RAW Space "\n\n"
+        =RAW Raw "\\this is not a command but this is"
+      -VARARGS
+    -PARAM
+  -CALL
+-ROOT

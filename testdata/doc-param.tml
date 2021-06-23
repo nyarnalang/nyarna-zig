@@ -1,0 +1,31 @@
+=== Document Parameter
+--- input
+\standalone:
+  who : \Raw
+:content:>
+Hello, \who!
+--- inline:who {strip}
+World
+--- ast
++ROOT "standalone"
+  +PARAM "who"
+    =TYPE Raw
+  -PARAM
+  >CONTENT
+  +CALL
+    +TARGET
+      +FUNC
+        =NAME "concatOf"
+      -FUNC
+    -TARGET
+    +PARAM "items"
+      +VARARGS
+        =RAW Raw "Hello, "
+        =VARIABLE "who"
+        =RAW Raw "!"
+      -VARARGS
+    -PARAM
+  -CALL
+-ROOT
+--- document
+=RAW Raw "Hello, World!"

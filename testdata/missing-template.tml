@@ -1,0 +1,22 @@
+=== Missing template
+--- lib:Numbers
+\standalone(Schema)
+
+\schema(root=\list(\Integer)):
+  \backend(sum):
+    \template(\Integer):
+      \process(\Raw(\this))
+    \end(template)
+  :actions:
+    \return:
+      \process(\subject::root)
+    \end(return)
+  \end(backend)
+\end(schema)
+--- input
+\standalone(Numbers)
+
+\listOf(1, 2, 3)
+--- errors:document
+8:15 - 8:28 NoTemplateForType
+  type is `Raw`

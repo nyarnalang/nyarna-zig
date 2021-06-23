@@ -1,0 +1,11 @@
+=== Missing inner end
+--- input
+\declare:
+  foo = \func:
+  :body:
+    bar
+\end(declare)
+
+\foo()
+--- errors:ast
+7:1 - 7:14 SkippingEndSubject

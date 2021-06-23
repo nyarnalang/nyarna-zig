@@ -1,0 +1,13 @@
+=== CRLF
+--- input {crlf}
+\func(comptime=false
+  ):
+  t : \Raw
+:body:
+  \t\
+  \t
+  \t
+\end(func)(x)
+--- output
+xx
+x
