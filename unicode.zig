@@ -1,3 +1,5 @@
+const std = @import("std");
+
 pub const Category = enum {
   Lu = 0, Ll = 1, Lt = 2, Lm = 3, Lo = 4,
   Mn = 5, Mc = 6, Me = 7,
@@ -321,3 +323,10 @@ pub const M = CategorySet.create(.{.Mc, .Me, .Mn});
 pub const P = CategorySet.create(.{.Pc, .Pd, .Pe, .Pf, .Pi, .Po, .Ps});
 pub const S = CategorySet.create(.{.Sc, .Sk, .Sm, .So});
 pub const MPS = CategorySet{.content = M.content | P.content | S.content};
+
+test "character categories" {
+  try std.testing.expectEqual(Category.Ll, category('f'));
+  try std.testing.expectEqual(Category.Lu, category('G'));
+  try std.testing.expectEqual(Category.Po, category(','));
+  try std.testing.expectEqual(Category.Sc, category('$'));
+}

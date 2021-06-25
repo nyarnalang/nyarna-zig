@@ -1,7 +1,7 @@
 === Empty file
 --- input
 --- tokens
-3:1[0] InputEnd
+3:1[0] end_source
 --- events
 3:1 EndInput
 --- ast

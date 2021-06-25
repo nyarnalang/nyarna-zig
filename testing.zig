@@ -27,8 +27,8 @@ pub fn lexTest(f: *tml.File) !void {
   };
   defer ctx.command_characters.deinit(ctx.allocator);
   try ctx.command_characters.put(std.testing.allocator, '\\', 0);
-  var startpos = data.Cursor{.at_line = 1 + input.line_offset, .before_column = 1, .byte_offset = 0};
   var l = try lex.Lexer.init(&ctx, &src);
+  var startpos = l.recent_end;
   defer l.deinit();
   var t = try l.next();
   while(true) : (t = try l.next()) {
@@ -41,9 +41,12 @@ pub fn lexTest(f: *tml.File) !void {
     };
     try std.testing.expectEqualStrings(expected, actual);
     if (t == .end_source) break;
+    startpos = l.recent_end;
   }
-  if (expected_content.next()) |unmatched| {
-    std.log.err("got fewer tokens than expected, first missing token: {s}", .{unmatched});
-    return TestError.no_match;
+  while (expected_content.next()) |unmatched| {
+    if (unmatched.len > 0) {
+      std.log.err("got fewer tokens than expected, first missing token: {s}", .{unmatched});
+      return TestError.no_match;
+    }
   }
 }

@@ -3,17 +3,17 @@
 Foo \@
 \\Bar\: Baz
 --- tokens
-3:1[0] Text
-3:4[3] Space
+3:1[0] literal
+3:4[3] space
 3:5[4] EscapeSequence
-3:7[6] LineEnd
+3:7[6] ws_break
 4:1[7] EscapeSequence
-4:3[9] Text
+4:3[9] literal
 4:6[12] EscapeSequence
-4:8[14] Space
-4:9[15] Text
-4:12[18] LineEnd
-5:1[19] InputEnd
+4:8[14] space
+4:9[15] literal
+4:12[18] ws_break
+5:1[19] end_source
 --- events
 3:1 Text "Foo @\n\\Bar: Baz"
 5:1 EndInput

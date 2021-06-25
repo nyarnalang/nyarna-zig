@@ -111,7 +111,7 @@ pub const Source = struct {
 
     pub fn contentFrom(w: *Walker, start: usize) []const u8 {
       const len = w.before.byte_offset - start;
-      return (w.cur - len)[0..len];
+      return (w.cur - len - 1)[0..len];
     }
   };
 };
@@ -381,8 +381,8 @@ pub const Lexer = struct {
         .end_char = undefined,
         .special = false,
       },
-      .newline_count = undefined,
-      .recent_end = undefined,
+      .newline_count = 0,
+      .recent_end = walker.before,
       .recent_id = undefined,
       .line_start = undefined,
       .indent_char_seen = undefined,
@@ -439,6 +439,7 @@ pub const Lexer = struct {
   /// while storing the beginning of the current line into l.line_start.
   inline fn emptyLines(l: *Lexer, cur: *u21) u16 {
     var newlines_seen: u16 = 0;
+    l.line_start = l.walker.before;
     while (true) {
       switch (cur.*) {
         '\t' => {
@@ -493,14 +494,19 @@ pub const Lexer = struct {
               return .end_source;
             },
             '#' => {
+              if (l.newline_count > 0) {
+                l.recent_end = l.walker.before;
+                l.newline_count = 0;
+                return .space;
+              }
               _ = l.readComment(&cur);
               l.recent_end = l.walker.before;
               return .comment;
             },
             else => {
-              const newlines = l.emptyLines(&cur);
+              l.newline_count += l.emptyLines(&cur);
               l.state = .check_indent;
-              if (newlines > 0) {
+              if (l.newline_count > 0) {
                 l.recent_end = l.line_start;
                 return .space;
               }
@@ -513,6 +519,7 @@ pub const Lexer = struct {
           }
           l.state = if (l.colons_disabled_at == null) .check_block_name else .in_block;
           if (l.recent_end.byte_offset != l.walker.before.byte_offset) {
+            l.level.indentation = @intCast(u16, l.recent_end.byte_offset - l.line_start.byte_offset);
             l.recent_end = l.walker.before;
             if (l.indent_char_seen.tab and l.indent_char_seen.space) {
               return .mixed_indentation;
@@ -524,7 +531,6 @@ pub const Lexer = struct {
               }
             } else {
               l.level.tabs = l.indent_char_seen.tab;
-              l.level.indentation = @intCast(u16, l.recent_end.byte_offset - l.line_start.byte_offset);
               return .indent;
             }
           }
@@ -536,7 +542,7 @@ pub const Lexer = struct {
           if (newlines > 0) {
             l.newline_count += newlines;
             return .parsep;
-          } else {
+          } else if (l.newline_count > 0) {
             return .ws_break;
           }
         },
@@ -633,6 +639,7 @@ pub const Lexer = struct {
           const res = try l.processContent(.block_name, &cur);
           if (res.hit_line_end) {
             std.debug.assert(res.token == null);
+            l.newline_count = 1;
             l.state = .indent_capture;
             l.recent_end = l.walker.before;
             return .missing_block_name_sep;
@@ -644,6 +651,7 @@ pub const Lexer = struct {
         },
         .after_id => {
           if (try l.exprContinuation(&cur, false)) |t| {
+            l.recent_end = l.walker.before;
             return t;
           } else {
             l.state = l.curBaseState();
@@ -651,6 +659,7 @@ pub const Lexer = struct {
         },
         .after_args => {
           if (try l.exprContinuation(&cur, true)) |t| {
+            l.recent_end = l.walker.before;
             return t;
           } else {
             l.state = l.curBaseState();
@@ -674,6 +683,7 @@ pub const Lexer = struct {
         .at_header => {
           const res = try l.processContent(.block, &cur);
           if (res.hit_line_end) {
+            l.newline_count = 1;
             l.state = .indent_capture;
           } else {
             // ignore proposed state changes, e.g. from encountering a command.
@@ -701,7 +711,6 @@ pub const Lexer = struct {
           l.readIdentifier(&cur);
           l.state = .config_item_arg;
           l.recent_end = l.walker.before;
-          l.level.id = l.recent_id;
           return .identifier;
         },
         .config_item_arg => {
@@ -768,49 +777,57 @@ pub const Lexer = struct {
   }
 
   const Surrounding = enum {block, args, config, block_name};
-  const ContentResult = struct {hit_line_end: bool, token: ?Token};
+  const ContentResult = struct {hit_line_end: bool = false, token: ?Token = null};
 
   /// return null for an unescaped line end since it may be part of a parsep.
   /// hit_line_end is true if the recently processed character was a line break.
   inline fn processContent(l: *Lexer, comptime ctx: Surrounding, cur: *u21) !ContentResult {
     switch (cur.*) {
       4 => {
-        return ContentResult{.hit_line_end = false, .token = .end_source};
+        return ContentResult{.token = .end_source};
       },
       '\r' => {
         l.cur_stored = l.walker.nextAfterCR();
         l.newline_count = 1;
-        return ContentResult{.hit_line_end = true, .token = null};
+        return ContentResult{.hit_line_end = true};
       },
       '\n' => {
         l.cur_stored = l.walker.nextAfterLF();
         l.newline_count = 1;
-        return ContentResult{.hit_line_end = true, .token = null};
+        return ContentResult{.hit_line_end = true};
       },
       '#' => {
-        if (ctx == .block_name or ctx == .config) {
-          l.cur_stored = l.walker.nextInline();
-          return ContentResult{.hit_line_end = false, .token = .illegal_character_for_id};
-        }
-        if (l.comments_disabled_at != null) {
-          l.readLiteral(cur, ctx);
-          return ContentResult{.hit_line_end = false, .token = .literal};
-        } else {
-          const line_end = l.readComment(cur);
-          l.newline_count = 0;
-          return ContentResult{.hit_line_end = line_end, .token = .comment};
+        switch (ctx) {
+          .block_name => {
+            l.cur_stored = l.walker.nextInline();
+            return ContentResult{.token = .illegal_character_for_id};
+          },
+          .config => {
+            l.cur_stored = l.walker.nextInline();
+            return ContentResult{.token = .comment};
+          },
+          else => {
+            if (l.comments_disabled_at != null) {
+              l.readLiteral(cur, ctx);
+              return ContentResult{.token = .literal};
+            } else {
+              const line_end = l.readComment(cur);
+              l.newline_count = 0;
+              return ContentResult{.hit_line_end = line_end, .token = .comment};
+            }
+          }
         }
       },
-      't', ' ' => {
+      '\t', ' ' => {
         while (true) {
           cur.* = l.walker.nextInline() catch |e| {
             l.cur_stored = e;
-            return ContentResult{.hit_line_end = false, .token = .space};
+            return ContentResult{.token = .space};
           };
           if (cur.* != '\t' and cur.* != ' ') break;
         }
         l.cur_stored = cur.*;
-        return ContentResult{.hit_line_end = false, .token = .space};
+        return ContentResult{.token = .space};
       },
       0...3, 5...8, 11...12, 14...31 => {
         return l.advanceAndReturn(.illegal_code_point, null);
@@ -823,17 +840,21 @@ pub const Lexer = struct {
         .args => {
           cur.* = l.walker.nextInline() catch |e| {
             l.cur_stored = e;
-            return ContentResult{.hit_line_end = false, .token = .literal};
+            return ContentResult{.token = .literal};
           };
           if (cur.* == '=') {
             return l.advanceAndReturn(.name_sep, null);
           }
         },
+        .config => {
+          l.cur_stored = l.walker.nextInline();
+          return ContentResult{.token = .block_name_sep};
+        },
         else => {},
       },
       ',' => if (ctx == .args or ctx == .config) {
         return l.advanceAndReturn(.comma,
-            if (ctx == .config) .config_item_arg else .arg_start);
+            if (ctx == .config) .config_item_start else .arg_start);
       },
       '=' => if (ctx == .args) {
         return l.advanceAndReturn(.name_sep, null);
@@ -861,7 +882,7 @@ pub const Lexer = struct {
       }
     }
     l.readLiteral(cur, ctx);
-    return ContentResult{.hit_line_end = false, .token = .literal};
+    return ContentResult{.token = .literal};
   }
 
   inline fn advanceAndReturn(l: *Lexer, value: Token, comptime new_state: ?State) ContentResult {
@@ -869,7 +890,7 @@ pub const Lexer = struct {
     if (new_state) |state| {
       l.state = state;
     }
-    return .{.hit_line_end = false, .token = value};
+    return .{.token = value};
   }
 
   inline fn readLiteral(l: *Lexer, cur: *u21, comptime ctx: Surrounding) void {
@@ -912,22 +933,23 @@ pub const Lexer = struct {
     l.code_point = cur.*;
     cur.* = l.walker.nextInline() catch |e| {
       l.cur_stored = e;
-      return .{.hit_line_end = false, .token = .illegal_command_char};
+      return .{.token = .illegal_command_char};
     };
     var cat = unicode.category(cur.*);
-    if (unicode.MPS.contains(cat)) {
+    if (unicode.L.contains(cat)) {
       l.readIdentifier(cur);
       if (std.mem.eql(u8, l.recent_id, "end")) {
         if (cur.* == '(') {
           l.cur_stored = l.walker.nextInline();
           l.state = .before_end_id;
-          return .{.hit_line_end = false, .token = .block_end_open};
+          return .{.token = .block_end_open};
         } else {
-          return .{.hit_line_end = false, .token = .invalid_end_command};
+          return .{.token = .invalid_end_command};
         }
       } else {
         l.state = .after_id;
-        return .{.hit_line_end = false, .token = .symref};
+        l.cur_stored = cur.*;
+        return .{.token = .symref};
       }
     } else switch (cur.*) {
       '\r' => {
@@ -949,7 +971,7 @@ pub const Lexer = struct {
         cur.* = l.walker.nextInline() catch |e| {
           l.cur_stored = e;
           l.recent_end = l.walker.before;
-          return .{.hit_line_end = false, .token = .escape};
+          return .{.token = .escape};
         };
         l.walker.mark();
         while (cur.* == '\t' or cur.* == ' ') {
@@ -967,7 +989,7 @@ pub const Lexer = struct {
           l.walker.resetToMark();
           l.cur_stored = l.walker.nextInline();
           l.recent_end = l.walker.before;
-          return .{.hit_line_end = false, .token = .escape};
+          return .{.token = .escape};
         }
         l.recent_end = l.walker.before;
         l.newline_count = 0;
@@ -977,14 +999,14 @@ pub const Lexer = struct {
         l.cur_stored = l.walker.nextInline();
         l.recent_end = l.walker.before;
         l.code_point = cur.*;
-        return .{.hit_line_end = false, .token = .escape};
+        return .{.token = .escape};
       }
     }
   }
 
   fn readIdentifier(l: *Lexer, cur: *u21) void {
     const name_start = l.walker.before.byte_offset;
-    while (unicode.MPS.contains(unicode.category(cur.*))) {
+    while (unicode.L.contains(unicode.category(cur.*))) {
       cur.* = l.walker.nextInline() catch |e| {
         l.cur_stored = e;
         const len = l.walker.before.byte_offset - name_start;
@@ -992,8 +1014,7 @@ pub const Lexer = struct {
         return;
       };
     }
-    const len = l.walker.before.byte_offset - name_start;
-    l.recent_id = (l.walker.cur - len)[0..len];
+    l.recent_id = l.walker.contentFrom(name_start);
     l.cur_stored = cur.*;
   }
 
@@ -1044,30 +1065,29 @@ pub const Lexer = struct {
     if (cur.* != 'd') return false;
     cur.* = l.walker.nextInline() catch return false;
     if (cur.* != '(') return false;
+    l.cur_stored = l.walker.nextInline();
     if (l.matchEndCommand(false) != .call_id) return false;
     cur.* = l.walker.nextInline() catch return false;
     return cur.* == ')';
   }
 
   fn matchEndCommand(l: *Lexer, search_skipped: bool) Token {
-    var cur: (@typeInfo(@TypeOf(Source.Walker.next)).Fn.return_type.?) = undefined;
-    while (true) {
-      cur = l.walker.nextInline();
-      const val = cur catch break;
+    var cur = l.cur_stored;
+    while (cur) |val| {
       if (val != '\t' and val != ' ') break;
-    }
+      cur = l.walker.nextInline();
+    } else |err| {}
     const start = l.walker.before.byte_offset;
     while (true) {
       const val = cur catch break;
-      if (!unicode.MPS.contains(unicode.category(val))) break;
+      if (!unicode.L.contains(unicode.category(val))) break;
       cur = l.walker.nextInline();
     }
     l.recent_id = l.walker.contentFrom(start);
-    while (true) {
-      const val = cur catch break;
+    while (cur) |val| {
       if (val != '\t' and val != ' ') break;
       cur = l.walker.nextInline();
-    }
+    } else |err| {}
     var ret: Token = undefined;
     l.cur_stored = cur;
     if (std.mem.eql(u8, l.level.id, l.recent_id)) {
@@ -1076,8 +1096,9 @@ pub const Lexer = struct {
       ret = .skipping_call_id;
       var found = false;
       if (search_skipped) {
-        var i = l.levels.items.len - 1;
-        while (i <= 0) : (i -= 1) {
+        var i = l.levels.items.len;
+        while (i > 0) {
+          i -= 1;
           if (std.mem.eql(u8, l.levels.items[i].id, l.recent_id)) {
             found = true;
             break;
@@ -1142,6 +1163,7 @@ pub const Lexer = struct {
             l.cur_stored = cur.*;
             if (l.paren_depth == 0) {
               if (!after_arglist) try l.pushLevel();
+              l.state = .after_blocks_colon;
               return .blocks_sep;
             } else {
               l.state = .in_arg;

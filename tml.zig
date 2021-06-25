@@ -90,7 +90,7 @@ pub const File = struct {
        const name_end = std.mem.indexOfScalar(u8, header, ':');
        const tag_start = std.mem.indexOfScalar(u8, header, '{');
        var sub_name: []const u8 = "";
-       const item_name = try ret.alloc().dupe(u8, blk: {
+       const item_name = std.mem.trim(u8, try ret.alloc().dupe(u8, blk: {
          if (name_end) |val| {
           if (tag_start) |tval| {
             if (val > tval) return failWith(name, "`{{` before `:` in value header", .{});
@@ -102,7 +102,7 @@ pub const File = struct {
         } else if (tag_start) |tval| {
           break :blk header[0..tval];
         } else break :blk header;
-      });
+      }), " \t");
       var tags = Tags{};
       if (tag_start) |tval| {
         const tag_end = std.mem.lastIndexOfScalar(u8, header, '}') orelse {
@@ -160,6 +160,7 @@ pub const File = struct {
       if (tags.strip) {
         if (std.mem.lastIndexOfAny(u8, content.items, "\r\n\t ")) |e| {
           content.shrinkRetainingCapacity(e);
+          try content.append(ret.alloc(), '\n');
         }
       }
       var found = false;
@@ -191,17 +192,41 @@ test "simple file" {
     \\=== Titel
     \\--- input
     \\a b c
+    \\--- errors:ast {strip}
+    \\foo
     \\--- inline:a
     \\d e
   );
   defer f.deinit();
   try std.testing.expectEqualStrings("Titel", f.name);
+
   try std.testing.expectEqual(@as(u32, 1), f.items.count());
   const input = f.items.get("input").?;
   try std.testing.expectEqual(@as(usize, 2), input.line_offset);
   try std.testing.expectEqualStrings("a b c\n", input.content.items);
+
+  try std.testing.expectEqual(@as(u32, 1), f.params.errors.count());
+  const ast = f.params.errors.get("ast").?;
+  try std.testing.expectEqual(@as(usize, 4), ast.line_offset);
+  try std.testing.expectEqualStrings("foo", ast.content.items);
+
   try std.testing.expectEqual(@as(u32, 1), f.params.@"inline".count());
   const a = f.params.@"inline".get("a").?;
-  try std.testing.expectEqual(@as(usize, 4), a.line_offset);
+  try std.testing.expectEqual(@as(usize, 6), a.line_offset);
   try std.testing.expectEqualStrings("d e\n", a.content.items);
+}
+
+test "chars" {
+  var f = try File.load("test file",
+    \\=== Chars test
+    \\--- input {chars}
+    \\a b %0A
+  );
+  defer f.deinit();
+  try std.testing.expectEqualStrings("Chars test", f.name);
+
+  try std.testing.expectEqual(@as(u32, 1), f.items.count());
+  const input = f.items.get("input").?;
+  try std.testing.expectEqual(@as(usize, 2), input.line_offset);
+  try std.testing.expectEqualStrings("a b \n\n", input.content.items);
 }
