@@ -208,7 +208,7 @@ test "simple file" {
   try std.testing.expectEqual(@as(u32, 1), f.params.errors.count());
   const ast = f.params.errors.get("ast").?;
   try std.testing.expectEqual(@as(usize, 4), ast.line_offset);
-  try std.testing.expectEqualStrings("foo", ast.content.items);
+  try std.testing.expectEqualStrings("foo\n", ast.content.items);
 
   try std.testing.expectEqual(@as(u32, 1), f.params.@"inline".count());
   const a = f.params.@"inline".get("a").?;

@@ -7,19 +7,23 @@ Test
 \end( foo )
 \baz(foo)(bar):
   spam
-\end(baz)
+\end()
 --- tokens
 3:1[0] symref
 3:5[4] blocks_sep
-3:6[5] ws_break
+3:6[5] space
 4:1[6] symref
 4:5[10] blocks_sep
-4:6[11] ws_break
+4:6[11] space
 5:1[12] literal
 5:5[16] ws_break
-6:1[17] EndCommand
+6:1[17] block_end_open
+6:6[22] call_id
+6:9[25] list_end
 6:10[26] ws_break
-7:1[27] EndCommand
+7:1[27] block_end_open
+7:6[32] call_id
+7:11[37] list_end
 7:12[38] ws_break
 8:1[39] symref
 8:5[43] list_start
@@ -29,10 +33,12 @@ Test
 8:11[49] literal
 8:14[52] list_end
 8:15[53] blocks_sep
-8:16[54] ws_break
+8:16[54] space
 9:1[55] indent
 9:3[57] literal
 9:7[61] ws_break
-10:1[62] EndCommand
-10:10[71] ws_break
-11:1[72] end_source
+10:1[62] block_end_open
+10:6[67] call_id
+10:6[67] list_end
+10:7[68] ws_break
+11:1[69] end_source

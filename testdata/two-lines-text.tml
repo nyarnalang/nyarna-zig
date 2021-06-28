@@ -5,11 +5,11 @@ Foo \@
 --- tokens
 3:1[0] literal
 3:4[3] space
-3:5[4] EscapeSequence
+3:5[4] escape
 3:7[6] ws_break
-4:1[7] EscapeSequence
+4:1[7] escape
 4:3[9] literal
-4:6[12] EscapeSequence
+4:6[12] escape
 4:8[14] space
 4:9[15] literal
 4:12[18] ws_break

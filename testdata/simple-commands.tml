@@ -7,7 +7,7 @@ foo\bar
 3:1[0] symref
 3:5[4] ws_break
 4:1[5] symref
-4:5[9] CommandEnd
+4:5[9] closer
 4:7[11] literal
 4:10[14] ws_break
 5:1[15] literal

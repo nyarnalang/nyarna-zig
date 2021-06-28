@@ -48,20 +48,24 @@ pub const Source = struct {
 
     fn next(w: *Walker) !u21 {
       w.before.byte_offset += w.recent_length;
-      w.recent_length = try std.unicode.utf8ByteSequenceLength(w.cur[0]);
+      w.recent_length = std.unicode.utf8ByteSequenceLength(w.cur[0]) catch |e| {
+        w.recent_length = 1;
+        w.cur += 1;
+        return e;
+      };
       defer w.cur += w.recent_length;
       switch (w.recent_length) {
         1 => {
           return @intCast(u21, w.cur[0]);
         },
         2 => {
-          return std.unicode.utf8Decode2(w.cur[0..1]);
+          return std.unicode.utf8Decode2(w.cur[0..2]);
         },
         3 => {
-          return std.unicode.utf8Decode3(w.cur[0..2]);
+          return std.unicode.utf8Decode3(w.cur[0..3]);
         },
         4 => {
-          return std.unicode.utf8Decode4(w.cur[0..3]);
+          return std.unicode.utf8Decode4(w.cur[0..4]);
         },
         else => unreachable
       }
@@ -106,7 +110,8 @@ pub const Source = struct {
     pub fn resetToMark(w: *Walker) void {
       w.before = w.marked;
       w.cur = w.source.content.ptr + w.before.byte_offset;
-      w.cur += std.unicode.utf8ByteSequenceLength(w.cur[0]) catch unreachable;
+      w.recent_length = std.unicode.utf8ByteSequenceLength(w.cur[0]) catch unreachable;
+      w.cur += w.recent_length;
     }
 
     pub fn contentFrom(w: *Walker, start: usize) []const u8 {
@@ -364,12 +369,11 @@ pub const Lexer = struct {
   newline_count: u16,
 
   pub fn init(context: *LexerContext, source: *Source) !Lexer {
-    var walker = Source.Walker.init(source);
-    return Lexer{
+    var ret = Lexer{
       .context = context,
-      .cur_stored = walker.nextInline(),
+      .cur_stored = undefined,
       .state = .indent_capture,
-      .walker = walker,
+      .walker = Source.Walker.init(source),
       .paren_depth = 0,
       .colons_disabled_at = null,
       .comments_disabled_at = null,
@@ -382,12 +386,15 @@ pub const Lexer = struct {
         .special = false,
       },
       .newline_count = 0,
-      .recent_end = walker.before,
+      .recent_end = undefined,
       .recent_id = undefined,
       .line_start = undefined,
       .indent_char_seen = undefined,
       .code_point = undefined,
     };
+    ret.cur_stored = ret.walker.nextInline();
+    ret.recent_end = ret.walker.before;
+    return ret;
   }
 
   pub fn deinit(l: *Lexer) void {
@@ -450,22 +457,25 @@ pub const Lexer = struct {
         },
         '\r' => {
           newlines_seen += 1;
-          l.line_start = l.walker.before;
           l.indent_char_seen = .{.space = false, .tab = false};
           cur.* = l.walker.nextAfterCR() catch |e| {
             l.cur_stored = e;
+            l.line_start = l.walker.before;
             return newlines_seen;
           };
+          l.line_start = l.walker.before;
           continue;
         },
         '\n' => {
           newlines_seen += 1;
-          l.line_start = l.walker.before;
+
           l.indent_char_seen = .{.space = false, .tab = false};
           cur.* = l.walker.nextAfterLF() catch |e| {
             l.cur_stored = e;
+            l.line_start = l.walker.before;
             return newlines_seen;
           };
+          l.line_start = l.walker.before;
           continue;
         },
         else => break,
@@ -736,18 +746,13 @@ pub const Lexer = struct {
         },
         .before_end_id => {
           var res = l.matchEndCommand(true);
-          switch (res) {
-            .call_id => {
+          if (res == .call_id) {
+            l.level = l.levels.pop();
+          } else {
+            var i = @enumToInt(res) + 1;
+            while (i > @enumToInt(Token.skipping_call_id)) : (i = i - 1) {
               l.level = l.levels.pop();
-            },
-            .skipping_call_id => {
-              res = @intToEnum(Token, @enumToInt(res) + 1);
-              while (res != .wrong_call_id) {
-                l.level = l.levels.pop();
-                res = @intToEnum(Token, @enumToInt(res) - 1);
-              }
-            },
-            else => {}
+            }
           }
           if (l.comments_disabled_at) |depth| {
             if (l.levels.items.len < depth) {
@@ -877,7 +882,7 @@ pub const Lexer = struct {
     } else {
       if (l.context.command_characters.contains(cur.*)) {
         return l.genCommand(cur);
-      } else if (l.checkEndCommand(cur)) {
+      } else if (cur.* == l.level.end_char and l.checkEndCommand(cur)) {
         return l.genCommand(cur);
       }
     }
