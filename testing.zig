@@ -32,9 +32,9 @@ pub fn lexTest(f: *tml.File) !void {
   defer l.deinit();
   var t = try l.next();
   while(true) : (t = try l.next()) {
-    const actual = try if (@enumToInt(t) >= @enumToInt(lex.Lexer.Token.skipping_call_id))
+    const actual = try if (@enumToInt(t) >= @enumToInt(lex.Token.skipping_call_id))
       std.fmt.allocPrint(std.testing.allocator, "{}:{}[{}] skipping_call_id({})",
-          .{startpos.at_line, startpos.before_column, startpos.byte_offset, @enumToInt(t) - @enumToInt(lex.Lexer.Token.skipping_call_id) + 1})
+          .{startpos.at_line, startpos.before_column, startpos.byte_offset, @enumToInt(t) - @enumToInt(lex.Token.skipping_call_id) + 1})
     else
       std.fmt.allocPrint(std.testing.allocator, "{}:{}[{}] {s}",
           .{startpos.at_line, startpos.before_column, startpos.byte_offset, @tagName(t)});

@@ -118,10 +118,18 @@ pub const Source = struct {
       const len = w.before.byte_offset - start;
       return (w.cur - len - 1)[0..len];
     }
+
+    pub fn lastUtf8Unit(w: *Walker) []const u8 {
+      return (w.cur - w.recent_length - 1)[0..w.recent_length];
+    }
+
+    pub fn posFrom(w: *Walker, start: data.Cursor) data.Position {
+      return .{.module = .{.name = w.source.name, .start = start, .end = w.before}};
+    }
   };
 };
 
-pub const LexerContext = struct {
+pub const Context = struct {
   /// Maps each existing command character to the index of the namespace it
   /// references. Lexer only uses this to check whether a character is a command
   /// character; the namespace mapping is only relevant for the interpreter.
@@ -130,8 +138,7 @@ pub const LexerContext = struct {
   allocator: *std.mem.Allocator,
 };
 
-pub const Lexer = struct {
-  pub const Token = enum(u16) {
+pub const Token = enum(u16) {
     /// A comment. Ends either before or after a linebreak depending on whether
     /// it's a comment-break or comment-nonbreak [7.5.1]
     comment,
@@ -249,6 +256,8 @@ pub const Lexer = struct {
     }
   };
 
+pub const Lexer = struct {
+
   const State = enum {
     /// initial state and state at the beginning of a block.
     /// may yields space and comment,
@@ -337,7 +346,7 @@ pub const Lexer = struct {
     special: bool,
   };
 
-  context: *LexerContext,
+  context: *Context,
   cur_stored: (@typeInfo(@TypeOf(Source.Walker.next)).Fn.return_type.?),
   state: State,
   walker: Source.Walker,
@@ -368,7 +377,7 @@ pub const Lexer = struct {
   level: Level,
   newline_count: u16,
 
-  pub fn init(context: *LexerContext, source: *Source) !Lexer {
+  pub fn init(context: *Context, source: *Source) !Lexer {
     var ret = Lexer{
       .context = context,
       .cur_stored = undefined,
@@ -1200,8 +1209,8 @@ pub const Lexer = struct {
   }
 };
 
-fn testLexer(input: *Source, expected: []const Lexer.Token) !void {
-  var ctx = LexerContext{
+fn testLexer(input: *Source, expected: []const Token) !void {
+  var ctx = Context{
     .command_characters = .{},
     .allocator = std.testing.allocator,
   };
@@ -1224,5 +1233,5 @@ test "empty source" {
     .locator = ".doc.document",
     .locator_ctx = ".doc.",
   };
-  try testLexer(&src, &[_]Lexer.Token{.space, .end_source});
+  try testLexer(&src, &[_]Token{.space, .end_source});
 }
