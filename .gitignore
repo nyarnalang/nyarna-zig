@@ -3,4 +3,3 @@
 *.exe
 zig-cache
 testgen
-lex_test.zig

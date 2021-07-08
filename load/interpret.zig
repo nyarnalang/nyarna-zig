@@ -7,14 +7,38 @@ pub const Errors = error {
   referred_source_unavailable,
 };
 
-/// This is the interpreter's context as seen by the parser.
+/// The Context is a view of the loader for the various processing steps
+/// (lexer, parser, interpreter). It effectively implements the interpreter
+/// since the parser can initiate interpretation of nodes.
 pub const Context = struct {
+  /// Maps each existing command character to the index of the namespace it
+  /// references. Lexer uses this to check whether a character is a command
+  /// character; the namespace mapping is relevant later for the interpreter.
+  command_characters: std.hash_map.AutoHashMapUnmanaged(u21, u16),
   /// Allocator used for AST nodes that will be discarded after interpretation
   /// has produced an expression.
   temp_nodes: std.heap.ArenaAllocator,
   /// Allocator used for expressions and AST nodes that can be accessed by other
   /// sources after interpretation has finished.
   source_content: std.heap.ArenaAllocator,
+
+  pub fn init(allocator: *std.mem.Allocator) !Context {
+    var ret = Context{
+      .temp_nodes = std.heap.ArenaAllocator.init(allocator),
+      .source_content = std.heap.ArenaAllocator.init(allocator),
+      .command_characters = .{},
+    };
+    errdefer ret.deinit().deinit();
+    try ret.command_characters.put(&ret.temp_nodes.allocator, '\\', 0);
+    return ret;
+  }
+
+  /// returns the allocator used for externally available source content.
+  /// that allocator must be used to unload the generated content.
+  pub fn deinit(c: *Context) std.heap.ArenaAllocator {
+    c.temp_nodes.deinit();
+    return c.source_content;
+  }
 
   /// Interprets the given node and returns an expression.
   /// immediate==true will use the temporary allocator and is expected to be
@@ -34,9 +58,9 @@ pub const Context = struct {
     // TODO
     return referred_source_unavailable;
   }
-};
 
-/// This is the interpreter's interface as seen by a caller.
-pub const Interpreter = struct {
-  context: Context,
+  pub fn resolveSymbol(ns: u16, sym: []const u8) *data.Node {
+    // TODO
+    unreachable;
+  }
 };

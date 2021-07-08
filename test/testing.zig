@@ -1,7 +1,9 @@
 const std = @import("std");
+const data = @import("data");
 const tml = @import("tml.zig");
-const lex = @import("lex.zig");
-const data = @import("data.zig");
+const lex = @import("lex");
+const Source = @import("source").Source;
+const Context = @import("interpret").Context;
 
 const TestError = error {
   no_match
@@ -12,7 +14,7 @@ pub fn lexTest(f: *tml.File) !void {
   try input.content.appendSlice(f.alloc(), "\x04\x04\x04\x04");
   const expected_data = f.items.get("tokens").?;
   var expected_content = std.mem.split(expected_data.content.items, "\n");
-  var src = lex.Source{
+  var src = Source{
     .content = input.content.items,
     .offsets = .{
       .line = input.line_offset, .column = 0,
@@ -21,12 +23,8 @@ pub fn lexTest(f: *tml.File) !void {
     .locator = ".doc.document",
     .locator_ctx = ".doc.",
   };
-  var ctx = lex.LexerContext{
-    .command_characters = .{},
-    .allocator = std.testing.allocator,
-  };
-  defer ctx.command_characters.deinit(ctx.allocator);
-  try ctx.command_characters.put(std.testing.allocator, '\\', 0);
+  var ctx = try Context.init(std.testing.allocator);
+  defer ctx.deinit().deinit();
   var l = try lex.Lexer.init(&ctx, &src);
   var startpos = l.recent_end;
   defer l.deinit();

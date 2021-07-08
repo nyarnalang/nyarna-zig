@@ -1,13 +1,14 @@
 const std = @import("std");
-const data = @import("data.zig");
+const data = @import("data");
 const lex = @import("lex.zig");
-const interpret = @import("interpret.zig");
+const Source = @import("source.zig").Source;
+const Context = @import("interpret.zig").Context;
 
 /// The parser creates AST nodes.
 /// Whenever an AST node is created, the parser checks whether it needs to be
 /// evaluated immediately, and if so, asks the interpreter to do so, which will
 /// yield the replacement for the original node.
-const Parser = struct {
+pub const Parser = struct {
   /// Contains information about the current command's structure and processes
   /// arguments to that command.
   const Command = struct {
@@ -150,38 +151,51 @@ const Parser = struct {
   /// currently parsed block config. Filled in the .config state.
   config: ?data.BlockConfig,
 
-  ctx: *interpret.Context,
-
   l: lex.Lexer,
-  lctx: lex.Context,
   state: State,
   cur: lex.Token,
   curStart: data.Cursor,
 
   fn int(self: *@This()) *std.mem.Allocator {
-    return &self.ctx.temp_nodes.allocator;
+    return &self.ctx().temp_nodes.allocator;
   }
 
   fn ext(self: *@This()) *std.mem.Allocator {
-    return &self.ctx.source_content.allocator;
+    return &self.ctx().source_content.allocator;
   }
 
-  pub fn init(ctx: *interpret.Context) !Parser {
-    var ret = Parser{
+  fn ctx(self: *@This()) *Context {
+    return self.l.context;
+  }
+
+  pub fn init() Parser {
+    return Parser{
       .config = null,
-      .ctx = ctx,
       .levels = .{},
-      .lctx = lex.Context{
-        .command_characters = .{},
-        .allocator = undefined
-      },
       .l = undefined,
       .state = .default,
       .cur = undefined,
       .curStart = undefined,
     };
-    ret.lctx.allocator = ret.int();
-    try ret.levels.append(ret.int(), ContentLevel{
+  }
+
+  pub fn parseFile(self: *Parser, path: []const u8, locator: data.Locator, context: *Context) !*data.Node {
+    const file = try std.fs.cwd().openFile(path, .{});
+    defer file.close();
+    const file_contents = try std.fs.cwd().readFileAlloc(std.testing.allocator, path, (try file.stat()).size + 4);
+    file_contents[file_contents.len - 4..] = "\x04\x04\x04\x04";
+    return self.parseSource(&Source{
+      .content = file_contents,
+      .offsets = .{.line = 0, .column = 0},
+      .name = path,
+      .locator = locator,
+      .locator_ctx = locator.parent()
+    }, context);
+  }
+
+  pub fn parseSource(self: *Parser, source: *Source, context: *Context) !data.Node {
+    self.l = try lex.Lexer.init(context, source);
+    try self.levels.append(self.int(), ContentLevel{
       .source_name = undefined,
       .start = undefined,
       .changes = null,
@@ -193,25 +207,6 @@ const Parser = struct {
       .nodes = .{},
       .parseps = .{},
     });
-    return ret;
-  }
-
-  pub fn parseFile(self: *Parser, path: []const u8, locator: data.Locator) !*data.Node {
-    const file = try std.fs.cwd().openFile(path, .{});
-    defer file.close();
-    const file_contents = try std.fs.cwd().readFileAlloc(std.testing.allocator, path, (try file.stat()).size + 4);
-    file_contents[file_contents.len - 4..] = "\x04\x04\x04\x04";
-    return self.parseSource(lex.Source{
-      .content = file_contents,
-      .offsets = .{.line = 0, .column = 0},
-      .name = path,
-      .locator = locator,
-      .locator_ctx = locator.parent()
-    });
-  }
-
-  pub fn parseSource(self: *Parser, source: *lex.Source) !data.Node {
-    self.l = try lex.Lexer.init(&self.lctx, source);
     self.levels.items[0].start = self.l.recent_end;
     self.levels.items[0].source_name = source.name;
     try self.advance();
@@ -252,6 +247,9 @@ const Parser = struct {
               try self.levels.items[0].finalize(&ret, self.int());
               return ret;
             },
+            .symref => {
+
+            },
             else => unreachable,
           }
         },
@@ -264,16 +262,17 @@ const Parser = struct {
                 try content.appendSlice(self.int(),
                     self.l.walker.contentFrom(self.curStart.byte_offset)),
               .literal => {
-                non_space_len = content.items.len;
                 try content.appendSlice(self.int(),
                     self.l.walker.contentFrom(self.curStart.byte_offset));
+                non_space_len = content.items.len;
               },
               .ws_break => {
-                non_space_len = content.items.len;
                 try content.append(self.int(), '\n');
               },
-              .escape =>
-                try content.appendSlice(self.int(), self.l.walker.lastUtf8Unit()),
+              .escape => {
+                try content.appendSlice(self.int(), self.l.walker.lastUtf8Unit());
+                non_space_len = content.items.len;
+              },
               else => break
             }
           }
@@ -312,26 +311,3 @@ const Parser = struct {
     }
   }
 };
-
-test "parse simple line" {
-  var src = lex.Source{
-    .content = "Hello, World!\x04",
-    .offsets = .{
-      .line = 0, .column = 0,
-    },
-    .name = "helloworld",
-    .locator = ".doc.document",
-    .locator_ctx = ".doc.",
-  };
-
-  var ctx = interpret.Context{
-    .temp_nodes = std.heap.ArenaAllocator.init(std.testing.allocator),
-    .source_content = std.heap.ArenaAllocator.init(std.testing.allocator),
-  };
-  defer ctx.temp_nodes.deinit();
-  defer ctx.source_content.deinit();
-  var p = try Parser.init(&ctx);
-  var res = try p.parseSource(&src);
-  try std.testing.expectEqual(data.Node.Data.literal, res.data);
-  try std.testing.expectEqualStrings("Hello, World!", res.data.literal.content);
-}

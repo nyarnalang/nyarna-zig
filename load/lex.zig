@@ -1,141 +1,114 @@
 const std = @import("std");
-const data = @import("data.zig");
+const data = @import("data");
 const unicode = @import("unicode.zig");
+const Source = @import("source.zig").Source;
+const Context = @import("interpret.zig").Context;
 
-/// A source provides content to be parsed. This is usually a source file.
-pub const Source = struct {
-  /// the content of the source that is to be parsed
-  content: []const u8,
-  /// offsets if the source is part of a larger file.
-  /// these will be added to line/column reporting.
-  offsets: struct {
-    line: usize,
-    column: usize
-  },
-  /// the name that is to be used for reporting errors.
-  /// usually the path of the file.
-  name: []const u8,
-  /// the absolute locator that identifies this source.
-  locator: []const u8,
-  /// the locator minus its final element, used for resolving
-  /// relative locators inside this source.
-  locator_ctx: []const u8,
+/// Walks a source and returns Unicode code points.
+pub const Walker = struct {
+  /// The source.
+  source: *Source,
+  /// Next character to be read.
+  cur: [*]const u8,
+  /// Cursor position before recently returned code point.
+  before: data.Cursor,
+  /// length of the recently returned character (1-4)
+  recent_length: u3,
+  /// Cursor position that has been marked for backtracking.
+  marked: data.Cursor,
 
-  /// Walks a source and returns Unicode code points.
-  pub const Walker = struct {
-    /// The source.
-    source: *Source,
-    /// Next character to be read.
-    cur: [*]const u8,
-    /// Cursor position before recently returned code point.
-    before: data.Cursor,
-    /// length of the recently returned character (1-4)
-    recent_length: u3,
-    /// Cursor position that has been marked for backtracking.
-    marked: data.Cursor,
+  /// Initializes a walker to walk the given source, starting at the beginning
+  pub fn init(s: *Source) Walker {
+    return .{
+      .source = s,
+      .cur = s.content.ptr,
+      .before = .{.at_line = s.offsets.line + 1,
+                  .before_column = s.offsets.column, .byte_offset = 0},
+      .recent_length = 0,
+      .marked = undefined
+    };
+  }
 
-    /// Initializes a walker to walk the given source, starting at the beginning
-    pub fn init(s: *Source) Walker {
-      return .{
-        .source = s,
-        .cur = s.content.ptr,
-        .before = .{.at_line = s.offsets.line + 1,
-                    .before_column = s.offsets.column, .byte_offset = 0},
-        .recent_length = 0,
-        .marked = undefined
-      };
+  fn next(w: *Walker) !u21 {
+    w.before.byte_offset += w.recent_length;
+    w.recent_length = std.unicode.utf8ByteSequenceLength(w.cur[0]) catch |e| {
+      w.recent_length = 1;
+      w.cur += 1;
+      return e;
+    };
+    defer w.cur += w.recent_length;
+    switch (w.recent_length) {
+      1 => {
+        return @intCast(u21, w.cur[0]);
+      },
+      2 => {
+        return std.unicode.utf8Decode2(w.cur[0..2]);
+      },
+      3 => {
+        return std.unicode.utf8Decode3(w.cur[0..3]);
+      },
+      4 => {
+        return std.unicode.utf8Decode4(w.cur[0..4]);
+      },
+      else => unreachable
     }
+  }
 
-    fn next(w: *Walker) !u21 {
-      w.before.byte_offset += w.recent_length;
-      w.recent_length = std.unicode.utf8ByteSequenceLength(w.cur[0]) catch |e| {
-        w.recent_length = 1;
-        w.cur += 1;
-        return e;
-      };
-      defer w.cur += w.recent_length;
-      switch (w.recent_length) {
-        1 => {
-          return @intCast(u21, w.cur[0]);
-        },
-        2 => {
-          return std.unicode.utf8Decode2(w.cur[0..2]);
-        },
-        3 => {
-          return std.unicode.utf8Decode3(w.cur[0..3]);
-        },
-        4 => {
-          return std.unicode.utf8Decode4(w.cur[0..4]);
-        },
-        else => unreachable
-      }
-    }
+  /// Call this for the first character or whenever the recent character has
+  /// not been CR or LF.
+  pub fn nextInline(w: *Walker) !u21 {
+    w.before.before_column += 1;
+    return w.next();
+  }
 
-    /// Call this for the first character or whenever the recent character has
-    /// not been CR or LF.
-    pub fn nextInline(w: *Walker) !u21 {
-      w.before.before_column += 1;
+  /// Return true iff the next character will be CR or LF.
+  pub fn peek_line_end(w: *Walker) bool {
+    return w.cur.* == '\r' or w.cur.* == '\n';
+  }
+
+  /// Call this if the recent character was LF.
+  pub fn nextAfterLF(w: *Walker) !u21 {
+    w.before.before_column = 1;
+    w.before.at_line += 1;
+    return w.next();
+  }
+
+  /// Call this if the recent character was CR.
+  pub fn nextAfterCR(w: *Walker) !u21 {
+    w.before.before_column = 1;
+    w.before.at_line += 1;
+    const c = try w.next();
+    if (c == '\n') {
       return w.next();
-    }
+    } else return c;
+  }
 
-    /// Return true iff the next character will be CR or LF.
-    pub fn peek_line_end(w: *Walker) bool {
-      return w.cur.* == '\r' or w.cur.* == '\n';
-    }
+  /// Marks the current position so that you can backtrack.
+  pub fn mark(w: *Walker) void {
+    w.marked = w.before;
+  }
 
-    /// Call this if the recent character was LF.
-    pub fn nextAfterLF(w: *Walker) !u21 {
-      w.before.before_column = 1;
-      w.before.at_line += 1;
-      return w.next();
-    }
+  /// Backtracks to the recently marked position.
+  /// Behavior undefined if mark() has not been called before.
+  pub fn resetToMark(w: *Walker) void {
+    w.before = w.marked;
+    w.cur = w.source.content.ptr + w.before.byte_offset;
+    w.recent_length = std.unicode.utf8ByteSequenceLength(w.cur[0]) catch unreachable;
+    w.cur += w.recent_length;
+  }
 
-    /// Call this if the recent character was CR.
-    pub fn nextAfterCR(w: *Walker) !u21 {
-      w.before.before_column = 1;
-      w.before.at_line += 1;
-      const c = try w.next();
-      if (c == '\n') {
-        return w.next();
-      } else return c;
-    }
+  pub fn contentFrom(w: *Walker, start: usize) []const u8 {
+    const len = w.before.byte_offset - start;
+    return (w.cur - len - 1)[0..len];
+  }
 
-    /// Marks the current position so that you can backtrack.
-    pub fn mark(w: *Walker) void {
-      w.marked = w.before;
-    }
+  pub fn lastUtf8Unit(w: *Walker) []const u8 {
+    return (w.cur - w.recent_length - 1)[0..w.recent_length];
+  }
 
-    /// Backtracks to the recently marked position.
-    /// Behavior undefined if mark() has not been called before.
-    pub fn resetToMark(w: *Walker) void {
-      w.before = w.marked;
-      w.cur = w.source.content.ptr + w.before.byte_offset;
-      w.recent_length = std.unicode.utf8ByteSequenceLength(w.cur[0]) catch unreachable;
-      w.cur += w.recent_length;
-    }
-
-    pub fn contentFrom(w: *Walker, start: usize) []const u8 {
-      const len = w.before.byte_offset - start;
-      return (w.cur - len - 1)[0..len];
-    }
-
-    pub fn lastUtf8Unit(w: *Walker) []const u8 {
-      return (w.cur - w.recent_length - 1)[0..w.recent_length];
-    }
-
-    pub fn posFrom(w: *Walker, start: data.Cursor) data.Position {
-      return .{.module = .{.name = w.source.name, .start = start, .end = w.before}};
-    }
-  };
-};
-
-pub const Context = struct {
-  /// Maps each existing command character to the index of the namespace it
-  /// references. Lexer only uses this to check whether a character is a command
-  /// character; the namespace mapping is only relevant for the interpreter.
-  command_characters: std.hash_map.AutoHashMapUnmanaged(u21, u16),
-  /// Allocator to be used by the lexer and for the command_characters.
-  allocator: *std.mem.Allocator,
+  pub fn posFrom(w: *Walker, start: data.Cursor) data.Position {
+    return .{.module = .{.name = w.source.name, .start = start, .end = w.before}};
+  }
 };
 
 pub const Token = enum(u16) {
@@ -347,9 +320,9 @@ pub const Lexer = struct {
   };
 
   context: *Context,
-  cur_stored: (@typeInfo(@TypeOf(Source.Walker.next)).Fn.return_type.?),
+  cur_stored: (@typeInfo(@TypeOf(Walker.next)).Fn.return_type.?),
   state: State,
-  walker: Source.Walker,
+  walker: Walker,
   paren_depth: u16,
   colons_disabled_at: ?u15,
   comments_disabled_at: ?u15,
@@ -382,11 +355,11 @@ pub const Lexer = struct {
       .context = context,
       .cur_stored = undefined,
       .state = .indent_capture,
-      .walker = Source.Walker.init(source),
+      .walker = Walker.init(source),
       .paren_depth = 0,
       .colons_disabled_at = null,
       .comments_disabled_at = null,
-      .levels = try std.ArrayListUnmanaged(Level).initCapacity(context.allocator, 32),
+      .levels = try std.ArrayListUnmanaged(Level).initCapacity(&context.temp_nodes.allocator, 32),
       .level = .{
         .indentation = 0,
         .tabs = null,
@@ -407,7 +380,7 @@ pub const Lexer = struct {
   }
 
   pub fn deinit(l: *Lexer) void {
-    l.levels.deinit(l.context.allocator);
+    // nothing to do – all allocated data managed by upstream Context.
   }
 
   /// assumes current character is '#'.
@@ -1032,7 +1005,7 @@ pub const Lexer = struct {
     l.cur_stored = cur.*;
   }
 
-  inline fn advancing(l: *Lexer, cur: *u21, f: @TypeOf(Source.Walker.nextInline)) !bool {
+  inline fn advancing(l: *Lexer, cur: *u21, f: @TypeOf(Walker.nextInline)) !bool {
     cur.* = f(&l.walker) catch |e| {
       if (l.recent_end.byte_offset != l.walker.before.byte_offset) {
         l.cur_stored = e;
@@ -1051,13 +1024,13 @@ pub const Lexer = struct {
     while(true) {
       switch (cur.*) {
         '\r' => {
-          if (try l.advancing(cur, Source.Walker.nextAfterCR)) return true;
+          if (try l.advancing(cur, Walker.nextAfterCR)) return true;
         },
         '\n' => {
-          if (try l.advancing(cur, Source.Walker.nextAfterLF)) return true;
+          if (try l.advancing(cur, Walker.nextAfterLF)) return true;
         },
         '\t', ' ' => {
-          if (try l.advancing(cur, Source.Walker.nextInline)) return true;
+          if (try l.advancing(cur, Walker.nextInline)) return true;
         },
         else => break,
       }
@@ -1193,7 +1166,7 @@ pub const Lexer = struct {
   }
 
   fn pushLevel(l: *Lexer) !void {
-    try l.levels.append(l.context.allocator, l.level);
+    try l.levels.append(&l.context.temp_nodes.allocator, l.level);
     l.level = .{
       .indentation = undefined,
       .tabs = null,
@@ -1221,17 +1194,4 @@ fn testLexer(input: *Source, expected: []const Token) !void {
   for (expected) |t| {
     try std.testing.expectEqual(try l.next(), t);
   }
-}
-
-test "empty source" {
-  var src = Source{
-    .content = "\n\x04",
-    .offsets = .{
-      .line = 0, .column = 0,
-    },
-    .name = "empty",
-    .locator = ".doc.document",
-    .locator_ctx = ".doc.",
-  };
-  try testLexer(&src, &[_]Token{.space, .end_source});
 }

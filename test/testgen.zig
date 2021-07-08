@@ -2,7 +2,7 @@ const std = @import("std");
 const tml = @import("tml.zig");
 
 pub fn main() !void {
-  var datadir = try std.fs.cwd().openDir("testdata",
+  var datadir = try std.fs.cwd().openDir("data",
       .{.access_sub_paths = true, .iterate = true, .no_follow = true});
   defer datadir.close();
   var i = datadir.iterate();
@@ -26,7 +26,7 @@ pub fn main() !void {
       _ = try lextest.write("test \"");
       _ = try lextest.write(content.name);
       _ = try lextest.write(\\" {
-        \\  var data = try tml.File.loadPath("testdata/
+        \\  var data = try tml.File.loadPath("test/data/
       );
       _ = try lextest.write(entry.name);
       _ = try lextest.write(\\");
