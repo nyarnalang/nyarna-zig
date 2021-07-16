@@ -336,6 +336,8 @@ pub const Lexer = struct {
   /// for ns_sym and symref, contains the decoded command character.
   /// for escape, contains the escaped character.
   code_point: u21,
+  /// the namespace of the recently read symref.
+  ns: u16,
 
   /// stores the start of the current line.
   /// necessary since searching for empty lines will read over the indentation
@@ -373,6 +375,7 @@ pub const Lexer = struct {
       .line_start = undefined,
       .indent_char_seen = undefined,
       .code_point = undefined,
+      .ns = undefined,
     };
     ret.cur_stored = ret.walker.nextInline();
     ret.recent_end = ret.walker.before;
@@ -862,7 +865,8 @@ pub const Lexer = struct {
         return l.advanceAndReturn(.ns_sym, null);
       }
     } else {
-      if (l.context.command_characters.contains(cur.*)) {
+      if (l.context.command_characters.get(cur.*)) |ns| {
+        l.ns = ns;
         return l.genCommand(cur);
       } else if (cur.* == l.level.end_char and l.checkEndCommand(cur)) {
         return l.genCommand(cur);

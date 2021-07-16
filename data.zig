@@ -47,56 +47,6 @@ pub const Position = union(enum) {
   }
 };
 
-pub const BlockConfig = struct {
-  /// Describes changes in command characters. either before or after may be 0,
-  /// but not both. If before is 0, after gets to be a new command character
-  /// with an empty namespace.
-  /// If after is 0, before is to be a command character that gets disabled.
-  /// If neither is 0, the command character before will be disabled and after
-  /// will take its place, referring to before's namespace.
-  pub const CharChange = struct {
-    before: u21,
-    after: u21,
-  };
-
-  /// Lists all command character changes mandated by this block config.
-  map: ?[]CharChange,
-  /// whether `off #` has been given.
-  commentOff: bool,
-  /// whether `off :` has been given.
-  colonOff: bool,
-  /// whether `fullast` has been given.
-  fullAst: bool,
-  /// contains the syntax name given, if any.
-  syntax: ?[]u8,
-};
-
-pub const Node = struct {
-  pub const Literal = struct {
-    kind: enum {text, space},
-    content: []const u8,
-
-  };
-  pub const Concatenation = struct {
-    content: []Node,
-  };
-  pub const Paragraphs = struct {
-    content: []Node,
-    /// separators[i] == num linebreaks in separator after item i
-    separators: []usize,
-  };
-
-  pub const Data = union(enum) {
-    literal: Literal,
-    concatenation: Concatenation,
-    paragraphs: Paragraphs,
-    voidNode,
-  };
-
-  pos: Position,
-  data: Data,
-};
-
 pub const Locator = struct {
   const Error = error {
     parse_error
@@ -134,4 +84,101 @@ pub const Locator = struct {
       .path = self.path[0..end]
     };
   }
+};
+
+pub const BlockConfig = struct {
+  /// Describes changes in command characters. either before or after may be 0,
+  /// but not both. If before is 0, after gets to be a new command character
+  /// with an empty namespace.
+  /// If after is 0, before is to be a command character that gets disabled.
+  /// If neither is 0, the command character before will be disabled and after
+  /// will take its place, referring to before's namespace.
+  pub const CharChange = struct {
+    before: u21,
+    after: u21,
+  };
+
+  /// Lists all command character changes mandated by this block config.
+  map: ?[]CharChange,
+  /// whether `off #` has been given.
+  commentOff: bool,
+  /// whether `off :` has been given.
+  colonOff: bool,
+  /// whether `fullast` has been given.
+  fullAst: bool,
+  /// contains the syntax name given, if any.
+  syntax: ?[]u8,
+};
+
+pub const Node = struct {
+  pub const Literal = struct {
+    kind: enum {text, space},
+    content: []const u8,
+
+  };
+  pub const Concatenation = struct {
+    content: []*Node,
+  };
+  pub const Paragraphs = struct {
+    content: []*Node,
+    /// separators[i] == num linebreaks in separator after item i
+    separators: []usize,
+  };
+  pub const SymRef = union(enum) {
+    resolved: *Symbol,
+    unresolved: struct {
+      ns: u16,
+      name: []const u8,
+    },
+  };
+  pub const Access = struct {
+    subject: *Node,
+    id: []const u8,
+  };
+  pub const Assignment = struct {
+    target: *Node,
+    replacement: *Node,
+  };
+
+  pub const Data = union(enum) {
+    access: Access,
+    assignment: Assignment,
+    literal: Literal,
+    concatenation: Concatenation,
+    paragraphs: Paragraphs,
+    symref: SymRef,
+    voidNode,
+  };
+
+  pos: Position,
+  data: Data,
+};
+
+pub const Symbol = struct {
+  /// External function, pre-defined by Nyarna or registered via Nyarna's API.
+  pub const ExtFunc = struct {
+    // TODO
+  };
+  /// Internal function, defined in Nyarna code.
+  pub const NyFunc = struct {
+    // TODO
+  };
+  /// A variable defined in Nyarna code.
+  pub const Variable = struct {
+    // TODO
+  };
+
+  pub const Data = union(enum) {
+    ext_func: ExtFunc,
+    ny_func: NyFunc,
+    variable: Variable
+  };
+
+  defined_at: Position,
+  name: []const u8,
+  data: Data,
+};
+
+pub const Expression = struct {
+  // TODO
 };

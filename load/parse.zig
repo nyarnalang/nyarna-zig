@@ -12,10 +12,20 @@ pub const Parser = struct {
   /// Contains information about the current command's structure and processes
   /// arguments to that command.
   const Command = struct {
-    subject: data.Node,
+    start: data.Cursor,
     info: union(enum) {
-      unknown,
+      /// This state means that the command has just been created and awaits
+      /// classification via the next lexer token.
+      unknown: *data.Node,
       resolved_call: struct {
+        /// Resolved target of this call. For a subject to be resolved, it must
+        /// not contain any unresolved parts, so that it can be an expression.
+        /// If the call is on a value whose type's function is called, the
+        /// subject is that function while the value will be pushed into the
+        /// arguments.
+        subject: *data.Expression,
+        // TODO: signature (?)
+
         /// seen blocks? This determines whether the parser continues filling
         /// this command with arguments when blocks are encountered. If true,
         /// this command will be finalized and become subject of a new call.
@@ -23,15 +33,64 @@ pub const Parser = struct {
         // TODO: argument expressions mapped to subject's parameters
       },
       unresolved_call: struct {
+        /// The subject which cannot immediately be resolved.
+        subject: *data.Node,
         /// like .resolved_call.blocks.
         blocks: bool,
         // TODO: map of argument name/pos -> expression
       },
-      access, // empty; received identifier will immediately be consumed
       assignment: struct {
-        // expression
+        /// The target which will be assigned the given value.
+        target: *data.Node,
+        /// The node that describes the expression which evaluates to the value
+        /// that is to be assigned.
+        replacement: ?*data.Node,
       }
     },
+
+    fn pushName(c: *Command, alloc: *std.mem.Allocator, pos: data.Position, name: []const u8) void {
+      // TODO
+    }
+
+    fn pushArg(c: *Command, alloc: *std.mem.Allocator, arg: *data.Node) !void {
+      switch (c.info) {
+        .assignment => |*ass| {
+          if (ass.replacement != null) unreachable; // TODO: error, multiple values
+          ass.replacement = arg;
+        },
+        .resolved_call => |*res| {
+          unreachable; // TODO
+        },
+        .unresolved_call => |*unres| {
+          unreachable; // TODO
+        },
+        else => unreachable, // can never happen; bug if it does anyway
+      }
+    }
+
+    fn shift(c: *Command, alloc: *std.mem.Allocator, src_name: []const u8, end: data.Cursor) !void {
+      const newNode = switch(c.info) {
+        .assignment => |*ass| blk: {
+          var assNode = try alloc.create(data.Node);
+          const replacement = ass.replacement.?; // TODO: error when missing (?)
+          assNode.* = .{
+            .pos = data.Position.inMod(src_name, c.start, end),
+            .data = .{
+              .assignment = .{
+                .target = ass.target,
+                .replacement = replacement,
+              },
+            },
+          };
+          break :blk assNode;
+        },
+        else => {
+          std.debug.print("shifting on {s} not implemented yet.", .{@tagName(c.info)});
+          unreachable;
+        }
+      };
+      c.info = .{.unknown = newNode};
+    }
   };
 
   /// This is either the root level of the current file,
@@ -61,51 +120,61 @@ pub const Parser = struct {
     /// every ContentLevel but the innermost one must have an open command.
     command: Command,
 
-    nodes: std.ArrayListUnmanaged(data.Node),
+    nodes: std.ArrayListUnmanaged(*data.Node),
     parseps: std.ArrayListUnmanaged(struct{before: usize, newlines: usize}),
 
-    fn add(l: *ContentLevel, alloc: *std.mem.Allocator) !*data.Node {
-      return l.nodes.addOne(alloc);
+    fn append(l: *ContentLevel, alloc: *std.mem.Allocator, item: *data.Node) !void {
+      try l.nodes.append(alloc, item);
     }
 
-    fn finalizeSlice(l: *ContentLevel, start: usize, end: usize) data.Node {
-      return switch(end - start) {
-        0 => .{
-          .pos = data.Position.inMod(l.source_name, l.start, l.start),
-          .data = .voidNode,
+    fn finalizeSlice(l: *ContentLevel, alloc: *std.mem.Allocator, start: usize, end: usize) !*data.Node {
+      switch(end - start) {
+        0 => {
+          var ret = try alloc.create(data.Node);
+          ret.* = .{
+            .pos = data.Position.inMod(l.source_name, l.start, l.start),
+            .data = .voidNode,
+          };
+          return ret;
         },
-        1 => l.nodes.items[0],
-        else => .{
-          .pos = l.nodes.items[start].pos.span(l.nodes.items[end - 1].pos),
-          .data = .{
-            .concatenation = .{
-              .content = l.nodes.items[start..end],
+        1 => return l.nodes.items[0],
+        else => {
+          var ret = try alloc.create(data.Node);
+          ret.* = .{
+            .pos = l.nodes.items[start].pos.span(l.nodes.items[end - 1].pos),
+            .data = .{
+              .concatenation = .{
+                .content = l.nodes.items[start..end],
+              },
             },
-          },
+          };
+          return ret;
         }
-      };
+      }
     }
 
-    fn finalize(l: *ContentLevel, target: *data.Node, alloc: *std.mem.Allocator) !void {
+    fn finalize(l: *ContentLevel, alloc: *std.mem.Allocator) !*data.Node {
       if (l.parseps.items.len == 0) {
-        target.* = l.finalizeSlice(0, l.nodes.items.len);
+        return l.finalizeSlice(alloc, 0, l.nodes.items.len);
       } else {
+        var target = try alloc.create(data.Node);
         target.* = .{
           .pos = l.nodes.items[0].pos.span(l.nodes.items[l.nodes.items.len - 1].pos),
           .data = .{
             .paragraphs = .{
-              .content = try alloc.alloc(data.Node, l.parseps.items.len + 1),
+              .content = try alloc.alloc(*data.Node, l.parseps.items.len + 1),
               .separators = try alloc.alloc(usize, l.parseps.items.len),
             },
           },
         };
         var curStart: usize = 0;
         for (l.parseps.items) |parsep, i| {
-          target.data.paragraphs.content[i] = l.finalizeSlice(curStart, parsep.before);
+          target.data.paragraphs.content[i] = try l.finalizeSlice(alloc, curStart, parsep.before);
           target.data.paragraphs.separators[i] = parsep.newlines;
           curStart = parsep.before;
         }
-        target.data.paragraphs.content[l.parseps.items.len] = l.finalizeSlice(curStart, l.nodes.items.len);
+        target.data.paragraphs.content[l.parseps.items.len] = try l.finalizeSlice(alloc, curStart, l.nodes.items.len);
+        return target;
       }
     }
   };
@@ -173,7 +242,7 @@ pub const Parser = struct {
       .config = null,
       .levels = .{},
       .l = undefined,
-      .state = .default,
+      .state = .start,
       .cur = undefined,
       .curStart = undefined,
     };
@@ -193,27 +262,26 @@ pub const Parser = struct {
     }, context);
   }
 
-  pub fn parseSource(self: *Parser, source: *Source, context: *Context) !data.Node {
-    self.l = try lex.Lexer.init(context, source);
+  fn pushLevel(self: *Parser) !void {
     try self.levels.append(self.int(), ContentLevel{
-      .source_name = undefined,
-      .start = undefined,
+      .source_name = self.l.walker.source.name,
+      .start = self.l.recent_end,
       .changes = null,
       .ignored_changes = null,
-      .command = Command{
-        .subject = undefined,
-        .info = .unknown,
-      },
+      .command = undefined,
       .nodes = .{},
       .parseps = .{},
     });
-    self.levels.items[0].start = self.l.recent_end;
-    self.levels.items[0].source_name = source.name;
+  }
+
+  pub fn parseSource(self: *Parser, source: *Source, context: *Context) !*data.Node {
+    self.l = try lex.Lexer.init(context, source);
+    try self.pushLevel();
     try self.advance();
     return self.doParse();
   }
 
-  pub fn resumeParse(self: *Parser) !data.Node {
+  pub fn resumeParse(self: *Parser) !*data.Node {
     return self.doParse();
   }
 
@@ -223,8 +291,13 @@ pub const Parser = struct {
     self.cur = try self.l.next();
   }
 
-  fn doParse(self: *Parser) !data.Node {
+  fn doParse(self: *Parser) !*data.Node {
     while (true) {
+      std.debug.print("parse step. state={s}, level stack =\n", .{@tagName(self.state)});
+      for (self.levels.items) |lvl| {
+        std.debug.print("  level(command = {s})\n", .{@tagName(lvl.command.info)});
+      }
+
       switch (self.state) {
         .start => {
           while (self.cur == .space) try self.advance();
@@ -239,16 +312,41 @@ pub const Parser = struct {
             .end_source => {
               while (self.levels.items.len > 1) {
                 var lvl = &self.levels.items[self.levels.items.len - 1];
-                var target = try self.levels.items[self.levels.items.len - 1].add(self.int());
-                try lvl.finalize(target, self.int());
+                try self.levels.items[self.levels.items.len - 1].append(self.int(),
+                    try lvl.finalize(self.int()));
                 _ = self.levels.pop();
               }
-              var ret: data.Node = undefined;
-              try self.levels.items[0].finalize(&ret, self.int());
-              return ret;
+              return self.levels.items[0].finalize(self.int());
             },
             .symref => {
-
+              self.levels.items[self.levels.items.len - 1].command = .{
+                .start = self.curStart,
+                .info = .{
+                  .unknown = try self.ctx().resolveSymbol(
+                      self.l.walker.posFrom(self.curStart), self.l.ns, self.l.recent_id),
+                },
+              };
+              self.state = .command;
+              try self.advance();
+            },
+            .list_end => {
+              var lvl = &self.levels.items[self.levels.items.len - 1];
+              var parent = &self.levels.items[self.levels.items.len - 2];
+              std.debug.print("parent command={s}\n", .{@tagName(parent.command.info)});
+              try parent.command.pushArg(self.int(),
+                  try lvl.finalize(self.int()));
+              _ = self.levels.pop();
+              const end = self.l.recent_end;
+              try self.advance();
+              if (self.cur == .blocks_sep) {
+                // call continues
+                self.state = .after_blocks_start;
+                try self.advance();
+              } else {
+                self.state = .command;
+                std.debug.print("parent command={s}\n", .{@tagName(parent.command.info)});
+                try parent.command.shift(self.int(), parent.source_name, end);
+              }
             },
             else => unreachable,
           }
@@ -256,6 +354,8 @@ pub const Parser = struct {
         .textual => {
           var content: std.ArrayListUnmanaged(u8) = .{};
           var non_space_len: usize = 0;
+          var non_space_end: data.Cursor = undefined;
+          const textual_start = self.curStart;
           while (true) : (try self.advance()) {
             switch (self.cur) {
               .space =>
@@ -265,6 +365,7 @@ pub const Parser = struct {
                 try content.appendSlice(self.int(),
                     self.l.walker.contentFrom(self.curStart.byte_offset));
                 non_space_len = content.items.len;
+                non_space_end = self.l.recent_end;
               },
               .ws_break => {
                 try content.append(self.int(), '\n');
@@ -272,32 +373,100 @@ pub const Parser = struct {
               .escape => {
                 try content.appendSlice(self.int(), self.l.walker.lastUtf8Unit());
                 non_space_len = content.items.len;
+                non_space_end = self.l.recent_end;
               },
               else => break
             }
           }
-          content.shrinkAndFree(self.int(),
-              if (self.cur == .block_end_open or self.cur == .block_name_sep or
-                self.cur == .comma or self.cur == .list_end)
-                non_space_len
-              else content.items.len);
+          const lvl = &self.levels.items[self.levels.items.len - 1];
+          const pos =
+            if (self.cur == .block_end_open or self.cur == .block_name_sep or
+                self.cur == .comma or self.cur == .name_sep or self.cur == .list_end) blk: {
+              content.shrinkAndFree(self.int(), non_space_len);
+              break :blk data.Position.inMod(lvl.source_name, textual_start, non_space_end);
+            } else self.l.walker.posFrom(textual_start);
           if (content.items.len > 0) {
-            var node = try self.levels.items[self.levels.items.len - 1].add(self.int());
-            node.* = .{
-              .pos = self.l.walker.posFrom(self.curStart),
-              .data = .{
-                .literal = .{
-                  .kind = if (non_space_len > 0) .text else .space,
-                  .content = content.items
+            if (self.cur == .name_sep) {
+              if (lvl.nodes.items.len > 0) {
+                unreachable; // TODO: error: equals not allowed here
+              }
+              self.levels.items[self.levels.items.len - 2].command.pushName(self.int(), pos, content.items);
+              try self.advance();
+              self.state = .start;
+            } else {
+              var node = try self.int().create(data.Node);
+              node.* = .{
+                .pos = pos,
+                .data = .{
+                  .literal = .{
+                    .kind = if (non_space_len > 0) .text else .space,
+                    .content = content.items
+                  },
                 },
-              },
-            };
-          }
-          self.state = .default;
+              };
+              try lvl.append(self.int(), node);
+              self.state = .default;
+            }
+          } else self.state = .default; // can happen with space at block/arg end
         },
         .command => {
-          // TODO
-          unreachable;
+          var lvl = &self.levels.items[self.levels.items.len - 1];
+          switch(self.cur) {
+            .access => {
+              try self.advance();
+              if (self.cur != .identifier) unreachable; // TODO: recover
+              var node = try self.int().create(data.Node);
+              node.* = .{
+                .pos = self.l.walker.posFrom(lvl.command.info.unknown.pos.module.start),
+                .data = .{
+                  .access = .{
+                    .subject = lvl.command.info.unknown,
+                    .id = self.l.recent_id,
+                  },
+                },
+              };
+              lvl.command.info.unknown = node;
+              try self.advance();
+            },
+            .assign => {
+              try self.advance();
+              switch (self.cur) {
+                .list_start => {
+                  self.state = .start;
+                },
+                .blocks_sep => {
+                  self.state = .after_blocks_start;
+                },
+                else => unreachable // TODO: recover
+              }
+              const target = lvl.command.info.unknown;
+              lvl.command.info = .{
+                .assignment = .{
+                  .target = target,
+                  .replacement = null,
+                },
+              };
+              try self.pushLevel();
+              try self.advance();
+            },
+            .list_start => {
+              // TODO
+              unreachable;
+            },
+            .blocks_sep => {
+              // TODO
+              unreachable;
+            },
+            .closer => {
+              try lvl.append(self.int(), lvl.command.info.unknown);
+              try self.advance();
+              self.state = .default;
+            },
+            else => {
+              try lvl.append(self.int(), lvl.command.info.unknown);
+              self.state = .default;
+            }
+          }
         },
         .after_blocks_start => {
           // TODO
