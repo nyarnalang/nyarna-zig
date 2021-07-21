@@ -120,9 +120,12 @@ pub const Node = struct {
     content: []*Node,
   };
   pub const Paragraphs = struct {
-    content: []*Node,
-    /// separators[i] == num linebreaks in separator after item i
-    separators: []usize,
+    pub const Item = struct {
+      content: *Node,
+      lf_after: usize
+    };
+    // lf_after of last item is ignored.
+    items: []Item,
   };
   pub const SymRef = union(enum) {
     resolved: *Symbol,

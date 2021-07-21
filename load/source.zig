@@ -7,8 +7,8 @@ pub const Source = struct {
   /// offsets if the source is part of a larger file.
   /// these will be added to line/column reporting.
   offsets: struct {
-    line: usize,
-    column: usize
+    line: usize = 0,
+    column: usize = 0
   },
   /// the name that is to be used for reporting errors.
   /// usually the path of the file.

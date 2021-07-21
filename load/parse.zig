@@ -121,14 +121,14 @@ pub const Parser = struct {
     command: Command,
 
     nodes: std.ArrayListUnmanaged(*data.Node),
-    parseps: std.ArrayListUnmanaged(struct{before: usize, newlines: usize}),
+    paragraphs: std.ArrayListUnmanaged(data.Node.Paragraphs.Item),
 
     fn append(l: *ContentLevel, alloc: *std.mem.Allocator, item: *data.Node) !void {
       try l.nodes.append(alloc, item);
     }
 
-    fn finalizeSlice(l: *ContentLevel, alloc: *std.mem.Allocator, start: usize, end: usize) !*data.Node {
-      switch(end - start) {
+    fn finalizeParagraph(l: *ContentLevel, alloc: *std.mem.Allocator) !*data.Node {
+      switch(l.nodes.items.len) {
         0 => {
           var ret = try alloc.create(data.Node);
           ret.* = .{
@@ -141,10 +141,10 @@ pub const Parser = struct {
         else => {
           var ret = try alloc.create(data.Node);
           ret.* = .{
-            .pos = l.nodes.items[start].pos.span(l.nodes.items[end - 1].pos),
+            .pos = l.nodes.items[0].pos.span(l.nodes.items[l.nodes.items.len - 1].pos),
             .data = .{
               .concatenation = .{
-                .content = l.nodes.items[start..end],
+                .content = l.nodes.items,
               },
             },
           };
@@ -154,27 +154,36 @@ pub const Parser = struct {
     }
 
     fn finalize(l: *ContentLevel, alloc: *std.mem.Allocator) !*data.Node {
-      if (l.parseps.items.len == 0) {
-        return l.finalizeSlice(alloc, 0, l.nodes.items.len);
+      if (l.paragraphs.items.len == 0) {
+        return l.finalizeParagraph(alloc);
       } else {
+        if (l.nodes.items.len > 0) {
+          try l.paragraphs.append(alloc, .{
+            .content = try l.finalizeParagraph(alloc),
+            .lf_after = 0,
+          });
+        }
+
         var target = try alloc.create(data.Node);
         target.* = .{
-          .pos = l.nodes.items[0].pos.span(l.nodes.items[l.nodes.items.len - 1].pos),
+          .pos = l.paragraphs.items[0].content.pos.span(l.paragraphs.items[l.paragraphs.items.len - 1].content.pos),
           .data = .{
             .paragraphs = .{
-              .content = try alloc.alloc(*data.Node, l.parseps.items.len + 1),
-              .separators = try alloc.alloc(usize, l.parseps.items.len),
+              .items = l.paragraphs.items,
             },
           },
         };
-        var curStart: usize = 0;
-        for (l.parseps.items) |parsep, i| {
-          target.data.paragraphs.content[i] = try l.finalizeSlice(alloc, curStart, parsep.before);
-          target.data.paragraphs.separators[i] = parsep.newlines;
-          curStart = parsep.before;
-        }
-        target.data.paragraphs.content[l.parseps.items.len] = try l.finalizeSlice(alloc, curStart, l.nodes.items.len);
         return target;
+      }
+    }
+
+    fn pushParagraph(l: *ContentLevel, alloc: *std.mem.Allocator, lf_after: usize) !void {
+      if (l.nodes.items.len > 0) {
+        try l.paragraphs.append(alloc, .{
+          .content = try l.finalizeParagraph(alloc),
+          .lf_after = lf_after
+        });
+        l.nodes = .{};
       }
     }
   };
@@ -270,7 +279,7 @@ pub const Parser = struct {
       .ignored_changes = null,
       .command = undefined,
       .nodes = .{},
-      .parseps = .{},
+      .paragraphs = .{},
     });
   }
 
@@ -347,6 +356,10 @@ pub const Parser = struct {
                 std.debug.print("parent command={s}\n", .{@tagName(parent.command.info)});
                 try parent.command.shift(self.int(), parent.source_name, end);
               }
+            },
+            .parsep => {
+              try self.levels.items[self.levels.items.len - 1].pushParagraph(self.int(), self.l.newline_count);
+              try self.advance();
             },
             else => unreachable,
           }

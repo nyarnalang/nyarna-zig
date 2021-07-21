@@ -4,6 +4,18 @@ const parse = @import("parse");
 const Source = @import("source").Source;
 const Context = @import("interpret").Context;
 
+fn ensureLiteral(node: *data.Node, kind: @typeInfo(data.Node.Literal).Struct.fields[0].field_type, content: []const u8) !void {
+  try std.testing.expectEqual(data.Node.Data.literal, node.data);
+  try std.testing.expectEqual(kind, node.data.literal.kind);
+  try std.testing.expectEqualStrings(content, node.data.literal.content);
+}
+
+fn ensureUnresSymref(node: *data.Node, ns: u16, id: []const u8) !void {
+  try std.testing.expectEqual(data.Node.Data.symref, node.data);
+  try std.testing.expectEqual(ns, node.data.symref.unresolved.ns);
+  try std.testing.expectEqualStrings(id, node.data.symref.unresolved.name);
+}
+
 test "parse simple line" {
   var src = Source{
     .content = "Hello, World!\x04",
@@ -19,8 +31,7 @@ test "parse simple line" {
   var ctx = try Context.init(std.testing.allocator);
   defer ctx.deinit().deinit();
   var res = try p.parseSource(&src, &ctx);
-  try std.testing.expectEqual(data.Node.Data.literal, res.data);
-  try std.testing.expectEqualStrings("Hello, World!", res.data.literal.content);
+  try ensureLiteral(res, .text, "Hello, World!");
 }
 
 test "parse assignment" {
@@ -39,8 +50,74 @@ test "parse assignment" {
   defer ctx.deinit().deinit();
   var res = try p.parseSource(&src, &ctx);
   try std.testing.expectEqual(data.Node.Data.assignment, res.data);
-  try std.testing.expectEqual(data.Node.Data.symref, res.data.assignment.target.data);
-  try std.testing.expectEqualStrings("foo", res.data.assignment.target.data.symref.unresolved.name);
-  try std.testing.expectEqual(data.Node.Data.literal, res.data.assignment.replacement.data);
-  try std.testing.expectEqualStrings("bar", res.data.assignment.replacement.data.literal.content);
+  try ensureUnresSymref(res.data.assignment.target, 0, "foo");
+  try ensureLiteral(res.data.assignment.replacement, .text, "bar");
+}
+
+test "parse access" {
+  var src = Source{
+    .content = "\\a::b::c\x04",
+    .offsets = .{
+      .line = 0, .column = 0,
+    },
+    .name = "access",
+    .locator = ".doc.document",
+    .locator_ctx = ".doc."
+  };
+
+  var p = parse.Parser.init();
+  var ctx = try Context.init(std.testing.allocator);
+  defer ctx.deinit().deinit();
+  var res = try p.parseSource(&src, &ctx);
+  try std.testing.expectEqual(data.Node.Data.access, res.data);
+  try std.testing.expectEqual(data.Node.Data.access, res.data.access.subject.data);
+  try std.testing.expectEqualStrings("c", res.data.access.id);
+  try ensureUnresSymref(res.data.access.subject.data.access.subject, 0, "a");
+  try std.testing.expectEqualStrings("b", res.data.access.subject.data.access.id);
+}
+
+test "parse concat" {
+  var src = Source{
+    .content = "lorem\\a:,ipsum\\b \\c\\#dolor\x04",
+    .offsets = .{
+      .line = 0, .column = 0,
+    },
+    .name = "access",
+    .locator = ".doc.document",
+    .locator_ctx = ".doc."
+  };
+
+  var p = parse.Parser.init();
+  var ctx = try Context.init(std.testing.allocator);
+  defer ctx.deinit().deinit();
+  var res = try p.parseSource(&src, &ctx);
+  try std.testing.expectEqual(data.Node.Data.concatenation, res.data);
+  try ensureLiteral(res.data.concatenation.content[0], .text, "lorem");
+  try ensureUnresSymref(res.data.concatenation.content[1], 0, "a");
+  try ensureLiteral(res.data.concatenation.content[2], .text, "ipsum");
+  try ensureUnresSymref(res.data.concatenation.content[3], 0, "b");
+  try ensureLiteral(res.data.concatenation.content[4], .space, " ");
+  try ensureUnresSymref(res.data.concatenation.content[5], 0, "c");
+  try ensureLiteral(res.data.concatenation.content[6], .text, "#dolor");
+}
+
+test "parse paragraphs" {
+  var src = Source{
+    .content = "lorem\n\nipsum\n\n\ndolor\x04",
+    .offsets = .{},
+    .name = "paragraphs",
+    .locator = ".doc.document",
+    .locator_ctx = ".doc."
+  };
+
+  var p = parse.Parser.init();
+  var ctx = try Context.init(std.testing.allocator);
+  defer ctx.deinit().deinit();
+  var res = try p.parseSource(&src, &ctx);
+  try std.testing.expectEqual(data.Node.Data.paragraphs, res.data);
+  try ensureLiteral(res.data.paragraphs.items[0].content, .text, "lorem");
+  try std.testing.expectEqual(@as(usize, 2), res.data.paragraphs.items[0].lf_after);
+  try ensureLiteral(res.data.paragraphs.items[1].content, .text, "ipsum");
+  try std.testing.expectEqual(@as(usize, 3), res.data.paragraphs.items[1].lf_after);
+  try ensureLiteral(res.data.paragraphs.items[2].content, .text, "dolor");
 }
