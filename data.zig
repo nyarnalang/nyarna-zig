@@ -93,22 +93,25 @@ pub const BlockConfig = struct {
   /// If after is 0, before is to be a command character that gets disabled.
   /// If neither is 0, the command character before will be disabled and after
   /// will take its place, referring to before's namespace.
-  pub const CharChange = struct {
-    before: u21,
-    after: u21,
+  pub const Map = struct {
+    pos: Position,
+    from: u21,
+    to: u21
   };
 
-  /// Lists all command character changes mandated by this block config.
-  map: ?[]CharChange,
-  /// whether `off #` has been given.
-  commentOff: bool,
-  /// whether `off :` has been given.
-  colonOff: bool,
-  /// whether `fullast` has been given.
-  fullAst: bool,
-  /// contains the syntax name given, if any.
-  syntax: ?[]u8,
+  pub const SyntaxDef =  struct {
+    pos: Position,
+    syntax: *SpecialSyntax,
+  };
+
+  syntax: ?SyntaxDef,
+  map: []Map,
+  off_colon: ?Position,
+  off_comment: ?Position,
+  full_ast: ?Position,
 };
+
+
 
 pub const Node = struct {
   pub const Literal = struct {
@@ -139,8 +142,36 @@ pub const Node = struct {
     id: []const u8,
   };
   pub const Assignment = struct {
-    target: *Node,
+    target: union(enum) {
+      unresolved: *Node,
+      resolved: *Expression,
+    },
     replacement: *Node,
+  };
+  pub const UnresolvedCall = struct {
+    pub const ParamKind = union(enum) {
+      named: []const u8,
+      direct: []const u8,
+      primary,
+      position
+    };
+    pub const Param = struct {
+      kind: ParamKind,
+      content: *Node,
+      /// See doc of first_block_param below.
+      had_explicit_block_config: bool,
+    };
+    target: *Node,
+    params: []Param,
+    /// This is used when a call's target is resolved *after* the parameters
+    /// have been read in. The resolution checks whether any parameter that was
+    /// given as block and did not have an explicit block config would have
+    /// gotten a default block config – which will then be reported as error.
+    first_block_param: usize,
+  };
+  pub const ResolvedCall = struct {
+    target: *Expression,
+    args: []*Node,
   };
 
   pub const Data = union(enum) {
@@ -150,6 +181,8 @@ pub const Node = struct {
     concatenation: Concatenation,
     paragraphs: Paragraphs,
     symref: SymRef,
+    unresolved_call: UnresolvedCall,
+    resolved_call: ResolvedCall,
     voidNode,
   };
 
@@ -182,6 +215,45 @@ pub const Symbol = struct {
   data: Data,
 };
 
+pub const SpecialSyntax = struct {
+  pub const Item = union(enum) {
+    literal: []const u8,
+    space: []const u8,
+    special_char: u21,
+    node: *Node,
+  };
+
+  push: fn(self: *SpecialSyntax, item: Item) std.mem.Allocator.Error!void,
+  finish: fn(self: *SpecialSyntax) std.mem.Allocator.Error!*Node,
+};
+
+pub const Signature = struct {
+  pub const Parameter = struct {
+    pos: Position,
+    name: []const u8,
+    // TODO: type
+    capture: enum {default, varargs},
+    default: *Expression,
+    config: ?BlockConfig,
+    mutable: bool,
+  };
+
+  parameter: []Parameter,
+  keyword: bool,
+  primary: ?u31,
+  varmap: ?u31,
+  auto_swallow: ?struct{
+    param_index: usize,
+    depth: usize,
+  },
+  // TODO: return type
+};
+
 pub const Expression = struct {
-  // TODO
+  pub const Data = union(enum) {
+    poison,
+  };
+
+  pos: Position,
+  data: Data,
 };

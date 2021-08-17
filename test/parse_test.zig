@@ -3,6 +3,7 @@ const data = @import("data");
 const parse = @import("parse");
 const Source = @import("source").Source;
 const Context = @import("interpret").Context;
+const errors = @import("errors");
 
 fn ensureLiteral(node: *data.Node, kind: @typeInfo(data.Node.Literal).Struct.fields[0].field_type, content: []const u8) !void {
   try std.testing.expectEqual(data.Node.Data.literal, node.data);
@@ -27,8 +28,9 @@ test "parse simple line" {
     .locator_ctx = ".doc.",
   };
 
+  var r = errors.CmdLineReporter.init();
   var p = parse.Parser.init();
-  var ctx = try Context.init(std.testing.allocator);
+  var ctx = try Context.init(std.testing.allocator, &r.reporter);
   defer ctx.deinit().deinit();
   var res = try p.parseSource(&src, &ctx);
   try ensureLiteral(res, .text, "Hello, World!");
@@ -45,12 +47,13 @@ test "parse assignment" {
     .locator_ctx = ".doc.",
   };
 
+  var r = errors.CmdLineReporter.init();
   var p = parse.Parser.init();
-  var ctx = try Context.init(std.testing.allocator);
+  var ctx = try Context.init(std.testing.allocator, &r.reporter);
   defer ctx.deinit().deinit();
   var res = try p.parseSource(&src, &ctx);
   try std.testing.expectEqual(data.Node.Data.assignment, res.data);
-  try ensureUnresSymref(res.data.assignment.target, 0, "foo");
+  try ensureUnresSymref(res.data.assignment.target.unresolved, 0, "foo");
   try ensureLiteral(res.data.assignment.replacement, .text, "bar");
 }
 
@@ -65,8 +68,9 @@ test "parse access" {
     .locator_ctx = ".doc."
   };
 
+  var r = errors.CmdLineReporter.init();
   var p = parse.Parser.init();
-  var ctx = try Context.init(std.testing.allocator);
+  var ctx = try Context.init(std.testing.allocator, &r.reporter);
   defer ctx.deinit().deinit();
   var res = try p.parseSource(&src, &ctx);
   try std.testing.expectEqual(data.Node.Data.access, res.data);
@@ -87,8 +91,9 @@ test "parse concat" {
     .locator_ctx = ".doc."
   };
 
+  var r = errors.CmdLineReporter.init();
   var p = parse.Parser.init();
-  var ctx = try Context.init(std.testing.allocator);
+  var ctx = try Context.init(std.testing.allocator, &r.reporter);
   defer ctx.deinit().deinit();
   var res = try p.parseSource(&src, &ctx);
   try std.testing.expectEqual(data.Node.Data.concatenation, res.data);
@@ -110,8 +115,9 @@ test "parse paragraphs" {
     .locator_ctx = ".doc."
   };
 
+  var r = errors.CmdLineReporter.init();
   var p = parse.Parser.init();
-  var ctx = try Context.init(std.testing.allocator);
+  var ctx = try Context.init(std.testing.allocator, &r.reporter);
   defer ctx.deinit().deinit();
   var res = try p.parseSource(&src, &ctx);
   try std.testing.expectEqual(data.Node.Data.paragraphs, res.data);

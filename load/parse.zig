@@ -3,6 +3,7 @@ const data = @import("data");
 const lex = @import("lex.zig");
 const Source = @import("source.zig").Source;
 const Context = @import("interpret.zig").Context;
+const mapper = @import("mapper.zig");
 
 /// The parser creates AST nodes.
 /// Whenever an AST node is created, the parser checks whether it needs to be
@@ -17,79 +18,59 @@ pub const Parser = struct {
       /// This state means that the command has just been created and awaits
       /// classification via the next lexer token.
       unknown: *data.Node,
-      resolved_call: struct {
-        /// Resolved target of this call. For a subject to be resolved, it must
-        /// not contain any unresolved parts, so that it can be an expression.
-        /// If the call is on a value whose type's function is called, the
-        /// subject is that function while the value will be pushed into the
-        /// arguments.
-        subject: *data.Expression,
-        // TODO: signature (?)
-
-        /// seen blocks? This determines whether the parser continues filling
-        /// this command with arguments when blocks are encountered. If true,
-        /// this command will be finalized and become subject of a new call.
-        blocks: bool,
-        // TODO: argument expressions mapped to subject's parameters
-      },
-      unresolved_call: struct {
-        /// The subject which cannot immediately be resolved.
-        subject: *data.Node,
-        /// like .resolved_call.blocks.
-        blocks: bool,
-        // TODO: map of argument name/pos -> expression
-      },
-      assignment: struct {
-        /// The target which will be assigned the given value.
-        target: *data.Node,
-        /// The node that describes the expression which evaluates to the value
-        /// that is to be assigned.
-        replacement: ?*data.Node,
-      }
+      resolved_call: mapper.SignatureMapper,
+      unresolved_call: mapper.CollectingMapper,
+      assignment: mapper.AssignmentMapper,
+    },
+    mapper: *mapper.Mapper,
+    cur_cursor: union(enum) {
+      mapped: mapper.Mapper.Cursor,
+      failed,
+      not_pushed
     },
 
-    fn pushName(c: *Command, alloc: *std.mem.Allocator, pos: data.Position, name: []const u8) void {
-      // TODO
+    fn pushName(c: *Command, pos: data.Position, name: []const u8, direct: bool,
+        flag: mapper.Mapper.ParamFlag) void {
+      c.cur_cursor = if (c.mapper.map(pos,
+          if (direct) .{.direct = name} else .{.named = name}, flag)
+      ) |mapped| .{
+        .mapped = mapped,
+      } else .failed;
     }
 
     fn pushArg(c: *Command, alloc: *std.mem.Allocator, arg: *data.Node) !void {
-      switch (c.info) {
-        .assignment => |*ass| {
-          if (ass.replacement != null) unreachable; // TODO: error, multiple values
-          ass.replacement = arg;
-        },
-        .resolved_call => |*res| {
-          unreachable; // TODO
-        },
-        .unresolved_call => |*unres| {
-          unreachable; // TODO
-        },
-        else => unreachable, // can never happen; bug if it does anyway
-      }
+      defer c.cur_cursor = .not_pushed;
+      const cursor = switch (c.cur_cursor) {
+        .mapped => |val| val,
+        .failed => return,
+        .not_pushed => c.mapper.map(arg.pos, .position, .flow) orelse return,
+      };
+      try c.mapper.push(alloc, cursor, arg);
     }
 
     fn shift(c: *Command, alloc: *std.mem.Allocator, src_name: []const u8, end: data.Cursor) !void {
-      const newNode = switch(c.info) {
-        .assignment => |*ass| blk: {
-          var assNode = try alloc.create(data.Node);
-          const replacement = ass.replacement.?; // TODO: error when missing (?)
-          assNode.* = .{
-            .pos = data.Position.inMod(src_name, c.start, end),
-            .data = .{
-              .assignment = .{
-                .target = ass.target,
-                .replacement = replacement,
-              },
-            },
-          };
-          break :blk assNode;
-        },
-        else => {
-          std.debug.print("shifting on {s} not implemented yet.", .{@tagName(c.info)});
-          unreachable;
-        }
-      };
+      const newNode = try c.mapper.finalize(alloc, data.Position.inMod(src_name, c.start, end));
       c.info = .{.unknown = newNode};
+    }
+
+    fn startAssignment(c: *Command) void {
+      const subject = c.info.unknown;
+      c.info = .{.assignment = mapper.AssignmentMapper.init(subject)};
+      c.mapper = &c.info.assignment.mapper;
+      c.cur_cursor = .not_pushed;
+    }
+
+    fn startResolvedCall(c: *Command, alloc: *std.mem.Allocator, target: *data.Expression, sig: *data.Signature) !void {
+      c.info = .{.resolved_call = try mapper.SignatureMapper.init(alloc, target, sig)};
+      c.mapper = &c.info.resolved_call.mapper;
+      c.cur_cursor = .not_pushed;
+    }
+
+    fn startUnresolvedCall(c: *Command, alloc: *std.mem.Allocator) !void {
+      const subject = c.info.unknown;
+      c.info = .{.unresolved_call = try mapper.CollectingMapper.init(subject)};
+      c.mapper = &c.info.unresolved_call.mapper;
+      c.cur_cursor = .not_pushed;
     }
   };
 
@@ -103,7 +84,7 @@ pub const Parser = struct {
     start: data.Cursor,
     /// Changes to command characters that occurred upon entering this level.
     /// For implicit block configs, this links to the block config definition.
-    changes: ?[]data.BlockConfig.CharChange,
+    changes: ?[]data.BlockConfig.Map,
     /// When the used block configuration defines the definiton of a command
     /// character, but that command character already exists, nothing will
     /// happen. Therefore, we must not revert that change when leaving this
@@ -204,7 +185,7 @@ pub const Parser = struct {
     /// .unknown and hold the occurred command in .subject.
     /// When encountering command continuation (e.g. opening list or blocks),
     /// set the .level.command's kind appropriately and open a new level.
-    /// When encountering content, will push .level.command.subject into .level
+    /// When encountering content, will push .level.command.unknown into .level
     /// and transition to .default. Handles error cases like .subject being
     /// prefix notation for a function but not being followed by a call.
     command,
@@ -334,6 +315,8 @@ pub const Parser = struct {
                   .unknown = try self.ctx().resolveSymbol(
                       self.l.walker.posFrom(self.curStart), self.l.ns, self.l.recent_id),
                 },
+                .mapper = undefined,
+                .cur_cursor = undefined,
               };
               self.state = .command;
               try self.advance();
@@ -403,7 +386,8 @@ pub const Parser = struct {
               if (lvl.nodes.items.len > 0) {
                 unreachable; // TODO: error: equals not allowed here
               }
-              self.levels.items[self.levels.items.len - 2].command.pushName(self.int(), pos, content.items);
+              self.levels.items[self.levels.items.len - 2].command.pushName(
+                  pos, content.items, pos.module.end.byte_offset - pos.module.start.byte_offset == 2, .flow);
               try self.advance();
               self.state = .start;
             } else {
@@ -453,12 +437,7 @@ pub const Parser = struct {
                 else => unreachable // TODO: recover
               }
               const target = lvl.command.info.unknown;
-              lvl.command.info = .{
-                .assignment = .{
-                  .target = target,
-                  .replacement = null,
-                },
-              };
+              lvl.command.startAssignment();
               try self.pushLevel();
               try self.advance();
             },

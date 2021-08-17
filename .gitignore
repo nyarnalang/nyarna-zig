@@ -3,3 +3,4 @@
 *.exe
 zig-cache
 testgen
+errors_generated.zig
