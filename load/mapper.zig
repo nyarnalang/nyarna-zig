@@ -127,25 +127,25 @@ pub const CollectingMapper = struct {
   mapper: Mapper,
   target: *data.Node,
   items: std.ArrayListUnmanaged(data.Node.UnresolvedCall.Param) = .{},
-  first_block: ?usize,
+  first_block: ?usize = null,
 
-  pub fn init(target: *data.Node) !CollectingMapper {
+  pub fn init(target: *data.Node) CollectingMapper {
     return .{
       .mapper = .{
         .mapFn = CollectingMapper.map,
         .pushFn = CollectingMapper.push,
         .finalizeFn = CollectingMapper.finalize,
       },
-      .target = target
+      .target = target,
     };
   }
 
   fn map(mapper: *Mapper, pos: data.Position, input: data.Node.UnresolvedCall.ParamKind, flag: Mapper.ParamFlag) ?Mapper.Cursor {
     const self = @fieldParentPtr(CollectingMapper, "mapper", mapper);
-    if (flag != .flow and !self.first_block) {
+    if (flag != .flow and self.first_block == null) {
       self.first_block = self.items.items.len;
     }
-    return Mapper.Cursor{.param = .{.kind = input}, .block = block, .config = flag == .block_with_config};
+    return Mapper.Cursor{.param = .{.kind = input}, .config = flag == .block_with_config};
   }
 
   fn push(mapper: *Mapper, alloc: *std.mem.Allocator, at: Mapper.Cursor, content: *data.Node) !void {
@@ -153,13 +153,13 @@ pub const CollectingMapper = struct {
     try self.items.append(alloc, .{.kind = at.param.kind, .content = content, .had_explicit_block_config = at.config});
   }
 
-  fn finalize(mapper: *Mapper, alloc: *std.mem.Allocator, pos: data.Position) !*data.Node {
+  fn finalize(mapper: *Mapper, alloc: *std.mem.Allocator, pos: data.Position) std.mem.Allocator.Error!*data.Node {
     const self = @fieldParentPtr(CollectingMapper, "mapper", mapper);
     var ret = try alloc.create(data.Node);
     ret.* = .{
-      .position = pos,
+      .pos = pos,
       .data = .{
-        .call = .{
+        .unresolved_call = .{
           .target = self.target,
           .params = self.items.items,
           .first_block_param = self.first_block orelse self.items.items.len,

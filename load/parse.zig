@@ -68,7 +68,7 @@ pub const Parser = struct {
 
     fn startUnresolvedCall(c: *Command, alloc: *std.mem.Allocator) !void {
       const subject = c.info.unknown;
-      c.info = .{.unresolved_call = try mapper.CollectingMapper.init(subject)};
+      c.info = .{.unresolved_call = mapper.CollectingMapper.init(subject)};
       c.mapper = &c.info.unresolved_call.mapper;
       c.cur_cursor = .not_pushed;
     }
@@ -173,6 +173,9 @@ pub const Parser = struct {
   const State = enum {
     /// skips over any space it finds, then transitions to default.
     start,
+    /// same as start, but does not transition to default if list_end is
+    /// encountered.
+    possible_start,
     /// reading content of a block or list argument. Allows inner blocks,
     /// swallowing and paragraph separators besides inner nodes that get pushed
     /// to the current level. Will ditch trailing space. Lexer will not produce
@@ -181,6 +184,9 @@ pub const Parser = struct {
     default,
     /// Used to merge literals space, ws_break and escape together.
     textual,
+    /// used after closed list. checks for blocks start; if none is encountered,
+    /// transitions to command.
+    after_list,
     /// used after any command. The current level's .command field will be
     /// .unknown and hold the occurred command in .subject.
     /// When encountering command continuation (e.g. opening list or blocks),
@@ -266,7 +272,6 @@ pub const Parser = struct {
 
   pub fn parseSource(self: *Parser, source: *Source, context: *Context) !*data.Node {
     self.l = try lex.Lexer.init(context, source);
-    try self.pushLevel();
     try self.advance();
     return self.doParse();
   }
@@ -279,6 +284,7 @@ pub const Parser = struct {
     self.curStart = self.l.recent_end;
     // TODO: recover from unicode errors?
     self.cur = try self.l.next();
+    std.debug.print("  << {s}\n", .{@tagName(self.cur)});
   }
 
   fn doParse(self: *Parser) !*data.Node {
@@ -291,7 +297,17 @@ pub const Parser = struct {
       switch (self.state) {
         .start => {
           while (self.cur == .space) try self.advance();
+          try self.pushLevel();
           self.state = .default;
+        },
+        .possible_start => {
+          while (self.cur == .space) try self.advance();
+          if (self.cur == .list_end) {
+            self.state = .after_list;
+          } else {
+            try self.pushLevel();
+            self.state = .default;
+          }
         },
         .default => {
           switch (self.cur) {
@@ -321,30 +337,26 @@ pub const Parser = struct {
               self.state = .command;
               try self.advance();
             },
-            .list_end => {
+            .list_end, .comma => {
               var lvl = &self.levels.items[self.levels.items.len - 1];
               var parent = &self.levels.items[self.levels.items.len - 2];
-              std.debug.print("parent command={s}\n", .{@tagName(parent.command.info)});
+              std.debug.print("{s}: parent command={s}\n", .{@tagName(self.cur), @tagName(parent.command.info)});
               try parent.command.pushArg(self.int(),
                   try lvl.finalize(self.int()));
               _ = self.levels.pop();
-              const end = self.l.recent_end;
-              try self.advance();
-              if (self.cur == .blocks_sep) {
-                // call continues
-                self.state = .after_blocks_start;
+              if (self.cur == .comma) {
                 try self.advance();
-              } else {
-                self.state = .command;
-                std.debug.print("parent command={s}\n", .{@tagName(parent.command.info)});
-                try parent.command.shift(self.int(), parent.source_name, end);
-              }
+                self.state = .start;
+              } else self.state = .after_list;
             },
             .parsep => {
               try self.levels.items[self.levels.items.len - 1].pushParagraph(self.int(), self.l.newline_count);
               try self.advance();
             },
-            else => unreachable,
+            else => {
+              std.debug.print("unexpected token in default: {s}\n", .{@tagName(self.cur)});
+              unreachable;
+            }
           }
         },
         .textual => {
@@ -388,8 +400,10 @@ pub const Parser = struct {
               }
               self.levels.items[self.levels.items.len - 2].command.pushName(
                   pos, content.items, pos.module.end.byte_offset - pos.module.start.byte_offset == 2, .flow);
-              try self.advance();
-              self.state = .start;
+              while (true) {
+                try self.advance();
+                if (self.cur != .space) break;
+              }
             } else {
               var node = try self.int().create(data.Node);
               node.* = .{
@@ -436,14 +450,31 @@ pub const Parser = struct {
                 },
                 else => unreachable // TODO: recover
               }
-              const target = lvl.command.info.unknown;
               lvl.command.startAssignment();
-              try self.pushLevel();
               try self.advance();
             },
             .list_start => {
-              // TODO
-              unreachable;
+              const target = lvl.command.info.unknown;
+              switch (target.data) {
+                .symref, .access => {
+                  const res = try self.ctx().resolveChain(target, self.ext());
+                  switch (res) {
+                    .var_chain => |chain| {
+                      unreachable; // TODO
+                    },
+                    .func_ref => |func| {
+                      unreachable; // TODO
+                    },
+                    .failed => {
+                      try lvl.command.startUnresolvedCall(self.int());
+                    },
+                    .poison => unreachable //TODO
+                  }
+                },
+                else => unreachable // TODO
+              }
+              try self.advance();
+              self.state = .possible_start;
             },
             .blocks_sep => {
               // TODO
@@ -458,6 +489,18 @@ pub const Parser = struct {
               try lvl.append(self.int(), lvl.command.info.unknown);
               self.state = .default;
             }
+          }
+        },
+        .after_list => {
+          const end = self.l.recent_end;
+          try self.advance();
+          if (self.cur == .blocks_sep) {
+            // call continues
+            self.state = .after_blocks_start;
+            try self.advance();
+          } else {
+            self.state = .command;
+            try self.levels.items[self.levels.items.len - 1].command.shift(self.int(), self.l.walker.source.name, end);
           }
         },
         .after_blocks_start => {

@@ -127,31 +127,34 @@ pub const Context = struct {
   };
 
   /// resolves an accessor chain of *data.Node.
-  pub fn resolveChain(self: *Context, chain: *data.Node, alloc: *std.mem.Allocator) !ChainResolution {
+  pub fn resolveChain(self: *Context, chain: *data.Node, alloc: *std.mem.Allocator) std.mem.Allocator.Error!ChainResolution {
     switch (chain.data) {
       .access => |value| {
         const inner = try self.resolveChain(value.subject, alloc);
         switch (inner) {
-          .var_chain => |value| {
+          .var_chain => |vc| {
             // TODO: find field in value's type, update value's type and the
             // field_chain, return it.
+            unreachable;
           },
-          .func_ref => |value| {
-            if (value.prefix != null) {
+          .func_ref => |ref| {
+            if (ref.prefix != null) {
               // TODO: report error based on the name of target_expr
               return .poison;
             }
             // TODO: transform function reference to variable ref, then search
             // in that expression's type for the symbol.
             unreachable;
-          }
+          },
+          .failed => return .failed,
+          .poison => return .poison,
         }
       },
       .symref => |value| {
         return switch (value) {
           .unresolved => .failed,
           .resolved => |sym| switch(sym.data) {
-            .ext_func | .ny_func => .{
+            .ext_func, .ny_func => ChainResolution{
               .func_ref = .{
                 .target = sym,
                 .prefix = null,
@@ -160,7 +163,7 @@ pub const Context = struct {
             .variable => blk: {
               const expr = try alloc.create(data.Expression);
               // TODO: set expr to be variable reference
-              break :blk .{
+              break :blk ChainResolution{
                 .var_chain = .{
                   .target = sym,
                   .field_chain = .{},
