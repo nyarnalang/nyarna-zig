@@ -2,11 +2,15 @@ const std = @import("std");
 const data = @import("data");
 
 pub const LexerError = enum {
-  foo, bar
+  unknown_config_directive
 };
 
 pub const GenericParserError = enum {
-  named_argument_in_assignment
+  named_argument_in_assignment, missing_block_name_end
+};
+
+pub const WrongTokenError = enum {
+  expected_token_x_got_y
 };
 
 pub const PreviousOccurenceError = enum {
@@ -16,6 +20,7 @@ pub const PreviousOccurenceError = enum {
 pub const Reporter = struct {
   lexerErrorFn: fn(reporter: *Reporter, id: LexerError, pos: data.Position) void,
   parserErrorFn: fn(reporter: *Reporter, id: GenericParserError, pos: data.Position) void,
+  wrongTokenErrorFn: fn(reporter: *Reporter, id: WrongTokenError, pos: data.Position, expected: data.Token, got: data.Token) void,
   previousOccurenceFn: fn(reporter: *Reporter, id: PreviousOccurenceError, pos: data.Position, previous: data.Position) void,
 };
 
@@ -45,6 +50,7 @@ pub const CmdLineReporter = struct {
         .lexerErrorFn = CmdLineReporter.lexerError,
         .parserErrorFn = CmdLineReporter.parserError,
         .previousOccurenceFn = CmdLineReporter.previousOccurence,
+        .wrongTokenErrorFn = CmdLineReporter.wrongTokenError,
       },
       .writer = stdout.writer(),
       .do_style = std.os.isatty(stdout.handle),
@@ -94,6 +100,12 @@ pub const CmdLineReporter = struct {
     const self = @fieldParentPtr(CmdLineReporter, "reporter", reporter);
     self.renderPos(pos);
     self.renderError("(parse) {s}", .{@tagName(id)});
+  }
+
+  fn wrongTokenError(reporter: *Reporter, id: WrongTokenError, pos: data.Position, expected: data.Token, got: data.Token) void {
+    const self = @fieldParentPtr(CmdLineReporter, "reporter", reporter);
+    self.renderPos(pos);
+    self.renderError("wrong token: expected {s}, got {s}", .{@tagName(expected), @tagName(got)});
   }
 
   fn previousOccurence(reporter: *Reporter, id: PreviousOccurenceError, pos: data.Position, previous: data.Position) void {

@@ -21,7 +21,7 @@ pub fn main() !void {
   inline for (@typeInfo(errors.LexerError).Enum.fields) |f| {
     _ = try eh.write("  pub fn " ++ f.name ++ "(self: *@This(), pos: data.Position) void {\n" ++
     \\    self.count = self.count + 1;
-    \\    self.reporter.lexerErrorFn(
+    \\    self.reporter.lexerErrorFn(self.reporter,
     ++ "." ++ f.name ++ ", pos);\n" ++
     \\  }
     \\
@@ -30,8 +30,17 @@ pub fn main() !void {
   inline for (@typeInfo(errors.GenericParserError).Enum.fields) |f| {
     _ = try eh.write("  pub fn " ++ f.name ++ "(self: *@This(), pos: data.Position) void {\n" ++
     \\    self.count = self.count + 1;
-    \\    self.reporter.parserErrorFn(
+    \\    self.reporter.parserErrorFn(self.reporter,
     ++ "." ++ f.name ++ ", pos);\n" ++
+    \\  }
+    \\
+    );
+  }
+  inline for (@typeInfo(errors.WrongTokenError).Enum.fields) |f| {
+    _ = try eh.write("  pub fn " ++ f.name ++ "(self: *@This(), pos: data.Position, expected: data.Token, got: data.Token) void {\n" ++
+    \\    self.count = self.count + 1;
+    \\    self.reporter.wrongTokenErrorFn(self.reporter,
+    ++ "." ++ f.name ++ ", pos, expected, got);\n" ++
     \\  }
     \\
     );
@@ -39,7 +48,7 @@ pub fn main() !void {
   inline for (@typeInfo(errors.PreviousOccurenceError).Enum.fields) |f| {
     _ = try eh.write("  pub fn " ++ f.name ++ "(self: *@This(), pos: data.Position, previous: data.Position) void {\n" ++
     \\    self.count = self.count + 1;
-    \\    self.reporter.prevousOccurenceFn(
+    \\    self.reporter.prevousOccurenceFn(self.reporter,
     ++ "." ++ f.name ++ ", pos, previous);\n" ++
     \\  }
     \\

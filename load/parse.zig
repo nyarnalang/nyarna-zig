@@ -48,6 +48,13 @@ pub const Parser = struct {
       try c.mapper.push(alloc, cursor, arg);
     }
 
+    fn pushPrimary(c: *Command, pos: data.Position, config: bool) void {
+      c.cur_cursor = if (c.mapper.map(pos, .primary,
+          if (config) .block_with_config else .block_no_config)) |cursor| .{
+            .mapped = cursor,
+          } else .failed;
+    }
+
     fn shift(c: *Command, alloc: *std.mem.Allocator, src_name: []const u8, end: data.Cursor) !void {
       const newNode = try c.mapper.finalize(alloc, data.Position.inMod(src_name, c.start, end));
       c.info = .{.unknown = newNode};
@@ -206,8 +213,9 @@ pub const Parser = struct {
     /// parameter. If no primary block exists, that ContentLevel will be
     /// discarded and its changes will be reverted.
     after_blocks_start,
-    /// This state processes block config.
-    config,
+    /// This state reads in a block name, possibly a block configuration, and
+    /// then pushes a level to read the block content.
+    block_name,
   };
 
   /// stack of current levels. must have at least size of 1, with the first
@@ -218,8 +226,8 @@ pub const Parser = struct {
 
   l: lex.Lexer,
   state: State,
-  cur: lex.Token,
-  curStart: data.Cursor,
+  cur: data.Token,
+  cur_start: data.Cursor,
 
   fn int(self: *@This()) *std.mem.Allocator {
     return &self.ctx().temp_nodes.allocator;
@@ -240,7 +248,7 @@ pub const Parser = struct {
       .l = undefined,
       .state = .start,
       .cur = undefined,
-      .curStart = undefined,
+      .cur_start = undefined,
     };
   }
 
@@ -281,7 +289,7 @@ pub const Parser = struct {
   }
 
   inline fn advance(self: *Parser) !void {
-    self.curStart = self.l.recent_end;
+    self.cur_start = self.l.recent_end;
     // TODO: recover from unicode errors?
     self.cur = try self.l.next();
     std.debug.print("  << {s}\n", .{@tagName(self.cur)});
@@ -326,10 +334,10 @@ pub const Parser = struct {
             },
             .symref => {
               self.levels.items[self.levels.items.len - 1].command = .{
-                .start = self.curStart,
+                .start = self.cur_start,
                 .info = .{
                   .unknown = try self.ctx().resolveSymbol(
-                      self.l.walker.posFrom(self.curStart), self.l.ns, self.l.recent_id),
+                      self.l.walker.posFrom(self.cur_start), self.l.ns, self.l.recent_id),
                 },
                 .mapper = undefined,
                 .cur_cursor = undefined,
@@ -363,15 +371,15 @@ pub const Parser = struct {
           var content: std.ArrayListUnmanaged(u8) = .{};
           var non_space_len: usize = 0;
           var non_space_end: data.Cursor = undefined;
-          const textual_start = self.curStart;
+          const textual_start = self.cur_start;
           while (true) : (try self.advance()) {
             switch (self.cur) {
               .space =>
                 try content.appendSlice(self.int(),
-                    self.l.walker.contentFrom(self.curStart.byte_offset)),
+                    self.l.walker.contentFrom(self.cur_start.byte_offset)),
               .literal => {
                 try content.appendSlice(self.int(),
-                    self.l.walker.contentFrom(self.curStart.byte_offset));
+                    self.l.walker.contentFrom(self.cur_start.byte_offset));
                 non_space_len = content.items.len;
                 non_space_end = self.l.recent_end;
               },
@@ -504,14 +512,196 @@ pub const Parser = struct {
           }
         },
         .after_blocks_start => {
-          // TODO
-          unreachable;
+          const parent = &self.levels.items[self.levels.items.len - 1];
+
+          var primary_config: data.BlockConfig = undefined;
+
+          if (self.cur == .diamond_open) {
+            try self.readBlockConfig(&primary_config, self.int());
+            parent.command.pushPrimary(self.l.walker.posFrom(self.l.recent_end), true);
+          } else {
+            // TODO: try and fetch block config from parameter
+            unreachable;
+          }
+          // TODO: apply block config
+          while (self.cur == .space) try self.advance();
+          if (self.cur == .block_name_sep) {
+            self.state = .block_name;
+          } else {
+            try self.pushLevel();
+            self.state = .default;
+          }
         },
-        .config => {
-          // TODO
-          unreachable;
-        }
+        .block_name => {
+          std.debug.assert(self.cur == .block_name_sep);
+          while (true) {
+            try self.advance();
+            if (self.cur != .space) break;
+          }
+          const parent = &self.levels.items[self.levels.items.len - 1];
+          if (self.cur == .identifier) {
+            const name = self.l.walker.contentFrom(self.cur_start.byte_offset);
+            const name_pos = self.l.walker.posFrom(self.cur_start);
+            var recover = false;
+            while (true) {
+              try self.advance();
+              if (self.cur == .block_name_sep or self.cur == .missing_block_name_sep) break;
+              if (self.cur != .space and !recover) {
+                self.ctx().eh.expected_token_x_got_y(
+                    self.l.walker.posFrom(self.cur_start), .block_name_sep, self.cur);
+                recover = true;
+              }
+            }
+            if (self.cur == .missing_block_name_sep) {
+              self.ctx().eh.missing_block_name_end(
+                data.Position.inMod(self.l.walker.source.name, self.cur_start, self.cur_start));
+            }
+            try self.advance();
+            parent.command.pushName(name_pos, name, false,
+                if (self.cur == .diamond_open) .block_with_config else .block_no_config);
+            var config: data.BlockConfig = undefined;
+            if (self.cur == .diamond_open) {
+              try self.readBlockConfig(&config, self.int());
+            } else {
+              // TODO: try and fetch block config from parameter
+              unreachable;
+            }
+            // TODO: apply block config
+          } else {
+            self.ctx().eh.expected_token_x_got_y(
+                self.l.walker.posFrom(self.cur_start), .identifier, self.cur);
+            while (self.cur != .block_name_sep and self.cur != .missing_block_name_sep) {
+              try self.advance();
+            }
+            if (self.cur == .diamond_open) {
+              var config: data.BlockConfig = undefined;
+              try self.readBlockConfig(&config, self.int());
+              // TODO: apply block config
+            }
+            parent.command.cur_cursor = .failed;
+          }
+          try self.pushLevel();
+          self.state = .start;
+        },
       }
     }
+  }
+
+  const ConfigItemKind = enum {csym, syntax, map, off, fullast, empty, unknown};
+
+  fn readBlockConfig(self: *Parser, into: *data.BlockConfig, alloc: *std.mem.Allocator) !void {
+    std.debug.assert(self.cur == .diamond_open);
+    var mapList: std.ArrayListUnmanaged(data.BlockConfig.Map) = .{};
+    into.* = .{
+      .syntax = null,
+      .off_colon = null,
+      .off_comment = null,
+      .full_ast = null,
+      .map = undefined,
+    };
+    while (self.cur != .diamond_close and self.cur != .end_source) {
+      while (true) {
+        try self.advance();
+        if (self.cur != .space) break;
+      }
+      std.debug.assert(self.cur == .identifier);
+      const start = self.cur_start;
+      const name = self.l.walker.contentFrom(self.cur_start.byte_offset);
+      const kind: ConfigItemKind = switch (std.hash.Adler32.hash(name)) {
+        std.hash.Adler32.hash("csym") => .csym,
+        std.hash.Adler32.hash("syntax") => .syntax,
+        std.hash.Adler32.hash("map") => .map,
+        std.hash.Adler32.hash("off") => .off,
+        std.hash.Adler32.hash("fullast") => .fullast,
+        std.hash.Adler32.hash("") => .empty,
+        else => blk: {
+          self.ctx().eh.unknown_config_directive(self.l.walker.posFrom(start));
+          break :blk .unknown;
+        },
+      };
+      while (true) {
+        try self.advance();
+        if (self.cur != .space) break;
+      }
+      var recover = false;
+      switch (kind) {
+        .csym => {
+          if (self.cur == .ns_sym) {
+            try mapList.append(alloc, .{
+              .pos = self.l.walker.posFrom(start),
+              .from = 0, .to = self.l.code_point});
+          } else {
+            self.ctx().eh.expected_token_x_got_y(
+                self.l.walker.posFrom(self.cur_start), .ns_sym, self.cur);
+            recover = true;
+          }
+        },
+        .syntax => {
+          if (self.cur == .identifier) {
+            // TODO
+          } else {
+            self.ctx().eh.expected_token_x_got_y(
+                self.l.walker.posFrom(self.cur_start), .identifier, self.cur);
+            recover = true;
+          }
+        },
+        .map => {
+          if (self.cur == .ns_sym) {
+            const from = self.l.code_point;
+            while (true) {
+              try self.advance();
+              if (self.cur != .space) break;
+            }
+            if (self.cur == .ns_sym) {
+              try mapList.append(alloc, .{
+                .pos = self.l.walker.posFrom(start),
+                .from = from, .to = self.l.code_point,
+              });
+            } else recover = true;
+          } else recover = true;
+          if (recover) {
+            self.ctx().eh.expected_token_x_got_y(
+                self.l.walker.posFrom(self.cur_start), .ns_sym, self.cur);
+          }
+        },
+        .off => {
+          switch (self.cur) {
+            .comment => into.off_comment = self.l.walker.posFrom(self.cur_start),
+            .block_name_sep => into.off_colon = self.l.walker.posFrom(self.cur_start),
+            .ns_sym => try mapList.append(alloc, .{
+              .pos = self.l.walker.posFrom(start), .from = self.l.code_point, .to = 0
+            }),
+            else => {
+              self.ctx().eh.expected_token_x_got_y(
+                  self.l.walker.posFrom(self.cur_start), .ns_sym, self.cur);
+              recover = true;
+            }
+          }
+        },
+        .fullast => into.full_ast = self.l.walker.posFrom(self.cur_start),
+        .empty => {
+          self.ctx().eh.expected_token_x_got_y(
+              self.l.walker.posFrom(self.cur_start), .identifier, self.cur);
+          recover = true;
+        },
+        .unknown => {}
+      }
+      try self.advance();
+      while (self.cur != .comma and self.cur != .diamond_close and self.cur != .end_source) {
+        if (self.cur != .space and !recover) {
+          self.ctx().eh.expected_token_x_got_y(
+              self.l.walker.posFrom(self.cur_start), .comma, self.cur);
+          recover = true;
+        }
+        try self.advance();
+      }
+    }
+    if (self.cur == .diamond_close) {
+      try self.advance();
+    } else {
+      self.ctx().eh.expected_token_x_got_y(
+          self.l.walker.posFrom(self.cur_start), .diamond_close, self.cur);
+    }
+    into.map = mapList.items;
   }
 };
