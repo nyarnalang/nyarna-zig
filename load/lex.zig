@@ -207,8 +207,8 @@ pub const Lexer = struct {
   state: State,
   walker: Walker,
   paren_depth: u16,
-  colons_disabled_at: ?u15,
-  comments_disabled_at: ?u15,
+  colons_disabled_at: ?usize,
+  comments_disabled_at: ?usize,
 
   /// the end of the recently emitted token
   /// (the start equals the end of the previously emitted token)
@@ -220,7 +220,7 @@ pub const Lexer = struct {
   /// for escape, contains the escaped character.
   code_point: u21,
   /// the namespace of the recently read symref.
-  ns: u16,
+  ns: u15,
 
   /// stores the start of the current line.
   /// necessary since searching for empty lines will read over the indentation
@@ -625,6 +625,11 @@ pub const Lexer = struct {
           if (l.comments_disabled_at) |depth| {
             if (l.levels.items.len < depth) {
               l.comments_disabled_at = null;
+            }
+          }
+          if (l.colons_disabled_at) |depth| {
+            if (l.levels.items.len < depth) {
+              l.colons_disabled_at = null;
             }
           }
           l.state = .after_end_id;
@@ -1066,6 +1071,18 @@ pub const Lexer = struct {
   inline fn curBaseState(l: *Lexer) State {
     return if (l.paren_depth > 0) .in_arg else
         if (l.level.special) State.special_syntax else State.in_block;
+  }
+
+  pub fn disableColons(l: *Lexer) void {
+    if (l.colons_disabled_at == null) {
+      l.colons_disabled_at = l.levels.items.len;
+    }
+  }
+
+  pub fn disableComments(l: *Lexer) void {
+    if (l.comments_disabled_at == null) {
+      l.comments_disabled_at = l.levels.items.len;
+    }
   }
 };
 

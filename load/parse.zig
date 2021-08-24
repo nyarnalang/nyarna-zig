@@ -4,6 +4,7 @@ const lex = @import("lex.zig");
 const Source = @import("source.zig").Source;
 const Context = @import("interpret.zig").Context;
 const mapper = @import("mapper.zig");
+const unicode = @import("unicode.zig");
 
 /// The parser creates AST nodes.
 /// Whenever an AST node is created, the parser checks whether it needs to be
@@ -111,6 +112,8 @@ pub const Parser = struct {
     nodes: std.ArrayListUnmanaged(*data.Node),
     paragraphs: std.ArrayListUnmanaged(data.Node.Paragraphs.Item),
 
+    block_config: ?*const data.BlockConfig,
+
     fn append(l: *ContentLevel, alloc: *std.mem.Allocator, item: *data.Node) !void {
       try l.nodes.append(alloc, item);
     }
@@ -141,7 +144,11 @@ pub const Parser = struct {
       }
     }
 
-    fn finalize(l: *ContentLevel, alloc: *std.mem.Allocator) !*data.Node {
+    fn finalize(l: *ContentLevel, p: *Parser) !*data.Node {
+      if (l.block_config) |c| {
+        try p.revertBlockConfig(c);
+      }
+      const alloc = p.int();
       if (l.paragraphs.items.len == 0) {
         return l.finalizeParagraph(alloc);
       } else {
@@ -218,11 +225,21 @@ pub const Parser = struct {
     block_name,
   };
 
+  const ns_mapping_failed = 1 << 15;
+  const ns_mapping_succeeded = (1 << 15) + 1;
+  const ns_mapping_no_from = ns_mapping_succeeded;
+
   /// stack of current levels. must have at least size of 1, with the first
   /// level being the current source's root.
   levels: std.ArrayListUnmanaged(ContentLevel),
   /// currently parsed block config. Filled in the .config state.
   config: ?data.BlockConfig,
+  /// stack of currently active namespace mapping statuses.
+  /// namespace mappings create a new namespace, disable a namespace, or map a
+  /// namespace from one character to another.
+  /// if a namespace is disabled, its index is pushed onto the stack.
+  /// for other operations, either ns_mapping_failed or ns_mapping_succeeded is pushed.
+  ns_mapping_stack: std.ArrayListUnmanaged(u16),
 
   l: lex.Lexer,
   state: State,
@@ -245,6 +262,7 @@ pub const Parser = struct {
     return Parser{
       .config = null,
       .levels = .{},
+      .ns_mapping_stack = .{},
       .l = undefined,
       .state = .start,
       .cur = undefined,
@@ -275,6 +293,7 @@ pub const Parser = struct {
       .command = undefined,
       .nodes = .{},
       .paragraphs = .{},
+      .block_config = null,
     });
   }
 
@@ -327,10 +346,10 @@ pub const Parser = struct {
               while (self.levels.items.len > 1) {
                 var lvl = &self.levels.items[self.levels.items.len - 1];
                 try self.levels.items[self.levels.items.len - 1].append(self.int(),
-                    try lvl.finalize(self.int()));
+                    try lvl.finalize(self));
                 _ = self.levels.pop();
               }
-              return self.levels.items[0].finalize(self.int());
+              return self.levels.items[0].finalize(self);
             },
             .symref => {
               self.levels.items[self.levels.items.len - 1].command = .{
@@ -350,7 +369,7 @@ pub const Parser = struct {
               var parent = &self.levels.items[self.levels.items.len - 2];
               std.debug.print("{s}: parent command={s}\n", .{@tagName(self.cur), @tagName(parent.command.info)});
               try parent.command.pushArg(self.int(),
-                  try lvl.finalize(self.int()));
+                  try lvl.finalize(self));
               _ = self.levels.pop();
               if (self.cur == .comma) {
                 try self.advance();
@@ -514,16 +533,17 @@ pub const Parser = struct {
         .after_blocks_start => {
           const parent = &self.levels.items[self.levels.items.len - 1];
 
-          var primary_config: data.BlockConfig = undefined;
+          var primary_config: ?data.BlockConfig = null;
 
           if (self.cur == .diamond_open) {
-            try self.readBlockConfig(&primary_config, self.int());
+            primary_config = @as(data.BlockConfig, undefined);
+            try self.readBlockConfig(&primary_config.?, self.int());
             parent.command.pushPrimary(self.l.walker.posFrom(self.l.recent_end), true);
           } else {
             // TODO: try and fetch block config from parameter
             unreachable;
           }
-          // TODO: apply block config
+          if (primary_config) |c| try self.applyBlockConfig(self.l.walker.posFrom(self.cur_start), &c);
           while (self.cur == .space) try self.advance();
           if (self.cur == .block_name_sep) {
             self.state = .block_name;
@@ -559,14 +579,15 @@ pub const Parser = struct {
             try self.advance();
             parent.command.pushName(name_pos, name, false,
                 if (self.cur == .diamond_open) .block_with_config else .block_no_config);
-            var config: data.BlockConfig = undefined;
+            var config: ?data.BlockConfig = null;
             if (self.cur == .diamond_open) {
-              try self.readBlockConfig(&config, self.int());
+              config = @as(data.BlockConfig, undefined);
+              try self.readBlockConfig(&config.?, self.int());
             } else {
               // TODO: try and fetch block config from parameter
               unreachable;
             }
-            // TODO: apply block config
+            if (config) |c| try self.applyBlockConfig(self.l.walker.posFrom(self.cur_start), &c);
           } else {
             self.ctx().eh.expected_token_x_got_y(
                 self.l.walker.posFrom(self.cur_start), .identifier, self.cur);
@@ -576,7 +597,7 @@ pub const Parser = struct {
             if (self.cur == .diamond_open) {
               var config: data.BlockConfig = undefined;
               try self.readBlockConfig(&config, self.int());
-              // TODO: apply block config
+              try self.applyBlockConfig(self.l.walker.posFrom(self.cur_start), &config);
             }
             parent.command.cur_cursor = .failed;
           }
@@ -703,5 +724,156 @@ pub const Parser = struct {
           self.l.walker.posFrom(self.cur_start), .diamond_close, self.cur);
     }
     into.map = mapList.items;
+  }
+
+  fn applyBlockConfig(self: *Parser, pos: data.Position, config: *const data.BlockConfig) !void {
+    var alloc = std.heap.stackFallback(128, self.int());
+
+    if (config.syntax) |s| unreachable; // TODO
+
+    if (config.map.len > 0) {
+      var resolved_indexes = try alloc.allocator.alloc(u16, config.map.len);
+      try self.ns_mapping_stack.ensureUnusedCapacity(self.int(), config.map.len);
+      // resolve all given from characters in the current set of command characters.
+      for (config.map) |mapping, i| {
+        resolved_indexes[i] = if (mapping.from == 0) ns_mapping_no_from else
+            if (self.ctx().command_characters.get(mapping.from)) |from_index| @intCast(u16, from_index) else blk: {
+          const ec = unicode.EncodedCharacter.init(mapping.from);
+          self.ctx().eh.is_not_a_namespace_character(ec.repr(), pos, mapping.pos);
+          break :blk ns_mapping_failed;
+        };
+      }
+      // disable all command characters that need disabling.
+      for (config.map) |mapping, i| {
+        if (mapping.to == 0) {
+          const from_index = resolved_indexes[i];
+          if (from_index != ns_mapping_failed) {
+            _ = self.ctx().command_characters.remove(mapping.from);
+          }
+          try self.ns_mapping_stack.append(self.int(), from_index);
+        }
+      }
+      // execute all namespace remappings
+      for (config.map) |mapping, i| {
+        const from_index = resolved_indexes[i];
+        if (mapping.to != 0 and from_index != ns_mapping_no_from) {
+          try self.ns_mapping_stack.append(self.int(), blk: {
+            if (from_index != ns_mapping_failed) {
+              if (self.ctx().command_characters.get(mapping.to)) |_| {
+                // check if an upcoming remapping will remove this command character
+                var found = false;
+                for (config.map[i+1..]) |upcoming| {
+                  if (upcoming.from == mapping.to) {
+                    found = true;
+                    break;
+                  }
+                }
+                if (!found) {
+                  const ec = unicode.EncodedCharacter.init(mapping.to);
+                  self.ctx().eh.already_a_namespace_character(ec.repr(), pos, mapping.pos);
+                  break :blk ns_mapping_failed;
+                }
+              }
+              try self.ctx().command_characters.put(self.int(), mapping.to, @intCast(u15, from_index));
+              // only remove old command character if it has not previously been remapped.
+              if (self.ctx().command_characters.get(mapping.from)) |cur_from_index| {
+                if (cur_from_index == from_index) {
+                  _ = self.ctx().command_characters.remove(mapping.from);
+                }
+              }
+              break :blk ns_mapping_succeeded;
+            } else break :blk ns_mapping_failed;
+          });
+        }
+      }
+      // establish all new namespaces
+      for (config.map) |mapping, i| {
+        if (resolved_indexes[i] == ns_mapping_no_from) {
+          std.debug.assert(mapping.to != 0);
+          if (self.ctx().command_characters.get(mapping.to)) |_| {
+            // this is not an error, but we still record it as 'failed' so
+            // that we know when reversing this block config, nothing needs to
+            // be done.
+            try self.ns_mapping_stack.append(self.int(), ns_mapping_failed);
+          } else {
+            try self.ctx().addNamespace(self.int(), mapping.to);
+            try self.ns_mapping_stack.append(self.int(), ns_mapping_succeeded);
+          }
+        }
+      }
+      // cleanup
+      alloc.allocator.free(resolved_indexes);
+    }
+
+    if (config.off_colon) |_| {
+      self.l.disableColons();
+    }
+    if (config.off_comment) |_| {
+      self.l.disableComments();
+    }
+
+    if (config.full_ast) |_| unreachable;
+
+    self.levels.items[self.levels.items.len - 1].block_config = config;
+  }
+
+  fn revertBlockConfig(self: *Parser, config: *const data.BlockConfig) !void {
+    if (config.syntax) |_| unreachable;
+
+    if (config.map.len > 0) {
+      var alloc = std.heap.stackFallback(128, self.int());
+
+      // reverse establishment of new namespaces
+      var i = config.map.len - 1;
+      while (true) : (i = i - 1) {
+        const mapping = &config.map[i];
+        if (mapping.from == 0) {
+          if (self.ns_mapping_stack.pop() == ns_mapping_succeeded) {
+            self.ctx().removeNamespace(mapping.to);
+          }
+        }
+        if (i == 0) break;
+      }
+
+      // get the indexes of namespaces that have been remapped.
+      var ns_indexes = try alloc.allocator.alloc(u15, config.map.len);
+      for (config.map) |mapping, j| {
+        if (mapping.from != 0 and mapping.to != 0) {
+          ns_indexes[j] = self.ctx().command_characters.get(mapping.to).?;
+        }
+      }
+
+      // reverse namespace remappings and re-enable characters that have been
+      // disabled. This can be done in one run.
+      i = config.map.len - 1;
+      while (true) : (i = i - 1) {
+        const mapping = &config.map[i];
+        if (mapping.from != 0) {
+          if (mapping.to != 0) {
+            if (self.ns_mapping_stack.pop() == ns_mapping_succeeded) {
+              const ns_index = ns_indexes[i];
+              // only remove command character if it has not already been reset
+              // to another namespace.
+              if (self.ctx().command_characters.get(mapping.to).? == ns_index) {
+                _ = self.ctx().command_characters.remove(mapping.to);
+              }
+              // this cannot fail because command_characters will always be large enough to
+              // add another item without requiring allocation.
+              self.ctx().command_characters.put(self.int(), mapping.from, ns_index) catch unreachable;
+            }
+          } else {
+            const ns_index = self.ns_mapping_stack.pop();
+            if (ns_index != ns_mapping_failed) {
+              // like above
+              self.ctx().command_characters.put(self.int(), mapping.from, @intCast(u15, ns_index)) catch unreachable;
+            }
+          }
+        }
+        if (i == 0) break;
+      }
+    }
+
+    // off_colon and off_comment are reversed automatically by the lexer
+    if (config.full_ast) |_| unreachable;
   }
 };

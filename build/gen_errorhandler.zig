@@ -46,10 +46,10 @@ pub fn main() !void {
     );
   }
   inline for (@typeInfo(errors.PreviousOccurenceError).Enum.fields) |f| {
-    _ = try eh.write("  pub fn " ++ f.name ++ "(self: *@This(), pos: data.Position, previous: data.Position) void {\n" ++
+    _ = try eh.write("  pub fn " ++ f.name ++ "(self: *@This(), repr: []const u8, pos: data.Position, previous: data.Position) void {\n" ++
     \\    self.count = self.count + 1;
-    \\    self.reporter.prevousOccurenceFn(self.reporter,
-    ++ "." ++ f.name ++ ", pos, previous);\n" ++
+    \\    self.reporter.previousOccurenceFn(self.reporter,
+    ++ "." ++ f.name ++ ", repr, pos, previous);\n" ++
     \\  }
     \\
     );

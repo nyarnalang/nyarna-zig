@@ -330,3 +330,18 @@ test "character categories" {
   try std.testing.expectEqual(Category.Po, category(','));
   try std.testing.expectEqual(Category.Sc, category('$'));
 }
+
+pub const EncodedCharacter = struct {
+  buffer: [4]u8,
+  len: u3,
+
+  pub fn init(character: u21) EncodedCharacter {
+    var ret: EncodedCharacter = undefined;
+    ret.len = std.unicode.utf8Encode(character, &ret.buffer) catch unreachable;
+    return ret;
+  }
+
+  pub fn repr(self: *const EncodedCharacter) []const u8 {
+    return self.buffer[0..self.len];
+  }
+};

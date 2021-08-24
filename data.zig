@@ -258,7 +258,7 @@ pub const Node = struct {
   pub const SymRef = union(enum) {
     resolved: *Symbol,
     unresolved: struct {
-      ns: u16,
+      ns: u15,
       name: []const u8,
     },
   };

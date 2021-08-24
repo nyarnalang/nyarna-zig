@@ -14,14 +14,33 @@ pub const WrongTokenError = enum {
 };
 
 pub const PreviousOccurenceError = enum {
-  baz
+  is_not_a_namespace_character, already_a_namespace_character,
+
+  fn errorMsg(e: PreviousOccurenceError) []const u8 {
+    return switch (e) {
+      .is_not_a_namespace_character => " is not a namespace character",
+      .already_a_namespace_character => " is already a namespace character",
+    };
+  }
+
+  fn entityName(e: PreviousOccurenceError) []const u8 {
+    return switch (e) {
+      .is_not_a_namespace_character, .already_a_namespace_character => "character",
+    };
+  }
+
+  fn prevOccurenceKind(e: PreviousOccurenceError) []const u8 {
+    return switch (e) {
+      .is_not_a_namespace_character, .already_a_namespace_character => "given"
+    };
+  }
 };
 
 pub const Reporter = struct {
   lexerErrorFn: fn(reporter: *Reporter, id: LexerError, pos: data.Position) void,
   parserErrorFn: fn(reporter: *Reporter, id: GenericParserError, pos: data.Position) void,
   wrongTokenErrorFn: fn(reporter: *Reporter, id: WrongTokenError, pos: data.Position, expected: data.Token, got: data.Token) void,
-  previousOccurenceFn: fn(reporter: *Reporter, id: PreviousOccurenceError, pos: data.Position, previous: data.Position) void,
+  previousOccurenceFn: fn(reporter: *Reporter, id: PreviousOccurenceError, repr: []const u8, pos: data.Position, previous: data.Position) void,
 };
 
 pub const CmdLineReporter = struct {
@@ -78,6 +97,17 @@ pub const CmdLineReporter = struct {
     }
   }
 
+  fn renderSubPos(self: *CmdLineReporter, pos: data.Position) void {
+    switch (pos) {
+      .module => |mod| {
+        self.writer.print("{s}({}:{}): ", .{mod.name, mod.start.at_line, mod.start.before_column}) catch unreachable;
+      },
+      .intrinsic => self.writer.print("<intrinsic>: ", .{}) catch unreachable,
+      .argument => |arg| self.writer.print("(param {s}): ", .{arg.param_name}) catch unreachable,
+      .invokation => self.writer.print("<invokation>: ", .{}) catch unreachable,
+    }
+  }
+
   fn renderError(self: *CmdLineReporter, comptime fmt: []const u8, args: anytype) void {
     self.style(.{.bold, .fg_red}, "[error] ", .{});
     self.style(.{.bold}, fmt, args);
@@ -108,11 +138,11 @@ pub const CmdLineReporter = struct {
     self.renderError("wrong token: expected {s}, got {s}", .{@tagName(expected), @tagName(got)});
   }
 
-  fn previousOccurence(reporter: *Reporter, id: PreviousOccurenceError, pos: data.Position, previous: data.Position) void {
+  fn previousOccurence(reporter: *Reporter, id: PreviousOccurenceError, repr: []const u8, pos: data.Position, previous: data.Position) void {
     const self = @fieldParentPtr(CmdLineReporter, "reporter", reporter);
     self.renderPos(pos);
-    self.renderError("duplicate symbol name", .{});
-    self.renderPos(previous);
-    self.renderInfo("previous occurrence here", .{});
+    self.renderError("{s} '{s}'{s}", .{id.entityName(), repr, id.errorMsg()});
+    self.renderSubPos(previous);
+    self.writer.print("{s} here", .{previous}) catch unreachable;
   }
 };

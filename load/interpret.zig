@@ -16,7 +16,7 @@ pub const Context = struct {
   /// references. Lexer uses this to check whether a character is a command
   /// character; the namespace mapping is relevant later for the interpreter.
   /// The values are indexes into the namespaces field.
-  command_characters: std.hash_map.AutoHashMapUnmanaged(u21, u16),
+  command_characters: std.hash_map.AutoHashMapUnmanaged(u21, u15),
   /// Allocator used for AST nodes that will be discarded after interpretation
   /// has produced an expression.
   temp_nodes: std.heap.ArenaAllocator,
@@ -46,8 +46,7 @@ pub const Context = struct {
       },
     };
     errdefer ret.deinit().deinit();
-    try ret.command_characters.put(&ret.temp_nodes.allocator, '\\', 0);
-    try ret.namespaces.append(&ret.temp_nodes.allocator, .{});
+    try ret.addNamespace(&ret.temp_nodes.allocator, '\\');
     return ret;
   }
 
@@ -56,6 +55,18 @@ pub const Context = struct {
   pub fn deinit(self: *Context) std.heap.ArenaAllocator {
     self.temp_nodes.deinit();
     return self.source_content;
+  }
+
+  pub fn addNamespace(self: *Context, alloc: *std.mem.Allocator, character: u21) !void {
+    // TODO: error message when too many namespaces are used (?)
+    try self.command_characters.put(alloc, character, @intCast(u15, self.namespaces.items.len));
+    try self.namespaces.append(alloc, .{});
+  }
+
+  pub fn removeNamespace(self: *Context, character: u21) void {
+    const ns_index = self.command_characters.remove(character).?;
+    std.debug.assert(ns_index.value == self.namespaces.items.len - 1);
+    _ = self.namespaces.pop();
   }
 
   /// Interprets the given node and returns an expression.
@@ -76,7 +87,7 @@ pub const Context = struct {
     return referred_source_unavailable;
   }
 
-  pub fn resolveSymbol(self: *Context, pos: data.Position, ns: u16, name: []const u8) !*data.Node {
+  pub fn resolveSymbol(self: *Context, pos: data.Position, ns: u15, name: []const u8) !*data.Node {
     var ret = try self.temp_nodes.allocator.create(data.Node);
     ret.pos = pos;
 

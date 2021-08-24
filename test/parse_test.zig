@@ -11,7 +11,7 @@ fn ensureLiteral(node: *data.Node, kind: @typeInfo(data.Node.Literal).Struct.fie
   try std.testing.expectEqualStrings(content, node.data.literal.content);
 }
 
-fn ensureUnresSymref(node: *data.Node, ns: u16, id: []const u8) !void {
+fn ensureUnresSymref(node: *data.Node, ns: usize, id: []const u8) !void {
   try std.testing.expectEqual(data.Node.Data.symref, node.data);
   try std.testing.expectEqual(ns, node.data.symref.unresolved.ns);
   try std.testing.expectEqualStrings(id, node.data.symref.unresolved.name);
