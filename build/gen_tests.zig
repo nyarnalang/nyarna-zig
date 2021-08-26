@@ -1,5 +1,5 @@
 const std = @import("std");
-const tml = @import("tml.zig");
+const tml = @import("tml");
 
 pub fn main() !void {
   var datadir = try std.fs.cwd().openDir("data",
@@ -12,7 +12,7 @@ pub fn main() !void {
   _ = try lextest.write(
     \\const std = @import("std");
     \\const tml = @import("tml.zig");
-    \\const testing = @import("testing.zig");
+    \\const testing = @import("testing");
     \\
     \\
   );

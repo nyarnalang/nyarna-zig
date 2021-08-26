@@ -1,39 +1,45 @@
 const std = @import("std");
 const Builder = std.build.Builder;
 
-const dataPkg = std.build.Pkg{
+const data_pkg = std.build.Pkg{
   .name = "data",
   .path = "data.zig",
 };
 
-const errorsPkg = std.build.Pkg{
+const errors_pkg = std.build.Pkg{
   .name = "errors",
   .path = "errors_generated.zig",
-  .dependencies = &.{dataPkg},
+  .dependencies = &.{data_pkg},
+};
+
+const source_pkg = std.build.Pkg{
+  .name = "source",
+  .path = "load/source.zig",
+};
+
+const interpret_pkg = std.build.Pkg{
+  .name = "interpret",
+  .path = "load/interpret.zig",
+  .dependencies = &.{errors_pkg, data_pkg},
+};
+
+const lex_pkg = std.build.Pkg{
+  .name = "lex",
+  .path = "load/lex.zig",
+  .dependencies = &.{data_pkg},
 };
 
 fn internalPackages(s: *std.build.LibExeObjStep) void {
-  s.addPackage(dataPkg);
-  s.addPackage(errorsPkg);
-  s.addPackage(.{
-    .name = "lex",
-    .path = "load/lex.zig",
-    .dependencies = &.{dataPkg},
-  });
+  s.addPackage(data_pkg);
+  s.addPackage(errors_pkg);
+  s.addPackage(lex_pkg);
   s.addPackage(.{
     .name = "parse",
     .path = "load/parse.zig",
-    .dependencies = &.{dataPkg, errorsPkg},
+    .dependencies = &.{data_pkg, errors_pkg},
   });
-  s.addPackage(.{
-    .name = "source",
-    .path = "load/source.zig",
-  });
-  s.addPackage(.{
-    .name = "interpret",
-    .path = "load/interpret.zig",
-    .dependencies = &.{errorsPkg},
-  });
+  s.addPackage(source_pkg);
+  s.addPackage(interpret_pkg);
 }
 
 pub fn build(b: *Builder) !void {
@@ -50,6 +56,10 @@ pub fn build(b: *Builder) !void {
   ehgen_cmd.step.dependOn(&ehgen_exe.step);
 
   var testgen_exe = b.addExecutable("testgen", "build/gen_tests.zig");
+  testgen_exe.addPackage(.{
+    .name = "tml",
+    .path = "test/tml.zig",
+  });
   var testgen_cmd = testgen_exe.run();
   testgen_cmd.cwd = "test";
   testgen_cmd.step.dependOn(&testgen_exe.step);
@@ -58,6 +68,11 @@ pub fn build(b: *Builder) !void {
   lex_test.step.dependOn(&testgen_cmd.step);
   lex_test.step.dependOn(&ehgen_cmd.step);
   internalPackages(lex_test);
+  lex_test.addPackage(.{
+    .name = "testing",
+    .path = "test/testing.zig",
+    .dependencies = &.{data_pkg, source_pkg, interpret_pkg, errors_pkg, lex_pkg},
+  });
 
   var lex_test_step = b.step("lexTest", "Run lexer tests");
   lex_test_step.dependOn(&lex_test.step);

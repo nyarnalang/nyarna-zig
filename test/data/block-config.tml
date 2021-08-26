@@ -23,7 +23,7 @@
 5:5[27] blocks_sep
 5:6[28] space
 6:1[29] block_name_sep
-6:2[30] literal
+6:2[30] identifier
 6:5[33] block_name_sep
 6:6[34] diamond_open
 6:7[35] identifier
@@ -39,7 +39,7 @@
 6:32[60] diamond_close
 6:33[61] space
 7:1[62] block_name_sep
-7:2[63] literal
+7:2[63] identifier
 7:5[66] block_name_sep
 7:6[67] diamond_open
 7:7[68] identifier

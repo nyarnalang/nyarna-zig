@@ -2,6 +2,7 @@ const std = @import("std");
 const data = @import("data");
 const tml = @import("tml.zig");
 const lex = @import("lex");
+const errors = @import("errors");
 const Source = @import("source").Source;
 const Context = @import("interpret").Context;
 
@@ -23,16 +24,18 @@ pub fn lexTest(f: *tml.File) !void {
     .locator = ".doc.document",
     .locator_ctx = ".doc.",
   };
-  var ctx = try Context.init(std.testing.allocator);
+  var r = errors.CmdLineReporter.init();
+  var ctx = try Context.init(std.testing.allocator, &r.reporter);
   defer ctx.deinit().deinit();
   var l = try lex.Lexer.init(&ctx, &src);
   var startpos = l.recent_end;
   defer l.deinit();
   var t = try l.next();
   while(true) : (t = try l.next()) {
-    const actual = try if (@enumToInt(t) >= @enumToInt(lex.Token.skipping_call_id))
+    const actual = try if (@enumToInt(t) >= @enumToInt(data.Token.skipping_call_id))
       std.fmt.allocPrint(std.testing.allocator, "{}:{}[{}] skipping_call_id({})",
-          .{startpos.at_line, startpos.before_column, startpos.byte_offset, @enumToInt(t) - @enumToInt(lex.Token.skipping_call_id) + 1})
+          .{startpos.at_line, startpos.before_column, startpos.byte_offset,
+            @enumToInt(t) - @enumToInt(data.Token.skipping_call_id) + 1})
     else
       std.fmt.allocPrint(std.testing.allocator, "{}:{}[{}] {s}",
           .{startpos.at_line, startpos.before_column, startpos.byte_offset, @tagName(t)});

@@ -12,6 +12,14 @@ pub const Cursor = struct {
   pub fn unknown() Cursor {
     return .{.at_line = 0, .before_column = 0, .byte_offset = 0};
   }
+
+  pub fn posHere(c: Cursor, name: []const u8) Position {
+    return Position{
+      .module = .{
+        .name = name, .start = c, .end = c,
+      }
+    };
+  }
 };
 
 /// Describes the origin of a construct. Usually start and end cursor in a
@@ -162,7 +170,7 @@ pub const Token = enum(u16) {
   }
 
   pub fn numSkippedEnds(t: Token) u32 {
-    return @enumToInt(t) - @enumToInt(Token.skipping_end_suject) + 1;
+    return @enumToInt(t) - @enumToInt(Token.skipping_call_id) + 1;
   }
 };
 

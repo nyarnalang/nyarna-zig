@@ -18,10 +18,15 @@ pub const Mapper = struct {
 
   mapFn: fn(self: *Self, pos: data.Position, input: data.Node.UnresolvedCall.ParamKind, flag: ParamFlag) ?Cursor,
   pushFn: fn(self: *Self, alloc: *std.mem.Allocator, at: Cursor, content: *data.Node) std.mem.Allocator.Error!void,
+  configFn: fn(self: *Self, at: Cursor) ?*data.BlockConfig,
   finalizeFn: fn(self: *Self, alloc: *std.mem.Allocator, pos: data.Position) std.mem.Allocator.Error!*data.Node,
 
   pub fn map(self: *Self, pos: data.Position, input: data.Node.UnresolvedCall.ParamKind, flag: ParamFlag) ?Cursor {
     return self.mapFn(self, pos, input, flag);
+  }
+
+  pub fn config(self: *Self, at: Cursor) ?*data.BlockConfig {
+    return self.configFn(self, at);
   }
 
   pub fn push(self: *Self, alloc: *std.mem.Allocator, at: Cursor, content: *data.Node) !void {
@@ -44,6 +49,7 @@ pub const SignatureMapper = struct {
     return .{
       .mapper = .{
         .mapFn = SignatureMapper.map,
+        .configFn = SignatureMapper.config,
         .pushFn = SignatureMapper.push,
         .finalizeFn = SignatureMapper.finalize,
       },
@@ -96,6 +102,11 @@ pub const SignatureMapper = struct {
     }
   }
 
+  fn config(mapper: *Mapper, at: Mapper.Cursor) ?*data.BlockConfig {
+    const self = @fieldParentPtr(SignatureMapper, "mapper", mapper);
+    return &self.signature.parameter[at.index].config;
+  }
+
   fn push(mapper: *Mapper, alloc: *self.mem.Allocator, at: Cursor, content: *data.Node) void {
     const self = @fieldParentPtr(SignatureMapper, "mapper", mapper);
     if (self.signature.parameter[at.index].capture == .varargs and !c.direct) {
@@ -133,6 +144,7 @@ pub const CollectingMapper = struct {
     return .{
       .mapper = .{
         .mapFn = CollectingMapper.map,
+        .configFn = CollectingMapper.config,
         .pushFn = CollectingMapper.push,
         .finalizeFn = CollectingMapper.finalize,
       },
@@ -146,6 +158,10 @@ pub const CollectingMapper = struct {
       self.first_block = self.items.items.len;
     }
     return Mapper.Cursor{.param = .{.kind = input}, .config = flag == .block_with_config};
+  }
+
+  fn config(mapper: *Mapper, at: Mapper.Cursor) ?*data.BlockConfig {
+    return null;
   }
 
   fn push(mapper: *Mapper, alloc: *std.mem.Allocator, at: Mapper.Cursor, content: *data.Node) !void {
@@ -179,6 +195,7 @@ pub const AssignmentMapper = struct {
     return .{
       .mapper = .{
         .mapFn = AssignmentMapper.map,
+        .configFn = AssignmentMapper.config,
         .pushFn =  AssignmentMapper.push,
         .finalizeFn = AssignmentMapper.finalize,
       },
@@ -202,6 +219,11 @@ pub const AssignmentMapper = struct {
   fn push(mapper: *Mapper, alloc: *std.mem.Allocator, at: Mapper.Cursor, content: *data.Node) !void {
     const self = @fieldParentPtr(AssignmentMapper, "mapper", mapper);
     self.replacement = content;
+  }
+
+  fn config(mapper: *Mapper, at: Mapper.Cursor) ?*data.BlockConfig {
+    // TODO: block config on variable definition
+    return null;
   }
 
   fn finalize(mapper: *Mapper, alloc: *std.mem.Allocator, pos: data.Position) !*data.Node {

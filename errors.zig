@@ -2,7 +2,7 @@ const std = @import("std");
 const data = @import("data");
 
 pub const LexerError = enum {
-  unknown_config_directive
+  unknown_config_directive, missing_closing_parenthesis
 };
 
 pub const GenericParserError = enum {
@@ -13,19 +13,30 @@ pub const WrongTokenError = enum {
   expected_token_x_got_y
 };
 
+pub const WrongIdError = enum {
+  wrong_call_id, skipping_call_id,
+
+  fn kind(e: WrongIdError) []const u8 {
+    return switch (e) {
+      .wrong_call_id => "wrong",
+      .skipping_call_id => "skipping"
+    };
+  }
+};
+
 pub const PreviousOccurenceError = enum {
   is_not_a_namespace_character, already_a_namespace_character,
 
   fn errorMsg(e: PreviousOccurenceError) []const u8 {
     return switch (e) {
       .is_not_a_namespace_character => " is not a namespace character",
-      .already_a_namespace_character => " is already a namespace character",
+      .already_a_namespace_character => " is already a namespace character"
     };
   }
 
   fn entityName(e: PreviousOccurenceError) []const u8 {
     return switch (e) {
-      .is_not_a_namespace_character, .already_a_namespace_character => "character",
+      .is_not_a_namespace_character, .already_a_namespace_character => "character"
     };
   }
 
@@ -40,6 +51,7 @@ pub const Reporter = struct {
   lexerErrorFn: fn(reporter: *Reporter, id: LexerError, pos: data.Position) void,
   parserErrorFn: fn(reporter: *Reporter, id: GenericParserError, pos: data.Position) void,
   wrongTokenErrorFn: fn(reporter: *Reporter, id: WrongTokenError, pos: data.Position, expected: data.Token, got: data.Token) void,
+  wrongIdErrorFn: fn(reporter: *Reporter, id: WrongIdError, pos: data.Position, expected: []const u8, got: []const u8, defined_at: data.Position) void,
   previousOccurenceFn: fn(reporter: *Reporter, id: PreviousOccurenceError, repr: []const u8, pos: data.Position, previous: data.Position) void,
 };
 
@@ -70,6 +82,7 @@ pub const CmdLineReporter = struct {
         .parserErrorFn = CmdLineReporter.parserError,
         .previousOccurenceFn = CmdLineReporter.previousOccurence,
         .wrongTokenErrorFn = CmdLineReporter.wrongTokenError,
+        .wrongIdErrorFn = CmdLineReporter.wrongIdError,
       },
       .writer = stdout.writer(),
       .do_style = std.os.isatty(stdout.handle),
@@ -136,6 +149,15 @@ pub const CmdLineReporter = struct {
     const self = @fieldParentPtr(CmdLineReporter, "reporter", reporter);
     self.renderPos(pos);
     self.renderError("wrong token: expected {s}, got {s}", .{@tagName(expected), @tagName(got)});
+  }
+
+  fn wrongIdError(reporter: *Reporter, id: WrongIdError, pos: data.Position, expected: []const u8, got: []const u8, defined_at: data.Position) void {
+    const self = @fieldParentPtr(CmdLineReporter, "reporter", reporter);
+    self.renderPos(pos);
+    self.renderError("{s} id: expected '{s}', got '{s}'",
+        .{WrongIdError.kind(id), expected, got});
+    self.renderSubPos(defined_at);
+    _ = self.writer.write("command started here") catch unreachable;
   }
 
   fn previousOccurence(reporter: *Reporter, id: PreviousOccurenceError, repr: []const u8, pos: data.Position, previous: data.Position) void {

@@ -155,3 +155,30 @@ test "parse unknown call" {
   try std.testing.expectEqual(false, p2.had_explicit_block_config);
   try ensureLiteral(p2.content, .text, "spam");
 }
+
+test "parse block" {
+  var src = Source{
+    .content = "\\block:<>\n  rock\n:droggel:\n  jug\n\\end(block)\x04",
+    .offsets = .{},
+    .name = "block",
+    .locator = ".doc.document",
+    .locator_ctx = ".doc.",
+  };
+
+  var r = errors.CmdLineReporter.init();
+  var p = parse.Parser.init();
+  var ctx = try Context.init(std.testing.allocator, &r.reporter);
+  defer ctx.deinit().deinit();
+  var res = try p.parseSource(&src, &ctx);
+  try std.testing.expectEqual(data.Node.Data.unresolved_call, res.data);
+  try ensureUnresSymref(res.data.unresolved_call.target, 0, "block");
+  try std.testing.expectEqual(@as(usize, 2), res.data.unresolved_call.params.len);
+  const p1 = &res.data.unresolved_call.params[0];
+  try std.testing.expectEqual(data.Node.UnresolvedCall.ParamKind.primary, p1.kind);
+  try std.testing.expectEqual(true, p1.had_explicit_block_config);
+  try ensureLiteral(p1.content, .text, "rock");
+  const p2 = &res.data.unresolved_call.params[1];
+  try std.testing.expectEqual(data.Node.UnresolvedCall.ParamKind.named, p2.kind);
+  try std.testing.expectEqual(false, p2.had_explicit_block_config);
+  try ensureLiteral(p2.content, .text, "jug");
+}

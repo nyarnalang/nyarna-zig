@@ -8,10 +8,7 @@ pub fn main() !void {
     \\const std = @import("std");
     \\
     \\const data = @import("data.zig");
-    \\const errors = @import("errors.zig");
-    \\
-    \\pub const Reporter = errors.Reporter;
-    \\pub const CmdLineReporter = errors.CmdLineReporter;
+    \\pub usingnamespace @import("errors.zig");
     \\
     \\pub const Handler = struct {
     \\  count: usize = 0,
@@ -50,6 +47,15 @@ pub fn main() !void {
     \\    self.count = self.count + 1;
     \\    self.reporter.previousOccurenceFn(self.reporter,
     ++ "." ++ f.name ++ ", repr, pos, previous);\n" ++
+    \\  }
+    \\
+    );
+  }
+  inline for (@typeInfo(errors.WrongIdError).Enum.fields) |f| {
+    _ = try eh.write("  pub fn " ++ f.name ++ "(self: *@This(), pos: data.Position, expected: []const u8, got: []const u8, defined_at: data.Position) void {\n" ++
+    \\    self.count = self.count + 1;
+    \\    self.reporter.wrongIdErrorFn(self.reporter,
+    ++ "." ++ f.name ++ ", pos, expected, got, defined_at);\n" ++
     \\  }
     \\
     );

@@ -144,6 +144,13 @@ pub const Parser = struct {
       }
     }
 
+    fn implicitBlockConfig(l: *ContentLevel) ?*data.BlockConfig {
+      return switch (l.command.cur_cursor) {
+        .mapped => |c| l.command.mapper.config(c),
+        else => null,
+      };
+    }
+
     fn finalize(l: *ContentLevel, p: *Parser) !*data.Node {
       if (l.block_config) |c| {
         try p.revertBlockConfig(c);
@@ -209,16 +216,11 @@ pub const Parser = struct {
     /// and transition to .default. Handles error cases like .subject being
     /// prefix notation for a function but not being followed by a call.
     command,
-    /// This state checks whether a primary block exists after a blocks start
-    /// without a block config (which forces a primary block).
-    /// A primary block exists when either any non-space content appears before
-    /// the occurrence of a block name, or an \end() command directly closes the
+    /// This state checks whether a primary block exists after a blocks start.
+    /// A primary block exists when any of the following is true:
+    /// a block config exists, any non-space content appears before the
+    /// occurrence of a block name, or an \end() command directly closes the
     /// blocks.
-    ///
-    /// When we are in this state, a ContentLevel has already been created to
-    /// honor any implicit block config that may be defined by the chosen target
-    /// parameter. If no primary block exists, that ContentLevel will be
-    /// discarded and its changes will be reverted.
     after_blocks_start,
     /// This state reads in a block name, possibly a block configuration, and
     /// then pushes a level to read the block content.
@@ -233,7 +235,9 @@ pub const Parser = struct {
   /// level being the current source's root.
   levels: std.ArrayListUnmanaged(ContentLevel),
   /// currently parsed block config. Filled in the .config state.
-  config: ?data.BlockConfig,
+  config: ?*data.BlockConfig,
+  /// buffer for inline block config.
+  config_buffer: data.BlockConfig,
   /// stack of currently active namespace mapping statuses.
   /// namespace mappings create a new namespace, disable a namespace, or map a
   /// namespace from one character to another.
@@ -261,6 +265,7 @@ pub const Parser = struct {
   pub fn init() Parser {
     return Parser{
       .config = null,
+      .config_buffer = undefined,
       .levels = .{},
       .ns_mapping_stack = .{},
       .l = undefined,
@@ -314,6 +319,16 @@ pub const Parser = struct {
     std.debug.print("  << {s}\n", .{@tagName(self.cur)});
   }
 
+  fn leaveLevel(self: *Parser) !void {
+    var lvl = &self.levels.items[self.levels.items.len - 1];
+    var parent = &self.levels.items[self.levels.items.len - 2];
+    const lvl_node = try lvl.finalize(self);
+    std.debug.print("{s}: pushing {s} into command {s}\n",
+        .{@tagName(self.cur), @tagName(lvl_node.data), @tagName(parent.command.info)});
+    try parent.command.pushArg(self.int(), lvl_node);
+    _ = self.levels.pop();
+  }
+
   fn doParse(self: *Parser) !*data.Node {
     while (true) {
       std.debug.print("parse step. state={s}, level stack =\n", .{@tagName(self.state)});
@@ -323,7 +338,7 @@ pub const Parser = struct {
 
       switch (self.state) {
         .start => {
-          while (self.cur == .space) try self.advance();
+          while (self.cur == .space or self.cur == .indent) try self.advance();
           try self.pushLevel();
           self.state = .default;
         },
@@ -338,10 +353,8 @@ pub const Parser = struct {
         },
         .default => {
           switch (self.cur) {
-            .space, .escape, .literal, .ws_break => {
-              self.state = .textual;
-              continue;
-            },
+            .indent => try self.advance(),
+            .space, .escape, .literal, .ws_break => self.state = .textual,
             .end_source => {
               while (self.levels.items.len > 1) {
                 var lvl = &self.levels.items[self.levels.items.len - 1];
@@ -365,12 +378,7 @@ pub const Parser = struct {
               try self.advance();
             },
             .list_end, .comma => {
-              var lvl = &self.levels.items[self.levels.items.len - 1];
-              var parent = &self.levels.items[self.levels.items.len - 2];
-              std.debug.print("{s}: parent command={s}\n", .{@tagName(self.cur), @tagName(parent.command.info)});
-              try parent.command.pushArg(self.int(),
-                  try lvl.finalize(self));
-              _ = self.levels.pop();
+              try self.leaveLevel();
               if (self.cur == .comma) {
                 try self.advance();
                 self.state = .start;
@@ -379,6 +387,44 @@ pub const Parser = struct {
             .parsep => {
               try self.levels.items[self.levels.items.len - 1].pushParagraph(self.int(), self.l.newline_count);
               try self.advance();
+            },
+            .block_name_sep => {
+              try self.leaveLevel();
+              self.state = .block_name;
+            },
+            .block_end_open => {
+              try self.advance();
+              switch (self.cur) {
+                .call_id => {},
+                .wrong_call_id => {
+                  const cmd_start = self.levels.items[self.levels.items.len - 2].command.start;
+                  self.ctx().eh.wrong_call_id(self.l.walker.posFrom(self.cur_start),
+                      self.l.recent_expected_id, self.l.recent_id,
+                      data.Position.inMod(self.l.walker.source.name, cmd_start, cmd_start));
+                },
+                else => {
+                  std.debug.assert(@enumToInt(self.cur) >= @enumToInt(data.Token.skipping_call_id));
+                  const cmd_start = self.levels.items[self.levels.items.len - 2].command.start;
+                  self.ctx().eh.skipping_call_id(self.l.walker.posFrom(self.cur_start),
+                      self.l.recent_expected_id, self.l.recent_id,
+                      data.Position.inMod(self.l.walker.source.name, cmd_start, cmd_start));
+                  var i = @as(u32, 0);
+                  while (i < data.Token.numSkippedEnds(self.cur)) : (i = i + 1) {
+                    try self.leaveLevel();
+                  }
+                },
+              }
+              try self.leaveLevel();
+              try self.advance();
+              if (self.cur == .list_end) {
+                try self.advance();
+              } else {
+                const pos = data.Position.inMod(self.l.walker.source.name, self.cur_start, self.cur_start);
+                self.ctx().eh.missing_closing_parenthesis(pos);
+              }
+              self.state = .command;
+              try self.levels.items[self.levels.items.len - 1].command.shift(
+                  self.int(), self.l.walker.source.name, self.cur_start);
             },
             else => {
               std.debug.print("unexpected token in default: {s}\n", .{@tagName(self.cur)});
@@ -480,7 +526,7 @@ pub const Parser = struct {
               lvl.command.startAssignment();
               try self.advance();
             },
-            .list_start => {
+            .list_start, .blocks_sep => {
               const target = lvl.command.info.unknown;
               switch (target.data) {
                 .symref, .access => {
@@ -500,12 +546,8 @@ pub const Parser = struct {
                 },
                 else => unreachable // TODO
               }
+              self.state = if (self.cur == .list_start) .possible_start else .after_blocks_start;
               try self.advance();
-              self.state = .possible_start;
-            },
-            .blocks_sep => {
-              // TODO
-              unreachable;
             },
             .closer => {
               try lvl.append(self.int(), lvl.command.info.unknown);
@@ -533,22 +575,25 @@ pub const Parser = struct {
         .after_blocks_start => {
           const parent = &self.levels.items[self.levels.items.len - 1];
 
-          var primary_config: ?data.BlockConfig = null;
-
+          var lvl_pushed = false;
           if (self.cur == .diamond_open) {
-            primary_config = @as(data.BlockConfig, undefined);
-            try self.readBlockConfig(&primary_config.?, self.int());
-            parent.command.pushPrimary(self.l.walker.posFrom(self.l.recent_end), true);
+            try self.readBlockConfig(&self.config_buffer, self.int());
+            const pos = self.cur_start.posHere(self.l.walker.source.name);
+            try self.applyBlockConfig(pos, &self.config_buffer);
+            parent.command.pushPrimary(pos, true);
+            try self.pushLevel();
+            lvl_pushed = true;
           } else {
-            // TODO: try and fetch block config from parameter
-            unreachable;
+            if (parent.implicitBlockConfig()) |c| {
+              try self.applyBlockConfig(self.cur_start.posHere(self.l.walker.source.name), c);
+            }
           }
-          if (primary_config) |c| try self.applyBlockConfig(self.l.walker.posFrom(self.cur_start), &c);
-          while (self.cur == .space) try self.advance();
+          while (self.cur == .space or self.cur == .indent) try self.advance();
           if (self.cur == .block_name_sep) {
+            if (lvl_pushed) try self.leaveLevel();
             self.state = .block_name;
           } else {
-            try self.pushLevel();
+            if (!lvl_pushed) try self.pushLevel();
             self.state = .default;
           }
         },
@@ -579,15 +624,13 @@ pub const Parser = struct {
             try self.advance();
             parent.command.pushName(name_pos, name, false,
                 if (self.cur == .diamond_open) .block_with_config else .block_no_config);
-            var config: ?data.BlockConfig = null;
             if (self.cur == .diamond_open) {
-              config = @as(data.BlockConfig, undefined);
-              try self.readBlockConfig(&config.?, self.int());
+              try self.readBlockConfig(&self.config_buffer, self.int());
+              try self.applyBlockConfig(self.cur_start.posHere(self.l.walker.source.name), &self.config_buffer);
             } else {
-              // TODO: try and fetch block config from parameter
-              unreachable;
+              if (parent.implicitBlockConfig()) |c|
+                try self.applyBlockConfig(self.cur_start.posHere(self.l.walker.source.name), c);
             }
-            if (config) |c| try self.applyBlockConfig(self.l.walker.posFrom(self.cur_start), &c);
           } else {
             self.ctx().eh.expected_token_x_got_y(
                 self.l.walker.posFrom(self.cur_start), .identifier, self.cur);
@@ -595,13 +638,11 @@ pub const Parser = struct {
               try self.advance();
             }
             if (self.cur == .diamond_open) {
-              var config: data.BlockConfig = undefined;
-              try self.readBlockConfig(&config, self.int());
-              try self.applyBlockConfig(self.l.walker.posFrom(self.cur_start), &config);
+              try self.readBlockConfig(&self.config_buffer, self.int());
+              try self.applyBlockConfig(self.cur_start.posHere(self.l.walker.source.name), &self.config_buffer);
             }
             parent.command.cur_cursor = .failed;
           }
-          try self.pushLevel();
           self.state = .start;
         },
       }
@@ -620,11 +661,20 @@ pub const Parser = struct {
       .full_ast = null,
       .map = undefined,
     };
+    var first = true;
     while (self.cur != .diamond_close and self.cur != .end_source) {
       while (true) {
         try self.advance();
         if (self.cur != .space) break;
       }
+      if (self.cur == .diamond_close) {
+        if (!first) {
+          self.ctx().eh.expected_token_x_got_y(self.l.walker.posFrom(self.cur_start),
+              data.Token.identifier, data.Token.diamond_close);
+        }
+        break;
+      }
+      first = false;
       std.debug.assert(self.cur == .identifier);
       const start = self.cur_start;
       const name = self.l.walker.contentFrom(self.cur_start.byte_offset);

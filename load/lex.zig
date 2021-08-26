@@ -216,6 +216,10 @@ pub const Lexer = struct {
   /// the recently read id. equals the content for identifier and call_id,
   /// equals the name behind the command character for symref.
   recent_id: []const u8,
+  /// the recently expected id. set when recent_id is not the expected id, i.e.
+  /// when .wrong_end_command or .skipping_end_command is emitted.
+  /// used for error reporting.
+  recent_expected_id: []const u8,
   /// for ns_sym and symref, contains the decoded command character.
   /// for escape, contains the escaped character.
   code_point: u21,
@@ -255,6 +259,7 @@ pub const Lexer = struct {
       .newline_count = 0,
       .recent_end = undefined,
       .recent_id = undefined,
+      .recent_expected_id = undefined,
       .line_start = undefined,
       .indent_char_seen = undefined,
       .code_point = undefined,
@@ -586,6 +591,11 @@ pub const Lexer = struct {
             l.recent_end = l.walker.before;
             return .space;
           }
+          if (cur == '>') {
+            l.cur_stored = l.walker.nextInline();
+            l.state = .after_config;
+            return .diamond_close;
+          }
           l.readIdentifier(&cur);
           l.state = .config_item_arg;
           l.recent_end = l.walker.before;
@@ -617,6 +627,7 @@ pub const Lexer = struct {
           if (res == .call_id) {
             l.level = l.levels.pop();
           } else {
+            l.recent_expected_id = l.level.id;
             var i = @enumToInt(res) + 1;
             while (i > @enumToInt(Token.skipping_call_id)) : (i = i - 1) {
               l.level = l.levels.pop();
@@ -760,8 +771,15 @@ pub const Lexer = struct {
         return l.genCommand(cur);
       }
     }
-    l.readLiteral(cur, ctx);
-    return ContentResult{.token = .literal};
+    return ContentResult{.token =
+      if (ctx == .block_name) blk: {
+        l.readIdentifier(cur);
+        break :blk .identifier;
+      } else blk: {
+        l.readLiteral(cur, ctx);
+        break :blk .literal;
+      }
+    };
   }
 
   inline fn advanceAndReturn(l: *Lexer, value: Token, comptime new_state: ?State) ContentResult {
