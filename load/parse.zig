@@ -5,6 +5,7 @@ const Source = @import("source.zig").Source;
 const Context = @import("interpret.zig").Context;
 const mapper = @import("mapper.zig");
 const unicode = @import("unicode.zig");
+const errors = @import("errors");
 
 /// The parser creates AST nodes.
 /// Whenever an AST node is created, the parser checks whether it needs to be
@@ -304,7 +305,7 @@ pub const Parser = struct {
 
   pub fn parseSource(self: *Parser, source: *Source, context: *Context) !*data.Node {
     self.l = try lex.Lexer.init(context, source);
-    try self.advance();
+    self.advance();
     return self.doParse();
   }
 
@@ -312,19 +313,67 @@ pub const Parser = struct {
     return self.doParse();
   }
 
-  inline fn advance(self: *Parser) !void {
-    self.cur_start = self.l.recent_end;
-    // TODO: recover from unicode errors?
-    self.cur = try self.l.next();
-    std.debug.print("  << {s}\n", .{@tagName(self.cur)});
+  /// retrieves the next valid token from the lexer.
+  /// emits errors for any invalid token along the way.
+  inline fn advance(self: *Parser) void {
+    while (true) {
+      self.cur_start = self.l.recent_end;
+      (switch (self.l.next() catch |e| blk: {
+        const start = self.cur_start;
+        const next = while (true) {
+          break self.l.next() catch continue;
+        } else unreachable;
+        self.ctx().eh.InvalidUtf8Encoding(self.l.walker.posFrom(start));
+        break :blk next;
+      }) {
+        // the following errors are not handled here since they indicate structure:
+        //   missing_block_name_sep (ends block name)
+        //
+        .illegal_code_point => errors.Handler.IllegalCodePoint,
+        .illegal_opening_parenthesis => errors.Handler.IllegalOpeningParenthesis,
+        .illegal_blocks_start_in_args => errors.Handler.IllegalBlocksStartInArgs,
+        .illegal_command_char => errors.Handler.IllegalCommandChar,
+        .mixed_indentation => errors.Handler.MixedIndentation,
+        .illegal_indentation => errors.Handler.IllegalIndentation,
+        .illegal_content_at_header => errors.Handler.IllegalContentAtHeader,
+        .illegal_character_for_id => errors.Handler.IllegalCharacterForId,
+        .invalid_end_command => errors.Handler.InvalidEndCommand,
+        .comment => continue,
+        else => |t| {
+          self.cur = t;
+          break;
+        }
+      })(&self.ctx().eh, self.l.walker.posFrom(self.cur_start));
+    }
+    if (std.builtin.mode == .Debug) {
+      if (@enumToInt(self.cur) >= @enumToInt(data.Token.skipping_call_id)) {
+        std.debug.print("  << skipping_call_id({})\n", .{@enumToInt(self.cur) - @enumToInt(data.Token.skipping_call_id) + 1});
+      } else {
+        std.debug.print("  << {s}\n", .{@tagName(self.cur)});
+      }
+    }
+  }
+
+  /// retrieves the next token from the lexer. returns true iff that token is valid.
+  /// if false is returned, self.cur must be considered undefined.
+  inline fn getNext(self: *Parser) bool {
+    // TODO: implement & call this
   }
 
   fn leaveLevel(self: *Parser) !void {
     var lvl = &self.levels.items[self.levels.items.len - 1];
     var parent = &self.levels.items[self.levels.items.len - 2];
     const lvl_node = try lvl.finalize(self);
-    std.debug.print("{s}: pushing {s} into command {s}\n",
-        .{@tagName(self.cur), @tagName(lvl_node.data), @tagName(parent.command.info)});
+    if (std.builtin.mode == .Debug) {
+      if (@enumToInt(self.cur) >= @enumToInt(data.Token.skipping_call_id)) {
+        std.debug.print("skipping_call_id({}): pushing {s} into command {s}\n",
+            .{@enumToInt(self.cur) - @enumToInt(data.Token.skipping_call_id) + 1,
+            @tagName(lvl_node.data), @tagName(parent.command.info)});
+      } else {
+        std.debug.print("{s}: pushing {s} into command {s}\n",
+            .{@tagName(self.cur), @tagName(lvl_node.data), @tagName(parent.command.info)});
+      }
+    }
     try parent.command.pushArg(self.int(), lvl_node);
     _ = self.levels.pop();
   }
@@ -338,12 +387,12 @@ pub const Parser = struct {
 
       switch (self.state) {
         .start => {
-          while (self.cur == .space or self.cur == .indent) try self.advance();
+          while (self.cur == .space or self.cur == .indent) self.advance();
           try self.pushLevel();
           self.state = .default;
         },
         .possible_start => {
-          while (self.cur == .space) try self.advance();
+          while (self.cur == .space) self.advance();
           if (self.cur == .list_end) {
             self.state = .after_list;
           } else {
@@ -353,7 +402,7 @@ pub const Parser = struct {
         },
         .default => {
           switch (self.cur) {
-            .indent => try self.advance(),
+            .indent => self.advance(),
             .space, .escape, .literal, .ws_break => self.state = .textual,
             .end_source => {
               while (self.levels.items.len > 1) {
@@ -375,37 +424,37 @@ pub const Parser = struct {
                 .cur_cursor = undefined,
               };
               self.state = .command;
-              try self.advance();
+              self.advance();
             },
             .list_end, .comma => {
               try self.leaveLevel();
               if (self.cur == .comma) {
-                try self.advance();
+                self.advance();
                 self.state = .start;
               } else self.state = .after_list;
             },
             .parsep => {
               try self.levels.items[self.levels.items.len - 1].pushParagraph(self.int(), self.l.newline_count);
-              try self.advance();
+              self.advance();
             },
             .block_name_sep => {
               try self.leaveLevel();
               self.state = .block_name;
             },
             .block_end_open => {
-              try self.advance();
+              self.advance();
               switch (self.cur) {
                 .call_id => {},
                 .wrong_call_id => {
                   const cmd_start = self.levels.items[self.levels.items.len - 2].command.start;
-                  self.ctx().eh.wrong_call_id(self.l.walker.posFrom(self.cur_start),
+                  self.ctx().eh.WrongCallId(self.l.walker.posFrom(self.cur_start),
                       self.l.recent_expected_id, self.l.recent_id,
                       data.Position.inMod(self.l.walker.source.name, cmd_start, cmd_start));
                 },
                 else => {
                   std.debug.assert(@enumToInt(self.cur) >= @enumToInt(data.Token.skipping_call_id));
                   const cmd_start = self.levels.items[self.levels.items.len - 2].command.start;
-                  self.ctx().eh.skipping_call_id(self.l.walker.posFrom(self.cur_start),
+                  self.ctx().eh.SkippingCallId(self.l.walker.posFrom(self.cur_start),
                       self.l.recent_expected_id, self.l.recent_id,
                       data.Position.inMod(self.l.walker.source.name, cmd_start, cmd_start));
                   var i = @as(u32, 0);
@@ -415,12 +464,12 @@ pub const Parser = struct {
                 },
               }
               try self.leaveLevel();
-              try self.advance();
+              self.advance();
               if (self.cur == .list_end) {
-                try self.advance();
+                self.advance();
               } else {
                 const pos = data.Position.inMod(self.l.walker.source.name, self.cur_start, self.cur_start);
-                self.ctx().eh.missing_closing_parenthesis(pos);
+                self.ctx().eh.MissingClosingParenthesis(pos);
               }
               self.state = .command;
               try self.levels.items[self.levels.items.len - 1].command.shift(
@@ -437,7 +486,7 @@ pub const Parser = struct {
           var non_space_len: usize = 0;
           var non_space_end: data.Cursor = undefined;
           const textual_start = self.cur_start;
-          while (true) : (try self.advance()) {
+          while (true) : (self.advance()) {
             switch (self.cur) {
               .space =>
                 try content.appendSlice(self.int(),
@@ -474,7 +523,7 @@ pub const Parser = struct {
               self.levels.items[self.levels.items.len - 2].command.pushName(
                   pos, content.items, pos.module.end.byte_offset - pos.module.start.byte_offset == 2, .flow);
               while (true) {
-                try self.advance();
+                self.advance();
                 if (self.cur != .space) break;
               }
             } else {
@@ -497,7 +546,7 @@ pub const Parser = struct {
           var lvl = &self.levels.items[self.levels.items.len - 1];
           switch(self.cur) {
             .access => {
-              try self.advance();
+              self.advance();
               if (self.cur != .identifier) unreachable; // TODO: recover
               var node = try self.int().create(data.Node);
               node.* = .{
@@ -510,10 +559,10 @@ pub const Parser = struct {
                 },
               };
               lvl.command.info.unknown = node;
-              try self.advance();
+              self.advance();
             },
             .assign => {
-              try self.advance();
+              self.advance();
               switch (self.cur) {
                 .list_start => {
                   self.state = .start;
@@ -524,7 +573,7 @@ pub const Parser = struct {
                 else => unreachable // TODO: recover
               }
               lvl.command.startAssignment();
-              try self.advance();
+              self.advance();
             },
             .list_start, .blocks_sep => {
               const target = lvl.command.info.unknown;
@@ -538,6 +587,9 @@ pub const Parser = struct {
                     .func_ref => |func| {
                       unreachable; // TODO
                     },
+                    .expr_chain => |chain| {
+                      unreachable; // TODO
+                    },
                     .failed => {
                       try lvl.command.startUnresolvedCall(self.int());
                     },
@@ -547,11 +599,11 @@ pub const Parser = struct {
                 else => unreachable // TODO
               }
               self.state = if (self.cur == .list_start) .possible_start else .after_blocks_start;
-              try self.advance();
+              self.advance();
             },
             .closer => {
               try lvl.append(self.int(), lvl.command.info.unknown);
-              try self.advance();
+              self.advance();
               self.state = .default;
             },
             else => {
@@ -562,11 +614,11 @@ pub const Parser = struct {
         },
         .after_list => {
           const end = self.l.recent_end;
-          try self.advance();
+          self.advance();
           if (self.cur == .blocks_sep) {
             // call continues
             self.state = .after_blocks_start;
-            try self.advance();
+            self.advance();
           } else {
             self.state = .command;
             try self.levels.items[self.levels.items.len - 1].command.shift(self.int(), self.l.walker.source.name, end);
@@ -588,7 +640,7 @@ pub const Parser = struct {
               try self.applyBlockConfig(self.cur_start.posHere(self.l.walker.source.name), c);
             }
           }
-          while (self.cur == .space or self.cur == .indent) try self.advance();
+          while (self.cur == .space or self.cur == .indent) self.advance();
           if (self.cur == .block_name_sep) {
             if (lvl_pushed) try self.leaveLevel();
             self.state = .block_name;
@@ -600,7 +652,7 @@ pub const Parser = struct {
         .block_name => {
           std.debug.assert(self.cur == .block_name_sep);
           while (true) {
-            try self.advance();
+            self.advance();
             if (self.cur != .space) break;
           }
           const parent = &self.levels.items[self.levels.items.len - 1];
@@ -609,19 +661,19 @@ pub const Parser = struct {
             const name_pos = self.l.walker.posFrom(self.cur_start);
             var recover = false;
             while (true) {
-              try self.advance();
+              self.advance();
               if (self.cur == .block_name_sep or self.cur == .missing_block_name_sep) break;
               if (self.cur != .space and !recover) {
-                self.ctx().eh.expected_token_x_got_y(
+                self.ctx().eh.ExpectedTokenXGotY(
                     self.l.walker.posFrom(self.cur_start), .block_name_sep, self.cur);
                 recover = true;
               }
             }
             if (self.cur == .missing_block_name_sep) {
-              self.ctx().eh.missing_block_name_end(
+              self.ctx().eh.MissingBlockNameEnd(
                 data.Position.inMod(self.l.walker.source.name, self.cur_start, self.cur_start));
             }
-            try self.advance();
+            self.advance();
             parent.command.pushName(name_pos, name, false,
                 if (self.cur == .diamond_open) .block_with_config else .block_no_config);
             if (self.cur == .diamond_open) {
@@ -632,10 +684,10 @@ pub const Parser = struct {
                 try self.applyBlockConfig(self.cur_start.posHere(self.l.walker.source.name), c);
             }
           } else {
-            self.ctx().eh.expected_token_x_got_y(
+            self.ctx().eh.ExpectedTokenXGotY(
                 self.l.walker.posFrom(self.cur_start), .identifier, self.cur);
             while (self.cur != .block_name_sep and self.cur != .missing_block_name_sep) {
-              try self.advance();
+              self.advance();
             }
             if (self.cur == .diamond_open) {
               try self.readBlockConfig(&self.config_buffer, self.int());
@@ -664,12 +716,12 @@ pub const Parser = struct {
     var first = true;
     while (self.cur != .diamond_close and self.cur != .end_source) {
       while (true) {
-        try self.advance();
+        self.advance();
         if (self.cur != .space) break;
       }
       if (self.cur == .diamond_close) {
         if (!first) {
-          self.ctx().eh.expected_token_x_got_y(self.l.walker.posFrom(self.cur_start),
+          self.ctx().eh.ExpectedTokenXGotY(self.l.walker.posFrom(self.cur_start),
               data.Token.identifier, data.Token.diamond_close);
         }
         break;
@@ -686,12 +738,12 @@ pub const Parser = struct {
         std.hash.Adler32.hash("fullast") => .fullast,
         std.hash.Adler32.hash("") => .empty,
         else => blk: {
-          self.ctx().eh.unknown_config_directive(self.l.walker.posFrom(start));
+          self.ctx().eh.UnknownConfigDirective(self.l.walker.posFrom(start));
           break :blk .unknown;
         },
       };
       while (true) {
-        try self.advance();
+        self.advance();
         if (self.cur != .space) break;
       }
       var recover = false;
@@ -702,7 +754,7 @@ pub const Parser = struct {
               .pos = self.l.walker.posFrom(start),
               .from = 0, .to = self.l.code_point});
           } else {
-            self.ctx().eh.expected_token_x_got_y(
+            self.ctx().eh.ExpectedTokenXGotY(
                 self.l.walker.posFrom(self.cur_start), .ns_sym, self.cur);
             recover = true;
           }
@@ -711,7 +763,7 @@ pub const Parser = struct {
           if (self.cur == .identifier) {
             // TODO
           } else {
-            self.ctx().eh.expected_token_x_got_y(
+            self.ctx().eh.ExpectedTokenXGotY(
                 self.l.walker.posFrom(self.cur_start), .identifier, self.cur);
             recover = true;
           }
@@ -720,7 +772,7 @@ pub const Parser = struct {
           if (self.cur == .ns_sym) {
             const from = self.l.code_point;
             while (true) {
-              try self.advance();
+              self.advance();
               if (self.cur != .space) break;
             }
             if (self.cur == .ns_sym) {
@@ -731,7 +783,7 @@ pub const Parser = struct {
             } else recover = true;
           } else recover = true;
           if (recover) {
-            self.ctx().eh.expected_token_x_got_y(
+            self.ctx().eh.ExpectedTokenXGotY(
                 self.l.walker.posFrom(self.cur_start), .ns_sym, self.cur);
           }
         },
@@ -743,7 +795,7 @@ pub const Parser = struct {
               .pos = self.l.walker.posFrom(start), .from = self.l.code_point, .to = 0
             }),
             else => {
-              self.ctx().eh.expected_token_x_got_y(
+              self.ctx().eh.ExpectedTokenXGotY(
                   self.l.walker.posFrom(self.cur_start), .ns_sym, self.cur);
               recover = true;
             }
@@ -751,26 +803,26 @@ pub const Parser = struct {
         },
         .fullast => into.full_ast = self.l.walker.posFrom(self.cur_start),
         .empty => {
-          self.ctx().eh.expected_token_x_got_y(
+          self.ctx().eh.ExpectedTokenXGotY(
               self.l.walker.posFrom(self.cur_start), .identifier, self.cur);
           recover = true;
         },
         .unknown => {}
       }
-      try self.advance();
+      self.advance();
       while (self.cur != .comma and self.cur != .diamond_close and self.cur != .end_source) {
         if (self.cur != .space and !recover) {
-          self.ctx().eh.expected_token_x_got_y(
+          self.ctx().eh.ExpectedTokenXGotY(
               self.l.walker.posFrom(self.cur_start), .comma, self.cur);
           recover = true;
         }
-        try self.advance();
+        self.advance();
       }
     }
     if (self.cur == .diamond_close) {
-      try self.advance();
+      self.advance();
     } else {
-      self.ctx().eh.expected_token_x_got_y(
+      self.ctx().eh.ExpectedTokenXGotY(
           self.l.walker.posFrom(self.cur_start), .diamond_close, self.cur);
     }
     into.map = mapList.items;
@@ -789,7 +841,7 @@ pub const Parser = struct {
         resolved_indexes[i] = if (mapping.from == 0) ns_mapping_no_from else
             if (self.ctx().command_characters.get(mapping.from)) |from_index| @intCast(u16, from_index) else blk: {
           const ec = unicode.EncodedCharacter.init(mapping.from);
-          self.ctx().eh.is_not_a_namespace_character(ec.repr(), pos, mapping.pos);
+          self.ctx().eh.IsNotANamespaceCharacter(ec.repr(), pos, mapping.pos);
           break :blk ns_mapping_failed;
         };
       }
@@ -820,7 +872,7 @@ pub const Parser = struct {
                 }
                 if (!found) {
                   const ec = unicode.EncodedCharacter.init(mapping.to);
-                  self.ctx().eh.already_a_namespace_character(ec.repr(), pos, mapping.pos);
+                  self.ctx().eh.AlreadyANamespaceCharacter(ec.repr(), pos, mapping.pos);
                   break :blk ns_mapping_failed;
                 }
               }

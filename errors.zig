@@ -2,47 +2,50 @@ const std = @import("std");
 const data = @import("data");
 
 pub const LexerError = enum {
-  unknown_config_directive, missing_closing_parenthesis
+  UnknownConfigDirective, MissingClosingParenthesis, InvalidUtf8Encoding,
+  IllegalCodePoint, IllegalOpeningParenthesis, IllegalBlocksStartInArgs,
+  IllegalCommandChar, MixedIndentation, IllegalIndentation, IllegalContentAtHeader,
+  IllegalCharacterForId, InvalidEndCommand
 };
 
 pub const GenericParserError = enum {
-  named_argument_in_assignment, missing_block_name_end
+  NamedArgumentInAssignment, MissingBlockNameEnd,
 };
 
 pub const WrongTokenError = enum {
-  expected_token_x_got_y
+  ExpectedTokenXGotY
 };
 
 pub const WrongIdError = enum {
-  wrong_call_id, skipping_call_id,
+  WrongCallId, SkippingCallId,
 
   fn kind(e: WrongIdError) []const u8 {
     return switch (e) {
-      .wrong_call_id => "wrong",
-      .skipping_call_id => "skipping"
+      .WrongCallId => "wrong",
+      .SkippingCallId => "skipping"
     };
   }
 };
 
 pub const PreviousOccurenceError = enum {
-  is_not_a_namespace_character, already_a_namespace_character,
+  IsNotANamespaceCharacter, AlreadyANamespaceCharacter,
 
   fn errorMsg(e: PreviousOccurenceError) []const u8 {
     return switch (e) {
-      .is_not_a_namespace_character => " is not a namespace character",
-      .already_a_namespace_character => " is already a namespace character"
+      .IsNotANamespaceCharacter => " is not a namespace character",
+      .AlreadyANamespaceCharacter => " is already a namespace character"
     };
   }
 
   fn entityName(e: PreviousOccurenceError) []const u8 {
     return switch (e) {
-      .is_not_a_namespace_character, .already_a_namespace_character => "character"
+      .IsNotANamespaceCharacter, .AlreadyANamespaceCharacter => "character"
     };
   }
 
   fn prevOccurenceKind(e: PreviousOccurenceError) []const u8 {
     return switch (e) {
-      .is_not_a_namespace_character, .already_a_namespace_character => "given"
+      .IsNotANamespaceCharacter, .AlreadyANamespaceCharacter => "given"
     };
   }
 };

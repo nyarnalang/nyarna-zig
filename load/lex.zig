@@ -545,6 +545,7 @@ pub const Lexer = struct {
             l.recent_end = l.walker.before;
             return t;
           } else {
+            l.level = l.levels.pop();
             l.state = l.curBaseState();
           }
         },
@@ -1103,17 +1104,3 @@ pub const Lexer = struct {
     }
   }
 };
-
-fn testLexer(input: *Source, expected: []const Token) !void {
-  var ctx = Context{
-    .command_characters = .{},
-    .allocator = std.testing.allocator,
-  };
-  defer ctx.command_characters.deinit(ctx.allocator);
-  try ctx.command_characters.put(std.testing.allocator, '\\', 0);
-  var l = try Lexer.init(&ctx, input);
-  defer l.deinit();
-  for (expected) |t| {
-    try std.testing.expectEqual(try l.next(), t);
-  }
-}

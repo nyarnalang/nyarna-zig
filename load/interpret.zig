@@ -8,6 +8,11 @@ pub const Errors = error {
   referred_source_unavailable,
 };
 
+const InterpretError = error {
+  failed_to_interpret_node,
+  OutOfMemory
+};
+
 /// The Context is a view of the loader for the various processing steps
 /// (lexer, parser, interpreter). It effectively implements the interpreter
 /// since the parser can initiate interpretation of nodes.
@@ -73,9 +78,9 @@ pub const Context = struct {
   /// A call of a keyword will be allocated inside the temporary allocator of
   /// the current source, while anything else will be allocated in the public
   /// region containing the current file's content.
-  pub fn interpret(self: *Context, input: *data.Node) !*data.Expression {
+  pub fn interpret(self: *Context, input: *data.Node) InterpretError!*data.Expression {
     // TODO
-    return Errors.failed_to_interpret_node;
+    return InterpretError.failed_to_interpret_node;
   }
 
   /// Evaluates the given expression, which must be a call to a keyword that
@@ -130,6 +135,11 @@ pub const Context = struct {
       /// enforce this.
       prefix: ?*data.Expression = null,
     },
+    /// chain starts at an expression and descends into the returned value.
+    expr_chain: struct {
+      expr: *data.Expression,
+      field_chain: std.ArrayListUnmanaged(usize) = .{},
+    },
     /// the resolution failed because an identifier in the chain could not be resolved –
     /// this is not necessarily an error since the chain may be successfully resolved later.
     failed,
@@ -155,6 +165,10 @@ pub const Context = struct {
             }
             // TODO: transform function reference to variable ref, then search
             // in that expression's type for the symbol.
+            unreachable;
+          },
+          .expr_chain => |ec| {
+            // TODO: same as var_chain basically
             unreachable;
           },
           .failed => return .failed,
@@ -184,8 +198,15 @@ pub const Context = struct {
           }
         };
       },
-      // TODO: can this ever be called on another kind of node?
-      else => unreachable,
+      else => {
+        const expr = self.interpret(chain) catch |err| switch(err) {
+          InterpretError.failed_to_interpret_node => return .failed,
+          InterpretError.OutOfMemory => |oom| return oom,
+        };
+        // TODO: resolve accessor chain in context of expression's type and
+        // return expr_chain
+        unreachable;
+      }
     }
   }
 };

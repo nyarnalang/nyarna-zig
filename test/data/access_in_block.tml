@@ -1,0 +1,21 @@
+=== Access in block
+--- input
+\block:
+  \foo::bar()
+\end(block)
+--- tokens
+3:1[0] symref
+3:7[6] blocks_sep
+3:8[7] space
+4:1[8] indent
+4:3[10] symref
+4:7[14] access
+4:9[16] identifier
+4:12[19] list_start
+4:13[20] list_end
+4:14[21] ws_break
+5:1[22] block_end_open
+5:6[27] call_id
+5:11[32] list_end
+5:12[33] ws_break
+6:1[34] end_source

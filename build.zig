@@ -29,17 +29,19 @@ const lex_pkg = std.build.Pkg{
   .dependencies = &.{data_pkg},
 };
 
+const parse_pkg = std.build.Pkg{
+  .name = "parse",
+  .path = "load/parse.zig",
+  .dependencies = &.{data_pkg, errors_pkg},
+};
+
+const internal_pkgs = [_]std.build.Pkg{
+  data_pkg, errors_pkg, lex_pkg, parse_pkg, source_pkg, interpret_pkg};
+
 fn internalPackages(s: *std.build.LibExeObjStep) void {
-  s.addPackage(data_pkg);
-  s.addPackage(errors_pkg);
-  s.addPackage(lex_pkg);
-  s.addPackage(.{
-    .name = "parse",
-    .path = "load/parse.zig",
-    .dependencies = &.{data_pkg, errors_pkg},
-  });
-  s.addPackage(source_pkg);
-  s.addPackage(interpret_pkg);
+  for (internal_pkgs) |pkg| {
+    s.addPackage(pkg);
+  }
 }
 
 pub fn build(b: *Builder) !void {
@@ -71,15 +73,21 @@ pub fn build(b: *Builder) !void {
   lex_test.addPackage(.{
     .name = "testing",
     .path = "test/testing.zig",
-    .dependencies = &.{data_pkg, source_pkg, interpret_pkg, errors_pkg, lex_pkg},
+    .dependencies = &internal_pkgs,
   });
 
   var lex_test_step = b.step("lexTest", "Run lexer tests");
   lex_test_step.dependOn(&lex_test.step);
 
   var parse_test = b.addTest("test/parse_test.zig");
+  parse_test.step.dependOn(&testgen_cmd.step);
   parse_test.step.dependOn(&ehgen_cmd.step);
   internalPackages(parse_test);
+  parse_test.addPackage(.{
+    .name = "testing",
+    .path = "test/testing.zig",
+    .dependencies = &internal_pkgs,
+  });
 
   var parse_test_step = b.step("parseTest", "Run parser tests");
   parse_test_step.dependOn(&parse_test.step);
