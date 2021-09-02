@@ -19,28 +19,23 @@
 
 \foo(foo, bar)::double()
 --- ast
-+ROOT "standalone"
-  >CONTENT
-  +CALL
-    +TARGET
-      +FUNC
-        =NAME "double"
-      -FUNC
-    -TARGET
-    +PARAM "this"
-      +CALL
-        +TARGET
-          =TYPE foo
-        -TARGET
-        +PARAM "a"
-          =RAW Raw "foo"
-        -PARAM
-        +PARAM "b"
-          =RAW Raw "bar"
-        -PARAM
-      -CALL
-    -PARAM
-  -CALL
--ROOT
++CALL
+  +TARGET
+    =SYMREF .doc.double
+  -TARGET
+  +PARAM "this"
+    +CALL
+      +TARGET
+        =SYMREF .doc.foo
+      -TARGET
+      +PARAM "a"
+        =LIT TEXT "foo"
+      -PARAM
+      +PARAM "b"
+        =LIT TEXT "bar"
+      -PARAM
+    -CALL
+  -PARAM
+-CALL
 --- document
 =RAW Raw "foobarfoobar"

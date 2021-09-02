@@ -16,7 +16,7 @@
 
 \foo(true)
 \bar(true)
---- ast
+--- todo:comptime-funcs
 +ROOT "standalone"
   >CONTENT
   +CALL

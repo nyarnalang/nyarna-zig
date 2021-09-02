@@ -6,7 +6,7 @@
 Hello, \who!
 --- inline:who {strip}
 World
---- ast
+--- todo:updateDocParameter
 +ROOT "standalone"
   +PARAM "who"
     =TYPE Raw

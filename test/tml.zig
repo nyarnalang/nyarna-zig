@@ -10,7 +10,7 @@ pub const Value = struct {
 pub const Values = std.StringHashMap(Value);
 
 const ParseError = error {
-  parsing_failed
+  parsing_failed, todo_encountered
 };
 
 const Tags = struct {
@@ -173,7 +173,12 @@ pub const File = struct {
       }
       if (!found) {
         if (sub_name.len > 0) {
-          return failWith(name, "unknown selector: `{s}`", .{item_name});
+          if (std.mem.eql(u8, "todo", item_name)) {
+            std.debug.print("[TODO] {s}: {s}\n", .{name, sub_name});
+            return ParseError.todo_encountered;
+          } else {
+            return failWith(name, "unknown selector: `{s}`", .{item_name});
+          }
         } else {
           try ret.items.put(item_name, .{.line_offset = start, .content = content});
         }

@@ -5,7 +5,4 @@ Bar # a comment
 Baz # a comment with escaped newline \
 Foz
 --- ast
-+ROOT "standalone"
-  >CONTENT
-  =RAW Raw "Foo Bar\nBazFoz"
--ROOT
+=LIT TEXT "Foo Bar\nBazFoz"

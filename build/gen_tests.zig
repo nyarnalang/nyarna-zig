@@ -24,7 +24,10 @@ fn genTests(dir: *std.fs.Dir, sets: []TestSet) !void {
     if (entry.kind != .File) continue;
     var file = try dir.openFile(entry.name, .{});
     defer file.close();
-    var content = try tml.File.loadFile(dir, entry.name, &file);
+    var content = tml.File.loadFile(dir, entry.name, &file) catch |err| switch(err) {
+      error.todo_encountered => continue,
+      else => return err,
+    };
     defer content.deinit();
     for (sets) |*set| {
       if (content.items.get(set.tml_item)) |_| {

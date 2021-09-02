@@ -23,7 +23,7 @@ amet
 \Paragraph:
   consectetur adipiscing elit
 \end(Paragraph)
---- ast
+--- todo:update with new paragraph handling
 +ROOT "fragment"
   >CONTENT
   +CALL

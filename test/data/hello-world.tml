@@ -9,18 +9,13 @@
 \end(declare)
 \hello(World)
 --- ast
-+ROOT "standalone"
-  >CONTENT
-  +CALL
-    +TARGET
-      +FUNC
-        =NAME "hello"
-      -FUNC
-    -TARGET
-    +PARAM "who"
-      =RAW Raw "World"
-    -PARAM
-  -CALL
--ROOT
++CALL
+  +TARGET
+    =SYMREF .doc.hello
+  -TARGET
+  +PARAM "who"
+    =LIT TEXT "World"
+  -PARAM
+-CALL
 --- document
 =RAW Raw "Hello, World!"

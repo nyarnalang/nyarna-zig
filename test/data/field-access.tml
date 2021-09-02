@@ -16,28 +16,23 @@
 
 \foo(\Data(x, y))
 --- ast
-+ROOT "standalone"
-  >CONTENT
-  +CALL
-    +TARGET
-      +FUNC
-        =NAME "foo"
-      -FUNC
-    -TARGET
-    +PARAM "data"
-      +CALL
-        +TARGET
-          =TYPE Data
-        -TARGET
-        +PARAM "a"
-          =RAW Raw "x"
-        -PARAM
-        +PARAM "b"
-          =RAW Raw "y"
-        -PARAM
-      -CALL
-    -PARAM
-  -CALL
--ROOT
++CALL
+  +TARGET
+    =SYMREF .doc.foo
+  -TARGET
+  +PARAM "data"
+    +CALL
+      +TARGET
+        =SYMREF .doc.Data
+      -TARGET
+      +PARAM "a"
+        =LIT TEXT "x"
+      -PARAM
+      +PARAM "b"
+        =LIT TEXT "y"
+      -PARAM
+    -CALL
+  -PARAM
+-CALL
 --- document
 =RAW Raw "(x, y)"

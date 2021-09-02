@@ -1,14 +1,14 @@
 === Inline Block Config
 --- input
 \block:
-:content:<nocolon>
+:content:<off :>
   lorem ipsum
   :dolor sit amet
 \end(block)
 
-\if(true):<nocomment>
+\if(true):<off #>
   this is # not a comment
-:else:<nocommand>
+:else:<off \>
   \this is not a command # but this is a comment
 \end(if)
 
@@ -16,37 +16,50 @@
   \this is not a command @if(true, but this is)
 \end(block)
 --- ast
-+ROOT "standalone"
-  >CONTENT
-  +CALL
++PARA
+  +UCALL
     +TARGET
-      +FUNC
-        =NAME "concatOf"
-      -FUNC
+      =SYMREF [0]block
     -TARGET
-    +PARAM "items"
-      +VARARGS
-        =RAW Raw "lorem ipsum\n:dolor sit amet"
-        =RAW Space "\n\n"
-        +CALL
-          +TARGET
-            +FUNC
-              =NAME "if"
-            -FUNC
-          -TARGET
-          +PARAM "condition"
-            =ENUM Boolean "true"
-          -PARAM
-          +PARAM "then"
-            =RAW Raw "this is # not a comment"
-          -PARAM
-          +PARAM "else"
-            =RAW Raw "\\this is not a command"
-          -PARAM
-        -CALL
-        =RAW Space "\n\n"
-        =RAW Raw "\\this is not a command but this is"
-      -VARARGS
+    +PARAM named="content"
+      =LIT TEXT "lorem ipsum\n:dolor sit amet"
     -PARAM
-  -CALL
--ROOT
+  -UCALL
+-PARA
++PARA
+  +UCALL
+    +TARGET
+      =SYMREF [0]if
+    -TARGET
+    +PARAM pos
+      =LIT TEXT "true"
+    -PARAM
+    +PARAM primary
+      =LIT TEXT "this is # not a comment"
+    -PARAM
+    +PARAM named="else"
+      =LIT TEXT "\\this is not a command"
+    -PARAM
+  -UCALL
+-PARA
++PARA
+  +UCALL
+    +TARGET
+      =SYMREF [0]block
+    -TARGET
+    +PARAM primary
+      =LIT TEXT "\\this is not a command"
+      +CALL
+        +TARGET
+          =SYMREF [0]if
+        -TARGET
+        +PARAM pos
+          =LIT TEXT "true"
+        -PARAM
+        +PARAM pos
+          =LIT TEXT "but this is"
+        -PARAM
+      -CALL
+    -PARAM
+  -UCALL
+-PARA

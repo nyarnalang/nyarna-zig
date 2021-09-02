@@ -55,24 +55,23 @@
 8:9[92] list_end
 8:10[93] ws_break
 9:1[94] end_source
---- events
-3:1 StartCommand "foo"
-3:5 StartBlocksWithConfig
-3:7 BlockConfigDirective
-3:14 EndBlockConfig
-4:1 EndBlocks
-4:10 EndCommand
-4:10 Space "\n"
-5:1 StartCommand "bar"
-5:5 StartBlocks
-6:1 BlockNameWithConfig "baz"
-6:7 BlockConfigDirective
-6:15 BlockConfigDirective
-6:23 EndBlockConfig
-7:1 BlockNameWithConfig "raz"
-7:7 BlockConfigDirective
-7:12 BlockConfigDirective "spam"
-7:26 EndBlockConfig
-8:1 EndBlocks
-8:10 EndCommand
-9:1 EndInput
+--- ast
++UCALL
+  +TARGET
+    =SYMREF [0]foo
+  -TARGET
+  +PARAM pos
+    =VOID
+  -PARAM
+-UCALL
++UCALL
+  +TARGET
+    =SYMREF [0]bar
+  -TARGET
+  +PARAM named="baz"
+    =VOID
+  -PARAM
+  +PARAM named="raz"
+    =VOID
+  -PARAM
+-UCALL

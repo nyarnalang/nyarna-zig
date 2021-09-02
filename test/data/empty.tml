@@ -5,7 +5,4 @@
 --- events
 3:1 EndInput
 --- ast
-+ROOT "standalone"
-  >CONTENT
-  =RAW Raw ""
--ROOT
+=VOID
