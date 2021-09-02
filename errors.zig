@@ -5,7 +5,7 @@ pub const LexerError = enum {
   UnknownConfigDirective, MissingClosingParenthesis, InvalidUtf8Encoding,
   IllegalCodePoint, IllegalOpeningParenthesis, IllegalBlocksStartInArgs,
   IllegalCommandChar, MixedIndentation, IllegalIndentation, IllegalContentAtHeader,
-  IllegalCharacterForId, InvalidEndCommand
+  IllegalCharacterForId, InvalidEndCommand, SwallowDepthWithoutDiamondClose,
 };
 
 pub const GenericParserError = enum {

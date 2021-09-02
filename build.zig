@@ -91,4 +91,16 @@ pub fn build(b: *Builder) !void {
 
   var parse_test_step = b.step("parseTest", "Run parser tests");
   parse_test_step.dependOn(&parse_test.step);
+
+  var parse_test_orig = b.addTest("test/parse_test_orig.zig");
+  parse_test_orig.step.dependOn(&ehgen_cmd.step);
+  internalPackages(parse_test_orig);
+  parse_test_orig.addPackage(.{
+    .name = "testing",
+    .path = "test/testing.zig",
+    .dependencies = &internal_pkgs,
+  });
+
+  var parse_test_orig_step = b.step("parseTestOrig", "Run original parser tests");
+  parse_test_orig_step.dependOn(&parse_test_orig.step);
 }

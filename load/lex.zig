@@ -182,6 +182,9 @@ pub const Lexer = struct {
     /// can yield blocks_sep and transitions to after_blocks_colon then.
     /// else transitions to at_header.
     after_config,
+    /// may yield diamond_close (it's an error if it doesn't), then
+    /// transitions to at_header.
+    after_depth,
     /// like indent_capture, but transitions to special_syntax_check_indent
     special_syntax_indent_capture,
     /// like check_indent, but transitions to special_syntax_check_block_name
@@ -222,6 +225,7 @@ pub const Lexer = struct {
   recent_expected_id: []const u8,
   /// for ns_sym and symref, contains the decoded command character.
   /// for escape, contains the escaped character.
+  /// for swallow_depth, contains the parsed depth.
   code_point: u21,
   /// the namespace of the recently read symref.
   ns: u15,
@@ -562,6 +566,12 @@ pub const Lexer = struct {
             l.recent_end = l.walker.before;
             return .diamond_close;
           },
+          '0'...'9' => {
+            l.readNumber(&cur);
+            l.state = .after_depth;
+
+            return .swallow_depth;
+          },
           else => l.state = .at_header,
         },
         .at_header => {
@@ -621,6 +631,14 @@ pub const Lexer = struct {
             return .blocks_sep;
           } else {
             l.state = .at_header;
+          }
+        },
+        .after_depth => {
+          l.state = .at_header;
+          if (cur == '>') {
+            l.cur_stored = l.walker.nextInline();
+            l.recent_end = l.walker.before;
+            return .diamond_close;
           }
         },
         .before_end_id => {
@@ -913,6 +931,20 @@ pub const Lexer = struct {
       };
     }
     l.recent_id = l.walker.contentFrom(name_start);
+    l.cur_stored = cur.*;
+  }
+
+  fn readNumber(l: *Lexer, cur: *u21) void {
+    const num_start = l.walker.before.byte_offset;
+    l.code_point = cur.* - '0';
+    while (true) {
+      cur.* = l.walker.nextInline() catch |e| {
+        l.cur_stored = e;
+        return;
+      };
+      if (cur.* < '0' or cur.* > '9') break;
+      l.code_point = l.code_point * 10 + (cur.* - '0');
+    }
     l.cur_stored = cur.*;
   }
 

@@ -30,6 +30,11 @@ pub const Parser = struct {
       failed,
       not_pushed
     },
+    /// if set, this command is currently swallowing at the given depth and will
+    /// end implicitly at the encounter of another command that has a lesser or
+    /// equal swallow depth – excluding swallow depth 0, which will only end
+    /// when a parent scope ends.
+    swallow_depth: ?u21 = null,
 
     fn pushName(c: *Command, pos: data.Position, name: []const u8, direct: bool,
         flag: mapper.Mapper.ParamFlag) void {
@@ -114,8 +119,13 @@ pub const Parser = struct {
     paragraphs: std.ArrayListUnmanaged(data.Node.Paragraphs.Item),
 
     block_config: ?*const data.BlockConfig,
+    dangling_space: ?*data.Node = null,
 
     fn append(l: *ContentLevel, alloc: *std.mem.Allocator, item: *data.Node) !void {
+      if (l.dangling_space) |space_node| {
+        try l.nodes.append(alloc, space_node);
+        l.dangling_space = null;
+      }
       try l.nodes.append(alloc, item);
     }
 
@@ -537,7 +547,10 @@ pub const Parser = struct {
                   },
                 },
               };
-              try lvl.append(self.int(), node);
+              // dangling space will be postponed for the case of a following,
+              // swallowing command that ends the current level.
+              if (non_space_len > 0) try lvl.append(self.int(), node)
+              else lvl.dangling_space = node;
               self.state = .default;
             }
           } else self.state = .default; // can happen with space at block/arg end
@@ -625,28 +638,22 @@ pub const Parser = struct {
           }
         },
         .after_blocks_start => {
-          const parent = &self.levels.items[self.levels.items.len - 1];
-
           var lvl_pushed = false;
-          if (self.cur == .diamond_open) {
-            try self.readBlockConfig(&self.config_buffer, self.int());
-            const pos = self.cur_start.posHere(self.l.walker.source.name);
-            try self.applyBlockConfig(pos, &self.config_buffer);
-            parent.command.pushPrimary(pos, true);
-            try self.pushLevel();
-            lvl_pushed = true;
-          } else {
-            if (parent.implicitBlockConfig()) |c| {
-              try self.applyBlockConfig(self.cur_start.posHere(self.l.walker.source.name), c);
-            }
-          }
-          while (self.cur == .space or self.cur == .indent) self.advance();
-          if (self.cur == .block_name_sep) {
-            if (lvl_pushed) try self.leaveLevel();
-            self.state = .block_name;
-          } else {
-            if (!lvl_pushed) try self.pushLevel();
+          if (try self.processBlockHeader(&lvl_pushed)) {
             self.state = .default;
+          } else {
+            const pos = self.cur_start.posHere(self.l.walker.source.name);
+            while (self.cur == .space or self.cur == .indent) self.advance();
+            if (self.cur == .block_name_sep) {
+              if (lvl_pushed) try self.leaveLevel();
+              self.state = .block_name;
+            } else {
+              if (!lvl_pushed) {
+                self.levels.items[self.levels.items.len - 1].command.pushPrimary(pos, false);
+                try self.pushLevel();
+              }
+              self.state = .default;
+            }
           }
         },
         .block_name => {
@@ -673,29 +680,18 @@ pub const Parser = struct {
               self.ctx().eh.MissingBlockNameEnd(
                 data.Position.inMod(self.l.walker.source.name, self.cur_start, self.cur_start));
             }
-            self.advance();
             parent.command.pushName(name_pos, name, false,
                 if (self.cur == .diamond_open) .block_with_config else .block_no_config);
-            if (self.cur == .diamond_open) {
-              try self.readBlockConfig(&self.config_buffer, self.int());
-              try self.applyBlockConfig(self.cur_start.posHere(self.l.walker.source.name), &self.config_buffer);
-            } else {
-              if (parent.implicitBlockConfig()) |c|
-                try self.applyBlockConfig(self.cur_start.posHere(self.l.walker.source.name), c);
-            }
           } else {
             self.ctx().eh.ExpectedTokenXGotY(
                 self.l.walker.posFrom(self.cur_start), .identifier, self.cur);
             while (self.cur != .block_name_sep and self.cur != .missing_block_name_sep) {
               self.advance();
             }
-            if (self.cur == .diamond_open) {
-              try self.readBlockConfig(&self.config_buffer, self.int());
-              try self.applyBlockConfig(self.cur_start.posHere(self.l.walker.source.name), &self.config_buffer);
-            }
             parent.command.cur_cursor = .failed;
           }
-          self.state = .start;
+          self.advance();
+          self.state = if (try self.processBlockHeader(null)) .default else .start;
         },
       }
     }
@@ -826,6 +822,124 @@ pub const Parser = struct {
           self.l.walker.posFrom(self.cur_start), .diamond_close, self.cur);
     }
     into.map = mapList.items;
+  }
+
+  /// processes the content after a `:` that either started blocks or ended a
+  /// block name. returns the swallow depth (0 if missing) iff swallowing is
+  /// encountered.
+  /// primary_pushed shall be non-null iff the ':' is not after a block name.
+  /// this indicates that the function will push a primary level if a block
+  /// config is encountered. If that happens, primary_pushed will be set to true.
+  fn processBlockHeader(self: *Parser, primary_pushed: ?*bool) !bool {
+    const parent = &self.levels.items[self.levels.items.len - 1];
+    const check_swallow = if (self.cur == .diamond_open) blk: {
+      try self.readBlockConfig(&self.config_buffer, self.int());
+      const pos = self.cur_start.posHere(self.l.walker.source.name);
+      try self.applyBlockConfig(pos, &self.config_buffer);
+      if (primary_pushed) |ind| {
+        parent.command.pushPrimary(pos, true);
+        try self.pushLevel();
+        ind.* = true;
+      }
+      if (self.cur == .block_name_sep) {
+        self.advance();
+        break :blk true;
+      } else break :blk false;
+    } else true;
+    if (check_swallow) {
+      var swallow_depth: u21 = 0;
+      if (switch (self.cur) {
+        .swallow_depth => blk: {
+          swallow_depth = self.l.code_point;
+          self.advance();
+          if (self.cur == .diamond_close) {
+            self.advance();
+          } else {
+            self.ctx().eh.SwallowDepthWithoutDiamondClose(self.cur_start.posHere(self.l.walker.source.name));
+            break :blk false;
+          }
+          break :blk true;
+        },
+        .diamond_close => blk: {
+          self.advance();
+          break :blk true;
+        },
+        else => blk: {
+          if (primary_pushed) |ind| {
+            if (!ind.*) {
+              // doesn't set ind.* to true because we don't do pushLevel.
+              parent.command.pushPrimary(self.cur_start.posHere(self.l.walker.source.name), false);
+              if (parent.implicitBlockConfig()) |c| {
+                try self.applyBlockConfig(self.cur_start.posHere(self.l.walker.source.name), c);
+              }
+            }
+          }
+          break :blk false;
+        }
+      }) {
+        if (primary_pushed) |ind| {
+          if (!ind.*) {
+            parent.command.pushPrimary(self.cur_start.posHere(self.l.walker.source.name), false);
+            if (parent.implicitBlockConfig()) |c| {
+              try self.applyBlockConfig(self.cur_start.posHere(self.l.walker.source.name), c);
+            }
+            try self.pushLevel();
+            ind.* = true;
+          }
+        } else try self.pushLevel();
+        parent.command.swallow_depth = swallow_depth;
+        if (swallow_depth != 0) {
+          // now close all commands that have a swallow depth equal or greater than the current one,
+          // excluding 0. To do this, we first determine the actual level in which the current
+          // command is to be placed in (we'll skip the innermost level which we just pushed).
+          // target_level is the level into which the current command should be pushed.
+          // cur_depth is the level we're checking. Since we may need to look beyond levels
+          // with swallow depth 0, we need to keep these values in separate vars.
+          var target_level: usize = self.levels.items.len - 2;
+          var cur_depth: usize = target_level;
+          while (cur_depth > 0) : (cur_depth = cur_depth - 1) {
+            if (self.levels.items[cur_depth - 1].command.swallow_depth) |level_depth| {
+              if (level_depth != 0) {
+                if (level_depth < swallow_depth) break;
+                target_level = cur_depth - 1;
+              }
+              // if level_depth is 0, we don't set target_level but still look if it
+              // has parents that have a depth greater 0 and are ended by the current
+              // swallow.
+            } else break;
+          }
+          if (target_level < self.levels.items.len - 2) {
+            // one or more levels need closing.
+            // calculate the end of the most recent node, which will be the end
+            // cursor for all levels that will now be closed.
+            // this cursor is not necesserily the start of the current
+            // swallowing command, since whitespace before that command is dumped.
+            const end_cursor = if (parent.nodes.items.len == 0)
+                parent.paragraphs.items[parent.paragraphs.items.len - 1].content.pos.module.end
+              else parent.nodes.items[parent.nodes.items.len - 1].pos.module.end;
+
+            var i = self.levels.items.len - 2;
+            while (i > target_level) : (i -= 1) {
+              const cur_parent = &self.levels.items[i - 1];
+              try cur_parent.command.pushArg(self.int(), try self.levels.items[i].finalize(self));
+              try cur_parent.command.shift(self.int(), self.l.walker.source.name, end_cursor);
+              try cur_parent.append(self.int(), cur_parent.command.info.unknown);
+            }
+            // target_level's command has now been closed.
+            // therefore it is safe to assign it to the previous parent's command
+            // (which has not been touched).
+            self.levels.items[target_level].command = parent.command;
+            // finally, shift the new level on top of the target_level
+            self.levels.items[target_level + 1] = self.levels.items[self.levels.items.len - 1];
+            try self.levels.resize(self.int(), target_level + 1);
+          }
+        }
+
+        while (self.cur == .space or self.cur == .indent or self.cur == .ws_break) self.advance();
+        return true;
+      }
+    }
+    return false;
   }
 
   fn applyBlockConfig(self: *Parser, pos: data.Position, config: *const data.BlockConfig) !void {
