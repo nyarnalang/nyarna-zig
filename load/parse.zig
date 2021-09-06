@@ -123,6 +123,7 @@ pub const Parser = struct {
 
     fn append(l: *ContentLevel, alloc: *std.mem.Allocator, item: *data.Node) !void {
       if (l.dangling_space) |space_node| {
+        std.debug.print("appending dangling space (kind={s})\n", .{@tagName(space_node.data.literal.kind)});
         try l.nodes.append(alloc, space_node);
         l.dangling_space = null;
       }
@@ -367,7 +368,33 @@ pub const Parser = struct {
   /// retrieves the next token from the lexer. returns true iff that token is valid.
   /// if false is returned, self.cur must be considered undefined.
   inline fn getNext(self: *Parser) bool {
-    // TODO: implement & call this
+    (switch (self.l.next() catch |e| {
+      self.ctx().eh.InvalidUtf8Encoding(self.l.walker.posFrom(self.cur_start));
+      return false;
+    }) {
+      .missing_block_name_sep => errors.Handler.MissingBlockNameEnd,
+      .illegal_code_point => errors.Handler.IllegalCodePoint,
+      .illegal_opening_parenthesis => errors.Handler.IllegalOpeningParenthesis,
+      .illegal_blocks_start_in_args => errors.Handler.IllegalBlocksStartInArgs,
+      .illegal_command_char => errors.Handler.IllegalCommandChar,
+      .mixed_indentation => errors.Handler.MixedIndentation,
+      .illegal_indentation => errors.Handler.IllegalIndentation,
+      .illegal_content_at_header => errors.Handler.IllegalContentAtHeader,
+      .illegal_character_for_id => errors.Handler.IllegalCharacterForId,
+      .invalid_end_command => unreachable,
+      .wrong_call_id => unreachable,
+      .skipping_call_id => unreachable,
+      else => |t| {
+        if (@enumToInt(t) > @enumToInt(data.Token.skipping_call_id))
+          unreachable;
+        self.cur = t;
+        if (std.builtin.mode == .Debug) {
+          std.debug.print("  << {s}\n", .{@tagName(self.cur)});
+        }
+        return true;
+      }
+    })(&self.ctx().eh, self.l.walker.posFrom(self.cur_start));
+    return false;
   }
 
   fn leaveLevel(self: *Parser) !void {
@@ -416,10 +443,10 @@ pub const Parser = struct {
             .space, .escape, .literal, .ws_break => self.state = .textual,
             .end_source => {
               while (self.levels.items.len > 1) {
-                var lvl = &self.levels.items[self.levels.items.len - 1];
-                try self.levels.items[self.levels.items.len - 1].append(self.int(),
-                    try lvl.finalize(self));
-                _ = self.levels.pop();
+                try self.leaveLevel();
+                const parent = &self.levels.items[self.levels.items.len - 1];
+                try parent.command.shift(self.int(), self.l.walker.source.name, self.cur_start);
+                try parent.append(self.int(), parent.command.info.unknown);
               }
               return self.levels.items[0].finalize(self);
             },
@@ -444,8 +471,11 @@ pub const Parser = struct {
               } else self.state = .after_list;
             },
             .parsep => {
-              try self.levels.items[self.levels.items.len - 1].pushParagraph(self.int(), self.l.newline_count);
+              const newline_count = self.l.newline_count;
               self.advance();
+              if (self.cur != .block_end_open and self.cur != .end_source) {
+                try self.levels.items[self.levels.items.len - 1].pushParagraph(self.int(), newline_count);
+              }
             },
             .block_name_sep => {
               try self.leaveLevel();
@@ -515,16 +545,19 @@ pub const Parser = struct {
                 non_space_len = content.items.len;
                 non_space_end = self.l.recent_end;
               },
+              .indent => {},
               else => break
             }
           }
           const lvl = &self.levels.items[self.levels.items.len - 1];
-          const pos =
-            if (self.cur == .block_end_open or self.cur == .block_name_sep or
-                self.cur == .comma or self.cur == .name_sep or self.cur == .list_end) blk: {
+          const pos = switch(self.cur) {
+            .block_end_open, .block_name_sep, .comma, .name_sep, .list_end,
+            .end_source => blk: {
               content.shrinkAndFree(self.int(), non_space_len);
               break :blk data.Position.inMod(lvl.source_name, textual_start, non_space_end);
-            } else self.l.walker.posFrom(textual_start);
+            },
+            else => self.l.walker.posFrom(textual_start),
+          };
           if (content.items.len > 0) {
             if (self.cur == .name_sep) {
               if (lvl.nodes.items.len > 0) {
@@ -547,6 +580,7 @@ pub const Parser = struct {
                   },
                 },
               };
+              std.debug.print("  push literal (kind={s}): {}\n", .{@tagName(node.data.literal.kind), std.zig.fmtEscapes(content.items)});
               // dangling space will be postponed for the case of a following,
               // swallowing command that ends the current level.
               if (non_space_len > 0) try lvl.append(self.int(), node)
@@ -738,81 +772,80 @@ pub const Parser = struct {
           break :blk .unknown;
         },
       };
-      while (true) {
-        self.advance();
-        if (self.cur != .space) break;
-      }
-      var recover = false;
-      switch (kind) {
-        .csym => {
-          if (self.cur == .ns_sym) {
-            try mapList.append(alloc, .{
-              .pos = self.l.walker.posFrom(start),
-              .from = 0, .to = self.l.code_point});
-          } else {
-            self.ctx().eh.ExpectedTokenXGotY(
-                self.l.walker.posFrom(self.cur_start), .ns_sym, self.cur);
-            recover = true;
-          }
-        },
-        .syntax => {
-          if (self.cur == .identifier) {
-            // TODO
-          } else {
-            self.ctx().eh.ExpectedTokenXGotY(
-                self.l.walker.posFrom(self.cur_start), .identifier, self.cur);
-            recover = true;
-          }
-        },
-        .map => {
-          if (self.cur == .ns_sym) {
-            const from = self.l.code_point;
-            while (true) {
-              self.advance();
-              if (self.cur != .space) break;
-            }
+      var recover = while (self.getNext()) {
+        if (self.cur != .space) break false;
+      } else true;
+      if (!recover) {
+        switch (kind) {
+          .csym => {
             if (self.cur == .ns_sym) {
               try mapList.append(alloc, .{
                 .pos = self.l.walker.posFrom(start),
-                .from = from, .to = self.l.code_point,
-              });
-            } else recover = true;
-          } else recover = true;
-          if (recover) {
-            self.ctx().eh.ExpectedTokenXGotY(
-                self.l.walker.posFrom(self.cur_start), .ns_sym, self.cur);
-          }
-        },
-        .off => {
-          switch (self.cur) {
-            .comment => into.off_comment = self.l.walker.posFrom(self.cur_start),
-            .block_name_sep => into.off_colon = self.l.walker.posFrom(self.cur_start),
-            .ns_sym => try mapList.append(alloc, .{
-              .pos = self.l.walker.posFrom(start), .from = self.l.code_point, .to = 0
-            }),
-            else => {
+                .from = 0, .to = self.l.code_point});
+            } else {
               self.ctx().eh.ExpectedTokenXGotY(
                   self.l.walker.posFrom(self.cur_start), .ns_sym, self.cur);
               recover = true;
             }
-          }
-        },
-        .fullast => into.full_ast = self.l.walker.posFrom(self.cur_start),
-        .empty => {
-          self.ctx().eh.ExpectedTokenXGotY(
-              self.l.walker.posFrom(self.cur_start), .identifier, self.cur);
-          recover = true;
-        },
-        .unknown => {}
+          },
+          .syntax => {
+            if (self.cur == .identifier) {
+              // TODO
+            } else {
+              self.ctx().eh.ExpectedTokenXGotY(
+                  self.l.walker.posFrom(self.cur_start), .identifier, self.cur);
+              recover = true;
+            }
+          },
+          .map => {
+            if (self.cur == .ns_sym) {
+              const from = self.l.code_point;
+              recover = while (self.getNext()) {
+                if (self.cur != .space) break self.cur != .ns_sym;
+              } else true;
+              if (!recover) {
+                try mapList.append(alloc, .{
+                  .pos = self.l.walker.posFrom(start),
+                  .from = from, .to = self.l.code_point,
+                });
+              }
+            } else recover = true;
+            if (recover) {
+              self.ctx().eh.ExpectedTokenXGotY(
+                  self.l.walker.posFrom(self.cur_start), .ns_sym, self.cur);
+            }
+          },
+          .off => {
+            switch (self.cur) {
+              .comment => into.off_comment = self.l.walker.posFrom(self.cur_start),
+              .block_name_sep => into.off_colon = self.l.walker.posFrom(self.cur_start),
+              .ns_sym => try mapList.append(alloc, .{
+                .pos = self.l.walker.posFrom(start), .from = self.l.code_point, .to = 0
+              }),
+              else => {
+                self.ctx().eh.ExpectedTokenXGotY(
+                    self.l.walker.posFrom(self.cur_start), .ns_sym, self.cur);
+                recover = true;
+              }
+            }
+          },
+          .fullast => into.full_ast = self.l.walker.posFrom(self.cur_start),
+          .empty => {
+            self.ctx().eh.ExpectedTokenXGotY(
+                self.l.walker.posFrom(self.cur_start), .identifier, self.cur);
+            recover = true;
+          },
+          .unknown => {}
+        }
       }
-      self.advance();
-      while (self.cur != .comma and self.cur != .diamond_close and self.cur != .end_source) {
+      while (true) {
+        while (!self.getNext()) {}
+        if (self.cur == .comma or self.cur == .diamond_close or self.cur == .end_source) break;
         if (self.cur != .space and !recover) {
           self.ctx().eh.ExpectedTokenXGotY(
               self.l.walker.posFrom(self.cur_start), .comma, self.cur);
           recover = true;
         }
-        self.advance();
       }
     }
     if (self.cur == .diamond_close) {
@@ -834,6 +867,7 @@ pub const Parser = struct {
     const parent = &self.levels.items[self.levels.items.len - 1];
     const check_swallow = if (self.cur == .diamond_open) blk: {
       try self.readBlockConfig(&self.config_buffer, self.int());
+      std.debug.print("block header has map length of {}\n", .{self.config_buffer.map.len});
       const pos = self.cur_start.posHere(self.l.walker.source.name);
       try self.applyBlockConfig(pos, &self.config_buffer);
       if (primary_pushed) |ind| {
@@ -943,12 +977,14 @@ pub const Parser = struct {
   }
 
   fn applyBlockConfig(self: *Parser, pos: data.Position, config: *const data.BlockConfig) !void {
-    var alloc = std.heap.stackFallback(128, self.int());
+    var sf = std.heap.stackFallback(128, self.int());
+    var alloc = sf.get();
 
     if (config.syntax) |s| unreachable; // TODO
 
     if (config.map.len > 0) {
-      var resolved_indexes = try alloc.allocator.alloc(u16, config.map.len);
+      var resolved_indexes = try alloc.alloc(u16, config.map.len);
+      defer alloc.free(resolved_indexes);
       try self.ns_mapping_stack.ensureUnusedCapacity(self.int(), config.map.len);
       // resolve all given from characters in the current set of command characters.
       for (config.map) |mapping, i| {
@@ -1017,8 +1053,6 @@ pub const Parser = struct {
           }
         }
       }
-      // cleanup
-      alloc.allocator.free(resolved_indexes);
     }
 
     if (config.off_colon) |_| {
@@ -1037,7 +1071,8 @@ pub const Parser = struct {
     if (config.syntax) |_| unreachable;
 
     if (config.map.len > 0) {
-      var alloc = std.heap.stackFallback(128, self.int());
+      var sf = std.heap.stackFallback(128, self.int());
+      var alloc = sf.get();
 
       // reverse establishment of new namespaces
       var i = config.map.len - 1;
@@ -1052,7 +1087,8 @@ pub const Parser = struct {
       }
 
       // get the indexes of namespaces that have been remapped.
-      var ns_indexes = try alloc.allocator.alloc(u15, config.map.len);
+      var ns_indexes = try alloc.alloc(u15, config.map.len);
+      defer alloc.free(ns_indexes);
       for (config.map) |mapping, j| {
         if (mapping.from != 0 and mapping.to != 0) {
           ns_indexes[j] = self.ctx().command_characters.get(mapping.to).?;

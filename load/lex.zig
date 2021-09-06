@@ -814,7 +814,7 @@ pub const Lexer = struct {
     while (true) {
       switch (cur.*) {
         0...32 => break,
-        '#' => if (l.comments_disabled_at != null) break,
+        '#' => if (l.comments_disabled_at == null) break,
         '>' => if (ctx == .config) break,
         ':' => switch(ctx) {
           .block_name => break,

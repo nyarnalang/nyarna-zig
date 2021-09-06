@@ -65,9 +65,9 @@ fn AstEmitter(Handler: anytype) type {
       e: *Self,
       name: []const u8,
 
-      fn pop(self: Popper) void {
+      fn pop(self: Popper) !void {
         self.e.depth -= 1;
-        self.e.emitLine("-{s}", .{self.name}) catch unreachable;
+        try self.e.emitLine("-{s}", .{self.name});
       }
     };
 
@@ -77,8 +77,8 @@ fn AstEmitter(Handler: anytype) type {
     fn emitLine(self: *Self, comptime fmt: []const u8, args: anytype) !void {
       var buffer: [1024]u8 = undefined;
       var i: usize = 0; while (i < self.depth*2) : (i += 1) buffer[i] = ' ';
-      const str = try std.fmt.bufPrint(buffer[i*2..], fmt, args);
-      try self.handler.handle(buffer[0..i*2+str.len]);
+      const str = try std.fmt.bufPrint(buffer[i..], fmt, args);
+      try self.handler.handle(buffer[0..i+str.len]);
     }
 
     fn push(self: *Self, comptime name: []const u8) !Popper {
@@ -97,37 +97,43 @@ fn AstEmitter(Handler: anytype) type {
     pub fn process(self: *Self, n: *data.Node) anyerror!void {
       switch (n.data) {
         .access => |a| {
-          const access = try self.push("ACCESS"); defer access.pop();
+          const access = try self.push("ACCESS");
           {
-            const target = try self.push("SUBJECT"); defer target.pop();
+            const target = try self.push("SUBJECT");
             try self.process(a.subject);
+            try target.pop();
           }
           try self.emitLine("=ID \"{s}\"", .{a.id});
+          try access.pop();
         },
         .assignment => |a| {
-          const ass = try self.push("ASS"); defer ass.pop();
+          const ass = try self.push("ASS");
           {
-            const target = try self.push("TARGET"); defer target.pop();
+            const target = try self.push("TARGET");
             try switch (a.target) {
               .unresolved => |u| self.process(u),
               .resolved => unreachable, // TODO
             };
+            try target.pop();
           }
           {
-            const repl = try self.push("REPL"); defer repl.pop();
+            const repl = try self.push("REPL");
             try self.process(a.replacement);
+            try repl.pop();
           }
+          try ass.pop();
         },
         .literal => |a| {
-          try self.emitLine("=LIT {s} \"{}\"", .{if (a.kind == .text) @as([]const u8, "TEXT") else "SPACE", std.zig.fmtEscapes(a.content)});
+          try self.emitLine("=LIT {s} \"{}\"", .{@tagName(a.kind), std.zig.fmtEscapes(a.content)});
         },
         .concatenation => |c| {
           for (c.content) |item| try self.process(item);
         },
         .paragraphs => |p| {
           for (p.items) |i| {
-            const para = try self.push("PARA"); defer para.pop();
+            const para = try self.push("PARA");
             try self.process(i.content);
+            try para.pop();
           }
         },
         .symref => |r| {
@@ -137,10 +143,11 @@ fn AstEmitter(Handler: anytype) type {
           }
         },
         .unresolved_call => |uc| {
-          const ucall = try self.push("UCALL"); defer ucall.pop();
+          const ucall = try self.push("UCALL");
           {
-            const t = try self.push("TARGET"); defer t.pop();
+            const t = try self.push("TARGET");
             try self.process(uc.target);
+            try t.pop();
           }
           for (uc.params) |p| {
             const para = try switch (p.kind) {
@@ -148,9 +155,11 @@ fn AstEmitter(Handler: anytype) type {
               .named => |named| self.pushWithKey("PARAM", "name", named),
               .direct => |direct| self.pushWithKey("PARAM", "direct", direct),
               .primary => self.pushWithKey("PARAM", "primary", null),
-            }; defer para.pop();
+            };
             try self.process(p.content);
+            try para.pop();
           }
+          try ucall.pop();
         },
         .resolved_call => unreachable,
         .voidNode => try self.emitLine("=VOID", .{}),
@@ -164,15 +173,30 @@ pub fn parseTest(f: *tml.File) !void {
   try input.content.appendSlice(f.alloc(), "\x04\x04\x04\x04");
   const expected_data = f.items.get("ast").?;
   var checker = struct {
-    expected_iter: std.mem.SplitIterator,
+    expected_iter: std.mem.TokenIterator,
+    line: usize,
     fn handle(self: *@This(), line: []const u8) !void {
       const expected = self.expected_iter.next() orelse {
         std.log.err("got more output than expected, first unexpected line:\n  {s}", .{line});
         return TestError.no_match;
       };
-      try std.testing.expectEqualStrings(expected, line);
+      if (!std.mem.eql(u8, expected, line)) {
+        std.log.err(
+          \\Wrong output at line {}:
+          \\==== expected content ====
+          \\{s}
+          \\
+          \\==== actual content ====
+          \\{s}
+          \\
+          \\
+        , .{self.line, expected, line});
+        return TestError.no_match;
+      }
+      self.line += 1;
     }
-  }{.expected_iter = std.mem.split(expected_data.content.items, "\n")};
+  }{.expected_iter = std.mem.tokenize(expected_data.content.items, "\n"),
+    .line = expected_data.line_offset + 1};
 
   var src = Source{
     .content = input.content.items,
@@ -194,7 +218,7 @@ pub fn parseTest(f: *tml.File) !void {
   };
   try emitter.process(res);
   if (checker.expected_iter.next()) |line| {
-    std.log.err("got less output than expected, first line missing:\n  {s}", .{line});
+    std.log.err("got less output than expected, line {} missing:\n{s}\n", .{checker.line, line});
     return TestError.no_match;
   }
 }

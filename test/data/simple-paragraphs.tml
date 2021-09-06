@@ -1,89 +1,48 @@
 === Simple Paragraphs
 --- input
-\declare:
-  Section = \record:
-    title : \Raw;
-    content : \list(\Raw) {primary}:<par>;
-  \end(record);
-\end(declare)
+\Section(foo):
+  Lorem ipsum
 
-\fragment(type=\concat(\Section)):
-:content:
-  \Section(foo):
-    Lorem ipsum
+  Dolor sit amet
+\end(Section)
 
-    Dolor sit amet
-  \end(Section)
+\Section(bar):
+  consectetur adipiscing elit,
+  sed do eiusmod tempor
 
-  \Section(bar):
-    consectetur adipiscing elit,
-    sed do eiusmod tempor
-
-  \end(Section)
-\end(fragment)
+\end(Section)
 --- ast
-+ROOT "fragment"
-  >CONTENT
-  +SPACEREM
-    +CALL
-      +TARGET
-        +FUNC
-          =NAME "concatOf"
-        -FUNC
-      -TARGET
-      +PARAM "items"
-        +VARARGS
-          +CALL
-            +TARGET
-              =TYPE Section
-            -TARGET
-            +PARAM "title"
-              =RAW Raw "foo"
-            -PARAM
-            +PARAM "content"
-              +CALL
-                +TARGET
-                  +FUNC
-                    =NAME "listOf"
-                  -FUNC
-                -TARGET
-                +PARAM "items"
-                  +VARARGS
-                    =RAW Raw "Lorem ipsum"
-                    =RAW Raw "Dolor sit amet"
-                  -VARARGS
-                -PARAM
-              -CALL
-            -PARAM
-          -CALL
-          =RAW Space "\n\n"
-          +CALL
-            +TARGET
-              =TYPE Section
-            -TARGET
-            +PARAM "title"
-              =RAW Raw "bar"
-            -PARAM
-            +PARAM "content"
-              +CALL
-                +TARGET
-                  +FUNC
-                    =NAME "listOf"
-                  -FUNC
-                -TARGET
-                +PARAM "items"
-                  +VARARGS
-                    =RAW Raw "consectetur adipiscing elit,\nsed do eiusmod tempor"
-                  -VARARGS
-                -PARAM
-              -CALL
-            -PARAM
-          -CALL
-        -VARARGS
-      -PARAM
-    -CALL
-  -SPACEREM
--ROOT
++PARA
+  +UCALL
+    +TARGET
+      =SYMREF [0]Section
+    -TARGET
+    +PARAM pos
+      =LIT text "foo"
+    -PARAM
+    +PARAM primary
+      +PARA
+        =LIT text "Lorem ipsum"
+      -PARA
+      +PARA
+        =LIT text "Dolor sit amet"
+      -PARA
+    -PARAM
+  -UCALL
+-PARA
++PARA
+  +UCALL
+    +TARGET
+      =SYMREF [0]Section
+    -TARGET
+    +PARAM pos
+      =LIT text "bar"
+    -PARAM
+    +PARAM primary
+      =LIT text "consectetur adipiscing elit,\nsed do eiusmod tempor"
+    -PARAM
+  -UCALL
+-PARA
 --- disabled-document
 +CONCAT
   +RECORD "Section"

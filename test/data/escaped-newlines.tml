@@ -5,4 +5,4 @@ Bar # a comment
 Baz # a comment with escaped newline \
 Foz
 --- ast
-=LIT TEXT "Foo Bar\nBazFoz"
+=LIT text "Foo Bar\nBazFoz"

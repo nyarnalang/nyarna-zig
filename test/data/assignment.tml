@@ -10,14 +10,15 @@
     =SYMREF [0]foo
   -TARGET
   +REPL
-    =LIT TEXT "bar"
+    =LIT text "bar"
   -REPL
 -ASS
+=LIT space "\n"
 +ASS
   +TARGET
     =SYMREF [0]spam
   -TARGET
   +REPL
-    =LIT TEXT "egg, sausage"
+    =LIT text "egg, sausage"
   -REPL
 -ASS

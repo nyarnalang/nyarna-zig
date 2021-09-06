@@ -20,8 +20,25 @@ fn genTests(dir: *std.fs.Dir, sets: []TestSet) !void {
     );
   }
 
-  while (try i.next()) |entry| {
+  const disabled_tests = [_][]const u8{
+    "delayed-method-resolution.tml", // missing: intrinsic funcs
+    "block-config.tml", // missing: fullast implementation
+    "hello-world.tml", // missing: intrinsic funcs
+    "simple-swallow.tml", // missing: if expression
+    "parameter-block-config.tml", // missing: default block config for params
+    "field-access.tml", // missing: intrinsic funcs
+    "integer-fragment.tml", // missing: intrinsic funcs, module kinds
+    "simple-variables.tml" // missing: variable decls
+  };
+
+  files: while (try i.next()) |entry| {
     if (entry.kind != .File) continue;
+    for (disabled_tests) |name| {
+      if (std.mem.eql(u8, name, entry.name)) {
+        std.debug.print("[DISABLED] {s}\n", .{name});
+        continue :files;
+      }
+    }
     var file = try dir.openFile(entry.name, .{});
     defer file.close();
     var content = tml.File.loadFile(dir, entry.name, &file) catch |err| switch(err) {

@@ -21,8 +21,8 @@
     +TARGET
       =SYMREF [0]block
     -TARGET
-    +PARAM named="content"
-      =LIT TEXT "lorem ipsum\n:dolor sit amet"
+    +PARAM name="content"
+      =LIT text "lorem ipsum\n:dolor sit amet"
     -PARAM
   -UCALL
 -PARA
@@ -32,13 +32,13 @@
       =SYMREF [0]if
     -TARGET
     +PARAM pos
-      =LIT TEXT "true"
+      =LIT text "true"
     -PARAM
     +PARAM primary
-      =LIT TEXT "this is # not a comment"
+      =LIT text "this is # not a comment"
     -PARAM
-    +PARAM named="else"
-      =LIT TEXT "\\this is not a command"
+    +PARAM name="else"
+      =LIT text "\\this is not a command"
     -PARAM
   -UCALL
 -PARA
@@ -48,16 +48,16 @@
       =SYMREF [0]block
     -TARGET
     +PARAM primary
-      =LIT TEXT "\\this is not a command"
+      =LIT text "\\this is not a command"
       +CALL
         +TARGET
           =SYMREF [0]if
         -TARGET
         +PARAM pos
-          =LIT TEXT "true"
+          =LIT text "true"
         -PARAM
         +PARAM pos
-          =LIT TEXT "but this is"
+          =LIT text "but this is"
         -PARAM
       -CALL
     -PARAM

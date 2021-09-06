@@ -3,7 +3,4 @@
 Lorem ipsum
 dolor sit amet
 --- ast
-+ROOT "standalone"
-  >CONTENT
-  =RAW Raw "Lorem ipsum\ndolor sit amet"
--ROOT
+=LIT text "Lorem ipsum\ndolor sit amet"
