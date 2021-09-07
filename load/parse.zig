@@ -368,6 +368,7 @@ pub const Parser = struct {
   /// retrieves the next token from the lexer. returns true iff that token is valid.
   /// if false is returned, self.cur must be considered undefined.
   inline fn getNext(self: *Parser) bool {
+    self.cur_start = self.l.recent_end;
     (switch (self.l.next() catch |e| {
       self.ctx().eh.InvalidUtf8Encoding(self.l.walker.posFrom(self.cur_start));
       return false;
@@ -524,9 +525,10 @@ pub const Parser = struct {
         .textual => {
           var content: std.ArrayListUnmanaged(u8) = .{};
           var non_space_len: usize = 0;
+          var non_space_line_len: usize = 0;
           var non_space_end: data.Cursor = undefined;
           const textual_start = self.cur_start;
-          while (true) : (self.advance()) {
+          while (true) {
             switch (self.cur) {
               .space =>
                 try content.appendSlice(self.int(),
@@ -535,18 +537,31 @@ pub const Parser = struct {
                 try content.appendSlice(self.int(),
                     self.l.walker.contentFrom(self.cur_start.byte_offset));
                 non_space_len = content.items.len;
+                non_space_line_len = non_space_len;
                 non_space_end = self.l.recent_end;
               },
               .ws_break => {
+                // dump whitespace before newline
+                content.shrinkRetainingCapacity(non_space_line_len);
                 try content.append(self.int(), '\n');
+                non_space_line_len = content.items.len;
               },
               .escape => {
-                try content.appendSlice(self.int(), self.l.walker.lastUtf8Unit());
+                try content.appendSlice(self.int(), self.l.recent_id);
                 non_space_len = content.items.len;
+                non_space_line_len = non_space_len;
                 non_space_end = self.l.recent_end;
               },
               .indent => {},
+              .comment => {
+                // dump whitespace before comment
+                content.shrinkRetainingCapacity(non_space_line_len);
+              },
               else => break
+            }
+            if (!self.getNext()) {
+              self.advance();
+              break;
             }
           }
           const lvl = &self.levels.items[self.levels.items.len - 1];
@@ -580,7 +595,7 @@ pub const Parser = struct {
                   },
                 },
               };
-              std.debug.print("  push literal (kind={s}): {}\n", .{@tagName(node.data.literal.kind), std.zig.fmtEscapes(content.items)});
+              std.debug.print("  push literal (kind={s}): \"{}\"\n", .{@tagName(node.data.literal.kind), std.zig.fmtEscapes(content.items)});
               // dangling space will be postponed for the case of a following,
               // swallowing command that ends the current level.
               if (non_space_len > 0) try lvl.append(self.int(), node)
@@ -672,18 +687,24 @@ pub const Parser = struct {
           }
         },
         .after_blocks_start => {
-          var lvl_pushed = false;
-          if (try self.processBlockHeader(&lvl_pushed)) {
+          var pb_exists = PrimaryBlockExists.unknown;
+          if (try self.processBlockHeader(&pb_exists)) {
             self.state = .default;
           } else {
             const pos = self.cur_start.posHere(self.l.walker.source.name);
             while (self.cur == .space or self.cur == .indent) self.advance();
             if (self.cur == .block_name_sep) {
-              if (lvl_pushed) try self.leaveLevel();
+              switch (pb_exists) {
+                .unknown => {},
+                .maybe => {
+                  const lvl = self.levels.pop();
+                  if (lvl.block_config) |c| try self.revertBlockConfig(c);
+                },
+                .yes => try self.leaveLevel(),
+              }
               self.state = .block_name;
             } else {
-              if (!lvl_pushed) {
-                self.levels.items[self.levels.items.len - 1].command.pushPrimary(pos, false);
+              if (pb_exists == .unknown) {
                 try self.pushLevel();
               }
               self.state = .default;
@@ -725,7 +746,11 @@ pub const Parser = struct {
             parent.command.cur_cursor = .failed;
           }
           self.advance();
-          self.state = if (try self.processBlockHeader(null)) .default else .start;
+          try self.pushLevel();
+          if (!(try self.processBlockHeader(null))) {
+            while (self.cur == .space or self.cur == .indent) self.advance();
+          }
+          self.state = .default;
         },
       }
     }
@@ -857,24 +882,38 @@ pub const Parser = struct {
     into.map = mapList.items;
   }
 
+  /// out-value used for processBlockHeader after the initial ':'.
+  const PrimaryBlockExists = enum {unknown, maybe, yes};
+
   /// processes the content after a `:` that either started blocks or ended a
-  /// block name. returns the swallow depth (0 if missing) iff swallowing is
-  /// encountered.
-  /// primary_pushed shall be non-null iff the ':' is not after a block name.
-  /// this indicates that the function will push a primary level if a block
-  /// config is encountered. If that happens, primary_pushed will be set to true.
-  fn processBlockHeader(self: *Parser, primary_pushed: ?*bool) !bool {
+  /// block name. returns true iff swallowing has ocurred.
+  /// pb_exists shall be non-null iff the ':' starts block parameters (i.e. we
+  /// are not after a block name). its initial value shall be .unknown.
+  /// the out value of pb_exists indicates the following:
+  ///   .unknown => no level has been pushed since neither explicit nor implicit
+  ///               block configuration has been encountered. the current level's
+  ///               primary param has been entered to check for implicit block config.
+  ///   .maybe   => level has been pushed and command entered its primary param,
+  ///               but existence of primary block is not known. This happens if
+  ///               a call target does have a primary parameter that supplies an
+  ///               implicit block config. This block config must be activated
+  ///               before reading the block content, since it may change the
+  ///               lexer's behavior. If there is, in fact, no primary block,
+  ///               the pushed level is to be discarded.
+  ///   .yes     => level has been pushed and command entered its primary param
+  ///               due to explicit block config.
+  fn processBlockHeader(self: *Parser, pb_exists: ?*PrimaryBlockExists) !bool {
     const parent = &self.levels.items[self.levels.items.len - 1];
     const check_swallow = if (self.cur == .diamond_open) blk: {
       try self.readBlockConfig(&self.config_buffer, self.int());
       std.debug.print("block header has map length of {}\n", .{self.config_buffer.map.len});
       const pos = self.cur_start.posHere(self.l.walker.source.name);
-      try self.applyBlockConfig(pos, &self.config_buffer);
-      if (primary_pushed) |ind| {
+      if (pb_exists) |ind| {
         parent.command.pushPrimary(pos, true);
         try self.pushLevel();
-        ind.* = true;
+        ind.* = .yes;
       }
+      try self.applyBlockConfig(pos, &self.config_buffer);
       if (self.cur == .block_name_sep) {
         self.advance();
         break :blk true;
@@ -899,11 +938,12 @@ pub const Parser = struct {
           break :blk true;
         },
         else => blk: {
-          if (primary_pushed) |ind| {
-            if (!ind.*) {
-              // doesn't set ind.* to true because we don't do pushLevel.
+          if (pb_exists) |ind| {
+            if (ind.* == .unknown) {
               parent.command.pushPrimary(self.cur_start.posHere(self.l.walker.source.name), false);
               if (parent.implicitBlockConfig()) |c| {
+                ind.* = .maybe;
+                try self.pushLevel();
                 try self.applyBlockConfig(self.cur_start.posHere(self.l.walker.source.name), c);
               }
             }
@@ -911,15 +951,15 @@ pub const Parser = struct {
           break :blk false;
         }
       }) {
-        if (primary_pushed) |ind| {
-          if (!ind.*) {
+        if (pb_exists) |ind| {
+          if (ind.* == .unknown) {
             parent.command.pushPrimary(self.cur_start.posHere(self.l.walker.source.name), false);
+            try self.pushLevel();
             if (parent.implicitBlockConfig()) |c| {
               try self.applyBlockConfig(self.cur_start.posHere(self.l.walker.source.name), c);
             }
-            try self.pushLevel();
-            ind.* = true;
           }
+          ind.* = .yes;
         } else try self.pushLevel();
         parent.command.swallow_depth = swallow_depth;
         if (swallow_depth != 0) {
@@ -1068,6 +1108,7 @@ pub const Parser = struct {
   }
 
   fn revertBlockConfig(self: *Parser, config: *const data.BlockConfig) !void {
+    std.debug.print("reverBlockConfig()\n", .{});
     if (config.syntax) |_| unreachable;
 
     if (config.map.len > 0) {

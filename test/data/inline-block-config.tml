@@ -12,7 +12,7 @@
   \this is not a command # but this is a comment
 \end(if)
 
-\block:<\ to @>
+\block:<map \ @>
   \this is not a command @if(true, but this is)
 \end(block)
 --- ast
@@ -48,8 +48,8 @@
       =SYMREF [0]block
     -TARGET
     +PARAM primary
-      =LIT text "\\this is not a command"
-      +CALL
+      =LIT text "\\this is not a command "
+      +UCALL
         +TARGET
           =SYMREF [0]if
         -TARGET
@@ -59,7 +59,7 @@
         +PARAM pos
           =LIT text "but this is"
         -PARAM
-      -CALL
+      -UCALL
     -PARAM
   -UCALL
 -PARA

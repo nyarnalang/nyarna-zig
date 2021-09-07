@@ -2,7 +2,7 @@
 --- input
 Foo \
 Bar # a comment
-Baz # a comment with escaped newline \
-Foz
+Baz # a comment without escaped newline #
+Foz\
 --- ast
-=LIT text "Foo Bar\nBazFoz"
+=LIT text "Foo \nBarBaz\nFoz\n"

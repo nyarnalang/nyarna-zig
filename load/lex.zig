@@ -104,7 +104,7 @@ pub const Walker = struct {
   }
 
   pub fn lastUtf8Unit(w: *Walker) []const u8 {
-    return (w.cur - w.recent_length - 1)[0..w.recent_length];
+    return (w.cur - w.recent_length)[0..w.recent_length];
   }
 
   pub fn posFrom(w: *Walker, start: data.Cursor) data.Position {
@@ -205,6 +205,8 @@ pub const Lexer = struct {
     special: bool,
   };
 
+  const newline = @as([]const u8, "\n");
+
   context: *Context,
   cur_stored: (@typeInfo(@TypeOf(Walker.next)).Fn.return_type.?),
   state: State,
@@ -217,7 +219,8 @@ pub const Lexer = struct {
   /// (the start equals the end of the previously emitted token)
   recent_end: data.Cursor,
   /// the recently read id. equals the content for identifier and call_id,
-  /// equals the name behind the command character for symref.
+  /// equals the name behind the command character for symref,
+  /// equals the character behind the command character for escape.
   recent_id: []const u8,
   /// the recently expected id. set when recent_id is not the expected id, i.e.
   /// when .wrong_end_command or .skipping_end_command is emitted.
@@ -438,6 +441,12 @@ pub const Lexer = struct {
             l.state = .read_block_name;
             l.cur_stored = l.walker.nextInline();
             l.recent_end = l.walker.before;
+            // if previous block disabled comments, re-enable them. this needs
+            // not be done for disabled colons, because if colons are disabled,
+            // we would never end up here.
+            if (l.comments_disabled_at) |depth| {
+              if (depth == l.levels.items.len) l.comments_disabled_at = null;
+            }
             return .block_name_sep;
           }
           l.state = .in_block;
@@ -786,7 +795,8 @@ pub const Lexer = struct {
       if (l.context.command_characters.get(cur.*)) |ns| {
         l.ns = ns;
         return l.genCommand(cur);
-      } else if (cur.* == l.level.end_char and l.checkEndCommand(cur)) {
+      } else if (cur.* == l.level.end_char and l.checkEndCommand()) {
+        std.debug.print("found end via end_char\n", .{});
         return l.genCommand(cur);
       }
     }
@@ -872,18 +882,18 @@ pub const Lexer = struct {
         l.cur_stored = l.walker.nextAfterCR();
         l.recent_end = l.walker.before;
         l.newline_count = 0;
-        l.code_point = '\n';
+        l.recent_id = newline;
         return .{.hit_line_end = true, .token = .escape};
       },
       '\n' => {
         l.cur_stored = l.walker.nextAfterLF();
         l.recent_end = l.walker.before;
         l.newline_count = 0;
-        l.code_point = '\n';
+        l.recent_id = newline;
         return .{.hit_line_end = true, .token = .escape};
       },
       '\t', ' ' => {
-        l.code_point = cur.*;
+        l.recent_id = l.walker.lastUtf8Unit();
         cur.* = l.walker.nextInline() catch |e| {
           l.cur_stored = e;
           l.recent_end = l.walker.before;
@@ -897,10 +907,10 @@ pub const Lexer = struct {
         }
         if (cur.* == '\r') {
           l.cur_stored = l.walker.nextAfterCR();
-          l.code_point = '\n';
+          l.recent_id = newline;
         } else if (cur.* == '\n') {
           l.cur_stored = l.walker.nextAfterLF();
-          l.code_point = '\n';
+          l.recent_id = newline;
         } else {
           l.walker.resetToMark();
           l.cur_stored = l.walker.nextInline();
@@ -914,7 +924,7 @@ pub const Lexer = struct {
       else => {
         l.cur_stored = l.walker.nextInline();
         l.recent_end = l.walker.before;
-        l.code_point = cur.*;
+        l.recent_id = l.walker.lastUtf8Unit();
         return .{.token = .escape};
       }
     }
@@ -984,21 +994,30 @@ pub const Lexer = struct {
     } else return false;
   }
 
-  inline fn checkEndCommand(l: *Lexer, cur: *u21) bool {
+  inline fn checkEndCommand(l: *Lexer) bool {
+    std.debug.print("  checkEndCommand: must be {s}, reading: '", .{l.level.id});
     l.walker.mark();
-    defer l.walker.resetToMark();
-    cur.* = l.walker.nextInline() catch return false;
-    if (cur.* != 'e') return false;
-    cur.* = l.walker.nextInline() catch return false;
-    if (cur.* != 'n') return false;
-    cur.* = l.walker.nextInline() catch return false;
-    if (cur.* != 'd') return false;
-    cur.* = l.walker.nextInline() catch return false;
-    if (cur.* != '(') return false;
+    defer {
+      l.walker.resetToMark();
+      std.debug.print("\n", .{});
+    }
+    var lookahead = l.walker.nextInline() catch return false;
+    std.debug.print("{s}", .{l.walker.lastUtf8Unit()});
+    if (lookahead != 'e') return false;
+    lookahead = l.walker.nextInline() catch return false;
+    std.debug.print("{s}", .{l.walker.lastUtf8Unit()});
+    if (lookahead != 'n') return false;
+    lookahead = l.walker.nextInline() catch return false;
+    std.debug.print("{s}", .{l.walker.lastUtf8Unit()});
+    if (lookahead != 'd') return false;
+    lookahead = l.walker.nextInline() catch return false;
+    std.debug.print("{s}", .{l.walker.lastUtf8Unit()});
+    if (lookahead != '(') return false;
     l.cur_stored = l.walker.nextInline();
     if (l.matchEndCommand(false) != .call_id) return false;
-    cur.* = l.walker.nextInline() catch return false;
-    return cur.* == ')';
+    lookahead = l.cur_stored catch return false;
+    std.debug.print("{s}' ({})\n", .{l.walker.lastUtf8Unit(), lookahead == ')'});
+    return lookahead == ')';
   }
 
   fn matchEndCommand(l: *Lexer, search_skipped: bool) Token {
