@@ -6,6 +6,11 @@ const data_pkg = std.build.Pkg{
   .path = "data.zig",
 };
 
+const types_pkg = std.build.Pkg{
+  .name = "types",
+  .path = "types.zig"
+};
+
 const errors_pkg = std.build.Pkg{
   .name = "errors",
   .path = "errors_generated.zig",
@@ -20,7 +25,7 @@ const source_pkg = std.build.Pkg{
 const interpret_pkg = std.build.Pkg{
   .name = "interpret",
   .path = "load/interpret.zig",
-  .dependencies = &.{errors_pkg, data_pkg},
+  .dependencies = &.{errors_pkg, data_pkg, types_pkg},
 };
 
 const lex_pkg = std.build.Pkg{
@@ -32,11 +37,12 @@ const lex_pkg = std.build.Pkg{
 const parse_pkg = std.build.Pkg{
   .name = "parse",
   .path = "load/parse.zig",
-  .dependencies = &.{data_pkg, errors_pkg},
+  .dependencies = &.{data_pkg, types_pkg, errors_pkg},
 };
 
 const internal_pkgs = [_]std.build.Pkg{
-  data_pkg, errors_pkg, lex_pkg, parse_pkg, source_pkg, interpret_pkg};
+  data_pkg, types_pkg, errors_pkg, lex_pkg, parse_pkg, source_pkg, interpret_pkg
+};
 
 fn internalPackages(s: *std.build.LibExeObjStep) void {
   for (internal_pkgs) |pkg| {

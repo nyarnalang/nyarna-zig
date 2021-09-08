@@ -1,5 +1,6 @@
 const std = @import("std");
 const data = @import("data");
+const Type = @import("types").Type;
 
 pub const Mapper = struct {
   const Self = @This();
@@ -41,7 +42,7 @@ pub const Mapper = struct {
 pub const SignatureMapper = struct {
   mapper: Mapper,
   subject: *data.Expression,
-  signature: *data.Signature,
+  signature: *Type.Signature,
   cur_pos: ?u31 = 0,
   args: []*data.Node,
 

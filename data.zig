@@ -360,28 +360,6 @@ pub const SpecialSyntax = struct {
   finish: fn(self: *SpecialSyntax) std.mem.Allocator.Error!*Node,
 };
 
-pub const Signature = struct {
-  pub const Parameter = struct {
-    pos: Position,
-    name: []const u8,
-    // TODO: type
-    capture: enum {default, varargs},
-    default: *Expression,
-    config: ?BlockConfig,
-    mutable: bool,
-  };
-
-  parameter: []Parameter,
-  keyword: bool,
-  primary: ?u31,
-  varmap: ?u31,
-  auto_swallow: ?struct{
-    param_index: usize,
-    depth: usize,
-  },
-  // TODO: return type
-};
-
 pub const Expression = struct {
   pub const Data = union(enum) {
     poison,
