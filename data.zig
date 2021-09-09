@@ -1,4 +1,5 @@
 const std = @import("std");
+const unicode = @import("load/unicode.zig");
 
 /// A cursor inside a source file
 pub const Cursor = struct {
@@ -244,8 +245,6 @@ pub const BlockConfig = struct {
   }
 };
 
-
-
 pub const Node = struct {
   pub const Literal = struct {
     kind: enum {text, space},
@@ -360,11 +359,309 @@ pub const SpecialSyntax = struct {
   finish: fn(self: *SpecialSyntax) std.mem.Allocator.Error!*Node,
 };
 
+pub const Type = union(enum) {
+  pub const Signature = struct {
+    pub const Parameter = struct {
+      pos: Position,
+      name: []const u8,
+      ptype: Type,
+      capture: enum {default, varargs},
+      default: *Expression,
+      config: ?BlockConfig,
+      mutable: bool,
+    };
+
+    parameter: []Parameter,
+    keyword: bool,
+    primary: ?u21,
+    varmap: ?u21,
+    auto_swallow: ?struct{
+      param_index: usize,
+      depth: usize,
+    },
+    returns: Type,
+  };
+
+  pub const Intersection = struct {
+    scalar: ?Type,
+    types: []Type,
+  };
+
+  pub const Concat = struct {
+    inner: Type,
+  };
+
+  pub const Optional = struct {
+    inner: Type,
+  };
+
+  pub const Paragraphs = struct {
+    inner: []Type,
+    auto: ?u21,
+  };
+
+  pub const List = struct {
+    inner: Type,
+  };
+
+  pub const Map = struct {
+    key: Type,
+    value: Type,
+  };
+
+  /// types with structural equivalence
+  pub const Structural = union(enum) {
+    optional: Optional,
+    concat: Concat,
+    paragraphs: Paragraphs,
+    list: List,
+    map: Map,
+    callable: *Signature,
+    intersection: Intersection,
+  };
+
+  /// parameters of a Textual type. The set of allowed characters is logically
+  /// defined as follows:
+  ///
+  ///  * all characters in include.chars are in the set.
+  ///  * all characters with a category in include.categories that are not in
+  ///    exclude are in the set.
+  pub const Textual = struct {
+    include: struct {
+      chars: []u8,
+      categories: unicode.CategorySet,
+    },
+    exclude: []u8,
+
+    pub fn pos(self: *@This()) Position {
+      return Instantiated.pos(self);
+    }
+  };
+
+  /// parameters of a Numeric type.
+  pub const Numeric = struct {
+    min: i64,
+    max: i64,
+    decimals: u32,
+
+    pub fn pos(self: *@This()) Position {
+      return Instantiated.pos(self);
+    }
+  };
+
+  /// parameters of a Float type.
+  pub const Float = struct {
+    pub const Precision = enum {
+      half, single, double, quadruple, octuple
+    };
+    precision: Precision,
+
+    pub fn pos(self: *@This()) Position {
+      return Instantiated.pos(self);
+    }
+  };
+
+  /// parameters of an Enum type.
+  pub const Enum = struct {
+    /// retains the order of the enum values.
+    /// must not be modified after creation.
+    values: std.StringArrayHashMapUnmanaged(u0),
+
+    pub fn pos(self: *@This()) Position {
+      return Instantiated.pos(self);
+    }
+  };
+
+  /// parameters of a Record type. contains the signature of its constructor.
+  /// its fields are derived from that signature.
+  pub const Record = struct {
+    signature: Signature,
+
+    pub fn pos(self: *@This()) Position {
+      return Instantiated.pos(self);
+    }
+  };
+
+  pub const Instantiated = struct {
+    const Data = union(enum) {
+      textual: Textual,
+      numeric: Numeric,
+      float: Float,
+      tenum: Enum,
+      record: Record,
+    };
+    /// position at which the type has been declared.
+    at: Position,
+    /// name of the type, if it has any.
+    name: *?Symbol,
+    /// kind and parameters of the type
+    data: Data,
+
+    /// calculates the position from a pointer to Textual, Numeric, Float,
+    /// Enum, or Record
+    fn pos(it: anytype) Position {
+      const t = @typeInfo(@TypeOf(it)).Pointer.child;
+      return @fieldParentPtr(Instantiated, "data", switch(t) {
+        Textual => @fieldParentPtr(Data, "textual", it),
+        Numeric => @fieldParentPtr(Data, "numeric", it),
+        Float => @fieldParentPtr(Data, "float", it),
+        Enum => @fieldParentPtr(Data, "tenum", it),
+        Record => @fieldParentPtr(Data, "record", it),
+        else => unreachable
+      }).at;
+    }
+  };
+
+  /// unique types predefined by Nyarna
+  intrinsic: enum {
+    void, prototype, schema, extension,
+    space, literal, raw,
+    location, definition, backend
+  },
+
+  structural: *Structural,
+  /// types with name equivalence that are instantiated by user code
+  instantiated: *Instantiated,
+};
+
 pub const Expression = struct {
+  /// a call to a type constructor.
+  const ConstrCall = struct {
+    target_type: Type,
+    exprs: []*Expression,
+  };
+  /// a call to an external function.
+  const ExtCall = struct {
+    target: *Symbol.ExtFunc,
+    exprs: []*Expression,
+  };
+  /// a call to an internal function.
+  const Call = struct {
+    target: *Symbol.NyFunc,
+    exprs: []*Expression,
+  };
+  /// assignment to a variable or one of its inner values
+  const Assignment = struct {
+    target: *Symbol.Variable,
+    /// list of indexes that identify which part of the variable is to be assigned.
+    path: []usize,
+    expr: *Expression,
+  };
+  /// retrieval of the value of a substructure
+  const Access = struct {
+    subject: *Expression,
+    /// the index of the field or item to be retrieved
+    index: usize
+  };
+  /// a literal value
+  const Literal = struct {
+    value: Value,
+  };
+  /// an ast subtree
+  const Ast = struct {
+    root: *Node,
+  };
+
   pub const Data = union(enum) {
-    poison,
+    constr_call: ConstrCall,
+    ext_call: ExtCall,
+    call: Call,
+    assignment: Assignment,
+    access: Access,
+    literal: Literal,
+    poison, void,
   };
 
   pos: Position,
   data: Data,
+};
+
+pub const Value = struct {
+  /// a Space, Literal, Raw or Textual value
+  pub const TextScalar = struct {
+    t: Type,
+    value: []const u8,
+  };
+  /// a Numeric value
+  pub const Number = struct {
+    t: *Type.Numeric,
+    value: i64,
+  };
+  /// a Float value
+  pub const FloatNumber = struct {
+    t: *Type.Float,
+    value: union {
+      half: f16,
+      single: f32,
+      double: f64,
+      quadruple: f128,
+    },
+  };
+  /// an Enum value
+  pub const Enum = struct {
+    t: *Type.Enum,
+    index: usize,
+  };
+  /// a Record value
+  pub const Record = struct {
+    t: *Type.Record,
+    fields: []*Value,
+  };
+  /// a Concat value
+  pub const Concat = struct {
+    t: *Type.Concat,
+    items: std.ArrayList(*Value),
+  };
+  /// a List value
+  pub const List = struct {
+    t: *Type.List,
+    items: std.ArrayList(*Value),
+  };
+  /// a Map value
+  pub const Map = struct {
+    t: *Type.Map,
+    items: std.HashMap(*Value, *Value, Value.hash, Value.eql, 50),
+  };
+
+  origin: Position,
+  data: union(enum) {
+    text: TextScalar,
+    number: Number,
+    float: FloatNumber,
+    enumval: Enum,
+    record: Record,
+    concat: Concat,
+    list: List,
+    map: Map,
+  },
+
+  fn hash(v: *@This()) u64 {
+    return switch (v.data) {
+      .text => |ts| std.hash_map.hashString(ts.value),
+      .number => |num| @bitCast(u64, num.value),
+      .float => |fl| switch (fl.t.precision) {
+        .half => @intCast(u64, @bitCast(u16, fl.value.half)),
+        .single => @intCast(u64, @bitCast(u32, fl.value.single)),
+        .double => @bitCast(u64, fl.value.double),
+        .quadruple, .octuple => @truncate(u64, @bitCast(u128, fl.value.quadruple)),
+      },
+      .enumval => |ev| @intCast(u64, ev.index),
+      else => unreachable,
+    };
+  }
+
+  fn eql(a: *@This(), b: *@This()) bool {
+    return switch (a.data) {
+      .text => |ts| std.hash_map.eqlString(ts.value, b.data.text.value),
+      .number => |num| num.value == b.data.number.value,
+      .float => |fl| switch (fl.t.precision) {
+        .half => fl.value.half == b.data.float.value.half,
+        .single => fl.value.single == b.data.float.value.single,
+        .double => fl.value.double == b.data.float.value.double,
+        .quadruple, .octuple => fl.value.quadruple == b.data.float.value.quadruple,
+      },
+      .enumval => |ev| ev.index == b.data.enumval.index,
+      else => unreachable,
+    };
+  }
 };

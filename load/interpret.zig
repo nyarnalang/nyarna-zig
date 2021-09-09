@@ -2,6 +2,7 @@ const std = @import("std");
 const data = @import("data");
 const parse = @import("parse");
 const errors = @import("errors");
+const types = @import("types");
 
 pub const Errors = error {
   failed_to_interpret_node,
@@ -39,6 +40,9 @@ pub const Context = struct {
   /// encountered. If one or more errors are encountered during loading of one
   /// source, the source is treated having failed to load.
   eh: errors.Handler,
+  /// The type lattice that handles types for this interpreter.
+  /// it also owns the context's structural types.
+  lattice: types.Lattice,
 
   pub fn init(allocator: *std.mem.Allocator, reporter: *errors.Reporter) !Context {
     var ret = Context{
@@ -49,6 +53,7 @@ pub const Context = struct {
       .eh = .{
         .reporter = reporter,
       },
+      .lattice = .{.alloc = allocator},
     };
     errdefer ret.deinit().deinit();
     try ret.addNamespace(&ret.temp_nodes.allocator, '\\');

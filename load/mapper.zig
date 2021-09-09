@@ -1,6 +1,6 @@
 const std = @import("std");
 const data = @import("data");
-const Type = @import("types").Type;
+const Type = data.Type;
 
 pub const Mapper = struct {
   const Self = @This();
