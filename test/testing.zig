@@ -4,7 +4,6 @@ const tml = @import("tml.zig");
 const lex = @import("lex");
 const parse = @import("parse");
 const errors = @import("errors");
-const Source = @import("source").Source;
 const Context = @import("interpret").Context;
 
 const TestError = error {
@@ -16,7 +15,7 @@ pub fn lexTest(f: *tml.File) !void {
   try input.content.appendSlice(f.alloc(), "\x04\x04\x04\x04");
   const expected_data = f.items.get("tokens").?;
   var expected_content = std.mem.split(expected_data.content.items, "\n");
-  var src = Source{
+  var src = data.Source{
     .content = input.content.items,
     .offsets = .{
       .line = input.line_offset, .column = 0,
@@ -136,12 +135,8 @@ fn AstEmitter(Handler: anytype) type {
             try para.pop();
           }
         },
-        .symref => |r| {
-          switch (r) {
-            .resolved => |res| try self.emitLine("=SYMREF {s}.{s}", .{res.defined_at.module.name, res.name}),
-            .unresolved => |u| try self.emitLine("=SYMREF [{}]{s}", .{u.ns, u.name}),
-          }
-        },
+        .unresolved_symref => |u| try self.emitLine("=SYMREF [{}]{s}", .{u.ns, u.name}),
+        .resolved_symref => |res| try self.emitLine("=SYMREF {s}.{s}", .{res.defined_at.input.source.name, res.name}),
         .unresolved_call => |uc| {
           const ucall = try self.push("UCALL");
           {
@@ -162,6 +157,7 @@ fn AstEmitter(Handler: anytype) type {
           try ucall.pop();
         },
         .resolved_call => unreachable,
+        .expression => unreachable,
         .voidNode => try self.emitLine("=VOID", .{}),
       }
     }
@@ -198,20 +194,25 @@ pub fn parseTest(f: *tml.File) !void {
   }{.expected_iter = std.mem.tokenize(expected_data.content.items, "\n"),
     .line = expected_data.line_offset + 1};
 
-  var src = Source{
+  var src_meta = data.Source.Descriptor{
+    .name = "input",
+    .locator = ".doc.document",
+    .argument = false,
+  };
+  var src = data.Source{
+    .meta = &src_meta,
     .content = input.content.items,
     .offsets = .{
       .line = input.line_offset, .column = 0,
     },
-    .name = "input",
-    .locator = ".doc.document",
     .locator_ctx = ".doc.",
   };
   var r = errors.CmdLineReporter.init();
   var ctx = try Context.init(std.testing.allocator, &r.reporter);
+  ctx.input = &src;
   defer ctx.deinit().deinit();
   var p = parse.Parser.init();
-  var res = try p.parseSource(&src, &ctx);
+  var res = try p.parseSource(&ctx);
   var emitter = AstEmitter(@TypeOf(&checker)){
     .depth = 0,
     .handler = &checker,

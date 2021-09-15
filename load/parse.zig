@@ -6,6 +6,7 @@ const Context = @import("interpret.zig").Context;
 const mapper = @import("mapper.zig");
 const unicode = @import("unicode.zig");
 const errors = @import("errors");
+const syntaxes = @import("syntaxes.zig");
 
 /// The parser creates AST nodes.
 /// Whenever an AST node is created, the parser checks whether it needs to be
@@ -36,7 +37,7 @@ pub const Parser = struct {
     /// when a parent scope ends.
     swallow_depth: ?u21 = null,
 
-    fn pushName(c: *Command, pos: data.Position, name: []const u8, direct: bool,
+    fn pushName(c: *Command, pos: data.Position.Input, name: []const u8, direct: bool,
         flag: mapper.Mapper.ParamFlag) void {
       c.cur_cursor = if (c.mapper.map(pos,
           if (direct) .{.direct = name} else .{.named = name}, flag)
@@ -50,20 +51,21 @@ pub const Parser = struct {
       const cursor = switch (c.cur_cursor) {
         .mapped => |val| val,
         .failed => return,
-        .not_pushed => c.mapper.map(arg.pos, .position, .flow) orelse return,
+        .not_pushed => c.mapper.map(arg.pos.input, .position, .flow) orelse return,
       };
       try c.mapper.push(alloc, cursor, arg);
     }
 
-    fn pushPrimary(c: *Command, pos: data.Position, config: bool) void {
+    fn pushPrimary(c: *Command, pos: data.Position.Input, config: bool) void {
       c.cur_cursor = if (c.mapper.map(pos, .primary,
           if (config) .block_with_config else .block_no_config)) |cursor| .{
             .mapped = cursor,
           } else .failed;
     }
 
-    fn shift(c: *Command, alloc: *std.mem.Allocator, src_name: []const u8, end: data.Cursor) !void {
-      const newNode = try c.mapper.finalize(alloc, data.Position.inMod(src_name, c.start, end));
+    fn shift(c: *Command, context: *Context, end: data.Cursor) !void {
+      const newNode = try c.mapper.finalize(
+        &context.temp_nodes.allocator, context.input.between(c.start, end));
       c.info = .{.unknown = newNode};
     }
 
@@ -93,8 +95,6 @@ pub const Parser = struct {
   /// The content level takes care of generating concatenations and paragraphs.
   const ContentLevel = struct {
     /// used for generating void nodes.
-    source_name: []const u8,
-    /// used for generating void nodes.
     start: data.Cursor,
     /// Changes to command characters that occurred upon entering this level.
     /// For implicit block configs, this links to the block config definition.
@@ -119,6 +119,7 @@ pub const Parser = struct {
     paragraphs: std.ArrayListUnmanaged(data.Node.Paragraphs.Item),
 
     block_config: ?*const data.BlockConfig,
+    syntax_proc: ?*data.SpecialSyntax.Processor = null,
     dangling_space: ?*data.Node = null,
 
     fn append(l: *ContentLevel, alloc: *std.mem.Allocator, item: *data.Node) !void {
@@ -130,21 +131,21 @@ pub const Parser = struct {
       try l.nodes.append(alloc, item);
     }
 
-    fn finalizeParagraph(l: *ContentLevel, alloc: *std.mem.Allocator) !*data.Node {
+    fn finalizeParagraph(l: *ContentLevel, c: *Context) !*data.Node {
       switch(l.nodes.items.len) {
         0 => {
-          var ret = try alloc.create(data.Node);
+          var ret = try c.temp_nodes.allocator.create(data.Node);
           ret.* = .{
-            .pos = data.Position.inMod(l.source_name, l.start, l.start),
+            .pos = .{.input = c.input.at(l.start)},
             .data = .voidNode,
           };
           return ret;
         },
         1 => return l.nodes.items[0],
         else => {
-          var ret = try alloc.create(data.Node);
+          var ret = try c.temp_nodes.allocator.create(data.Node);
           ret.* = .{
-            .pos = l.nodes.items[0].pos.span(l.nodes.items[l.nodes.items.len - 1].pos),
+            .pos = .{.input = l.nodes.items[0].pos.input.span(l.nodes.items[l.nodes.items.len - 1].pos.input)},
             .data = .{
               .concatenation = .{
                 .content = l.nodes.items,
@@ -169,18 +170,19 @@ pub const Parser = struct {
       }
       const alloc = p.int();
       if (l.paragraphs.items.len == 0) {
-        return l.finalizeParagraph(alloc);
+        return l.finalizeParagraph(p.ctx());
       } else {
         if (l.nodes.items.len > 0) {
           try l.paragraphs.append(alloc, .{
-            .content = try l.finalizeParagraph(alloc),
+            .content = try l.finalizeParagraph(p.ctx()),
             .lf_after = 0,
           });
         }
 
         var target = try alloc.create(data.Node);
         target.* = .{
-          .pos = l.paragraphs.items[0].content.pos.span(l.paragraphs.items[l.paragraphs.items.len - 1].content.pos),
+          .pos = .{.input = l.paragraphs.items[0].content.pos.input.span(
+            l.paragraphs.items[l.paragraphs.items.len - 1].content.pos.input)},
           .data = .{
             .paragraphs = .{
               .items = l.paragraphs.items,
@@ -191,10 +193,10 @@ pub const Parser = struct {
       }
     }
 
-    fn pushParagraph(l: *ContentLevel, alloc: *std.mem.Allocator, lf_after: usize) !void {
+    fn pushParagraph(l: *ContentLevel, context: *Context, lf_after: usize) !void {
       if (l.nodes.items.len > 0) {
-        try l.paragraphs.append(alloc, .{
-          .content = try l.finalizeParagraph(alloc),
+        try l.paragraphs.append(&context.temp_nodes.allocator, .{
+          .content = try l.finalizeParagraph(context),
           .lf_after = lf_after
         });
         l.nodes = .{};
@@ -237,6 +239,8 @@ pub const Parser = struct {
     /// This state reads in a block name, possibly a block configuration, and
     /// then pushes a level to read the block content.
     block_name,
+    /// This state passes lexer tokens to the special syntax processor.
+    special,
   };
 
   const ns_mapping_failed = 1 << 15;
@@ -303,7 +307,6 @@ pub const Parser = struct {
 
   fn pushLevel(self: *Parser) !void {
     try self.levels.append(self.int(), ContentLevel{
-      .source_name = self.l.walker.source.name,
       .start = self.l.recent_end,
       .changes = null,
       .ignored_changes = null,
@@ -314,8 +317,8 @@ pub const Parser = struct {
     });
   }
 
-  pub fn parseSource(self: *Parser, source: *Source, context: *Context) !*data.Node {
-    self.l = try lex.Lexer.init(context, source);
+  pub fn parseSource(self: *Parser, context: *Context) !*data.Node {
+    self.l = try lex.Lexer.init(context);
     self.advance();
     return self.doParse();
   }
@@ -446,7 +449,7 @@ pub const Parser = struct {
               while (self.levels.items.len > 1) {
                 try self.leaveLevel();
                 const parent = &self.levels.items[self.levels.items.len - 1];
-                try parent.command.shift(self.int(), self.l.walker.source.name, self.cur_start);
+                try parent.command.shift(self.ctx(), self.cur_start);
                 try parent.append(self.int(), parent.command.info.unknown);
               }
               return self.levels.items[0].finalize(self);
@@ -456,7 +459,8 @@ pub const Parser = struct {
                 .start = self.cur_start,
                 .info = .{
                   .unknown = try self.ctx().resolveSymbol(
-                      self.l.walker.posFrom(self.cur_start), self.l.ns, self.l.recent_id),
+                      .{.input = self.l.walker.posFrom(self.cur_start)},
+                      self.l.ns, self.l.recent_id),
                 },
                 .mapper = undefined,
                 .cur_cursor = undefined,
@@ -475,7 +479,7 @@ pub const Parser = struct {
               const newline_count = self.l.newline_count;
               self.advance();
               if (self.cur != .block_end_open and self.cur != .end_source) {
-                try self.levels.items[self.levels.items.len - 1].pushParagraph(self.int(), newline_count);
+                try self.levels.items[self.levels.items.len - 1].pushParagraph(self.ctx(), newline_count);
               }
             },
             .block_name_sep => {
@@ -490,14 +494,14 @@ pub const Parser = struct {
                   const cmd_start = self.levels.items[self.levels.items.len - 2].command.start;
                   self.ctx().eh.WrongCallId(self.l.walker.posFrom(self.cur_start),
                       self.l.recent_expected_id, self.l.recent_id,
-                      data.Position.inMod(self.l.walker.source.name, cmd_start, cmd_start));
+                      self.ctx().input.at(cmd_start));
                 },
                 else => {
                   std.debug.assert(@enumToInt(self.cur) >= @enumToInt(data.Token.skipping_call_id));
                   const cmd_start = self.levels.items[self.levels.items.len - 2].command.start;
                   self.ctx().eh.SkippingCallId(self.l.walker.posFrom(self.cur_start),
                       self.l.recent_expected_id, self.l.recent_id,
-                      data.Position.inMod(self.l.walker.source.name, cmd_start, cmd_start));
+                      self.ctx().input.at(cmd_start));
                   var i = @as(u32, 0);
                   while (i < data.Token.numSkippedEnds(self.cur)) : (i = i + 1) {
                     try self.leaveLevel();
@@ -509,12 +513,11 @@ pub const Parser = struct {
               if (self.cur == .list_end) {
                 self.advance();
               } else {
-                const pos = data.Position.inMod(self.l.walker.source.name, self.cur_start, self.cur_start);
-                self.ctx().eh.MissingClosingParenthesis(pos);
+                self.ctx().eh.MissingClosingParenthesis(self.ctx().input.at(self.cur_start));
               }
               self.state = .command;
               try self.levels.items[self.levels.items.len - 1].command.shift(
-                  self.int(), self.l.walker.source.name, self.cur_start);
+                  self.ctx(), self.cur_start);
             },
             else => {
               std.debug.print("unexpected token in default: {s}\n", .{@tagName(self.cur)});
@@ -569,7 +572,7 @@ pub const Parser = struct {
             .block_end_open, .block_name_sep, .comma, .name_sep, .list_end,
             .end_source => blk: {
               content.shrinkAndFree(self.int(), non_space_len);
-              break :blk data.Position.inMod(lvl.source_name, textual_start, non_space_end);
+              break :blk self.ctx().input.between(textual_start, non_space_end);
             },
             else => self.l.walker.posFrom(textual_start),
           };
@@ -579,7 +582,7 @@ pub const Parser = struct {
                 unreachable; // TODO: error: equals not allowed here
               }
               self.levels.items[self.levels.items.len - 2].command.pushName(
-                  pos, content.items, pos.module.end.byte_offset - pos.module.start.byte_offset == 2, .flow);
+                pos, content.items, pos.end.byte_offset - pos.start.byte_offset == 2, .flow);
               while (true) {
                 self.advance();
                 if (self.cur != .space) break;
@@ -587,7 +590,7 @@ pub const Parser = struct {
             } else {
               var node = try self.int().create(data.Node);
               node.* = .{
-                .pos = pos,
+                .pos = .{.input = pos},
                 .data = .{
                   .literal = .{
                     .kind = if (non_space_len > 0) .text else .space,
@@ -612,7 +615,7 @@ pub const Parser = struct {
               if (self.cur != .identifier) unreachable; // TODO: recover
               var node = try self.int().create(data.Node);
               node.* = .{
-                .pos = self.l.walker.posFrom(lvl.command.info.unknown.pos.module.start),
+                .pos = .{.input = self.l.walker.posFrom(lvl.command.info.unknown.pos.input.start)},
                 .data = .{
                   .access = .{
                     .subject = lvl.command.info.unknown,
@@ -640,7 +643,7 @@ pub const Parser = struct {
             .list_start, .blocks_sep => {
               const target = lvl.command.info.unknown;
               switch (target.data) {
-                .symref, .access => {
+                .resolved_symref, .unresolved_symref, .access => {
                   const res = try self.ctx().resolveChain(target, self.ext());
                   switch (res) {
                     .var_chain => |chain| {
@@ -666,11 +669,11 @@ pub const Parser = struct {
             .closer => {
               try lvl.append(self.int(), lvl.command.info.unknown);
               self.advance();
-              self.state = .default;
+              self.state = if (self.levels.items[self.levels.items.len - 1].syntax_proc != null) .special else .default;
             },
             else => {
               try lvl.append(self.int(), lvl.command.info.unknown);
-              self.state = .default;
+              self.state = if (self.levels.items[self.levels.items.len - 1].syntax_proc != null) .special else .default;
             }
           }
         },
@@ -683,15 +686,15 @@ pub const Parser = struct {
             self.advance();
           } else {
             self.state = .command;
-            try self.levels.items[self.levels.items.len - 1].command.shift(self.int(), self.l.walker.source.name, end);
+            try self.levels.items[self.levels.items.len - 1].command.shift(self.ctx(), end);
           }
         },
         .after_blocks_start => {
           var pb_exists = PrimaryBlockExists.unknown;
           if (try self.processBlockHeader(&pb_exists)) {
-            self.state = .default;
+            self.state = if (self.levels.items[self.levels.items.len - 1].syntax_proc != null) .special else .default;
           } else {
-            const pos = self.cur_start.posHere(self.l.walker.source.name);
+            const pos = self.ctx().input.at(self.cur_start);
             while (self.cur == .space or self.cur == .indent) self.advance();
             if (self.cur == .block_name_sep) {
               switch (pb_exists) {
@@ -707,7 +710,7 @@ pub const Parser = struct {
               if (pb_exists == .unknown) {
                 try self.pushLevel();
               }
-              self.state = .default;
+              self.state = if (self.levels.items[self.levels.items.len - 1].syntax_proc != null) .special else .default;
             }
           }
         },
@@ -726,20 +729,22 @@ pub const Parser = struct {
               self.advance();
               if (self.cur == .block_name_sep or self.cur == .missing_block_name_sep) break;
               if (self.cur != .space and !recover) {
-                self.ctx().eh.ExpectedTokenXGotY(
-                    self.l.walker.posFrom(self.cur_start), .block_name_sep, self.cur);
+                self.ctx().eh.ExpectedXGotY(
+                    self.l.walker.posFrom(self.cur_start),
+                    &[_]errors.WrongItemError.ItemDescr{.{.token = .block_name_sep}},
+                    .{.token = self.cur});
                 recover = true;
               }
             }
             if (self.cur == .missing_block_name_sep) {
-              self.ctx().eh.MissingBlockNameEnd(
-                data.Position.inMod(self.l.walker.source.name, self.cur_start, self.cur_start));
+              self.ctx().eh.MissingBlockNameEnd(self.ctx().input.at(self.cur_start));
             }
             parent.command.pushName(name_pos, name, false,
                 if (self.cur == .diamond_open) .block_with_config else .block_no_config);
           } else {
-            self.ctx().eh.ExpectedTokenXGotY(
-                self.l.walker.posFrom(self.cur_start), .identifier, self.cur);
+            self.ctx().eh.ExpectedXGotY(self.ctx().input.at(self.cur_start),
+              &[_]errors.WrongItemError.ItemDescr{.{.token = .identifier}},
+              .{.token = self.cur});
             while (self.cur != .block_name_sep and self.cur != .missing_block_name_sep) {
               self.advance();
             }
@@ -750,8 +755,28 @@ pub const Parser = struct {
           if (!(try self.processBlockHeader(null))) {
             while (self.cur == .space or self.cur == .indent) self.advance();
           }
-          self.state = .default;
+          self.state = if (self.levels.items[self.levels.items.len - 1].syntax_proc != null) .special else .default;
         },
+        .special => {
+          const proc = self.levels.items[self.levels.items.len - 1].syntax_proc.?;
+          try switch (self.cur) {
+            .indent => self.advance(),
+            .space => proc.push(proc, self.l.walker.posFrom(self.cur_start),
+                .{.space = self.l.walker.contentFrom(self.cur_start.byte_offset)}),
+            .escape => proc.push(proc, self.l.walker.posFrom(self.cur_start),
+                .{.escaped_char = self.l.code_point}),
+            .literal => proc.push(proc, self.l.walker.posFrom(self.cur_start),
+                .{.literal = self.l.walker.contentFrom(self.cur_start.byte_offset)}),
+            .ws_break => // TODO: discard if at end of block
+              proc.push(proc, self.l.walker.posFrom(self.cur_start), .{.newlines = 1}),
+            .parsep => proc.push(proc, self.l.walker.posFrom(self.cur_start), .{.newlines = self.l.newline_count}),
+            .end_source, .symref, .block_name_sep, .block_end_open => self.state = .default,
+            else => {
+              std.debug.print("unexpected token in special: {s}\n", .{@tagName(self.cur)});
+              unreachable;
+            }
+          };
+        }
       }
     }
   }
@@ -774,10 +799,11 @@ pub const Parser = struct {
         self.advance();
         if (self.cur != .space) break;
       }
-      if (self.cur == .diamond_close) {
+      if (self.cur == .diamond_close or self.cur == .end_source) {
         if (!first) {
-          self.ctx().eh.ExpectedTokenXGotY(self.l.walker.posFrom(self.cur_start),
-              data.Token.identifier, data.Token.diamond_close);
+          self.ctx().eh.ExpectedXGotY(self.l.walker.posFrom(self.cur_start),
+              &[_]errors.WrongItemError.ItemDescr{.{.token = .identifier}},
+              .{.token = self.cur});
         }
         break;
       }
@@ -808,17 +834,30 @@ pub const Parser = struct {
                 .pos = self.l.walker.posFrom(start),
                 .from = 0, .to = self.l.code_point});
             } else {
-              self.ctx().eh.ExpectedTokenXGotY(
-                  self.l.walker.posFrom(self.cur_start), .ns_sym, self.cur);
+              self.ctx().eh.ExpectedXGotY(self.l.walker.posFrom(self.cur_start),
+                  &[_]errors.WrongItemError.ItemDescr{.{.token = .ns_sym}},
+                  .{.token = self.cur});
               recover = true;
             }
           },
           .syntax => {
             if (self.cur == .identifier) {
-              // TODO
+              switch (std.hash.Adler32.hash(self.l.recent_id)) {
+                std.hash.Adler32.hash("locations") => {
+                  into.syntax = .{
+                    .pos = .intrinsic,
+                    .syntax = syntaxes.Locations.syntax(),
+                  };
+                },
+                std.hash.Adler32.hash("definitions") => unreachable,
+                else => {
+                  self.ctx().eh.UnknownSyntax(self.l.walker.posFrom(self.cur_start));
+                }
+              }
             } else {
-              self.ctx().eh.ExpectedTokenXGotY(
-                  self.l.walker.posFrom(self.cur_start), .identifier, self.cur);
+              self.ctx().eh.ExpectedXGotY(self.l.walker.posFrom(self.cur_start),
+                  &[_]errors.WrongItemError.ItemDescr{.{.token = .identifier}},
+                  .{.token = self.cur});
               recover = true;
             }
           },
@@ -836,8 +875,9 @@ pub const Parser = struct {
               }
             } else recover = true;
             if (recover) {
-              self.ctx().eh.ExpectedTokenXGotY(
-                  self.l.walker.posFrom(self.cur_start), .ns_sym, self.cur);
+              self.ctx().eh.ExpectedXGotY(self.l.walker.posFrom(self.cur_start),
+                  &[_]errors.WrongItemError.ItemDescr{.{.token = .ns_sym}},
+                  .{.token = self.cur});
             }
           },
           .off => {
@@ -848,16 +888,20 @@ pub const Parser = struct {
                 .pos = self.l.walker.posFrom(start), .from = self.l.code_point, .to = 0
               }),
               else => {
-                self.ctx().eh.ExpectedTokenXGotY(
-                    self.l.walker.posFrom(self.cur_start), .ns_sym, self.cur);
+                self.ctx().eh.ExpectedXGotY(
+                    self.l.walker.posFrom(self.cur_start),
+                    &[_]errors.WrongItemError.ItemDescr{.{.token = .ns_sym}, .{.character = '#'}, .{.character = ':'}},
+                    .{.token = self.cur});
                 recover = true;
               }
             }
           },
           .fullast => into.full_ast = self.l.walker.posFrom(self.cur_start),
           .empty => {
-            self.ctx().eh.ExpectedTokenXGotY(
-                self.l.walker.posFrom(self.cur_start), .identifier, self.cur);
+            self.ctx().eh.ExpectedXGotY(
+                self.l.walker.posFrom(self.cur_start),
+                &[_]errors.WrongItemError.ItemDescr{.{.token = .identifier}},
+                .{.token = self.cur});
             recover = true;
           },
           .unknown => {}
@@ -867,8 +911,9 @@ pub const Parser = struct {
         while (!self.getNext()) {}
         if (self.cur == .comma or self.cur == .diamond_close or self.cur == .end_source) break;
         if (self.cur != .space and !recover) {
-          self.ctx().eh.ExpectedTokenXGotY(
-              self.l.walker.posFrom(self.cur_start), .comma, self.cur);
+          self.ctx().eh.ExpectedXGotY(self.l.walker.posFrom(self.cur_start),
+              &[_]errors.WrongItemError.ItemDescr{.{.character = ','}, .{.character = '>'}},
+              .{.token = self.cur});
           recover = true;
         }
       }
@@ -876,8 +921,9 @@ pub const Parser = struct {
     if (self.cur == .diamond_close) {
       self.advance();
     } else {
-      self.ctx().eh.ExpectedTokenXGotY(
-          self.l.walker.posFrom(self.cur_start), .diamond_close, self.cur);
+      self.ctx().eh.ExpectedXGotY(self.l.walker.posFrom(self.cur_start),
+          &[_]errors.WrongItemError.ItemDescr{.{.token = .diamond_close}},
+          .{.token = self.cur});
     }
     into.map = mapList.items;
   }
@@ -907,7 +953,7 @@ pub const Parser = struct {
     const check_swallow = if (self.cur == .diamond_open) blk: {
       try self.readBlockConfig(&self.config_buffer, self.int());
       std.debug.print("block header has map length of {}\n", .{self.config_buffer.map.len});
-      const pos = self.cur_start.posHere(self.l.walker.source.name);
+      const pos = self.ctx().input.at(self.cur_start);
       if (pb_exists) |ind| {
         parent.command.pushPrimary(pos, true);
         try self.pushLevel();
@@ -928,7 +974,7 @@ pub const Parser = struct {
           if (self.cur == .diamond_close) {
             self.advance();
           } else {
-            self.ctx().eh.SwallowDepthWithoutDiamondClose(self.cur_start.posHere(self.l.walker.source.name));
+            self.ctx().eh.SwallowDepthWithoutDiamondClose(self.ctx().input.at(self.cur_start));
             break :blk false;
           }
           break :blk true;
@@ -940,11 +986,11 @@ pub const Parser = struct {
         else => blk: {
           if (pb_exists) |ind| {
             if (ind.* == .unknown) {
-              parent.command.pushPrimary(self.cur_start.posHere(self.l.walker.source.name), false);
+              parent.command.pushPrimary(self.ctx().input.at(self.cur_start), false);
               if (parent.implicitBlockConfig()) |c| {
                 ind.* = .maybe;
                 try self.pushLevel();
-                try self.applyBlockConfig(self.cur_start.posHere(self.l.walker.source.name), c);
+                try self.applyBlockConfig(self.ctx().input.at(self.cur_start), c);
               }
             }
           }
@@ -953,10 +999,10 @@ pub const Parser = struct {
       }) {
         if (pb_exists) |ind| {
           if (ind.* == .unknown) {
-            parent.command.pushPrimary(self.cur_start.posHere(self.l.walker.source.name), false);
+            parent.command.pushPrimary(self.ctx().input.at(self.cur_start), false);
             try self.pushLevel();
             if (parent.implicitBlockConfig()) |c| {
-              try self.applyBlockConfig(self.cur_start.posHere(self.l.walker.source.name), c);
+              try self.applyBlockConfig(self.ctx().input.at(self.cur_start), c);
             }
           }
           ind.* = .yes;
@@ -989,14 +1035,14 @@ pub const Parser = struct {
             // this cursor is not necesserily the start of the current
             // swallowing command, since whitespace before that command is dumped.
             const end_cursor = if (parent.nodes.items.len == 0)
-                parent.paragraphs.items[parent.paragraphs.items.len - 1].content.pos.module.end
-              else parent.nodes.items[parent.nodes.items.len - 1].pos.module.end;
+                parent.paragraphs.items[parent.paragraphs.items.len - 1].content.pos.input.end
+              else parent.nodes.items[parent.nodes.items.len - 1].pos.input.end;
 
             var i = self.levels.items.len - 2;
             while (i > target_level) : (i -= 1) {
               const cur_parent = &self.levels.items[i - 1];
               try cur_parent.command.pushArg(self.int(), try self.levels.items[i].finalize(self));
-              try cur_parent.command.shift(self.int(), self.l.walker.source.name, end_cursor);
+              try cur_parent.command.shift(self.ctx(), end_cursor);
               try cur_parent.append(self.int(), cur_parent.command.info.unknown);
             }
             // target_level's command has now been closed.
@@ -1016,11 +1062,14 @@ pub const Parser = struct {
     return false;
   }
 
-  fn applyBlockConfig(self: *Parser, pos: data.Position, config: *const data.BlockConfig) !void {
+  fn applyBlockConfig(self: *Parser, pos: data.Position.Input, config: *const data.BlockConfig) !void {
     var sf = std.heap.stackFallback(128, self.int());
     var alloc = sf.get();
 
-    if (config.syntax) |s| unreachable; // TODO
+    if (config.syntax) |s| {
+      self.levels.items[self.levels.items.len - 1].syntax_proc = try s.syntax.init(self.ctx());
+      self.l.enableSpecialSyntax();
+    }
 
     if (config.map.len > 0) {
       var resolved_indexes = try alloc.alloc(u16, config.map.len);
@@ -1166,7 +1215,8 @@ pub const Parser = struct {
       }
     }
 
-    // off_colon and off_comment are reversed automatically by the lexer
+    // off_colon, off_comment, and special syntax are reversed automatically by the lexer
+
     if (config.full_ast) |_| unreachable;
   }
 };

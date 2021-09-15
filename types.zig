@@ -1,6 +1,6 @@
 const std = @import("std");
 const data = @import("data.zig");
-const unicode = @import("load/unicode.zig");
+
 
 /// This is Nyarna's type lattice. It calculates type intersections, checks type
 /// compatibility, and owns all data of structural types.

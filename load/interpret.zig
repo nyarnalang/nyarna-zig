@@ -18,6 +18,8 @@ const InterpretError = error {
 /// (lexer, parser, interpreter). It effectively implements the interpreter
 /// since the parser can initiate interpretation of nodes.
 pub const Context = struct {
+  /// input contains the source that is being parsed.
+  input: *data.Source,
   /// Maps each existing command character to the index of the namespace it
   /// references. Lexer uses this to check whether a character is a command
   /// character; the namespace mapping is relevant later for the interpreter.
@@ -46,6 +48,7 @@ pub const Context = struct {
 
   pub fn init(allocator: *std.mem.Allocator, reporter: *errors.Reporter) !Context {
     var ret = Context{
+      .input = undefined,
       .temp_nodes = std.heap.ArenaAllocator.init(allocator),
       .source_content = std.heap.ArenaAllocator.init(allocator),
       .command_characters = .{},
@@ -103,17 +106,13 @@ pub const Context = struct {
 
     var syms = &self.namespaces.items[ns];
     ret.data = .{
-      .symref = .{
-        .resolved = syms.get(name) orelse {
-          ret.data = .{
-            .symref = .{
-              .unresolved = .{
-                .ns = ns, .name = name
-              }
-            }
-          };
-          return ret;
-        }
+      .resolved_symref = syms.get(name) orelse {
+        ret.data = .{
+          .unresolved_symref = .{
+            .ns = ns, .name = name
+          }
+        };
+        return ret;
       }
     };
     return ret;
@@ -180,32 +179,28 @@ pub const Context = struct {
           .poison => return .poison,
         }
       },
-      .symref => |value| {
-        return switch (value) {
-          .unresolved => .failed,
-          .resolved => |sym| switch(sym.data) {
-            .ext_func, .ny_func => ChainResolution{
-              .func_ref = .{
-                .target = sym,
-                .prefix = null,
-              },
+      .unresolved_symref => return .failed,
+      .resolved_symref => |sym| return switch(sym.data) {
+        .ext_func, .ny_func => ChainResolution{
+          .func_ref = .{
+            .target = sym,
+            .prefix = null,
+          },
+        },
+        .variable => blk: {
+          const expr = try alloc.create(data.Expression);
+          // TODO: set expr to be variable reference
+          break :blk ChainResolution{
+            .var_chain = .{
+              .target = sym,
+              .field_chain = .{},
             },
-            .variable => blk: {
-              const expr = try alloc.create(data.Expression);
-              // TODO: set expr to be variable reference
-              break :blk ChainResolution{
-                .var_chain = .{
-                  .target = sym,
-                  .field_chain = .{},
-                },
-              };
-            },
-          }
-        };
+          };
+        },
       },
       else => {
         const expr = self.interpret(chain) catch |err| switch(err) {
-          InterpretError.failed_to_interpret_node => return .failed,
+          InterpretError.failed_to_interpret_node => return @as(ChainResolution, .failed),
           InterpretError.OutOfMemory => |oom| return oom,
         };
         // TODO: resolve accessor chain in context of expression's type and
@@ -213,5 +208,10 @@ pub const Context = struct {
         unreachable;
       }
     }
+  }
+
+  /// returns Nyarna's builtin boolean type
+  pub fn getBoolean(self: *Context) *data.Type.Enum {
+    unreachable;
   }
 };

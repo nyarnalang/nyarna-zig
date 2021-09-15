@@ -1,5 +1,6 @@
 const std = @import("std");
 const unicode = @import("load/unicode.zig");
+const Context = @import("load/interpret.zig").Context;
 
 /// A cursor inside a source file
 pub const Cursor = struct {
@@ -13,46 +14,71 @@ pub const Cursor = struct {
   pub fn unknown() Cursor {
     return .{.at_line = 0, .before_column = 0, .byte_offset = 0};
   }
-
-  pub fn posHere(c: Cursor, name: []const u8) Position {
-    return Position{
-      .module = .{
-        .name = name, .start = c, .end = c,
-      }
-    };
-  }
 };
 
 /// Describes the origin of a construct. Usually start and end cursor in a
 /// source file, but some constructs originate elsewhere.
 pub const Position = union(enum) {
+  /// Position in some kind of source code input.
+  pub const Input = struct {
+    source: *const Source.Descriptor,
+    start: Cursor,
+    end: Cursor,
+
+    /// Creates a new position starting at the start of left and ending at the end of right.
+    pub inline fn span(left: Input, right: Input) Input {
+      std.debug.assert(left.source == right.source);
+      return .{.source = left.source, .start = left.start, .end = right.end};
+    }
+  };
+
   /// Construct has no source position since it is intrinsic to the language.
   intrinsic: void,
-  /// Construct originates from a module source
-  module: struct {
-    name: []const u8,
-    start: Cursor,
-    end: Cursor
-  },
-  /// Construct originates from an argument to the interpreter.
-  argument: struct {
-    /// Name of the parameter the argument was bound to.
-    param_name: []u8
-  },
-
+  /// Construct originates from input source
+  input: Input,
   /// The invokation position is where the interpreter is called.
   /// This is an singleton, there is only one invokation position.
   invokation: void,
+};
 
-  pub fn inMod(name: []const u8, start: Cursor, end: Cursor) Position {
-    return .{.module = .{.name = name, .start = start, .end = end}};
+/// A source provides content to be parsed. This is either a source file or a
+/// (command-line) argument
+pub const Source = struct {
+  /// A source's descriptor specifies metadata about the source.
+  /// This is used to refer to the source in position data of nodes and expressions.
+  pub const Descriptor = struct {
+    name: []const u8,
+    /// the absolute locator that identifies this source.
+    locator: []const u8,
+    /// true iff the source has been given as command-line argument
+    argument: bool,
+  };
+
+  /// This source's metadata. The metadata will live longer than the source itself,
+  /// which will be deallocated once it has been parsed completely. Therefore it
+  /// is a pointer and is owned by the context.
+  meta: *const Descriptor,
+  /// the content of the source that is to be parsed
+  content: []const u8,
+  /// offsets if the source is part of a larger file.
+  /// these will be added to line/column reporting.
+  /// this feature is exists to support the testing framework.
+  offsets: struct {
+    line: usize = 0,
+    column: usize = 0
+  },
+  /// the locator minus its final element, used for resolving
+  /// relative locators inside this source.
+  locator_ctx: []const u8,
+
+  /// returns the position inside the source at the given cursor (starts & ends there)
+  pub inline fn at(s: *const Source, cursor: Cursor) Position.Input {
+    return s.between(cursor, cursor);
   }
 
-  /// Creates a new position starting at the start of left and ending at the end of right.
-  pub fn span(left: Position, right: Position) Position {
-    std.debug.assert(left == .module and right == .module);
-    std.debug.assert(std.mem.eql(u8, left.module.name, right.module.name));
-    return .{.module = .{.name = left.module.name, .start = left.module.start, .end = right.module.end}};
+  /// returns the position inside the source between start and end
+  pub inline fn between(s: *const Source, start: Cursor, end: Cursor) Position.Input {
+    return .{.source = s.meta, .start = start, .end = end};
   }
 };
 
@@ -141,6 +167,8 @@ pub const Token = enum(u16) {
   illegal_blocks_start_in_args,
   /// command character inside a block name or id_setter
   illegal_command_char,
+  /// non-identifier characters occurring where an identifier is expected
+  illegal_characters,
   /// indentation which contains both tab and space characters
   mixed_indentation,
   /// indentation which contains a different indentation character
@@ -222,21 +250,23 @@ pub const BlockConfig = struct {
   /// If neither is 0, the command character .from will be disabled and .to
   /// will take its place, referring to .from's namespace.
   pub const Map = struct {
-    pos: Position,
+    /// mappings are not defined by intrinsic functions, therefore position is
+    /// always in some Input.
+    pos: Position.Input,
     from: u21,
     to: u21
   };
 
   pub const SyntaxDef =  struct {
     pos: Position,
-    syntax: *SpecialSyntax,
+    syntax: SpecialSyntax,
   };
 
   syntax: ?SyntaxDef,
   map: []Map,
-  off_colon: ?Position,
-  off_comment: ?Position,
-  full_ast: ?Position,
+  off_colon: ?Position.Input,
+  off_comment: ?Position.Input,
+  full_ast: ?Position.Input,
 
   pub fn empty() BlockConfig {
     return .{
@@ -262,12 +292,9 @@ pub const Node = struct {
     // lf_after of last item is ignored.
     items: []Item,
   };
-  pub const SymRef = union(enum) {
-    resolved: *Symbol,
-    unresolved: struct {
-      ns: u15,
-      name: []const u8,
-    },
+  pub const UnresolvedSymRef = struct {
+    ns: u15,
+    name: []const u8,
   };
   pub const Access = struct {
     subject: *Node,
@@ -312,9 +339,11 @@ pub const Node = struct {
     literal: Literal,
     concatenation: Concatenation,
     paragraphs: Paragraphs,
-    symref: SymRef,
+    unresolved_symref: UnresolvedSymRef,
+    resolved_symref: *Symbol,
     unresolved_call: UnresolvedCall,
     resolved_call: ResolvedCall,
+    expression: *Expression,
     voidNode,
   };
 
@@ -351,12 +380,18 @@ pub const SpecialSyntax = struct {
   pub const Item = union(enum) {
     literal: []const u8,
     space: []const u8,
+    escaped_char: u21,
     special_char: u21,
     node: *Node,
+    newlines: usize, // 1 for newlines, >1 for parseps.
   };
 
-  push: fn(self: *SpecialSyntax, item: Item) std.mem.Allocator.Error!void,
-  finish: fn(self: *SpecialSyntax) std.mem.Allocator.Error!*Node,
+  pub const Processor = struct {
+    push: fn(self: *@This(), pos: Position.Input, item: Item) std.mem.Allocator.Error!void,
+    finish: fn(self: *@This(), pos: Position.Input) std.mem.Allocator.Error!*Node,
+  };
+
+  init: fn init(ctx: *Context) std.mem.Allocator.Error!*Processor,
 };
 
 pub const Type = union(enum) {
@@ -633,6 +668,7 @@ pub const Value = struct {
     concat: Concat,
     list: List,
     map: Map,
+    typeval: Type,
   },
 
   fn hash(v: *@This()) u64 {

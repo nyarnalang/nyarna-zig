@@ -1,14 +1,13 @@
 const std = @import("std");
 const data = @import("data");
 const unicode = @import("unicode.zig");
-const Source = @import("source.zig").Source;
 const Context = @import("interpret.zig").Context;
 const Token = data.Token;
 
 /// Walks a source and returns Unicode code points.
 pub const Walker = struct {
   /// The source.
-  source: *Source,
+  source: *data.Source,
   /// Next character to be read.
   cur: [*]const u8,
   /// Cursor position before recently returned code point.
@@ -19,7 +18,7 @@ pub const Walker = struct {
   marked: data.Cursor,
 
   /// Initializes a walker to walk the given source, starting at the beginning
-  pub fn init(s: *Source) Walker {
+  pub fn init(s: *data.Source) Walker {
     return .{
       .source = s,
       .cur = s.content.ptr,
@@ -107,14 +106,14 @@ pub const Walker = struct {
     return (w.cur - w.recent_length)[0..w.recent_length];
   }
 
-  pub fn posFrom(w: *Walker, start: data.Cursor) data.Position {
-    return .{.module = .{.name = w.source.name, .start = start, .end = w.before}};
+  pub fn posFrom(w: *Walker, start: data.Cursor) data.Position.Input {
+    return .{.source = w.source.meta, .start = start, .end = w.before};
   }
 };
 
 pub const Lexer = struct {
 
-  const State = enum {
+  const State = enum(i8) {
     /// initial state and state at the beginning of a block.
     /// may yields space and comment,
     /// will transition to check_indent when non-empty line is encountered.
@@ -129,13 +128,13 @@ pub const Lexer = struct {
     /// yields block_name_sep if exists and transitions to read_block_name then,
     /// else transitions to in_block.
     check_block_name,
+    /// reads content of a block, can start commands. Whitespace is emitted as
+    /// space, transitions to check_parsep when encountering a line end.
+    in_block,
     /// may yield space and identifier.
     /// yields either block_name_sep or missing_block_name_sep and transitions
     /// to indent_capture.
     read_block_name,
-    /// reads content of a block, can start commands. Whitespace is emitted as
-    /// space, transitions to check_parsep when encountering a line end.
-    in_block,
     /// Expects an identifier. used after '::'.
     after_access_colons,
     /// Expects either args start or blocks start. used after ':='.
@@ -187,6 +186,8 @@ pub const Lexer = struct {
     after_depth,
     /// like indent_capture, but transitions to special_syntax_check_indent
     special_syntax_indent_capture,
+    /// like check_parsep, but transitions to special_syntax_check_indent
+    special_syntax_check_parsep,
     /// like check_indent, but transitions to special_syntax_check_block_name
     special_syntax_check_indent,
     /// like check_block_name, but transitions to special_syntax
@@ -246,12 +247,12 @@ pub const Lexer = struct {
   level: Level,
   newline_count: u16,
 
-  pub fn init(context: *Context, source: *Source) !Lexer {
+  pub fn init(context: *Context) !Lexer {
     var ret = Lexer{
       .context = context,
       .cur_stored = undefined,
       .state = .indent_capture,
-      .walker = Walker.init(source),
+      .walker = Walker.init(context.input),
       .paren_depth = 0,
       .colons_disabled_at = null,
       .comments_disabled_at = null,
@@ -369,6 +370,12 @@ pub const Lexer = struct {
     return newlines_seen;
   }
 
+  /// transition to a new state via the offset between base_from and base_to.
+  /// used for transparently handling special_syntax transitions.
+  inline fn transition(l: *Lexer, comptime base_from: State, base_to: State) void {
+    l.state = @intToEnum(State, @enumToInt(l.state) + (@enumToInt(base_to) - @enumToInt(base_from)));
+  }
+
   pub fn next(l: *Lexer) !Token {
     var cur = l.cur_stored catch |e| {
       l.cur_stored = l.walker.nextInline();
@@ -378,7 +385,7 @@ pub const Lexer = struct {
     var recent_start = l.walker.before;
     while (true) {
       switch (l.state) {
-        .indent_capture => {
+        .indent_capture, .special_syntax_indent_capture => {
           switch (cur) {
             4 => {
               return .end_source;
@@ -395,7 +402,7 @@ pub const Lexer = struct {
             },
             else => {
               l.newline_count += l.emptyLines(&cur);
-              l.state = .check_indent;
+              l.transition(.indent_capture, .check_indent);
               if (l.newline_count > 0) {
                 l.recent_end = l.line_start;
                 return .space;
@@ -403,11 +410,11 @@ pub const Lexer = struct {
             }
           }
         },
-        .check_indent => {
+        .check_indent, .special_syntax_check_indent => {
           if (cur == 4) {
             return .end_source;
           }
-          l.state = if (l.colons_disabled_at == null) .check_block_name else .in_block;
+          l.transition(.check_indent, if (l.colons_disabled_at == null) State.check_block_name else .in_block);
           if (l.recent_end.byte_offset != l.walker.before.byte_offset) {
             l.level.indentation = @intCast(u16, l.recent_end.byte_offset - l.line_start.byte_offset);
             l.recent_end = l.walker.before;
@@ -425,10 +432,10 @@ pub const Lexer = struct {
             }
           }
         },
-        .check_parsep => {
+        .check_parsep, .special_syntax_check_parsep => {
           const newlines = l.emptyLines(&cur);
           l.recent_end = l.line_start;
-          l.state = .check_indent;
+          l.transition(.check_parsep, .check_indent);
           if (newlines > 0) {
             l.newline_count += newlines;
             return .parsep;
@@ -436,7 +443,7 @@ pub const Lexer = struct {
             return .ws_break;
           }
         },
-        .check_block_name => {
+        .check_block_name, .special_syntax_check_block_name => {
           if (cur == ':') {
             l.state = .read_block_name;
             l.cur_stored = l.walker.nextInline();
@@ -447,14 +454,18 @@ pub const Lexer = struct {
             if (l.comments_disabled_at) |depth| {
               if (depth == l.levels.items.len) l.comments_disabled_at = null;
             }
+            // if previous block had special syntax, disable it.
+            l.level.special = false;
             return .block_name_sep;
           }
-          l.state = .in_block;
+          l.transition(.check_block_name, .in_block);
         },
-        .in_block => {
-          const res = try l.processContent(.block, &cur);
+        .in_block, .special_syntax => {
+          const res = try if (l.state == .in_block) l.processContent(.block, &cur)
+          else l.processContent(.special, &cur);
+
           if (res.hit_line_end) {
-            l.state = .check_parsep;
+            l.transition(.in_block, .check_parsep);
           }
           if (res.token) |t| {
             l.recent_end = l.walker.before;
@@ -498,27 +509,26 @@ pub const Lexer = struct {
             l.recent_end = l.walker.before;
             return .space;
           }
-          l.readIdentifier(&cur);
-          // while the call ID must be processed by the lexer to be able to
-          // close the command later, we parse additional (illegal) content
-          // normally. The parser will produce appropriate errors.
           l.state = .in_arg;
-          l.recent_end = l.walker.before;
-          l.level.id = l.recent_id;
-          return .call_id;
+          if (l.readIdentifier(&cur)) {
+            // while the call ID must be recognized by the lexer to be able to
+            // close the command later, we parse additional (illegal) content
+            // normally. The parser will produce appropriate errors.
+            l.recent_end = l.walker.before;
+            l.level.id = l.recent_id;
+            return .call_id;
+          } else {
+            // no proper ID, therefore level ID is not changed. Just emit the
+            // rest of the content normally, parser will report an error.
+          }
         },
         .after_access_colons => {
-          l.readIdentifier(&cur);
-          if (l.recent_id.len > 0) {
+          if (l.readIdentifier(&cur)) {
             l.state = .after_id;
             l.recent_end = l.walker.before;
             return .identifier;
           }
           l.state = l.curBaseState();
-          if (l.cur_stored) {} else |e| {
-            l.cur_stored = l.walker.nextInline();
-            return e;
-          }
         },
         .after_assign => {
           if (try l.exprContinuation(&cur, false)) |t| {
@@ -616,7 +626,12 @@ pub const Lexer = struct {
             l.state = .after_config;
             return .diamond_close;
           }
-          l.readIdentifier(&cur);
+          if (!l.readIdentifier(&cur)) {
+            // we always emit .identifier here, even if it has 0 length.
+            // if reading an identifier fails, we need to store cur manually
+            // while this is done automatically on success.
+            l.cur_stored = cur;
+          }
           l.state = .config_item_arg;
           l.recent_end = l.walker.before;
           return .identifier;
@@ -687,13 +702,11 @@ pub const Lexer = struct {
             l.state = .in_block;
           }
         },
-        .special_syntax, .special_syntax_indent_capture, .special_syntax_check_indent,
-        .special_syntax_check_block_name => unreachable
       }
     }
   }
 
-  const Surrounding = enum {block, args, config, block_name};
+  const Surrounding = enum {block, args, config, block_name, special};
   const ContentResult = struct {hit_line_end: bool = false, token: ?Token = null};
 
   /// return null for an unescaped line end since it may be part of a parsep.
@@ -722,6 +735,16 @@ pub const Lexer = struct {
           .config => {
             l.cur_stored = l.walker.nextInline();
             return ContentResult{.token = .comment};
+          },
+          .special => {
+            if (l.comments_disabled_at != null) {
+              l.cur_stored = l.walker.nextInline();
+              return ContentResult{.token = .special};
+            } else {
+              const line_end = l.readComment(cur);
+              l.newline_count = 0;
+              return ContentResult{.hit_line_end = line_end, .token = .comment};
+            }
           },
           else => {
             if (l.comments_disabled_at != null) {
@@ -796,17 +819,38 @@ pub const Lexer = struct {
         l.ns = ns;
         return l.genCommand(cur);
       } else if (cur.* == l.level.end_char and l.checkEndCommand()) {
-        std.debug.print("found end via end_char\n", .{});
         return l.genCommand(cur);
       }
     }
     return ContentResult{.token =
-      if (ctx == .block_name) blk: {
-        l.readIdentifier(cur);
-        break :blk .identifier;
-      } else blk: {
-        l.readLiteral(cur, ctx);
-        break :blk .literal;
+      switch(ctx) {
+        .block_name => blk: {
+          if (l.readIdentifier(cur)) break :blk .identifier;
+          while (true) {
+            cur.* = l.walker.nextInline() catch |e| {
+              l.cur_stored = e;
+              l.recent_end = l.walker.before;
+              break :blk Token.illegal_characters;
+            };
+            switch (cur.*) {
+              4, ' ', '\t', '\r', '\n', ':' => break,
+              else => {
+                if (l.context.command_characters.get(cur.*) != null or
+                    unicode.L.contains(unicode.category(cur.*))) break;
+              }
+            }
+          }
+          break :blk Token.illegal_characters;
+        },
+        .special => blk: {
+          if (l.readIdentifier(cur)) break :blk .identifier;
+          l.cur_stored = l.walker.nextInline();
+          break :blk Token.special;
+        },
+        else => blk: {
+          l.readLiteral(cur, ctx);
+          break :blk .literal;
+        },
       }
     };
   }
@@ -861,9 +905,7 @@ pub const Lexer = struct {
       l.cur_stored = e;
       return .{.token = .illegal_command_char};
     };
-    var cat = unicode.category(cur.*);
-    if (unicode.L.contains(cat)) {
-      l.readIdentifier(cur);
+    if (l.readIdentifier(cur)) {
       if (std.mem.eql(u8, l.recent_id, "end")) {
         if (cur.* == '(') {
           l.cur_stored = l.walker.nextInline();
@@ -930,18 +972,21 @@ pub const Lexer = struct {
     }
   }
 
-  fn readIdentifier(l: *Lexer, cur: *u21) void {
+  fn readIdentifier(l: *Lexer, cur: *u21) bool {
     const name_start = l.walker.before.byte_offset;
     while (unicode.L.contains(unicode.category(cur.*))) {
       cur.* = l.walker.nextInline() catch |e| {
         l.cur_stored = e;
         const len = l.walker.before.byte_offset - name_start;
         l.recent_id = (l.walker.cur - len)[0..len];
-        return;
+        return true;
       };
     }
     l.recent_id = l.walker.contentFrom(name_start);
-    l.cur_stored = cur.*;
+    if (l.recent_id.len > 0) {
+      l.cur_stored = cur.*;
+      return true;
+    } else return false;
   }
 
   fn readNumber(l: *Lexer, cur: *u21) void {
@@ -995,28 +1040,21 @@ pub const Lexer = struct {
   }
 
   inline fn checkEndCommand(l: *Lexer) bool {
-    std.debug.print("  checkEndCommand: must be {s}, reading: '", .{l.level.id});
     l.walker.mark();
     defer {
       l.walker.resetToMark();
-      std.debug.print("\n", .{});
     }
     var lookahead = l.walker.nextInline() catch return false;
-    std.debug.print("{s}", .{l.walker.lastUtf8Unit()});
     if (lookahead != 'e') return false;
     lookahead = l.walker.nextInline() catch return false;
-    std.debug.print("{s}", .{l.walker.lastUtf8Unit()});
     if (lookahead != 'n') return false;
     lookahead = l.walker.nextInline() catch return false;
-    std.debug.print("{s}", .{l.walker.lastUtf8Unit()});
     if (lookahead != 'd') return false;
     lookahead = l.walker.nextInline() catch return false;
-    std.debug.print("{s}", .{l.walker.lastUtf8Unit()});
     if (lookahead != '(') return false;
     l.cur_stored = l.walker.nextInline();
     if (l.matchEndCommand(false) != .call_id) return false;
     lookahead = l.cur_stored catch return false;
-    std.debug.print("{s}' ({})\n", .{l.walker.lastUtf8Unit(), lookahead == ')'});
     return lookahead == ')';
   }
 
@@ -1153,5 +1191,9 @@ pub const Lexer = struct {
     if (l.comments_disabled_at == null) {
       l.comments_disabled_at = l.levels.items.len;
     }
+  }
+
+  pub fn enableSpecialSyntax(l: *Lexer) void {
+    l.level.special = true;
   }
 };
