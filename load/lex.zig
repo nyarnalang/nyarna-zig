@@ -203,7 +203,7 @@ pub const Lexer = struct {
     tabs: ?bool,
     id: []const u8,
     end_char: u21,
-    special: bool,
+    special: enum{disabled, standard_comments, comments_without_newline},
   };
 
   const newline = @as([]const u8, "\n");
@@ -228,7 +228,6 @@ pub const Lexer = struct {
   /// used for error reporting.
   recent_expected_id: []const u8,
   /// for ns_sym and symref, contains the decoded command character.
-  /// for escape, contains the escaped character.
   /// for swallow_depth, contains the parsed depth.
   code_point: u21,
   /// the namespace of the recently read symref.
@@ -262,7 +261,7 @@ pub const Lexer = struct {
         .tabs = null,
         .id = undefined,
         .end_char = undefined,
-        .special = false,
+        .special = .disabled,
       },
       .newline_count = 0,
       .recent_end = undefined,
@@ -307,12 +306,22 @@ pub const Lexer = struct {
           }
         },
         '\r' => {
-          l.cur_stored = l.walker.nextAfterCR();
-          return true;
+          if (l.level.special == .comments_without_newline) {
+            l.cur_stored = cur.*;
+            return false;
+          } else {
+            l.cur_stored = l.walker.nextAfterCR();
+            return true;
+          }
         },
         '\n' => {
-          l.cur_stored = l.walker.nextAfterLF();
-          return true;
+          if (l.level.special == .comments_without_newline) {
+            l.cur_stored = cur.*;
+            return false;
+          } else {
+            l.cur_stored = l.walker.nextAfterLF();
+            return true;
+          }
         },
         else => cur.* = l.walker.nextInline() catch |e| {
           l.cur_stored = e;
@@ -455,7 +464,7 @@ pub const Lexer = struct {
               if (depth == l.levels.items.len) l.comments_disabled_at = null;
             }
             // if previous block had special syntax, disable it.
-            l.level.special = false;
+            l.level.special = .disabled;
             return .block_name_sep;
           }
           l.transition(.check_block_name, .in_block);
@@ -738,6 +747,7 @@ pub const Lexer = struct {
           },
           .special => {
             if (l.comments_disabled_at != null) {
+              l.code_point =  cur.*;
               l.cur_stored = l.walker.nextInline();
               return ContentResult{.token = .special};
             } else {
@@ -844,6 +854,7 @@ pub const Lexer = struct {
         },
         .special => blk: {
           if (l.readIdentifier(cur)) break :blk .identifier;
+          l.code_point = cur.*;
           l.cur_stored = l.walker.nextInline();
           break :blk Token.special;
         },
@@ -964,9 +975,9 @@ pub const Lexer = struct {
         return .{.hit_line_end = true, .token = .escape};
       },
       else => {
+        l.recent_id = l.walker.lastUtf8Unit();
         l.cur_stored = l.walker.nextInline();
         l.recent_end = l.walker.before;
-        l.recent_id = l.walker.lastUtf8Unit();
         return .{.token = .escape};
       }
     }
@@ -1109,7 +1120,7 @@ pub const Lexer = struct {
             .tabs = null,
             .id = "",
             .end_char = l.level.end_char,
-            .special = false,
+            .special = .disabled,
           };
         } else {
           try l.pushLevel();
@@ -1172,13 +1183,13 @@ pub const Lexer = struct {
       .tabs = null,
       .id = l.recent_id,
       .end_char = l.code_point,
-      .special = false,
+      .special = .disabled,
     };
   }
 
   inline fn curBaseState(l: *Lexer) State {
     return if (l.paren_depth > 0) .in_arg else
-        if (l.level.special) State.special_syntax else State.in_block;
+        if (l.level.special == .disabled) State.in_block else State.special_syntax;
   }
 
   pub fn disableColons(l: *Lexer) void {
@@ -1193,7 +1204,10 @@ pub const Lexer = struct {
     }
   }
 
-  pub fn enableSpecialSyntax(l: *Lexer) void {
-    l.level.special = true;
+  pub fn enableSpecialSyntax(l: *Lexer, comments_include_newline: bool) void {
+    std.debug.print("  lex: enabling special syntax at state {s}\n", .{@tagName(l.state)});
+    l.level.special = if (comments_include_newline) .standard_comments else .comments_without_newline;
+    std.debug.assert(l.state == .check_indent);
+    l.state = .special_syntax_check_indent;
   }
 };

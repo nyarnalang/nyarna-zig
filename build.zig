@@ -17,11 +17,6 @@ const errors_pkg = std.build.Pkg{
   .dependencies = &.{data_pkg},
 };
 
-const source_pkg = std.build.Pkg{
-  .name = "source",
-  .path = "load/source.zig",
-};
-
 const interpret_pkg = std.build.Pkg{
   .name = "interpret",
   .path = "load/interpret.zig",
@@ -41,7 +36,7 @@ const parse_pkg = std.build.Pkg{
 };
 
 const internal_pkgs = [_]std.build.Pkg{
-  data_pkg, types_pkg, errors_pkg, lex_pkg, parse_pkg, source_pkg, interpret_pkg
+  data_pkg, types_pkg, errors_pkg, lex_pkg, parse_pkg, interpret_pkg
 };
 
 fn internalPackages(s: *std.build.LibExeObjStep) void {
@@ -53,6 +48,7 @@ fn internalPackages(s: *std.build.LibExeObjStep) void {
 pub fn build(b: *Builder) !void {
   const mode = b.standardReleaseOptions();
   const target = b.standardTargetOptions(.{});
+  const test_filter = b.option([]const u8, "test-filter", "filters tests when testing");
 
   var ehgen_exe = b.addExecutable("ehgen", "build/gen_errorhandler.zig");
   ehgen_exe.addPackage(.{
@@ -81,6 +77,7 @@ pub fn build(b: *Builder) !void {
     .path = "test/testing.zig",
     .dependencies = &internal_pkgs,
   });
+  lex_test.setFilter(test_filter);
 
   var lex_test_step = b.step("lexTest", "Run lexer tests");
   lex_test_step.dependOn(&lex_test.step);
@@ -94,6 +91,7 @@ pub fn build(b: *Builder) !void {
     .path = "test/testing.zig",
     .dependencies = &internal_pkgs,
   });
+  parse_test.setFilter(test_filter);
 
   var parse_test_step = b.step("parseTest", "Run parser tests");
   parse_test_step.dependOn(&parse_test.step);
@@ -106,6 +104,7 @@ pub fn build(b: *Builder) !void {
     .path = "test/testing.zig",
     .dependencies = &internal_pkgs,
   });
+  parse_test_orig.setFilter(test_filter);
 
   var parse_test_orig_step = b.step("parseTestOrig", "Run original parser tests");
   parse_test_orig_step.dependOn(&parse_test_orig.step);

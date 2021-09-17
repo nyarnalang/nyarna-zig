@@ -1,0 +1,192 @@
+=== Locations syntax
+--- input
+\block:<syntax locations>
+  spam : \Raw
+  egg, sausage = \Integer(42); baked : \List(\Text) {varargs};
+  beans {primary}= \if(true):
+    warbl
+  :else:
+    wirbl
+  \end(if) # comment
+  schwurbl : \Boolean
+\end(block)
+--- ast
++UCALL
+  +TARGET
+    =SYMREF [0]block
+  -TARGET
+  +PARAM primary
+    +RCALL
+      +TARGET
+        =TYPE location
+      -TARGET
+      +ARG
+        =LIT text "spam"
+      -ARG
+      +ARG
+        =SYMREF [0]Raw
+      -ARG
+      +ARG
+        =VOID
+      -ARG
+      +ARG
+        =ENUM Boolean "false"
+      -ARG
+      +ARG
+        =ENUM Boolean "false"
+      -ARG
+      +ARG
+        =ENUM Boolean "false"
+      -ARG
+    -RCALL
+    +RCALL
+      +TARGET
+        =TYPE location
+      -TARGET
+      +ARG
+        =LIT text "egg"
+      -ARG
+      +ARG
+        =VOID
+      -ARG
+      +ARG
+        +UCALL
+          +TARGET
+            =SYMREF [0]Integer
+          -TARGET
+          +PARAM pos
+            =LIT text "42"
+          -PARAM
+        -UCALL
+      -ARG
+      +ARG
+        =ENUM Boolean "false"
+      -ARG
+      +ARG
+        =ENUM Boolean "false"
+      -ARG
+      +ARG
+        =ENUM Boolean "false"
+      -ARG
+    -RCALL
+    +RCALL
+      +TARGET
+        =TYPE location
+      -TARGET
+      +ARG
+        =LIT text "sausage"
+      -ARG
+      +ARG
+        =VOID
+      -ARG
+      +ARG
+        +UCALL
+          +TARGET
+            =SYMREF [0]Integer
+          -TARGET
+          +PARAM pos
+            =LIT text "42"
+          -PARAM
+        -UCALL
+      -ARG
+      +ARG
+        =ENUM Boolean "false"
+      -ARG
+      +ARG
+        =ENUM Boolean "false"
+      -ARG
+      +ARG
+        =ENUM Boolean "false"
+      -ARG
+    -RCALL
+    +RCALL
+      +TARGET
+        =TYPE location
+      -TARGET
+      +ARG
+        =LIT text "baked"
+      -ARG
+      +ARG
+        +UCALL
+          +TARGET
+            =SYMREF [0]List
+          -TARGET
+          +PARAM pos
+            =SYMREF [0]Text
+          -PARAM
+        -UCALL
+      -ARG
+      +ARG
+        =VOID
+      -ARG
+      +ARG
+        =ENUM Boolean "false"
+      -ARG
+      +ARG
+        =ENUM Boolean "true"
+      -ARG
+      +ARG
+        =ENUM Boolean "false"
+      -ARG
+    -RCALL
+    +RCALL
+      +TARGET
+        =TYPE location
+      -TARGET
+      +ARG
+        =LIT text "beans"
+      -ARG
+      +ARG
+        =VOID
+      -ARG
+      +ARG
+        +UCALL
+          +TARGET
+            =SYMREF [0]if
+          -TARGET
+          +PARAM pos
+            =LIT text "true"
+          -PARAM
+          +PARAM primary
+            =LIT text "warbl"
+          -PARAM
+          +PARAM name="else"
+            =LIT text "wirbl"
+          -PARAM
+        -UCALL
+      -ARG
+      +ARG
+        =ENUM Boolean "true"
+      -ARG
+      +ARG
+        =ENUM Boolean "false"
+      -ARG
+      +ARG
+        =ENUM Boolean "false"
+      -ARG
+    -RCALL
+    +RCALL
+      +TARGET
+        =TYPE location
+      -TARGET
+      +ARG
+        =LIT text "schwurbl"
+      -ARG
+      +ARG
+        =SYMREF [0]Boolean
+      -ARG
+      +ARG
+        =VOID
+      -ARG
+      +ARG
+        =ENUM Boolean "false"
+      -ARG
+      +ARG
+        =ENUM Boolean "false"
+      -ARG
+      +ARG
+        =ENUM Boolean "false"
+      -ARG
+    -RCALL
+  -PARAM
+-UCALL

@@ -3,13 +3,32 @@ const data = @import("data");
 const Context = @import("interpret.zig").Context;
 const errors = @import("errors");
 
+pub const SpecialSyntax = struct {
+  pub const Item = union(enum) {
+    literal: []const u8,
+    space: []const u8,
+    escaped: []const u8,
+    special_char: u21,
+    node: *data.Node,
+    newlines: usize, // 1 for newlines, >1 for parseps.
+  };
+
+  pub const Processor = struct {
+    push: fn(self: *@This(), pos: data.Position.Input, item: Item) std.mem.Allocator.Error!void,
+    finish: fn(self: *@This(), pos: data.Position.Input) std.mem.Allocator.Error!*data.Node,
+  };
+
+  init: fn init(ctx: *Context) std.mem.Allocator.Error!*Processor,
+  comments_include_newline: bool,
+};
+
 pub const Locations = struct {
   const State = enum {
     initial, names, after_name, ltype, after_ltype, flags, after_flag, after_flags, default, at_end
   };
 
   ctx: *Context,
-  proc: data.SpecialSyntax.Processor,
+  proc: SpecialSyntax.Processor,
   state: State,
   produced: std.ArrayListUnmanaged(*data.Node),
   // ----- current line ------
@@ -23,13 +42,14 @@ pub const Locations = struct {
   // -------------------------
 
 
-  pub fn syntax() data.SpecialSyntax {
+  pub fn syntax() SpecialSyntax {
     return .{
       .init = Locations.init,
+      .comments_include_newline = false,
     };
   }
 
-  fn init(ctx: *Context) std.mem.Allocator.Error!*data.SpecialSyntax.Processor {
+  fn init(ctx: *Context) std.mem.Allocator.Error!*SpecialSyntax.Processor {
     const alloc = &ctx.temp_nodes.allocator;
     const ret = try alloc.create(Locations);
     ret.ctx = ctx;
@@ -53,14 +73,17 @@ pub const Locations = struct {
     l.names.clearRetainingCapacity();
   }
 
-  fn push(p: *data.SpecialSyntax.Processor, pos: data.Position.Input,
-          item: data.SpecialSyntax.Item) std.mem.Allocator.Error!void {
+  fn push(p: *SpecialSyntax.Processor, pos: data.Position.Input,
+          item: SpecialSyntax.Item) std.mem.Allocator.Error!void {
     const self = @fieldParentPtr(Locations, "proc", p);
     self.state = while (true) {
       switch (self.state) {
-        .initial => if (item == .space) return else {
-          self.start = pos.start;
-          self.state = .names;
+        .initial => switch(item) {
+          .space, .newlines => return,
+          else => {
+            self.start = pos.start;
+            self.state = .names;
+          },
         },
         .names => switch (item) {
           .space => return,
@@ -76,7 +99,7 @@ pub const Locations = struct {
             try self.names.append(&self.ctx.temp_nodes.allocator, name_node);
             break .after_name;
           },
-          .escaped_char => {
+          .escaped => {
             self.ctx.eh.IllegalItem(pos,
                 &[_]errors.WrongItemError.ItemDescr{.{.token = .identifier}},
                 .{.token = .escape});
@@ -120,15 +143,16 @@ pub const Locations = struct {
           .space => return,
           .literal => |name| {
             self.ctx.eh.MissingToken(pos,
-                &[_]errors.WrongItemError.ItemDescr{.{.character = ','}},
-                .{.token = .identifier});
+                &[_]errors.WrongItemError.ItemDescr{
+                  .{.character = ','}, .{.character = ':'}, .{.character = '{'}, .{.character = '='}
+                }, .{.token = .identifier});
             self.state = .names;
           },
-          .escaped_char => {
+          .escaped => {
             self.ctx.eh.IllegalItem(pos,
-                &[_]errors.WrongItemError.ItemDescr{.{.character = ','},
-                  .{.character = '{'}, .{.character = ':'}, .{.character = '='}},
-                .{.token = .escape});
+                &[_]errors.WrongItemError.ItemDescr{
+                  .{.character = ','}, .{.character = ':'}, .{.character = '{'}, .{.character = '='}
+                }, .{.token = .escape});
             return;
           },
           .special_char => |c| switch (c) {
@@ -160,7 +184,7 @@ pub const Locations = struct {
             self.ctx.eh.IllegalItem(pos, &[_]errors.WrongItemError.ItemDescr{.node}, .{.token = .literal});
             return;
           },
-          .escaped_char => {
+          .escaped => {
             self.ctx.eh.IllegalItem(pos,
                 &[_]errors.WrongItemError.ItemDescr{.node},
                 .{.token = .escape});
@@ -197,7 +221,7 @@ pub const Locations = struct {
                 }, .{.token = .identifier});
             return;
           },
-          .escaped_char => {
+          .escaped => {
             self.ctx.eh.IllegalItem(pos,
                 &[_]errors.WrongItemError.ItemDescr{
                   .{.character = '='}, .{.character = ';'}, .{.token = .ws_break}
@@ -242,7 +266,7 @@ pub const Locations = struct {
             } else target.* = pos;
             break .after_flag;
           },
-          .escaped_char => {
+          .escaped => {
             self.ctx.eh.IllegalItem(pos,
                 &[_]errors.WrongItemError.ItemDescr{
                     .{.token = .identifier}, .{.character = '}'}
@@ -297,7 +321,7 @@ pub const Locations = struct {
                 }, .{.token = .identifier});
             return;
           },
-          .escaped_char => {
+          .escaped => {
             self.ctx.eh.IllegalItem(pos,
                 &[_]errors.WrongItemError.ItemDescr{
                     .{.character = ','}, .{.character = '}'}
@@ -345,7 +369,7 @@ pub const Locations = struct {
                 }, .{.token = .identifier});
             return;
           },
-          .escaped_char => {
+          .escaped => {
             self.ctx.eh.IllegalItem(pos,
                 &[_]errors.WrongItemError.ItemDescr{
                   .{.character = '='}, .{.character = ';'}, .{.token = .ws_break}
@@ -378,7 +402,7 @@ pub const Locations = struct {
                 &[_]errors.WrongItemError.ItemDescr{.node}, .{.token = .identifier});
             return;
           },
-          .escaped_char => {
+          .escaped => {
             self.ctx.eh.IllegalItem(pos,
                 &[_]errors.WrongItemError.ItemDescr{.node}, .{.token = .escape});
             return;
@@ -413,7 +437,7 @@ pub const Locations = struct {
                 .{.token = .identifier});
             return;
           },
-          .escaped_char => {
+          .escaped => {
             self.ctx.eh.IllegalItem(pos,
                 &[_]errors.WrongItemError.ItemDescr{.{.character = ';'}, .{.token = .ws_break}},
                 .{.token = .escape});
@@ -446,7 +470,7 @@ pub const Locations = struct {
     } else unreachable;
   }
 
-  fn finish(p: *data.SpecialSyntax.Processor, pos: data.Position.Input) std.mem.Allocator.Error!*data.Node {
+  fn finish(p: *SpecialSyntax.Processor, pos: data.Position.Input) std.mem.Allocator.Error!*data.Node {
     const self = @fieldParentPtr(Locations, "proc", p);
     const ret = try self.ctx.temp_nodes.allocator.create(data.Node);
     ret.pos = .{.input = pos};

@@ -1,8 +1,9 @@
 const std = @import("std");
 const data = @import("data");
-const parse = @import("parse");
+const parse = @import("parse.zig");
 const errors = @import("errors");
 const types = @import("types");
+const syntaxes = @import("syntaxes.zig");
 
 pub const Errors = error {
   failed_to_interpret_node,
@@ -45,6 +46,10 @@ pub const Context = struct {
   /// The type lattice that handles types for this interpreter.
   /// it also owns the context's structural types.
   lattice: types.Lattice,
+  /// predefined types. TODO: move these to system.ny
+  boolean: data.Type.Instantiated,
+  /// Array of known syntaxes. TODO: make this user-extensible
+  syntax_registry: [1]syntaxes.SpecialSyntax,
 
   pub fn init(allocator: *std.mem.Allocator, reporter: *errors.Reporter) !Context {
     var ret = Context{
@@ -57,8 +62,16 @@ pub const Context = struct {
         .reporter = reporter,
       },
       .lattice = .{.alloc = allocator},
+      .boolean = .{.at = .intrinsic, .name = null, .data = .{.tenum = undefined}},
+      .syntax_registry = .{syntaxes.Locations.syntax()},
     };
     errdefer ret.deinit().deinit();
+    ret.boolean.data.tenum = try data.Type.Enum.predefBoolean(&ret.source_content.allocator);
+    const boolsym = try ret.source_content.allocator.create(data.Symbol);
+    boolsym.defined_at = .intrinsic;
+    boolsym.name = "Boolean";
+    boolsym.data = .{.ny_type = .{.instantiated = &ret.boolean}};
+    ret.boolean.name = boolsym;
     try ret.addNamespace(&ret.temp_nodes.allocator, '\\');
     return ret;
   }
@@ -139,6 +152,8 @@ pub const Context = struct {
       /// enforce this.
       prefix: ?*data.Expression = null,
     },
+    /// last chain item was resolved to a type.
+    type_ref: *data.Symbol,
     /// chain starts at an expression and descends into the returned value.
     expr_chain: struct {
       expr: *data.Expression,
@@ -171,6 +186,10 @@ pub const Context = struct {
             // in that expression's type for the symbol.
             unreachable;
           },
+          .type_ref => |ref| {
+            // TODO: search in the namespace of the type for the given name.
+            unreachable;
+          },
           .expr_chain => |ec| {
             // TODO: same as var_chain basically
             unreachable;
@@ -186,6 +205,9 @@ pub const Context = struct {
             .target = sym,
             .prefix = null,
           },
+        },
+        .ny_type => ChainResolution{
+          .type_ref = sym,
         },
         .variable => blk: {
           const expr = try alloc.create(data.Expression);
@@ -211,7 +233,8 @@ pub const Context = struct {
   }
 
   /// returns Nyarna's builtin boolean type
-  pub fn getBoolean(self: *Context) *data.Type.Enum {
-    unreachable;
+  pub fn getBoolean(self: *Context) *const data.Type.Enum {
+    return &self.boolean.data.tenum;
   }
 };
+

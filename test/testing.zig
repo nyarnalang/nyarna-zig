@@ -15,19 +15,24 @@ pub fn lexTest(f: *tml.File) !void {
   try input.content.appendSlice(f.alloc(), "\x04\x04\x04\x04");
   const expected_data = f.items.get("tokens").?;
   var expected_content = std.mem.split(expected_data.content.items, "\n");
+  var src_meta = data.Source.Descriptor{
+    .name = "input",
+    .locator = ".doc.document",
+    .argument = false,
+  };
   var src = data.Source{
+    .meta = &src_meta,
     .content = input.content.items,
     .offsets = .{
       .line = input.line_offset, .column = 0,
     },
-    .name = "input",
-    .locator = ".doc.document",
     .locator_ctx = ".doc.",
   };
   var r = errors.CmdLineReporter.init();
   var ctx = try Context.init(std.testing.allocator, &r.reporter);
+  ctx.input = &src;
   defer ctx.deinit().deinit();
-  var l = try lex.Lexer.init(&ctx, &src);
+  var l = try lex.Lexer.init(&ctx);
   var startpos = l.recent_end;
   defer l.deinit();
   var t = try l.next();
@@ -53,6 +58,15 @@ pub fn lexTest(f: *tml.File) !void {
       std.log.err("got fewer tokens than expected, first missing token: {s}", .{unmatched});
       return TestError.no_match;
     }
+  }
+}
+
+fn formatTypeName(t: data.Type, comptime fmt: []const u8,
+                  options: std.fmt.FormatOptions, writer: anytype) !void {
+  switch (t) {
+    .intrinsic => |i| try writer.writeAll(@tagName(i)),
+    .structural => |s| unreachable,
+    .instantiated => |i| try writer.writeAll(if (i.name) |sym| sym.name else "<anon>"),
   }
 }
 
@@ -87,8 +101,9 @@ fn AstEmitter(Handler: anytype) type {
     }
 
     fn pushWithKey(self: *Self, comptime name: []const u8, comptime key: []const u8, value: ?[]const u8) !Popper {
-      try if (value) |v| self.emitLine("+{s} " ++ key ++ "=\"{s}\"", .{name, v})
-      else self.emitLine("+{s} " ++ key, .{name});
+      if (name.len == 0) try self.emitLine("+{s} " ++ value.?) else
+      if (value) |v| try self.emitLine("+{s} " ++ key ++ "=\"{s}\"", .{name, v})
+      else try self.emitLine("+{s} " ++ key, .{name});
       self.depth += 1;
       return Popper{.e = self, .name = name};
     }
@@ -156,9 +171,111 @@ fn AstEmitter(Handler: anytype) type {
           }
           try ucall.pop();
         },
-        .resolved_call => unreachable,
-        .expression => unreachable,
+        .resolved_call => |rc| {
+          const rcall = try self.push("RCALL");
+          {
+            const t = try self.push("TARGET");
+            try self.processExpr(rc.target);
+            try t.pop();
+          }
+          for (rc.args) |a| {
+            const arg = try self.push("ARG");
+            try self.process(a);
+            try arg.pop();
+          }
+          try rcall.pop();
+        },
+        .expression => |e| try self.processExpr(e),
         .voidNode => try self.emitLine("=VOID", .{}),
+      }
+    }
+
+    pub fn processExpr(self: *Self, e: *data.Expression) anyerror!void {
+      switch (e.data) {
+        .constr_call => |cc| {
+          const constr = try self.push("CONSTRUCT");
+          try self.processType(cc.target_type);
+          for (cc.exprs) |ex| {
+            const a = try self.push("ARG");
+            try self.processExpr(ex);
+            try a.pop();
+          }
+          try constr.pop();
+        },
+        .ext_call => |ec| {
+          unreachable;
+        },
+        .call => |c| {
+          unreachable;
+        },
+        .assignment => |ass| {
+          unreachable;
+        },
+        .access => |acc| {
+          unreachable;
+        },
+        .literal => |l| {
+          try self.processValue(&l.value);
+        },
+        .poison => try self.emitLine("=POISON", .{}),
+        .void => try self.emitLine("=VOID", .{}),
+      }
+    }
+
+    fn processType(self: *Self, t: data.Type) !void {
+      switch (t) {
+        .intrinsic => |i| try self.emitLine("=TYPE {s}", .{@tagName(i)}),
+        .structural => unreachable,
+        .instantiated => |i| {
+          if (i.name) |sym| try self.emitLine("=TYPE {s} \"{s}\"", .{@tagName(i.data), sym.name})
+          else {
+            const tc = try self.pushWithKey("TYPE", "", @tagName(i.data));
+            switch (i.data) {
+              .textual => |txt| unreachable,
+              .numeric => |num| unreachable,
+              .float => |fl| unreachable,
+              .tenum => |en| {
+                for (en.values.entries.items) |*entry| {
+                  try self.emitLine("=ITEM {s}", .{entry.key});
+                }
+              },
+              .record => |rec| unreachable,
+            }
+            try tc.pop();
+          }
+        },
+      }
+    }
+
+    fn processValue(self: *Self, v: *const data.Value) !void {
+      switch (v.data) {
+        .text => |txt| {
+          const t = std.fmt.Formatter(formatTypeName){.data = txt.t};
+          try self.emitLine("=TEXT {} \"{}\"", .{t, std.zig.fmtEscapes(txt.value)});
+        },
+        .number => |num| {
+          unreachable;
+        },
+        .float => |fl| {
+          unreachable;
+        },
+        .enumval => |ev| {
+          const t = std.fmt.Formatter(formatTypeName){.data = ev.t.typedef()};
+          try self.emitLine("=ENUM {} \"{s}\"", .{t, ev.t.values.entries.items[ev.index].key});
+        },
+        .record => |rec| {
+          unreachable;
+        },
+        .concat => |con| {
+          unreachable;
+        },
+        .list => |lst| {
+          unreachable;
+        },
+        .map => |map| {
+          unreachable;
+        },
+        .typeval => |t| try self.processType(t),
       }
     }
   };
@@ -171,28 +288,41 @@ pub fn parseTest(f: *tml.File) !void {
   var checker = struct {
     expected_iter: std.mem.TokenIterator,
     line: usize,
+    full_output: std.ArrayListUnmanaged(u8),
+    failed: bool,
     fn handle(self: *@This(), line: []const u8) !void {
-      const expected = self.expected_iter.next() orelse {
-        std.log.err("got more output than expected, first unexpected line:\n  {s}", .{line});
-        return TestError.no_match;
-      };
-      if (!std.mem.eql(u8, expected, line)) {
-        std.log.err(
-          \\Wrong output at line {}:
-          \\==== expected content ====
-          \\{s}
-          \\
-          \\==== actual content ====
-          \\{s}
-          \\
-          \\
-        , .{self.line, expected, line});
-        return TestError.no_match;
+      defer {
+        self.line += 1;
+        self.full_output.appendSlice(std.testing.allocator, line) catch unreachable;
+        self.full_output.append(std.testing.allocator, '\n') catch unreachable;
       }
-      self.line += 1;
+      const expected = self.expected_iter.next() orelse {
+        if (!self.failed) {
+          std.log.err("got more output than expected, first unexpected line:\n  {s}", .{line});
+          self.failed = true;
+        }
+        return;
+      };
+      if (!self.failed) {
+        if (!std.mem.eql(u8, expected, line)) {
+          std.log.err(
+            \\Wrong output at line {}:
+            \\==== expected content ====
+            \\{s}
+            \\
+            \\===== actual content =====
+            \\{s}
+            \\
+            \\
+          , .{self.line, expected, line});
+          self.failed = true;
+        }
+      }
     }
   }{.expected_iter = std.mem.tokenize(expected_data.content.items, "\n"),
-    .line = expected_data.line_offset + 1};
+    .line = expected_data.line_offset + 1,
+    .full_output = .{}, .failed = false};
+  defer checker.full_output.deinit(std.testing.allocator);
 
   var src_meta = data.Source.Descriptor{
     .name = "input",
@@ -219,7 +349,18 @@ pub fn parseTest(f: *tml.File) !void {
   };
   try emitter.process(res);
   if (checker.expected_iter.next()) |line| {
-    std.log.err("got less output than expected, line {} missing:\n{s}\n", .{checker.line, line});
+    if (!checker.failed) {
+      std.log.err("got less output than expected, line {} missing:\n{s}\n", .{checker.line, line});
+      checker.failed = true;
+    }
+  }
+  if (checker.failed) {
+    std.log.err(
+      \\==== Full output ====
+      \\{s}
+      \\
+      \\
+      , .{checker.full_output.items});
     return TestError.no_match;
   }
 }

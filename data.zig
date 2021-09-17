@@ -259,7 +259,7 @@ pub const BlockConfig = struct {
 
   pub const SyntaxDef =  struct {
     pos: Position,
-    syntax: SpecialSyntax,
+    index: usize
   };
 
   syntax: ?SyntaxDef,
@@ -368,30 +368,13 @@ pub const Symbol = struct {
   pub const Data = union(enum) {
     ext_func: ExtFunc,
     ny_func: NyFunc,
-    variable: Variable
+    variable: Variable,
+    ny_type: Type,
   };
 
   defined_at: Position,
   name: []const u8,
   data: Data,
-};
-
-pub const SpecialSyntax = struct {
-  pub const Item = union(enum) {
-    literal: []const u8,
-    space: []const u8,
-    escaped_char: u21,
-    special_char: u21,
-    node: *Node,
-    newlines: usize, // 1 for newlines, >1 for parseps.
-  };
-
-  pub const Processor = struct {
-    push: fn(self: *@This(), pos: Position.Input, item: Item) std.mem.Allocator.Error!void,
-    finish: fn(self: *@This(), pos: Position.Input) std.mem.Allocator.Error!*Node,
-  };
-
-  init: fn init(ctx: *Context) std.mem.Allocator.Error!*Processor,
 };
 
 pub const Type = union(enum) {
@@ -502,8 +485,19 @@ pub const Type = union(enum) {
     /// must not be modified after creation.
     values: std.StringArrayHashMapUnmanaged(u0),
 
-    pub fn pos(self: *@This()) Position {
+    pub inline fn pos(self: *const @This()) Position {
       return Instantiated.pos(self);
+    }
+
+    pub inline fn typedef(self: *const @This()) Type {
+      return Instantiated.typedef(self);
+    }
+
+    pub fn predefBoolean(alloc: *std.mem.Allocator) !Enum {
+      var ret = Enum{.values = .{}};
+      try ret.values.put(alloc, "false", 0);
+      try ret.values.put(alloc, "true", 0);
+      return ret;
     }
   };
 
@@ -524,26 +518,44 @@ pub const Type = union(enum) {
       float: Float,
       tenum: Enum,
       record: Record,
+
+      /// workaround for https://github.com/ziglang/zig/issues/6611
+      fn offset(comptime field: []const u8) usize {
+        var data = @unionInit(Data, field, undefined);
+        return @ptrToInt(&@field(data, field)) - @ptrToInt(&data);
+      }
     };
     /// position at which the type has been declared.
     at: Position,
     /// name of the type, if it has any.
-    name: *?Symbol,
+    name: ?*Symbol,
     /// kind and parameters of the type
     data: Data,
+
+    fn parent(it: anytype) *Instantiated {
+      var data: Data = undefined;
+      var base_ptr = &data;
+
+      const t = @typeInfo(@TypeOf(it)).Pointer.child;
+      const addr = @ptrToInt(it) - switch(t) {
+        Textual =>  Data.offset("textual"),
+        Numeric => Data.offset("numeric"),
+        Float => Data.offset("float"),
+        Enum => Data.offset("tenum"),
+        Record => Data.offset("record"),
+        else => unreachable
+      };
+      return @fieldParentPtr(Instantiated, "data", @intToPtr(*Data, addr));
+    }
 
     /// calculates the position from a pointer to Textual, Numeric, Float,
     /// Enum, or Record
     fn pos(it: anytype) Position {
-      const t = @typeInfo(@TypeOf(it)).Pointer.child;
-      return @fieldParentPtr(Instantiated, "data", switch(t) {
-        Textual => @fieldParentPtr(Data, "textual", it),
-        Numeric => @fieldParentPtr(Data, "numeric", it),
-        Float => @fieldParentPtr(Data, "float", it),
-        Enum => @fieldParentPtr(Data, "tenum", it),
-        Record => @fieldParentPtr(Data, "record", it),
-        else => unreachable
-      }).at;
+      return parent(it).at;
+    }
+
+    fn typedef(it: anytype) Type {
+      return .{.instantiated = parent(it)};
     }
   };
 
@@ -619,12 +631,12 @@ pub const Value = struct {
   };
   /// a Numeric value
   pub const Number = struct {
-    t: *Type.Numeric,
+    t: *const Type.Numeric,
     value: i64,
   };
   /// a Float value
   pub const FloatNumber = struct {
-    t: *Type.Float,
+    t: *const Type.Float,
     value: union {
       half: f16,
       single: f32,
@@ -634,27 +646,27 @@ pub const Value = struct {
   };
   /// an Enum value
   pub const Enum = struct {
-    t: *Type.Enum,
+    t: *const Type.Enum,
     index: usize,
   };
   /// a Record value
   pub const Record = struct {
-    t: *Type.Record,
+    t: *const Type.Record,
     fields: []*Value,
   };
   /// a Concat value
   pub const Concat = struct {
-    t: *Type.Concat,
+    t: *const Type.Concat,
     items: std.ArrayList(*Value),
   };
   /// a List value
   pub const List = struct {
-    t: *Type.List,
+    t: *const Type.List,
     items: std.ArrayList(*Value),
   };
   /// a Map value
   pub const Map = struct {
-    t: *Type.Map,
+    t: *const Type.Map,
     items: std.HashMap(*Value, *Value, Value.hash, Value.eql, 50),
   };
 

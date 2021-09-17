@@ -69,7 +69,7 @@ pub const Reporter = struct {
 };
 
 fn formatItemDescr(d: WrongItemError.ItemDescr, comptime fmt: []const u8,
-                   options: std.fmt.FormatOptions, writer: anytype) !void {
+                   options: std.fmt.FormatOptions, writer: anytype) @TypeOf(writer).Error!void {
   switch (d) {
     .token => |t| try writer.writeAll(@tagName(t)),
     .character => |c| {
@@ -82,7 +82,7 @@ fn formatItemDescr(d: WrongItemError.ItemDescr, comptime fmt: []const u8,
 }
 
 fn formatItemArr(i: []const WrongItemError.ItemDescr, comptime fmt: []const u8,
-                 options: std.fmt.FormatOptions, writer: anytype) !void {
+                 options: std.fmt.FormatOptions, writer: anytype) @TypeOf(writer).Error!void {
   if (i.len == 1) try formatItemDescr(i[0], fmt, options, writer)
   else {
     for (i) |cur, index| {
@@ -90,6 +90,7 @@ fn formatItemArr(i: []const WrongItemError.ItemDescr, comptime fmt: []const u8,
       else writer.writeAll(", ");
       try formatItemDescr(cur, fmt, options, writer);
     }
+    try writer.writeByte(']');
   }
 }
 
@@ -172,10 +173,9 @@ pub const CmdLineReporter = struct {
                     expected: []const WrongItemError.ItemDescr, got: WrongItemError.ItemDescr) void {
     const self = @fieldParentPtr(CmdLineReporter, "reporter", reporter);
     self.renderPos(.{.bold}, pos);
-    self.renderError("wrong token: expected {}, got {}", .{
-      std.fmt.Formatter(formatItemArr){.data = expected},
-      std.fmt.Formatter(formatItemDescr){.data = got},
-    });
+    const arr = std.fmt.Formatter(formatItemArr){.data = expected};
+    const single = std.fmt.Formatter(formatItemDescr){.data = got};
+    self.renderError("wrong token: expected {}, got {}", .{arr, single});
   }
 
   fn wrongIdError(reporter: *Reporter, id: WrongIdError, pos: data.Position.Input,

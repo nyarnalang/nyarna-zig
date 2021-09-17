@@ -1,7 +1,6 @@
 const std = @import("std");
 const data = @import("data");
 const parse = @import("parse");
-const Source = @import("source").Source;
 const Context = @import("interpret").Context;
 const errors = @import("errors");
 
@@ -12,38 +11,47 @@ fn ensureLiteral(node: *data.Node, kind: @typeInfo(data.Node.Literal).Struct.fie
 }
 
 fn ensureUnresSymref(node: *data.Node, ns: usize, id: []const u8) !void {
-  try std.testing.expectEqual(data.Node.Data.symref, node.data);
-  try std.testing.expectEqual(ns, node.data.symref.unresolved.ns);
-  try std.testing.expectEqualStrings(id, node.data.symref.unresolved.name);
+  try std.testing.expectEqual(data.Node.Data.unresolved_symref, node.data);
+  try std.testing.expectEqual(ns, node.data.unresolved_symref.ns);
+  try std.testing.expectEqualStrings(id, node.data.unresolved_symref.name);
 }
 
 test "parse simple line" {
-  var src = Source{
+  var src_meta = data.Source.Descriptor{
+    .name = "helloworld",
+    .locator = ".doc.document",
+    .argument = false,
+  };
+  var src = data.Source{
+    .meta = &src_meta,
     .content = "Hello, World!\x04",
     .offsets = .{
       .line = 0, .column = 0,
     },
-    .name = "helloworld",
-    .locator = ".doc.document",
     .locator_ctx = ".doc.",
   };
 
   var r = errors.CmdLineReporter.init();
   var p = parse.Parser.init();
   var ctx = try Context.init(std.testing.allocator, &r.reporter);
+  ctx.input = &src;
   defer ctx.deinit().deinit();
-  var res = try p.parseSource(&src, &ctx);
+  var res = try p.parseSource(&ctx);
   try ensureLiteral(res, .text, "Hello, World!");
 }
 
 test "parse assignment" {
-  var src = Source{
+  var src_meta = data.Source.Descriptor{
+    .name = "assignment",
+    .locator = ".doc.document",
+    .argument = false,
+  };
+  var src = data.Source{
+    .meta = &src_meta,
     .content = "\\foo:=(bar)\x04",
     .offsets = .{
       .line = 0, .column = 0,
     },
-    .name = "assignment",
-    .locator = ".doc.document",
     .locator_ctx = ".doc.",
   };
 
@@ -51,28 +59,34 @@ test "parse assignment" {
   var p = parse.Parser.init();
   var ctx = try Context.init(std.testing.allocator, &r.reporter);
   defer ctx.deinit().deinit();
-  var res = try p.parseSource(&src, &ctx);
+  ctx.input = &src;
+  var res = try p.parseSource(&ctx);
   try std.testing.expectEqual(data.Node.Data.assignment, res.data);
   try ensureUnresSymref(res.data.assignment.target.unresolved, 0, "foo");
   try ensureLiteral(res.data.assignment.replacement, .text, "bar");
 }
 
 test "parse access" {
-  var src = Source{
+  var src_meta = data.Source.Descriptor{
+    .name = "access",
+    .locator = ".doc.document",
+    .argument = false,
+  };
+  var src = data.Source{
+    .meta = &src_meta,
     .content = "\\a::b::c\x04",
     .offsets = .{
       .line = 0, .column = 0,
     },
-    .name = "access",
-    .locator = ".doc.document",
     .locator_ctx = ".doc."
   };
 
   var r = errors.CmdLineReporter.init();
   var p = parse.Parser.init();
   var ctx = try Context.init(std.testing.allocator, &r.reporter);
+  ctx.input = &src;
   defer ctx.deinit().deinit();
-  var res = try p.parseSource(&src, &ctx);
+  var res = try p.parseSource(&ctx);
   try std.testing.expectEqual(data.Node.Data.access, res.data);
   try std.testing.expectEqual(data.Node.Data.access, res.data.access.subject.data);
   try std.testing.expectEqualStrings("c", res.data.access.id);
@@ -81,21 +95,26 @@ test "parse access" {
 }
 
 test "parse concat" {
-  var src = Source{
+  var src_meta = data.Source.Descriptor{
+    .name = "access",
+    .locator = ".doc.document",
+    .argument = false,
+  };
+  var src = data.Source{
+    .meta = &src_meta,
     .content = "lorem\\a:,ipsum\\b \\c\\#dolor\x04",
     .offsets = .{
       .line = 0, .column = 0,
     },
-    .name = "access",
-    .locator = ".doc.document",
     .locator_ctx = ".doc."
   };
 
   var r = errors.CmdLineReporter.init();
   var p = parse.Parser.init();
   var ctx = try Context.init(std.testing.allocator, &r.reporter);
+  ctx.input = &src;
   defer ctx.deinit().deinit();
-  var res = try p.parseSource(&src, &ctx);
+  var res = try p.parseSource(&ctx);
   try std.testing.expectEqual(data.Node.Data.concatenation, res.data);
   try ensureLiteral(res.data.concatenation.content[0], .text, "lorem");
   try ensureUnresSymref(res.data.concatenation.content[1], 0, "a");
@@ -107,19 +126,25 @@ test "parse concat" {
 }
 
 test "parse paragraphs" {
-  var src = Source{
-    .content = "lorem\n\nipsum\n\n\ndolor\x04",
-    .offsets = .{},
+  var src_meta = data.Source.Descriptor{
     .name = "paragraphs",
     .locator = ".doc.document",
+    .argument = false,
+  };
+
+  var src = data.Source{
+    .meta = &src_meta,
+    .content = "lorem\n\nipsum\n\n\ndolor\x04",
+    .offsets = .{},
     .locator_ctx = ".doc."
   };
 
   var r = errors.CmdLineReporter.init();
   var p = parse.Parser.init();
   var ctx = try Context.init(std.testing.allocator, &r.reporter);
+  ctx.input = &src;
   defer ctx.deinit().deinit();
-  var res = try p.parseSource(&src, &ctx);
+  var res = try p.parseSource(&ctx);
   try std.testing.expectEqual(data.Node.Data.paragraphs, res.data);
   try ensureLiteral(res.data.paragraphs.items[0].content, .text, "lorem");
   try std.testing.expectEqual(@as(usize, 2), res.data.paragraphs.items[0].lf_after);
@@ -129,19 +154,24 @@ test "parse paragraphs" {
 }
 
 test "parse unknown call" {
-  var src = Source{
-    .content = "\\spam(egg, sausage=spam)\x04",
-    .offsets = .{},
+  var src_meta = data.Source.Descriptor{
     .name = "unknownCall",
     .locator = ".doc.document",
+    .argument = false,
+  };
+  var src = data.Source{
+    .meta = &src_meta,
+    .content = "\\spam(egg, sausage=spam)\x04",
+    .offsets = .{},
     .locator_ctx = ".doc.",
   };
 
   var r = errors.CmdLineReporter.init();
   var p = parse.Parser.init();
   var ctx = try Context.init(std.testing.allocator, &r.reporter);
+  ctx.input = &src;
   defer ctx.deinit().deinit();
-  var res = try p.parseSource(&src, &ctx);
+  var res = try p.parseSource(&ctx);
   try std.testing.expectEqual(data.Node.Data.unresolved_call, res.data);
   try ensureUnresSymref(res.data.unresolved_call.target, 0, "spam");
   try std.testing.expectEqual(@as(usize, 2), res.data.unresolved_call.params.len);
@@ -157,19 +187,24 @@ test "parse unknown call" {
 }
 
 test "parse block" {
-  var src = Source{
-    .content = "\\block:<>\n  rock\n:droggel:\n  jug\n\\end(block)\x04",
-    .offsets = .{},
+  var src_meta = data.Source.Descriptor{
     .name = "block",
     .locator = ".doc.document",
+    .argument = false,
+  };
+  var src = data.Source{
+    .meta = &src_meta,
+    .content = "\\block:<>\n  rock\n:droggel:\n  jug\n\\end(block)\x04",
+    .offsets = .{},
     .locator_ctx = ".doc.",
   };
 
   var r = errors.CmdLineReporter.init();
   var p = parse.Parser.init();
   var ctx = try Context.init(std.testing.allocator, &r.reporter);
+  ctx.input = &src;
   defer ctx.deinit().deinit();
-  var res = try p.parseSource(&src, &ctx);
+  var res = try p.parseSource(&ctx);
   try std.testing.expectEqual(data.Node.Data.unresolved_call, res.data);
   try ensureUnresSymref(res.data.unresolved_call.target, 0, "block");
   try std.testing.expectEqual(@as(usize, 2), res.data.unresolved_call.params.len);

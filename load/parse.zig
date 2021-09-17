@@ -119,16 +119,20 @@ pub const Parser = struct {
     paragraphs: std.ArrayListUnmanaged(data.Node.Paragraphs.Item),
 
     block_config: ?*const data.BlockConfig,
-    syntax_proc: ?*data.SpecialSyntax.Processor = null,
+    syntax_proc: ?*syntaxes.SpecialSyntax.Processor = null,
     dangling_space: ?*data.Node = null,
 
     fn append(l: *ContentLevel, alloc: *std.mem.Allocator, item: *data.Node) !void {
-      if (l.dangling_space) |space_node| {
-        std.debug.print("appending dangling space (kind={s})\n", .{@tagName(space_node.data.literal.kind)});
-        try l.nodes.append(alloc, space_node);
-        l.dangling_space = null;
+      if (l.syntax_proc) |proc| {
+        try proc.push(proc, item.pos.input, .{.node = item});
+      } else {
+        if (l.dangling_space) |space_node| {
+          std.debug.print("appending dangling space (kind={s})\n", .{@tagName(space_node.data.literal.kind)});
+          try l.nodes.append(alloc, space_node);
+          l.dangling_space = null;
+        }
+        try l.nodes.append(alloc, item);
       }
-      try l.nodes.append(alloc, item);
     }
 
     fn finalizeParagraph(l: *ContentLevel, c: *Context) !*data.Node {
@@ -169,7 +173,9 @@ pub const Parser = struct {
         try p.revertBlockConfig(c);
       }
       const alloc = p.int();
-      if (l.paragraphs.items.len == 0) {
+      if (l.syntax_proc) |proc| {
+        return proc.finish(proc, p.ctx().input.between(l.start, p.cur_start));
+      } else if (l.paragraphs.items.len == 0) {
         return l.finalizeParagraph(p.ctx());
       } else {
         if (l.nodes.items.len > 0) {
@@ -423,7 +429,8 @@ pub const Parser = struct {
     while (true) {
       std.debug.print("parse step. state={s}, level stack =\n", .{@tagName(self.state)});
       for (self.levels.items) |lvl| {
-        std.debug.print("  level(command = {s})\n", .{@tagName(lvl.command.info)});
+        std.debug.print("  level(command = {s}, special = {})\n",
+            .{@tagName(lvl.command.info), lvl.syntax_proc != null});
       }
 
       switch (self.state) {
@@ -655,6 +662,9 @@ pub const Parser = struct {
                     .expr_chain => |chain| {
                       unreachable; // TODO
                     },
+                    .type_ref => |t| {
+                      unreachable; // TODO
+                    },
                     .failed => {
                       try lvl.command.startUnresolvedCall(self.int());
                     },
@@ -674,6 +684,7 @@ pub const Parser = struct {
             else => {
               try lvl.append(self.int(), lvl.command.info.unknown);
               self.state = if (self.levels.items[self.levels.items.len - 1].syntax_proc != null) .special else .default;
+              std.debug.print("state reset after command, now {s}\n", .{@tagName(self.state)});
             }
           }
         },
@@ -691,12 +702,15 @@ pub const Parser = struct {
         },
         .after_blocks_start => {
           var pb_exists = PrimaryBlockExists.unknown;
+          std.debug.print("after_blocks_start: processing header…\n", .{});
           if (try self.processBlockHeader(&pb_exists)) {
+            std.debug.print("  … swallowing.\n", .{});
             self.state = if (self.levels.items[self.levels.items.len - 1].syntax_proc != null) .special else .default;
           } else {
             const pos = self.ctx().input.at(self.cur_start);
             while (self.cur == .space or self.cur == .indent) self.advance();
             if (self.cur == .block_name_sep) {
+              std.debug.print("  … no primary block.\n", .{});
               switch (pb_exists) {
                 .unknown => {},
                 .maybe => {
@@ -707,12 +721,14 @@ pub const Parser = struct {
               }
               self.state = .block_name;
             } else {
+              std.debug.print("  … primary block.\n", .{});
               if (pb_exists == .unknown) {
                 try self.pushLevel();
               }
               self.state = if (self.levels.items[self.levels.items.len - 1].syntax_proc != null) .special else .default;
             }
           }
+          std.debug.print("  … state is now {s}\n", .{@tagName(self.state)});
         },
         .block_name => {
           std.debug.assert(self.cur == .block_name_sep);
@@ -760,22 +776,28 @@ pub const Parser = struct {
         .special => {
           const proc = self.levels.items[self.levels.items.len - 1].syntax_proc.?;
           try switch (self.cur) {
-            .indent => self.advance(),
+            .indent => {},
             .space => proc.push(proc, self.l.walker.posFrom(self.cur_start),
                 .{.space = self.l.walker.contentFrom(self.cur_start.byte_offset)}),
             .escape => proc.push(proc, self.l.walker.posFrom(self.cur_start),
-                .{.escaped_char = self.l.code_point}),
-            .literal => proc.push(proc, self.l.walker.posFrom(self.cur_start),
-                .{.literal = self.l.walker.contentFrom(self.cur_start.byte_offset)}),
+                .{.escaped = self.l.recent_id}),
+            .identifier => proc.push(proc, self.l.walker.posFrom(self.cur_start),
+                .{.literal = self.l.recent_id}),
+            .special => proc.push(proc, self.l.walker.posFrom(self.cur_start),
+                .{.special_char = self.l.code_point}),
             .ws_break => // TODO: discard if at end of block
               proc.push(proc, self.l.walker.posFrom(self.cur_start), .{.newlines = 1}),
             .parsep => proc.push(proc, self.l.walker.posFrom(self.cur_start), .{.newlines = self.l.newline_count}),
-            .end_source, .symref, .block_name_sep, .block_end_open => self.state = .default,
+            .end_source, .symref, .block_name_sep, .block_end_open => {
+              self.state = .default;
+              continue;
+            },
             else => {
               std.debug.print("unexpected token in special: {s}\n", .{@tagName(self.cur)});
               unreachable;
             }
           };
+          self.advance();
         }
       }
     }
@@ -841,12 +863,12 @@ pub const Parser = struct {
             }
           },
           .syntax => {
-            if (self.cur == .identifier) {
-              switch (std.hash.Adler32.hash(self.l.recent_id)) {
+            if (self.cur == .literal) {
+              switch (std.hash.Adler32.hash(self.l.walker.contentFrom(self.cur_start.byte_offset))) {
                 std.hash.Adler32.hash("locations") => {
                   into.syntax = .{
                     .pos = .intrinsic,
-                    .syntax = syntaxes.Locations.syntax(),
+                    .index = 0,
                   };
                 },
                 std.hash.Adler32.hash("definitions") => unreachable,
@@ -856,7 +878,7 @@ pub const Parser = struct {
               }
             } else {
               self.ctx().eh.ExpectedXGotY(self.l.walker.posFrom(self.cur_start),
-                  &[_]errors.WrongItemError.ItemDescr{.{.token = .identifier}},
+                  &[_]errors.WrongItemError.ItemDescr{.{.token = .literal}},
                   .{.token = self.cur});
               recover = true;
             }
@@ -1067,8 +1089,9 @@ pub const Parser = struct {
     var alloc = sf.get();
 
     if (config.syntax) |s| {
-      self.levels.items[self.levels.items.len - 1].syntax_proc = try s.syntax.init(self.ctx());
-      self.l.enableSpecialSyntax();
+      const syntax = self.ctx().syntax_registry[s.index];
+      self.levels.items[self.levels.items.len - 1].syntax_proc = try syntax.init(self.ctx());
+      self.l.enableSpecialSyntax(syntax.comments_include_newline);
     }
 
     if (config.map.len > 0) {
@@ -1157,8 +1180,8 @@ pub const Parser = struct {
   }
 
   fn revertBlockConfig(self: *Parser, config: *const data.BlockConfig) !void {
-    std.debug.print("reverBlockConfig()\n", .{});
-    if (config.syntax) |_| unreachable;
+    // config.syntax does not need to be reversed, this happens automatically by
+    // leaving the level.
 
     if (config.map.len > 0) {
       var sf = std.heap.stackFallback(128, self.int());
