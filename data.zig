@@ -561,7 +561,7 @@ pub const Type = union(enum) {
 
   /// unique types predefined by Nyarna
   intrinsic: enum {
-    void, prototype, schema, extension,
+    void, prototype, schema, extension, ast_node,
     space, literal, raw,
     location, definition, backend
   },

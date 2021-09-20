@@ -60,18 +60,18 @@
   +TARGET
     =SYMREF [0]foo
   -TARGET
-  +PROTO pos
+  +PROTO primary
     =VOID
   -PROTO
 -UCALL
+=LIT space "\n"
 +UCALL
   +TARGET
     =SYMREF [0]bar
   -TARGET
-  +PROTO named="baz"
-    =VOID
+  +PROTO name="baz"
   -PROTO
-  +PROTO named="raz"
+  +PROTO name="raz"
     =VOID
   -PROTO
 -UCALL

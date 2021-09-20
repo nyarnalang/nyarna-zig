@@ -21,6 +21,7 @@ pub const Mapper = struct {
   mapFn: fn(self: *Self, pos: data.Position.Input, input: ArgKind, flag: ProtoArgFlag) ?Cursor,
   pushFn: fn(self: *Self, alloc: *std.mem.Allocator, at: Cursor, content: *data.Node) std.mem.Allocator.Error!void,
   configFn: fn(self: *Self, at: Cursor) ?*data.BlockConfig,
+  paramTypeFn: fn(self: *Self, at: Cursor) ?data.Type,
   finalizeFn: fn(self: *Self, alloc: *std.mem.Allocator, pos: data.Position) std.mem.Allocator.Error!*data.Node,
 
   pub fn map(self: *Self, pos: data.Position.Input, input: ArgKind, flag: ProtoArgFlag) ?Cursor {
@@ -29,6 +30,10 @@ pub const Mapper = struct {
 
   pub fn config(self: *Self, at: Cursor) ?*data.BlockConfig {
     return self.configFn(self, at);
+  }
+
+  pub fn paramType(self: *Self, at: Cursor) ?data.Type {
+    return self.paramTypeFn(self, at);
   }
 
   pub fn push(self: *Self, alloc: *std.mem.Allocator, at: Cursor, content: *data.Node) !void {
@@ -52,6 +57,7 @@ pub const SignatureMapper = struct {
       .mapper = .{
         .mapFn = SignatureMapper.map,
         .configFn = SignatureMapper.config,
+        .paramTypeFn = SignatureMapper.paramType,
         .pushFn = SignatureMapper.push,
         .finalizeFn = SignatureMapper.finalize,
       },
@@ -107,7 +113,18 @@ pub const SignatureMapper = struct {
 
   fn config(mapper: *Mapper, at: Mapper.Cursor) ?*data.BlockConfig {
     const self = @fieldParentPtr(SignatureMapper, "mapper", mapper);
-    return &self.signature.parameter[at.index].config;
+    return switch (at.param) {
+      .index => |index| &self.signature.parameter[index].config,
+      .kind => null
+    };
+  }
+
+  fn paramType(mapper: *Mapper, at: Mapper.Cursor) ?data.Type {
+    const self = @fieldParentPtr(SignatureMapper, "mapper", mapper);
+    return switch (at.param) {
+      .index => |index| &self.signature.parameter[index].ptype,
+      .kind => null
+    };
   }
 
   fn push(mapper: *Mapper, alloc: *self.mem.Allocator, at: Cursor, content: *data.Node) void {
@@ -148,6 +165,7 @@ pub const CollectingMapper = struct {
       .mapper = .{
         .mapFn = CollectingMapper.map,
         .configFn = CollectingMapper.config,
+        .paramTypeFn = CollectingMapper.paramType,
         .pushFn = CollectingMapper.push,
         .finalizeFn = CollectingMapper.finalize,
       },
@@ -165,6 +183,10 @@ pub const CollectingMapper = struct {
   }
 
   fn config(mapper: *Mapper, at: Mapper.Cursor) ?*data.BlockConfig {
+    return null;
+  }
+
+  fn paramType(mapper: *Mapper, at: Mapper.Cursor) ?data.Type {
     return null;
   }
 
@@ -200,6 +222,7 @@ pub const AssignmentMapper = struct {
       .mapper = .{
         .mapFn = AssignmentMapper.map,
         .configFn = AssignmentMapper.config,
+        .paramTypeFn = AssignmentMapper.paramType,
         .pushFn =  AssignmentMapper.push,
         .finalizeFn = AssignmentMapper.finalize,
       },
@@ -228,6 +251,11 @@ pub const AssignmentMapper = struct {
 
   fn config(mapper: *Mapper, at: Mapper.Cursor) ?*data.BlockConfig {
     // TODO: block config on variable definition
+    return null;
+  }
+
+  fn paramType(mapper: *Mapper, at: Mapper.Cursor) ?data.Type {
+    // TODO: param type of subject
     return null;
   }
 

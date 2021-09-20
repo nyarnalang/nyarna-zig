@@ -36,7 +36,7 @@ test "parse simple line" {
   var ctx = try Context.init(std.testing.allocator, &r.reporter);
   ctx.input = &src;
   defer ctx.deinit().deinit();
-  var res = try p.parseSource(&ctx);
+  var res = try p.parseSource(&ctx, true);
   try ensureLiteral(res, .text, "Hello, World!");
 }
 
@@ -60,7 +60,7 @@ test "parse assignment" {
   var ctx = try Context.init(std.testing.allocator, &r.reporter);
   defer ctx.deinit().deinit();
   ctx.input = &src;
-  var res = try p.parseSource(&ctx);
+  var res = try p.parseSource(&ctx, true);
   try std.testing.expectEqual(data.Node.Data.assignment, res.data);
   try ensureUnresSymref(res.data.assignment.target.unresolved, 0, "foo");
   try ensureLiteral(res.data.assignment.replacement, .text, "bar");
@@ -86,7 +86,7 @@ test "parse access" {
   var ctx = try Context.init(std.testing.allocator, &r.reporter);
   ctx.input = &src;
   defer ctx.deinit().deinit();
-  var res = try p.parseSource(&ctx);
+  var res = try p.parseSource(&ctx, true);
   try std.testing.expectEqual(data.Node.Data.access, res.data);
   try std.testing.expectEqual(data.Node.Data.access, res.data.access.subject.data);
   try std.testing.expectEqualStrings("c", res.data.access.id);
@@ -114,7 +114,7 @@ test "parse concat" {
   var ctx = try Context.init(std.testing.allocator, &r.reporter);
   ctx.input = &src;
   defer ctx.deinit().deinit();
-  var res = try p.parseSource(&ctx);
+  var res = try p.parseSource(&ctx, true);
   try std.testing.expectEqual(data.Node.Data.concatenation, res.data);
   try ensureLiteral(res.data.concatenation.content[0], .text, "lorem");
   try ensureUnresSymref(res.data.concatenation.content[1], 0, "a");
@@ -144,7 +144,7 @@ test "parse paragraphs" {
   var ctx = try Context.init(std.testing.allocator, &r.reporter);
   ctx.input = &src;
   defer ctx.deinit().deinit();
-  var res = try p.parseSource(&ctx);
+  var res = try p.parseSource(&ctx, true);
   try std.testing.expectEqual(data.Node.Data.paragraphs, res.data);
   try ensureLiteral(res.data.paragraphs.items[0].content, .text, "lorem");
   try std.testing.expectEqual(@as(usize, 2), res.data.paragraphs.items[0].lf_after);
@@ -171,7 +171,7 @@ test "parse unknown call" {
   var ctx = try Context.init(std.testing.allocator, &r.reporter);
   ctx.input = &src;
   defer ctx.deinit().deinit();
-  var res = try p.parseSource(&ctx);
+  var res = try p.parseSource(&ctx, true);
   try std.testing.expectEqual(data.Node.Data.unresolved_call, res.data);
   try ensureUnresSymref(res.data.unresolved_call.target, 0, "spam");
   try std.testing.expectEqual(@as(usize, 2), res.data.unresolved_call.proto_args.len);
@@ -204,7 +204,7 @@ test "parse block" {
   var ctx = try Context.init(std.testing.allocator, &r.reporter);
   ctx.input = &src;
   defer ctx.deinit().deinit();
-  var res = try p.parseSource(&ctx);
+  var res = try p.parseSource(&ctx, true);
   try std.testing.expectEqual(data.Node.Data.unresolved_call, res.data);
   try ensureUnresSymref(res.data.unresolved_call.target, 0, "block");
   try std.testing.expectEqual(@as(usize, 2), res.data.unresolved_call.proto_args.len);

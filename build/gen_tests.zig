@@ -23,7 +23,6 @@ fn genTests(dir: *std.fs.Dir, sets: []TestSet) !void {
   const disabled_tests = [_][]const u8{
     "auto-paragraphs.tml", // missing: intrinsic funcs
     "delayed-method-resolution.tml", // missing: intrinsic funcs
-    "block-config.tml", // missing: fullast implementation
     "doc-param.tml", // missing: document parameters
     "hello-world.tml", // missing: intrinsic funcs
     "simple-swallow.tml", // missing: if expression

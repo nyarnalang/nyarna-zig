@@ -342,7 +342,7 @@ pub fn parseTest(f: *tml.File) !void {
   ctx.input = &src;
   defer ctx.deinit().deinit();
   var p = parse.Parser.init();
-  var res = try p.parseSource(&ctx);
+  var res = try p.parseSource(&ctx, true);
   var emitter = AstEmitter(@TypeOf(&checker)){
     .depth = 0,
     .handler = &checker,
@@ -363,4 +363,5 @@ pub fn parseTest(f: *tml.File) !void {
       , .{checker.full_output.items});
     return TestError.no_match;
   }
+  try std.testing.expectEqual(@as(usize, 0), ctx.eh.count);
 }

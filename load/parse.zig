@@ -88,6 +88,16 @@ pub const Parser = struct {
       c.mapper = &c.info.unresolved_call.mapper;
       c.cur_cursor = .not_pushed;
     }
+
+    fn choseAstNodeParam(c: *Command) bool {
+      return switch (c.cur_cursor) {
+        .mapped => |cursor| if (c.mapper.paramType(cursor)) |t| switch (t) {
+          .intrinsic => |i| i == .ast_node,
+          else => false,
+        } else false,
+        else => false,
+      };
+    }
   };
 
   /// This is either the root level of the current file,
@@ -99,21 +109,12 @@ pub const Parser = struct {
     /// Changes to command characters that occurred upon entering this level.
     /// For implicit block configs, this links to the block config definition.
     changes: ?[]data.BlockConfig.Map,
-    /// When the used block configuration defines the definiton of a command
-    /// character, but that command character already exists, nothing will
-    /// happen. Therefore, we must not revert that change when leaving this
-    /// content level (which would remove a command character that is defined
-    /// in an upper level). For explicit block configs, this issue is handled by
-    /// directly removing the change from the config, but implicit block configs
-    /// can be referred to in multiple places and therefore must not be modified
-    /// when they are used. For those cases, we set this variable to the index
-    /// of all changes that are not to be reverted when the content level will
-    // be left.
-    ignored_changes: ?[]usize,
     /// the currently open command on this content level. info === unknown if no
     /// command is open or only the subject has been read.
     /// every ContentLevel but the innermost one must have an open command.
     command: Command,
+    /// whether this level has fullast semantics.
+    fullast: bool,
 
     nodes: std.ArrayListUnmanaged(*data.Node),
     paragraphs: std.ArrayListUnmanaged(data.Node.Paragraphs.Item),
@@ -311,26 +312,42 @@ pub const Parser = struct {
     }, context);
   }
 
-  fn pushLevel(self: *Parser) !void {
+  fn pushLevel(self: *Parser, fullast: bool) !void {
     try self.levels.append(self.int(), ContentLevel{
       .start = self.l.recent_end,
       .changes = null,
-      .ignored_changes = null,
       .command = undefined,
       .nodes = .{},
       .paragraphs = .{},
       .block_config = null,
+      .fullast = fullast,
     });
   }
 
-  pub fn parseSource(self: *Parser, context: *Context) !*data.Node {
+  /// parse context.input. If it returns interpret.Errors.referred_source_unavailable,
+  /// parsing may be resumed via resumeParse() after the referred source has been
+  /// loaded. Other returned errors are not recoverable.
+  ///
+  /// Errors in the given input are not returned as errors of this function.
+  /// Instead, they are handed to the context's errors.Handler. To check whether
+  /// errors have occurred, check if the handler's error_count has been increased.
+  pub fn parseSource(self: *Parser, context: *Context, fullast: bool) !*data.Node {
     self.l = try lex.Lexer.init(context);
     self.advance();
-    return self.doParse();
+    return self.doParse(fullast);
   }
 
+  /// continue parsing. Precondition: Either parseSource() or resumeParse()
+  /// have returned with interpret.Errors.referred_source_unavailable
+  /// previously on the given parser, and have never returned a *data.Node.
+  ///
+  /// Apart from the precondition, this function has the same semantics as
+  /// parseSource(), including that it may return interpret.Errors.referred_source_unavailable.
   pub fn resumeParse(self: *Parser) !*data.Node {
-    return self.doParse();
+    // when resuming, the fullast value is irrelevant since it is only inspected
+    // when encountering the first non-space token in the file – which will always
+    // be before parsing is interrupted.
+    return self.doParse(undefined);
   }
 
   /// retrieves the next valid token from the lexer.
@@ -425,7 +442,11 @@ pub const Parser = struct {
     _ = self.levels.pop();
   }
 
-  fn doParse(self: *Parser) !*data.Node {
+  inline fn curLevel(self: *Parser) *ContentLevel {
+    return &self.levels.items[self.levels.items.len - 1];
+  }
+
+  fn doParse(self: *Parser, implicit_fullast: bool) !*data.Node {
     while (true) {
       std.debug.print("parse step. state={s}, level stack =\n", .{@tagName(self.state)});
       for (self.levels.items) |lvl| {
@@ -436,7 +457,12 @@ pub const Parser = struct {
       switch (self.state) {
         .start => {
           while (self.cur == .space or self.cur == .indent) self.advance();
-          try self.pushLevel();
+          // this state is used for initial top-level and for list arguments.
+          // list arguments do not change block configuration and so will always
+          // inherit parent's fullast. the top-level will not be fullast unless
+          // instructed by the caller.
+          try self.pushLevel(
+            if (self.levels.items.len == 0) implicit_fullast else self.curLevel().fullast);
           self.state = .default;
         },
         .possible_start => {
@@ -444,7 +470,7 @@ pub const Parser = struct {
           if (self.cur == .list_end) {
             self.state = .after_list;
           } else {
-            try self.pushLevel();
+            try self.pushLevel(self.curLevel().fullast);
             self.state = .default;
           }
         },
@@ -697,7 +723,7 @@ pub const Parser = struct {
             self.advance();
           } else {
             self.state = .command;
-            try self.levels.items[self.levels.items.len - 1].command.shift(self.ctx(), end);
+            try self.curLevel().command.shift(self.ctx(), end);
           }
         },
         .after_blocks_start => {
@@ -705,7 +731,7 @@ pub const Parser = struct {
           std.debug.print("after_blocks_start: processing header…\n", .{});
           if (try self.processBlockHeader(&pb_exists)) {
             std.debug.print("  … swallowing.\n", .{});
-            self.state = if (self.levels.items[self.levels.items.len - 1].syntax_proc != null) .special else .default;
+            self.state = if (self.curLevel().syntax_proc != null) .special else .default;
           } else {
             const pos = self.ctx().input.at(self.cur_start);
             while (self.cur == .space or self.cur == .indent) self.advance();
@@ -723,9 +749,12 @@ pub const Parser = struct {
             } else {
               std.debug.print("  … primary block.\n", .{});
               if (pb_exists == .unknown) {
-                try self.pushLevel();
+                const lvl = self.curLevel();
+                // neither explicit nor implicit block config. fullast is thus
+                // inherited except when an AstNode parameter has been chosen.
+                try self.pushLevel(if (lvl.command.choseAstNodeParam()) false else lvl.fullast);
               }
-              self.state = if (self.levels.items[self.levels.items.len - 1].syntax_proc != null) .special else .default;
+              self.state = if (self.curLevel().syntax_proc != null) .special else .default;
             }
           }
           std.debug.print("  … state is now {s}\n", .{@tagName(self.state)});
@@ -767,7 +796,9 @@ pub const Parser = struct {
             parent.command.cur_cursor = .failed;
           }
           self.advance();
-          try self.pushLevel();
+          // initialize level with fullast according to chosen param type.
+          // may be overridden by block config in following processBlockHeader.
+          try self.pushLevel(if (parent.command.choseAstNodeParam()) false else parent.fullast);
           if (!(try self.processBlockHeader(null))) {
             while (self.cur == .space or self.cur == .indent) self.advance();
           }
@@ -848,7 +879,7 @@ pub const Parser = struct {
       var recover = while (self.getNext()) {
         if (self.cur != .space) break false;
       } else true;
-      if (!recover) {
+      if (!recover) consume_next: {
         switch (kind) {
           .csym => {
             if (self.cur == .ns_sym) {
@@ -923,20 +954,23 @@ pub const Parser = struct {
               }
             }
           },
-          .fullast => into.full_ast = self.l.walker.posFrom(self.cur_start),
+          .fullast => {
+            into.full_ast = self.l.walker.posFrom(self.cur_start);
+            break :consume_next;
+          },
           .empty => {
             self.ctx().eh.ExpectedXGotY(
                 self.l.walker.posFrom(self.cur_start),
                 &[_]errors.WrongItemError.ItemDescr{.{.token = .identifier}},
                 .{.token = self.cur});
             recover = true;
+            break :consume_next;
           },
-          .unknown => {}
+          .unknown => break :consume_next,
         }
-      }
-      while (true) {
         while (!self.getNext()) {}
-        if (self.cur == .comma or self.cur == .diamond_close or self.cur == .end_source) break;
+      }
+      while (self.cur != .comma and self.cur != .diamond_close and self.cur != .end_source) : (while (!self.getNext()) {}) {
         if (self.cur != .space and !recover) {
           self.ctx().eh.ExpectedXGotY(self.l.walker.posFrom(self.cur_start),
               &[_]errors.WrongItemError.ItemDescr{.{.character = ','}, .{.character = '>'}},
@@ -976,14 +1010,14 @@ pub const Parser = struct {
   ///   .yes     => level has been pushed and command entered its primary param
   ///               due to explicit block config.
   fn processBlockHeader(self: *Parser, pb_exists: ?*PrimaryBlockExists) !bool {
-    const parent = &self.levels.items[self.levels.items.len - 1];
+    const parent = self.curLevel();
     const check_swallow = if (self.cur == .diamond_open) blk: {
       try self.readBlockConfig(&self.config_buffer, self.int());
       std.debug.print("block header has map length of {}\n", .{self.config_buffer.map.len});
       const pos = self.ctx().input.at(self.cur_start);
       if (pb_exists) |ind| {
         parent.command.pushPrimary(pos, true);
-        try self.pushLevel();
+        try self.pushLevel(if (parent.command.choseAstNodeParam()) false else parent.fullast);
         ind.* = .yes;
       }
       try self.applyBlockConfig(pos, &self.config_buffer);
@@ -1016,7 +1050,7 @@ pub const Parser = struct {
               parent.command.pushPrimary(self.ctx().input.at(self.cur_start), false);
               if (parent.implicitBlockConfig()) |c| {
                 ind.* = .maybe;
-                try self.pushLevel();
+                try self.pushLevel(if (parent.command.choseAstNodeParam()) false else parent.fullast);
                 try self.applyBlockConfig(self.ctx().input.at(self.cur_start), c);
               }
             }
@@ -1027,13 +1061,13 @@ pub const Parser = struct {
         if (pb_exists) |ind| {
           if (ind.* == .unknown) {
             parent.command.pushPrimary(self.ctx().input.at(self.cur_start), false);
-            try self.pushLevel();
+            try self.pushLevel(if (parent.command.choseAstNodeParam()) false else parent.fullast);
             if (parent.implicitBlockConfig()) |c| {
               try self.applyBlockConfig(self.ctx().input.at(self.cur_start), c);
             }
           }
           ind.* = .yes;
-        } else try self.pushLevel();
+        } else try self.pushLevel(if (parent.command.choseAstNodeParam()) false else parent.fullast);
         parent.command.swallow_depth = swallow_depth;
         if (swallow_depth != 0) {
           // now close all commands that have a swallow depth equal or greater than the current one,
@@ -1092,10 +1126,11 @@ pub const Parser = struct {
   fn applyBlockConfig(self: *Parser, pos: data.Position.Input, config: *const data.BlockConfig) !void {
     var sf = std.heap.stackFallback(128, self.int());
     var alloc = sf.get();
+    const lvl = self.curLevel();
 
     if (config.syntax) |s| {
       const syntax = self.ctx().syntax_registry[s.index];
-      self.levels.items[self.levels.items.len - 1].syntax_proc = try syntax.init(self.ctx());
+      lvl.syntax_proc = try syntax.init(self.ctx());
       self.l.enableSpecialSyntax(syntax.comments_include_newline);
     }
 
@@ -1179,9 +1214,9 @@ pub const Parser = struct {
       self.l.disableComments();
     }
 
-    if (config.full_ast) |_| unreachable;
+    if (config.full_ast) |_| lvl.fullast = true;
 
-    self.levels.items[self.levels.items.len - 1].block_config = config;
+    lvl.block_config = config;
   }
 
   fn revertBlockConfig(self: *Parser, config: *const data.BlockConfig) !void {
@@ -1243,8 +1278,7 @@ pub const Parser = struct {
       }
     }
 
-    // off_colon, off_comment, and special syntax are reversed automatically by the lexer
-
-    if (config.full_ast) |_| unreachable;
+    // off_colon, off_comment, and special syntax are reversed automatically by the lexer.
+    // full_ast is automatically reversed by leaving the level.
   }
 };
