@@ -9,8 +9,9 @@ pub const LexerError = enum {
 };
 
 pub const GenericParserError = enum {
-  NamedArgumentInAssignment, MissingBlockNameEnd, UnknownFlag, MissingSymbolName,
-  MissingSymbolType, UnknownSyntax
+  NamedArgumentInAssignment, MissingBlockNameEnd, UnknownFlag,
+  NonLocationFlag, NonDefinitionFlag, MissingSymbolName,
+  MissingSymbolType, MissingSymbolEntity, UnknownSyntax
 };
 
 pub const WrongItemError = enum {

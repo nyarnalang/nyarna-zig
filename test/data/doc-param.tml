@@ -6,11 +6,11 @@
 Hello, \who!
 --- inline:who {strip}
 World
---- todo:updateDocParameter
+--- ast
 +ROOT "standalone"
-  +PARAM "who"
+  +PROTO "who"
     =TYPE Raw
-  -PARAM
+  -PROTO
   >CONTENT
   +CALL
     +TARGET
@@ -18,13 +18,13 @@ World
         =NAME "concatOf"
       -FUNC
     -TARGET
-    +PARAM "items"
+    +PROTO "items"
       +VARARGS
         =RAW Raw "Hello, "
         =VARIABLE "who"
         =RAW Raw "!"
       -VARARGS
-    -PARAM
+    -PROTO
   -CALL
 -ROOT
 --- document

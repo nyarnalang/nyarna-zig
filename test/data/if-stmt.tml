@@ -8,7 +8,7 @@
 :else:
   baz
 \end(if)
---- todo:ifstmt
+--- ast
 +ROOT "standalone"
   >CONTENT
   +CALL
@@ -17,7 +17,7 @@
         =NAME "concatOf"
       -FUNC
     -TARGET
-    +PARAM "items"
+    +PROTO "items"
       +VARARGS
         +CALL
           +TARGET
@@ -25,15 +25,15 @@
               =NAME "if"
             -FUNC
           -TARGET
-          +PARAM "condition"
+          +PROTO "condition"
             =ENUM Boolean "true"
-          -PARAM
-          +PARAM "then"
+          -PROTO
+          +PROTO "then"
             =RAW Raw "foo"
-          -PARAM
-          +PARAM "else"
+          -PROTO
+          +PROTO "else"
             =NONE
-          -PARAM
+          -PROTO
         -CALL
         =RAW Space "\n"
         +CALL
@@ -42,18 +42,18 @@
               =NAME "if"
             -FUNC
           -TARGET
-          +PARAM "condition"
+          +PROTO "condition"
             =ENUM Boolean "false"
-          -PARAM
-          +PARAM "then"
+          -PROTO
+          +PROTO "then"
             =RAW Raw "bar"
-          -PARAM
-          +PARAM "else"
+          -PROTO
+          +PROTO "else"
             =RAW Raw "baz"
-          -PARAM
+          -PROTO
         -CALL
       -VARARGS
-    -PARAM
+    -PROTO
   -CALL
 -ROOT
 --- document

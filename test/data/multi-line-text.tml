@@ -2,5 +2,5 @@
 --- input
 Lorem ipsum
 dolor sit amet
---- ast
+--- rawast
 =LIT text "Lorem ipsum\ndolor sit amet"

@@ -308,25 +308,25 @@ pub const Node = struct {
     replacement: *Node,
   };
   pub const UnresolvedCall = struct {
-    pub const ParamKind = union(enum) {
+    pub const ArgKind = union(enum) {
       named: []const u8,
       direct: []const u8,
       primary,
       position
     };
-    pub const Param = struct {
-      kind: ParamKind,
+    pub const ProtoArg = struct {
+      kind: ArgKind,
       content: *Node,
-      /// See doc of first_block_param below.
+      /// See doc of first_block_arg below.
       had_explicit_block_config: bool,
     };
     target: *Node,
-    params: []Param,
-    /// This is used when a call's target is resolved *after* the parameters
-    /// have been read in. The resolution checks whether any parameter that was
+    proto_args: []ProtoArg,
+    /// This is used when a call's target is resolved *after* the arguments
+    /// have been read in. The resolution checks whether any argument that was
     /// given as block and did not have an explicit block config would have
     /// gotten a default block config – which will then be reported as error.
-    first_block_param: usize,
+    first_block_arg: usize,
   };
   pub const ResolvedCall = struct {
     target: *Expression,

@@ -15,15 +15,15 @@
 \block:<map \ @>
   \this is not a command @if(true, but this is)
 \end(block)
---- ast
+--- rawast
 +PARA
   +UCALL
     +TARGET
       =SYMREF [0]block
     -TARGET
-    +PARAM name="content"
+    +PROTO name="content"
       =LIT text "lorem ipsum\n:dolor sit amet"
-    -PARAM
+    -PROTO
   -UCALL
 -PARA
 +PARA
@@ -31,15 +31,15 @@
     +TARGET
       =SYMREF [0]if
     -TARGET
-    +PARAM pos
+    +PROTO pos
       =LIT text "true"
-    -PARAM
-    +PARAM primary
+    -PROTO
+    +PROTO primary
       =LIT text "this is # not a comment"
-    -PARAM
-    +PARAM name="else"
+    -PROTO
+    +PROTO name="else"
       =LIT text "\\this is not a command"
-    -PARAM
+    -PROTO
   -UCALL
 -PARA
 +PARA
@@ -47,19 +47,19 @@
     +TARGET
       =SYMREF [0]block
     -TARGET
-    +PARAM primary
+    +PROTO primary
       =LIT text "\\this is not a command "
       +UCALL
         +TARGET
           =SYMREF [0]if
         -TARGET
-        +PARAM pos
+        +PROTO pos
           =LIT text "true"
-        -PARAM
-        +PARAM pos
+        -PROTO
+        +PROTO pos
           =LIT text "but this is"
-        -PARAM
+        -PROTO
       -UCALL
-    -PARAM
+    -PROTO
   -UCALL
 -PARA

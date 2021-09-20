@@ -10,12 +10,12 @@
   \end(if) # comment
   schwurbl : \Boolean
 \end(block)
---- ast
+--- rawast
 +UCALL
   +TARGET
     =SYMREF [0]block
   -TARGET
-  +PARAM primary
+  +PROTO primary
     +RCALL
       +TARGET
         =TYPE location
@@ -54,9 +54,9 @@
           +TARGET
             =SYMREF [0]Integer
           -TARGET
-          +PARAM pos
+          +PROTO pos
             =LIT text "42"
-          -PARAM
+          -PROTO
         -UCALL
       -ARG
       +ARG
@@ -84,9 +84,9 @@
           +TARGET
             =SYMREF [0]Integer
           -TARGET
-          +PARAM pos
+          +PROTO pos
             =LIT text "42"
-          -PARAM
+          -PROTO
         -UCALL
       -ARG
       +ARG
@@ -111,9 +111,9 @@
           +TARGET
             =SYMREF [0]List
           -TARGET
-          +PARAM pos
+          +PROTO pos
             =SYMREF [0]Text
-          -PARAM
+          -PROTO
         -UCALL
       -ARG
       +ARG
@@ -144,15 +144,15 @@
           +TARGET
             =SYMREF [0]if
           -TARGET
-          +PARAM pos
+          +PROTO pos
             =LIT text "true"
-          -PARAM
-          +PARAM primary
+          -PROTO
+          +PROTO primary
             =LIT text "warbl"
-          -PARAM
-          +PARAM name="else"
+          -PROTO
+          +PROTO name="else"
             =LIT text "wirbl"
-          -PARAM
+          -PROTO
         -UCALL
       -ARG
       +ARG
@@ -188,5 +188,5 @@
         =ENUM Boolean "false"
       -ARG
     -RCALL
-  -PARAM
+  -PROTO
 -UCALL

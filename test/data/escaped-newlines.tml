@@ -4,5 +4,5 @@ Foo \
 Bar # a comment
 Baz # a comment without escaped newline #
 Foz\
---- ast
+--- rawast
 =LIT text "Foo \nBarBaz\nFoz\n"

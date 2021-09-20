@@ -11,23 +11,23 @@
   sed do eiusmod tempor
 
 \end(Section)
---- ast
+--- rawast
 +PARA
   +UCALL
     +TARGET
       =SYMREF [0]Section
     -TARGET
-    +PARAM pos
+    +PROTO pos
       =LIT text "foo"
-    -PARAM
-    +PARAM primary
+    -PROTO
+    +PROTO primary
       +PARA
         =LIT text "Lorem ipsum"
       -PARA
       +PARA
         =LIT text "Dolor sit amet"
       -PARA
-    -PARAM
+    -PROTO
   -UCALL
 -PARA
 +PARA
@@ -35,12 +35,12 @@
     +TARGET
       =SYMREF [0]Section
     -TARGET
-    +PARAM pos
+    +PROTO pos
       =LIT text "bar"
-    -PARAM
-    +PARAM primary
+    -PROTO
+    +PROTO primary
       =LIT text "consectetur adipiscing elit,\nsed do eiusmod tempor"
-    -PARAM
+    -PROTO
   -UCALL
 -PARA
 --- disabled-document

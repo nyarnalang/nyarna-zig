@@ -14,15 +14,15 @@ foo
           =NAME "if"
         -FUNC
       -TARGET
-      +PARAM "condition"
+      +PROTO "condition"
         =ENUM Boolean "true"
-      -PARAM
-      +PARAM "then"
+      -PROTO
+      +PROTO "then"
         =RAW Raw "foo"
-      -PARAM
-      +PARAM "else"
+      -PROTO
+      +PROTO "else"
         =NONE
-      -PARAM
+      -PROTO
     -CALL
   -CONVERT
 -ROOT

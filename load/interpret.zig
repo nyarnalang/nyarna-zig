@@ -49,7 +49,7 @@ pub const Context = struct {
   /// predefined types. TODO: move these to system.ny
   boolean: data.Type.Instantiated,
   /// Array of known syntaxes. TODO: make this user-extensible
-  syntax_registry: [1]syntaxes.SpecialSyntax,
+  syntax_registry: [2]syntaxes.SpecialSyntax,
 
   pub fn init(allocator: *std.mem.Allocator, reporter: *errors.Reporter) !Context {
     var ret = Context{
@@ -63,7 +63,7 @@ pub const Context = struct {
       },
       .lattice = .{.alloc = allocator},
       .boolean = .{.at = .intrinsic, .name = null, .data = .{.tenum = undefined}},
-      .syntax_registry = .{syntaxes.Locations.syntax()},
+      .syntax_registry = .{syntaxes.SymbolDefs.locations(), syntaxes.SymbolDefs.definitions()},
     };
     errdefer ret.deinit().deinit();
     ret.boolean.data.tenum = try data.Type.Enum.predefBoolean(&ret.source_content.allocator);

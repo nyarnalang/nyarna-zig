@@ -23,19 +23,19 @@
   +TARGET
     =SYMREF .doc.double
   -TARGET
-  +PARAM "this"
+  +PROTO "this"
     +CALL
       +TARGET
         =SYMREF .doc.foo
       -TARGET
-      +PARAM "a"
+      +PROTO "a"
         =LIT TEXT "foo"
-      -PARAM
-      +PARAM "b"
+      -PROTO
+      +PROTO "b"
         =LIT TEXT "bar"
-      -PARAM
+      -PROTO
     -CALL
-  -PARAM
+  -PROTO
 -CALL
 --- document
 =RAW Raw "foobarfoobar"

@@ -159,15 +159,15 @@ fn AstEmitter(Handler: anytype) type {
             try self.process(uc.target);
             try t.pop();
           }
-          for (uc.params) |p| {
-            const para = try switch (p.kind) {
-              .position => self.pushWithKey("PARAM", "pos", null),
-              .named => |named| self.pushWithKey("PARAM", "name", named),
-              .direct => |direct| self.pushWithKey("PARAM", "direct", direct),
-              .primary => self.pushWithKey("PARAM", "primary", null),
+          for (uc.proto_args) |a| {
+            const parg = try switch (a.kind) {
+              .position => self.pushWithKey("PROTO", "pos", null),
+              .named => |named| self.pushWithKey("PROTO", "name", named),
+              .direct => |direct| self.pushWithKey("PROTO", "direct", direct),
+              .primary => self.pushWithKey("PROTO", "primary", null),
             };
-            try self.process(p.content);
-            try para.pop();
+            try self.process(a.content);
+            try parg.pop();
           }
           try ucall.pop();
         },
@@ -284,7 +284,7 @@ fn AstEmitter(Handler: anytype) type {
 pub fn parseTest(f: *tml.File) !void {
   var input = f.items.get("input").?;
   try input.content.appendSlice(f.alloc(), "\x04\x04\x04\x04");
-  const expected_data = f.items.get("ast").?;
+  const expected_data = f.items.get("rawast").?;
   var checker = struct {
     expected_iter: std.mem.TokenIterator,
     line: usize,

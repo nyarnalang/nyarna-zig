@@ -38,7 +38,7 @@
         =NAME "concatOf"
       -FUNC
     -TARGET
-    +PARAM "items"
+    +PROTO "items"
       +VARARGS
         =RAW Raw "This is # not a comment"
         =RAW Space "\n\n"
@@ -46,6 +46,6 @@
         =RAW Space "\n\n"
         =RAW Raw "This is \\neither a command # nor a comment"
       -VARARGS
-    -PARAM
+    -PROTO
   -CALL
 -ROOT

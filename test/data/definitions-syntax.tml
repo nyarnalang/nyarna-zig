@@ -1,0 +1,83 @@
+=== Definitions Syntax
+--- input
+\block:<syntax definitions>
+  Money = \numeric(decimals = 2)
+  PostalNumber = \textual(include=0123456789); TrafficLight {root} = \enum(red, yellow, green)
+\end(block)
+--- rawast
++UCALL
+  +TARGET
+    =SYMREF [0]block
+  -TARGET
+  +PROTO primary
+    +RCALL
+      +TARGET
+        =TYPE definition
+      -TARGET
+      +ARG
+        =LIT text "Money"
+      -ARG
+      +ARG
+        +UCALL
+          +TARGET
+            =SYMREF [0]numeric
+          -TARGET
+          +PROTO name="decimals"
+            =LIT text "2"
+          -PROTO
+        -UCALL
+      -ARG
+      +ARG
+        =ENUM Boolean "false"
+      -ARG
+    -RCALL
+    +RCALL
+      +TARGET
+        =TYPE definition
+      -TARGET
+      +ARG
+        =LIT text "PostalNumber"
+      -ARG
+      +ARG
+        +UCALL
+          +TARGET
+            =SYMREF [0]textual
+          -TARGET
+          +PROTO name="include"
+            =LIT text "0123456789"
+          -PROTO
+        -UCALL
+      -ARG
+      +ARG
+        =ENUM Boolean "false"
+      -ARG
+    -RCALL
+    +RCALL
+      +TARGET
+        =TYPE definition
+      -TARGET
+      +ARG
+        =LIT text "TrafficLight"
+      -ARG
+      +ARG
+        +UCALL
+          +TARGET
+            =SYMREF [0]enum
+          -TARGET
+          +PROTO pos
+            =LIT text "red"
+          -PROTO
+          +PROTO pos
+            =LIT text "yellow"
+          -PROTO
+          +PROTO pos
+            =LIT text "green"
+          -PROTO
+        -UCALL
+      -ARG
+      +ARG
+        =ENUM Boolean "true"
+      -ARG
+    -RCALL
+  -PROTO
+-UCALL

@@ -174,13 +174,13 @@ test "parse unknown call" {
   var res = try p.parseSource(&ctx);
   try std.testing.expectEqual(data.Node.Data.unresolved_call, res.data);
   try ensureUnresSymref(res.data.unresolved_call.target, 0, "spam");
-  try std.testing.expectEqual(@as(usize, 2), res.data.unresolved_call.params.len);
-  const p1 = &res.data.unresolved_call.params[0];
-  try std.testing.expectEqual(data.Node.UnresolvedCall.ParamKind.position, p1.kind);
+  try std.testing.expectEqual(@as(usize, 2), res.data.unresolved_call.proto_args.len);
+  const p1 = &res.data.unresolved_call.proto_args[0];
+  try std.testing.expectEqual(data.Node.UnresolvedCall.ArgKind.position, p1.kind);
   try std.testing.expectEqual(false, p1.had_explicit_block_config);
   try ensureLiteral(p1.content, .text, "egg");
-  const p2 = &res.data.unresolved_call.params[1];
-  try std.testing.expectEqual(data.Node.UnresolvedCall.ParamKind.named, p2.kind);
+  const p2 = &res.data.unresolved_call.proto_args[1];
+  try std.testing.expectEqual(data.Node.UnresolvedCall.ArgKind.named, p2.kind);
   try std.testing.expectEqualStrings("sausage", p2.kind.named);
   try std.testing.expectEqual(false, p2.had_explicit_block_config);
   try ensureLiteral(p2.content, .text, "spam");
@@ -207,13 +207,13 @@ test "parse block" {
   var res = try p.parseSource(&ctx);
   try std.testing.expectEqual(data.Node.Data.unresolved_call, res.data);
   try ensureUnresSymref(res.data.unresolved_call.target, 0, "block");
-  try std.testing.expectEqual(@as(usize, 2), res.data.unresolved_call.params.len);
-  const p1 = &res.data.unresolved_call.params[0];
-  try std.testing.expectEqual(data.Node.UnresolvedCall.ParamKind.primary, p1.kind);
+  try std.testing.expectEqual(@as(usize, 2), res.data.unresolved_call.proto_args.len);
+  const p1 = &res.data.unresolved_call.proto_args[0];
+  try std.testing.expectEqual(data.Node.UnresolvedCall.ArgKind.primary, p1.kind);
   try std.testing.expectEqual(true, p1.had_explicit_block_config);
   try ensureLiteral(p1.content, .text, "rock");
-  const p2 = &res.data.unresolved_call.params[1];
-  try std.testing.expectEqual(data.Node.UnresolvedCall.ParamKind.named, p2.kind);
+  const p2 = &res.data.unresolved_call.proto_args[1];
+  try std.testing.expectEqual(data.Node.UnresolvedCall.ArgKind.named, p2.kind);
   try std.testing.expectEqual(false, p2.had_explicit_block_config);
   try ensureLiteral(p2.content, .text, "jug");
 }

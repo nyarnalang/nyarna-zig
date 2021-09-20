@@ -13,9 +13,9 @@
   +TARGET
     =SYMREF .doc.hello
   -TARGET
-  +PARAM "who"
+  +PROTO "who"
     =LIT TEXT "World"
-  -PARAM
+  -PROTO
 -CALL
 --- document
 =RAW Raw "Hello, World!"

@@ -22,60 +22,87 @@ pub const SpecialSyntax = struct {
   comments_include_newline: bool,
 };
 
-pub const Locations = struct {
+pub const SymbolDefs = struct {
   const State = enum {
-    initial, names, after_name, ltype, after_ltype, flags, after_flag, after_flags, default, at_end
+    initial, names, after_name, ltype, after_ltype, flags, after_flag, after_flags, expr, at_end
   };
+  const Variant = enum {locs, defs};
 
   ctx: *Context,
   proc: SpecialSyntax.Processor,
   state: State,
   produced: std.ArrayListUnmanaged(*data.Node),
+  variant: Variant,
   // ----- current line ------
   start: data.Cursor,
   names: std.ArrayListUnmanaged(*data.Node),
   primary: ?data.Position.Input,
   varargs: ?data.Position.Input,
   varmap: ?data.Position.Input,
+  root: ?data.Position.Input,
   ltype: ?*data.Node,
-  default: ?*data.Node,
+  expr: ?*data.Node,
   // -------------------------
 
+  const after_name_items_arr = [_]errors.WrongItemError.ItemDescr{
+    .{.character = ','}, .{.character = '{'}, .{.character = '='}, .{.character = ':'}
+  };
 
-  pub fn syntax() SpecialSyntax {
+  fn afterNameItems(self: *@This()) []const errors.WrongItemError.ItemDescr {
+    return after_name_items_arr[0..if (self.variant == .locs) @as(usize, 4) else 3];
+  }
+
+  pub fn locations() SpecialSyntax {
     return .{
-      .init = Locations.init,
+      .init = SymbolDefs.initLocations,
       .comments_include_newline = false,
     };
   }
 
-  fn init(ctx: *Context) std.mem.Allocator.Error!*SpecialSyntax.Processor {
+  pub fn definitions() SpecialSyntax {
+    return .{
+      .init = SymbolDefs.initDefinitions,
+      .comments_include_newline = false,
+    };
+  }
+
+  fn init(ctx: *Context, variant: Variant) std.mem.Allocator.Error!*SpecialSyntax.Processor {
     const alloc = &ctx.temp_nodes.allocator;
-    const ret = try alloc.create(Locations);
+    const ret = try alloc.create(SymbolDefs);
     ret.ctx = ctx;
     ret.proc = .{
-      .push = Locations.push,
-      .finish = Locations.finish,
+      .push = SymbolDefs.push,
+      .finish = SymbolDefs.finish,
     };
     ret.state = .initial;
     ret.names = .{};
     ret.produced = .{};
+    ret.variant = variant;
     ret.reset();
     return &ret.proc;
   }
 
-  fn reset(l: *Locations) void {
+  fn initLocations(ctx: *Context) !*SpecialSyntax.Processor {
+    return init(ctx, .locs);
+  }
+
+  fn initDefinitions(ctx: *Context) !*SpecialSyntax.Processor {
+    return init(ctx, .defs);
+  }
+
+  fn reset(l: *SymbolDefs) void {
     l.primary = null;
     l.varargs = null;
     l.varmap = null;
+    l.root = null;
     l.ltype = null;
-    l.default = null;
+    l.expr = null;
     l.names.clearRetainingCapacity();
   }
 
   fn push(p: *SpecialSyntax.Processor, pos: data.Position.Input,
           item: SpecialSyntax.Item) std.mem.Allocator.Error!void {
-    const self = @fieldParentPtr(Locations, "proc", p);
+    const self = @fieldParentPtr(SymbolDefs, "proc", p);
     self.state = while (true) {
       switch (self.state) {
         .initial => switch(item) {
@@ -106,11 +133,22 @@ pub const Locations = struct {
             return;
           },
           .special_char => |c| switch (c) {
-            ':', '=', '{' => {
+            '=', '{' => {
               self.ctx.eh.MissingToken(pos,
                   &[_]errors.WrongItemError.ItemDescr{.{.token = .identifier}},
                   .{.character = c});
               self.state = .after_name;
+            },
+            ':' => if (self.variant == .locs) {
+              self.ctx.eh.MissingToken(pos,
+                &[_]errors.WrongItemError.ItemDescr{.{.token = .identifier}},
+                .{.character = c});
+              self.state = .after_name;
+            } else {
+              self.ctx.eh.ExpectedXGotY(pos,
+                &[_]errors.WrongItemError.ItemDescr{.{.token = .identifier}},
+                .{.character = c});
+              return;
             },
             ';' => {
               self.ctx.eh.PrematureToken(pos,
@@ -142,38 +180,29 @@ pub const Locations = struct {
         .after_name => switch (item) {
           .space => return,
           .literal => |name| {
-            self.ctx.eh.MissingToken(pos,
-                &[_]errors.WrongItemError.ItemDescr{
-                  .{.character = ','}, .{.character = ':'}, .{.character = '{'}, .{.character = '='}
-                }, .{.token = .identifier});
+            self.ctx.eh.MissingToken(pos, self.afterNameItems(), .{.token = .identifier});
             self.state = .names;
           },
           .escaped => {
-            self.ctx.eh.IllegalItem(pos,
-                &[_]errors.WrongItemError.ItemDescr{
-                  .{.character = ','}, .{.character = ':'}, .{.character = '{'}, .{.character = '='}
-                }, .{.token = .escape});
+            self.ctx.eh.IllegalItem(pos, self.afterNameItems(), .{.token = .escape});
             return;
           },
           .special_char => |c| switch (c) {
             ',' => break .names,
-            ':' => break .ltype,
+            ':' => {
+              if (self.variant == .locs) break .ltype;
+              self.ctx.eh.IllegalItem(pos, self.afterNameItems(), .{.character = c});
+            },
             '{' => break .flags,
-            '=' => break .default,
+            '=' => break .expr,
             ';' => self.state = .at_end,
             else => {
-              self.ctx.eh.IllegalItem(pos,
-                  &[_]errors.WrongItemError.ItemDescr{.{.character = ','},
-                    .{.character = '{'}, .{.character = ':'}, .{.character = '='}},
-                  .{.character = c});
+              self.ctx.eh.IllegalItem(pos, self.afterNameItems(), .{.character = c});
               return;
             },
           },
           .node => {
-            self.ctx.eh.IllegalItem(pos,
-                &[_]errors.WrongItemError.ItemDescr{.{.character = ','},
-                  .{.character = '{'}, .{.character = ':'}, .{.character = '='}},
-                .node);
+            self.ctx.eh.IllegalItem(pos, self.afterNameItems(), .node);
             return;
           },
           .newlines => self.state = .at_end,
@@ -230,7 +259,7 @@ pub const Locations = struct {
           },
           .special_char => |c| switch (c) {
             '{' => break .flags,
-            '=' => break .default,
+            '=' => break .expr,
             ';' => self.state = .at_end,
             else => {
               self.ctx.eh.IllegalItem(pos,
@@ -256,6 +285,7 @@ pub const Locations = struct {
               std.hash.Adler32.hash("primary") => &self.primary,
               std.hash.Adler32.hash("varargs") => &self.varargs,
               std.hash.Adler32.hash("varmap") => &self.varmap,
+              std.hash.Adler32.hash("root") => &self.root,
               else => {
                 self.ctx.eh.UnknownFlag(pos);
                 return;
@@ -377,7 +407,7 @@ pub const Locations = struct {
             return;
           },
           .special_char => |c| switch (c) {
-            '=' => break .default,
+            '=' => break .expr,
             ';' => self.state = .at_end,
             '{' => break .flags,
             else => {
@@ -395,7 +425,7 @@ pub const Locations = struct {
           },
           .newlines => self.state = .at_end,
         },
-        .default => switch(item) {
+        .expr => switch(item) {
           .space => return,
           .literal => {
             self.ctx.eh.IllegalItem(pos,
@@ -420,7 +450,7 @@ pub const Locations = struct {
             },
           },
           .node => |n| {
-            self.default = n;
+            self.expr = n;
             break .at_end;
           },
           .newlines => {
@@ -471,7 +501,7 @@ pub const Locations = struct {
   }
 
   fn finish(p: *SpecialSyntax.Processor, pos: data.Position.Input) std.mem.Allocator.Error!*data.Node {
-    const self = @fieldParentPtr(Locations, "proc", p);
+    const self = @fieldParentPtr(SymbolDefs, "proc", p);
     const ret = try self.ctx.temp_nodes.allocator.create(data.Node);
     ret.pos = .{.input = pos};
     ret.data = .{
@@ -482,14 +512,17 @@ pub const Locations = struct {
     return ret;
   }
 
-  fn finishLine(self: *Locations, pos: data.Position.Input) !void {
+  fn finishLine(self: *SymbolDefs, pos: data.Position.Input) !void {
     defer self.reset();
     if (self.names.items.len == 0) {
       self.ctx.eh.MissingSymbolName(pos);
       return;
     }
-    if (self.ltype == null and self.default == null) {
-      self.ctx.eh.MissingSymbolType(pos);
+    if (self.ltype == null and self.expr == null) {
+      if (self.variant == .locs)
+        self.ctx.eh.MissingSymbolType(pos)
+      else
+        self.ctx.eh.MissingSymbolEntity(pos);
       return;
     }
     const line_pos = .{.input = self.ctx.input.between(self.start, pos.end)};
@@ -502,7 +535,7 @@ pub const Locations = struct {
           .origin = line_pos,
           .data = .{
             .typeval = .{
-              .intrinsic = .location
+              .intrinsic = if (self.variant == .locs) .location else .definition
             }
           }
         }
@@ -510,23 +543,42 @@ pub const Locations = struct {
     };
 
     for (self.names.items) |name| {
-      const args = try self.ctx.temp_nodes.allocator.alloc(*data.Node, 6);
+      const args = try self.ctx.temp_nodes.allocator.alloc(*data.Node,
+          switch (self.variant) {.locs => @as(usize, 6), .defs => 3});
       args[0] = name;
-      args[1] = self.ltype orelse blk: {
+      const additionals = switch (self.variant) {
+        .locs => ptr: {
+          args[1] = self.ltype orelse blk: {
+            const vn = try self.ctx.temp_nodes.allocator.create(data.Node);
+            vn.pos = .{.input = pos};
+            vn.data = .voidNode;
+            break :blk vn;
+          };
+          break :ptr args.ptr + 2;
+        },
+        .defs => args.ptr + 1,
+      };
+      additionals[0] = self.expr orelse blk: {
         const vn = try self.ctx.temp_nodes.allocator.create(data.Node);
         vn.pos = .{.input = pos};
         vn.data = .voidNode;
         break :blk vn;
       };
-      args[2] = self.default orelse blk: {
-        const vn = try self.ctx.temp_nodes.allocator.create(data.Node);
-        vn.pos = .{.input = pos};
-        vn.data = .voidNode;
-        break :blk vn;
-      };
-      args[3] = try self.boolFrom(self.primary, pos);
-      args[4] = try self.boolFrom(self.varargs, pos);
-      args[5] = try self.boolFrom(self.varmap, pos);
+      switch (self.variant) {
+        .locs => {
+          additionals[1] = try self.boolFrom(self.primary, pos);
+          additionals[2] = try self.boolFrom(self.varargs, pos);
+          additionals[3] = try self.boolFrom(self.varmap, pos);
+          if (self.root) |rpos| self.ctx.eh.NonLocationFlag(rpos);
+        },
+        .defs => {
+          additionals[1] = try self.boolFrom(self.root, pos);
+          if (self.primary) |ppos| self.ctx.eh.NonDefinitionFlag(ppos);
+          if (self.varargs) |vpos| self.ctx.eh.NonDefinitionFlag(vpos);
+          if (self.varmap) |mpos| self.ctx.eh.NonDefinitionFlag(mpos);
+        }
+      }
+
       const constructor = try self.ctx.temp_nodes.allocator.create(data.Node);
       constructor.pos = line_pos;
       constructor.data = .{
@@ -539,7 +591,7 @@ pub const Locations = struct {
     }
   }
 
-  fn boolFrom(self: *Locations, pos: ?data.Position.Input, at: data.Position.Input) !*data.Node {
+  fn boolFrom(self: *SymbolDefs, pos: ?data.Position.Input, at: data.Position.Input) !*data.Node {
     const expr = try self.ctx.source_content.allocator.create(data.Expression);
     expr.pos = .{.input = pos orelse at};
     expr.data = .{

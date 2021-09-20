@@ -16,7 +16,7 @@
 
 \foo(true)
 \bar(true)
---- todo:comptime-funcs
+--- ast
 +ROOT "standalone"
   >CONTENT
   +CALL
@@ -25,12 +25,12 @@
         =NAME "concatOf"
       -FUNC
     -TARGET
-    +PARAM "items"
+    +PROTO "items"
       +VARARGS
         =RAW Raw "foobar"
         =RAW Space "\n"
         =RAW Raw "barfoo"
       -VARARGS
-    -PARAM
+    -PROTO
   -CALL
 -ROOT

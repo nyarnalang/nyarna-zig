@@ -4,7 +4,7 @@
 \spam:=:
   egg, sausage
 \end(spam)
---- ast
+--- rawast
 +ASS
   +TARGET
     =SYMREF [0]foo

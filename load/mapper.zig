@@ -8,21 +8,22 @@ pub const Mapper = struct {
   pub const Cursor = struct {
     param: union(enum) {
       index: usize,
-      kind: data.Node.UnresolvedCall.ParamKind,
+      kind: ArgKind,
     },
     config: bool,
   };
 
-  pub const ParamFlag = enum {
+  pub const ProtoArgFlag = enum {
     flow, block_no_config, block_with_config
   };
+  const ArgKind = data.Node.UnresolvedCall.ArgKind;
 
-  mapFn: fn(self: *Self, pos: data.Position.Input, input: data.Node.UnresolvedCall.ParamKind, flag: ParamFlag) ?Cursor,
+  mapFn: fn(self: *Self, pos: data.Position.Input, input: ArgKind, flag: ProtoArgFlag) ?Cursor,
   pushFn: fn(self: *Self, alloc: *std.mem.Allocator, at: Cursor, content: *data.Node) std.mem.Allocator.Error!void,
   configFn: fn(self: *Self, at: Cursor) ?*data.BlockConfig,
   finalizeFn: fn(self: *Self, alloc: *std.mem.Allocator, pos: data.Position) std.mem.Allocator.Error!*data.Node,
 
-  pub fn map(self: *Self, pos: data.Position.Input, input: data.Node.UnresolvedCall.ParamKind, flag: ParamFlag) ?Cursor {
+  pub fn map(self: *Self, pos: data.Position.Input, input: ArgKind, flag: ProtoArgFlag) ?Cursor {
     return self.mapFn(self, pos, input, flag);
   }
 
@@ -61,7 +62,7 @@ pub const SignatureMapper = struct {
   }
 
   fn map(mapper: *Mapper, pos: data.Position.Input,
-         input: data.Node.UnresolvedCall.ParamKind, flag: Mapper.ParamFlag) ?Mapper.Cursor {
+         input: Mapper.ArgKind, flag: Mapper.ProtoArgFlag) ?Mapper.Cursor {
     const self = @fieldParentPtr(SignatureMapper, "mapper", mapper);
 
     switch (input) {
@@ -139,7 +140,7 @@ pub const SignatureMapper = struct {
 pub const CollectingMapper = struct {
   mapper: Mapper,
   target: *data.Node,
-  items: std.ArrayListUnmanaged(data.Node.UnresolvedCall.Param) = .{},
+  items: std.ArrayListUnmanaged(data.Node.UnresolvedCall.ProtoArg) = .{},
   first_block: ?usize = null,
 
   pub fn init(target: *data.Node) CollectingMapper {
@@ -155,7 +156,7 @@ pub const CollectingMapper = struct {
   }
 
   fn map(mapper: *Mapper, pos: data.Position.Input,
-         input: data.Node.UnresolvedCall.ParamKind, flag: Mapper.ParamFlag) ?Mapper.Cursor {
+         input: Mapper.ArgKind, flag: Mapper.ProtoArgFlag) ?Mapper.Cursor {
     const self = @fieldParentPtr(CollectingMapper, "mapper", mapper);
     if (flag != .flow and self.first_block == null) {
       self.first_block = self.items.items.len;
@@ -180,8 +181,8 @@ pub const CollectingMapper = struct {
       .data = .{
         .unresolved_call = .{
           .target = self.target,
-          .params = self.items.items,
-          .first_block_param = self.first_block orelse self.items.items.len,
+          .proto_args = self.items.items,
+          .first_block_arg = self.first_block orelse self.items.items.len,
         },
       },
     };
@@ -208,7 +209,7 @@ pub const AssignmentMapper = struct {
   }
 
   pub fn map(mapper: *Mapper, pos: data.Position.Input,
-             input: data.Node.UnresolvedCall.ParamKind, flag: Mapper.ParamFlag) ?Mapper.Cursor {
+             input: Mapper.ArgKind, flag: Mapper.ProtoArgFlag) ?Mapper.Cursor {
     const self = @fieldParentPtr(AssignmentMapper, "mapper", mapper);
     if (input == .named or input == .direct) {
       // TODO: report error

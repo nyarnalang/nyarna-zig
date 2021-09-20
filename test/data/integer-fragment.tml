@@ -11,8 +11,8 @@
     +TARGET
       =TYPE Integer
     -TARGET
-    +PARAM "value"
+    +PROTO "value"
       =RAW Raw "42"
-    -PARAM
+    -PROTO
   -CALL
 -ROOT

@@ -55,23 +55,23 @@
 8:9[92] list_end
 8:10[93] ws_break
 9:1[94] end_source
---- ast
+--- rawast
 +UCALL
   +TARGET
     =SYMREF [0]foo
   -TARGET
-  +PARAM pos
+  +PROTO pos
     =VOID
-  -PARAM
+  -PROTO
 -UCALL
 +UCALL
   +TARGET
     =SYMREF [0]bar
   -TARGET
-  +PARAM named="baz"
+  +PROTO named="baz"
     =VOID
-  -PARAM
-  +PARAM named="raz"
+  -PROTO
+  +PROTO named="raz"
     =VOID
-  -PARAM
+  -PROTO
 -UCALL

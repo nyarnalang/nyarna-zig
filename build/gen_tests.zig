@@ -21,14 +21,18 @@ fn genTests(dir: *std.fs.Dir, sets: []TestSet) !void {
   }
 
   const disabled_tests = [_][]const u8{
+    "auto-paragraphs.tml", // missing: intrinsic funcs
     "delayed-method-resolution.tml", // missing: intrinsic funcs
     "block-config.tml", // missing: fullast implementation
+    "doc-param.tml", // missing: document parameters
     "hello-world.tml", // missing: intrinsic funcs
     "simple-swallow.tml", // missing: if expression
     "parameter-block-config.tml", // missing: default block config for params
     "field-access.tml", // missing: intrinsic funcs
+    "if-stmt.tml", // missing: if expression
+    "indirect-recursion.tml", // missing: declare
     "integer-fragment.tml", // missing: intrinsic funcs, module kinds
-    "simple-variables.tml" // missing: variable decls
+    "simple-variables.tml", // missing: variable decls
   };
 
   files: while (try i.next()) |entry| {
@@ -41,10 +45,7 @@ fn genTests(dir: *std.fs.Dir, sets: []TestSet) !void {
     }
     var file = try dir.openFile(entry.name, .{});
     defer file.close();
-    var content = tml.File.loadFile(dir, entry.name, &file) catch |err| switch(err) {
-      error.todo_encountered => continue,
-      else => return err,
-    };
+    var content = try tml.File.loadFile(dir, entry.name, &file);
     defer content.deinit();
     for (sets) |*set| {
       if (content.items.get(set.tml_item)) |_| {
@@ -80,7 +81,7 @@ pub fn main() !void {
     },
     .{
       .file = undefined,
-      .tml_item = "ast",
+      .tml_item = "rawast",
       .funcname = "parseTest",
     },
   };

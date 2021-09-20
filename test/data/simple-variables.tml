@@ -19,7 +19,7 @@
           =NAME "concatOf"
         -FUNC
       -TARGET
-      +PARAM "items"
+      +PROTO "items"
         +VARARGS
           +ASSIGNMENT
             =VARIABLE "foo"
@@ -39,7 +39,7 @@
           =VARIABLE "bar"
           =VARIABLE "foo"
         -VARARGS
-      -PARAM
+      -PROTO
     -CALL
   -SCOPE
 -ROOT

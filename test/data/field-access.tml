@@ -20,19 +20,19 @@
   +TARGET
     =SYMREF .doc.foo
   -TARGET
-  +PARAM "data"
+  +PROTO "data"
     +CALL
       +TARGET
         =SYMREF .doc.Data
       -TARGET
-      +PARAM "a"
+      +PROTO "a"
         =LIT TEXT "x"
-      -PARAM
-      +PARAM "b"
+      -PROTO
+      +PROTO "b"
         =LIT TEXT "y"
-      -PARAM
+      -PROTO
     -CALL
-  -PARAM
+  -PROTO
 -CALL
 --- document
 =RAW Raw "(x, y)"

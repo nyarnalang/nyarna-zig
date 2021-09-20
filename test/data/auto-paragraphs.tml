@@ -7,7 +7,7 @@
 
   Section = \record:
     title: \Text
-    content: \list(\Paragraph) {}:<par auto>:>
+    content: \paragraphs(\Paragraph, auto=true) {primary}:>
   \end(record)
 \end(declare)
 
@@ -23,52 +23,52 @@ amet
 \Paragraph:
   consectetur adipiscing elit
 \end(Paragraph)
---- todo:update with new paragraph handling
+--- ast
 +ROOT "fragment"
   >CONTENT
   +CALL
     +TARGET
       =TYPE Section
     -TARGET
-    +PARAM "title"
+    +PROTO "title"
       =TEXT Text "First Section"
-    -PARAM
-    +PARAM "content"
+    -PROTO
+    +PROTO "content"
       +CALL
         +TARGET
           +FUNC
             =NAME "listOf"
           -FUNC
         -TARGET
-        +PARAM "items"
+        +PROTO "items"
           +VARARGS
             +CALL
               +TARGET
                 =TYPE Paragraph
               -TARGET
-              +PARAM "content"
+              +PROTO "content"
                 =TEXT Text "Lorem ipsum"
-              -PARAM
+              -PROTO
             -CALL
             +CALL
               +TARGET
                 =TYPE Paragraph
               -TARGET
-              +PARAM "content"
+              +PROTO "content"
                 =TEXT Text "Dolor sit\namet"
-              -PARAM
+              -PROTO
             -CALL
             +CALL
               +TARGET
                 =TYPE Paragraph
               -TARGET
-              +PARAM "content"
+              +PROTO "content"
                 =TEXT Text "consectetur adipiscing elit"
-              -PARAM
+              -PROTO
             -CALL
           -VARARGS
-        -PARAM
+        -PROTO
       -CALL
-    -PARAM
+    -PROTO
   -CALL
 -ROOT

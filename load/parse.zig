@@ -38,7 +38,7 @@ pub const Parser = struct {
     swallow_depth: ?u21 = null,
 
     fn pushName(c: *Command, pos: data.Position.Input, name: []const u8, direct: bool,
-        flag: mapper.Mapper.ParamFlag) void {
+        flag: mapper.Mapper.ProtoArgFlag) void {
       c.cur_cursor = if (c.mapper.map(pos,
           if (direct) .{.direct = name} else .{.named = name}, flag)
       ) |mapped| .{
@@ -871,7 +871,12 @@ pub const Parser = struct {
                     .index = 0,
                   };
                 },
-                std.hash.Adler32.hash("definitions") => unreachable,
+                std.hash.Adler32.hash("definitions") => {
+                  into.syntax = .{
+                    .pos = .intrinsic,
+                    .index = 1,
+                  };
+                },
                 else => {
                   self.ctx().eh.UnknownSyntax(self.l.walker.posFrom(self.cur_start));
                 }
