@@ -125,7 +125,8 @@ pub const Parser = struct {
 
     fn append(l: *ContentLevel, alloc: *std.mem.Allocator, item: *data.Node) !void {
       if (l.syntax_proc) |proc| {
-        try proc.push(proc, item.pos.input, .{.node = item});
+        const res = try proc.push(proc, item.pos.input, .{.node = item});
+        std.debug.assert(res == .none);
       } else {
         if (l.dangling_space) |space_node| {
           std.debug.print("appending dangling space (kind={s})\n", .{@tagName(space_node.data.literal.kind)});
@@ -805,9 +806,9 @@ pub const Parser = struct {
           self.state = if (self.levels.items[self.levels.items.len - 1].syntax_proc != null) .special else .default;
         },
         .special => {
-          const proc = self.levels.items[self.levels.items.len - 1].syntax_proc.?;
-          try switch (self.cur) {
-            .indent => {},
+          const proc = self.curLevel().syntax_proc.?;
+          const result = try switch (self.cur) {
+            .indent => syntaxes.SpecialSyntax.Processor.Action.none,
             .space => proc.push(proc, self.l.walker.posFrom(self.cur_start),
                 .{.space = self.l.walker.contentFrom(self.cur_start.byte_offset)}),
             .escape => proc.push(proc, self.l.walker.posFrom(self.cur_start),
@@ -828,7 +829,40 @@ pub const Parser = struct {
               unreachable;
             }
           };
-          self.advance();
+          switch (result) {
+            .none => self.advance(),
+            .read_block_header => {
+              const start = self.cur_start;
+              self.l.readBlockHeader();
+              const expr = try self.ext().create(data.Expression);
+              expr.data = .{
+                .literal = .{
+                  .value = .{
+                    .origin = undefined,
+                    .data = .{.block_header = undefined},
+                  },
+                },
+              };
+              const bh = &expr.data.literal.value.data.block_header;
+
+              self.advance();
+              const check_swallow = if (self.cur == .diamond_open) blk: {
+                bh.config = @as(data.BlockConfig, undefined);
+                try self.readBlockConfig(&bh.config.?, self.ext());
+                if (self.cur == .blocks_sep) {
+                  self.advance();
+                  break :blk true;
+                } else break :blk false;
+              } else true;
+              if (check_swallow) {
+                bh.swallow_depth = self.checkSwallow();
+              }
+              const pos = self.ctx().input.between(start, self.cur_start);
+              expr.data.literal.value.origin = pos;
+              expr.pos = .{.input = pos};
+              _ = try proc.push(proc, pos, .{.block_header = bh});
+            }
+          }
         }
       }
     }
@@ -1021,43 +1055,13 @@ pub const Parser = struct {
         ind.* = .yes;
       }
       try self.applyBlockConfig(pos, &self.config_buffer);
-      if (self.cur == .block_name_sep) {
+      if (self.cur == .blocks_sep) {
         self.advance();
         break :blk true;
       } else break :blk false;
     } else true;
     if (check_swallow) {
-      var swallow_depth: u21 = 0;
-      if (switch (self.cur) {
-        .swallow_depth => blk: {
-          swallow_depth = self.l.code_point;
-          self.advance();
-          if (self.cur == .diamond_close) {
-            self.advance();
-          } else {
-            self.ctx().eh.SwallowDepthWithoutDiamondClose(self.ctx().input.at(self.cur_start));
-            break :blk false;
-          }
-          break :blk true;
-        },
-        .diamond_close => blk: {
-          self.advance();
-          break :blk true;
-        },
-        else => blk: {
-          if (pb_exists) |ind| {
-            if (ind.* == .unknown) {
-              parent.command.pushPrimary(self.ctx().input.at(self.cur_start), false);
-              if (parent.implicitBlockConfig()) |c| {
-                ind.* = .maybe;
-                try self.pushLevel(if (parent.command.choseAstNodeParam()) false else parent.fullast);
-                try self.applyBlockConfig(self.ctx().input.at(self.cur_start), c);
-              }
-            }
-          }
-          break :blk false;
-        }
-      }) {
+      if (self.checkSwallow()) |swallow_depth| {
         if (pb_exists) |ind| {
           if (ind.* == .unknown) {
             parent.command.pushPrimary(self.ctx().input.at(self.cur_start), false);
@@ -1118,9 +1122,39 @@ pub const Parser = struct {
 
         while (self.cur == .space or self.cur == .indent or self.cur == .ws_break) self.advance();
         return true;
+      } else if (pb_exists) |ind| {
+        if (ind.* == .unknown) {
+          parent.command.pushPrimary(self.ctx().input.at(self.cur_start), false);
+          if (parent.implicitBlockConfig()) |c| {
+            ind.* = .maybe;
+            try self.pushLevel(if (parent.command.choseAstNodeParam()) false else parent.fullast);
+            try self.applyBlockConfig(self.ctx().input.at(self.cur_start), c);
+          }
+        }
       }
     }
     return false;
+  }
+
+  fn checkSwallow(self: *Parser) ?u21 {
+    return switch (self.cur) {
+      .swallow_depth => blk: {
+        const swallow_depth = self.l.code_point;
+        self.advance();
+        if (self.cur == .diamond_close) {
+          self.advance();
+        } else {
+          self.ctx().eh.SwallowDepthWithoutDiamondClose(self.ctx().input.at(self.cur_start));
+          break :blk null;
+        }
+        break :blk swallow_depth;
+      },
+      .diamond_close => blk: {
+        self.advance();
+        break :blk 0;
+      },
+      else => null,
+    };
   }
 
   fn applyBlockConfig(self: *Parser, pos: data.Position.Input, config: *const data.BlockConfig) !void {

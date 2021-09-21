@@ -70,6 +70,56 @@ fn formatTypeName(t: data.Type, comptime fmt: []const u8,
   }
 }
 
+const HeaderWithContext = struct {
+  header: *const data.Value.BlockHeader,
+  context: *Context,
+};
+
+fn formatBlockHeader(hc: HeaderWithContext, comptime fmt: []const u8,
+                     options: std.fmt.FormatOptions, writer: anytype) !void {
+  if (hc.header.config) |config| {
+    try writer.writeAll(":<");
+    var first = true;
+    for (config.map) |*item| {
+      if (item.to == 0) {
+        if (first) first = false else try writer.writeAll(", ");
+        const ec = lex.EncodedCharacter.init(item.from);
+        try writer.print("off {s}", .{ec.repr()});
+      }
+    }
+    for (config.map) |*item| {
+      if (item.from == 0) {
+        if (first) first = false else try writer.writeAll(", ");
+        const ec = lex.EncodedCharacter.init(item.to);
+        try writer.print("csym {s}", .{ec.repr()});
+      }
+    }
+    for (config.map) |*item| {
+      if (item.from != 0 and item.to != 0) {
+        if (first) first = false else try writer.writeAll(", ");
+        const fc = lex.EncodedCharacter.init(item.from);
+        const tc = lex.EncodedCharacter.init(item.to);
+        try writer.print("map {s} {s}", .{fc.repr(), tc.repr()});
+      }
+    }
+    if (config.full_ast) |_| {
+      if (first) first = false else try writer.writeAll(", ");
+      try writer.writeAll("fullast");
+    }
+    if (config.syntax) |def| {
+      if (first) first = false else try writer.writeAll(", ");
+      // TODO: user-define syntaxes
+      try writer.print("syntax {s}", .{switch (def.index) {
+        0 => @as([]const u8, "locations"), 1 => "definitions", else => unreachable
+      }});
+    }
+    try writer.writeByte('>');
+  }
+  if (hc.header.swallow_depth) |swallow_depth| {
+    try if (swallow_depth > 0) writer.print(":{}>", .{swallow_depth}) else writer.writeAll(":>");
+  } else if (hc.header.config == null) try writer.writeAll("null");
+}
+
 fn AstEmitter(Handler: anytype) type {
   return struct {
     const Self = @This();
@@ -86,6 +136,7 @@ fn AstEmitter(Handler: anytype) type {
 
     handler: Handler,
     depth: usize,
+    context: *Context,
 
     fn emitLine(self: *Self, comptime fmt: []const u8, args: anytype) !void {
       var buffer: [1024]u8 = undefined;
@@ -275,7 +326,11 @@ fn AstEmitter(Handler: anytype) type {
         .map => |map| {
           unreachable;
         },
-        .typeval => |t| try self.processType(t),
+        .typeval => |tv| try self.processType(tv.t),
+        .block_header => |*h| {
+          const hf = std.fmt.Formatter(formatBlockHeader){.data = .{.header = h, .context = self.context}};
+          try self.emitLine("=HEADER {}", .{hf});
+        },
       }
     }
   };
@@ -346,6 +401,7 @@ pub fn parseTest(f: *tml.File) !void {
   var emitter = AstEmitter(@TypeOf(&checker)){
     .depth = 0,
     .handler = &checker,
+    .context = &ctx,
   };
   try emitter.process(res);
   if (checker.expected_iter.next()) |line| {

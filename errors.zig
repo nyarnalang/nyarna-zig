@@ -10,8 +10,8 @@ pub const LexerError = enum {
 
 pub const GenericParserError = enum {
   NamedArgumentInAssignment, MissingBlockNameEnd, UnknownFlag,
-  NonLocationFlag, NonDefinitionFlag, MissingSymbolName,
-  MissingSymbolType, MissingSymbolEntity, UnknownSyntax
+  NonLocationFlag, NonDefinitionFlag, BlockHeaderNotAllowedForDefinition,
+  MissingSymbolName, MissingSymbolType, MissingSymbolEntity, UnknownSyntax
 };
 
 pub const WrongItemError = enum {
@@ -36,26 +36,29 @@ pub const WrongIdError = enum {
 };
 
 pub const PreviousOccurenceError = enum {
-  IsNotANamespaceCharacter, AlreadyANamespaceCharacter, DuplicateFlag,
+  IsNotANamespaceCharacter, AlreadyANamespaceCharacter, DuplicateFlag, DuplicateBlockHeader,
 
   fn errorMsg(e: PreviousOccurenceError) []const u8 {
     return switch (e) {
       .IsNotANamespaceCharacter => " is not a namespace character",
       .AlreadyANamespaceCharacter => " is already a namespace character",
       .DuplicateFlag => " has been seen previously",
+      .DuplicateBlockHeader => " can only be given once per definition",
     };
   }
 
   fn entityName(e: PreviousOccurenceError) []const u8 {
     return switch (e) {
       .IsNotANamespaceCharacter, .AlreadyANamespaceCharacter => "character",
-      .DuplicateFlag => "flag"
+      .DuplicateFlag => "flag",
+      .DuplicateBlockHeader => "block header"
     };
   }
 
   fn prevOccurenceKind(e: PreviousOccurenceError) []const u8 {
     return switch (e) {
-      .IsNotANamespaceCharacter, .AlreadyANamespaceCharacter, .DuplicateFlag => "given"
+      .IsNotANamespaceCharacter, .AlreadyANamespaceCharacter, .DuplicateFlag,
+      .DuplicateBlockHeader => "given"
     };
   }
 };
@@ -195,6 +198,6 @@ pub const CmdLineReporter = struct {
     self.renderPos(.{.bold}, pos);
     self.renderError("{s} '{s}'{s}", .{id.entityName(), repr, id.errorMsg()});
     self.renderPos(.{}, previous);
-    self.writer.print("{s} here", .{id.prevOccurenceKind()}) catch unreachable;
+    self.writer.print("{s} here\n", .{id.prevOccurenceKind()}) catch unreachable;
   }
 };

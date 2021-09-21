@@ -8,7 +8,7 @@
   :else:
     wirbl
   \end(if) # comment
-  schwurbl : \Boolean
+  schwurbl : \Boolean {}:<syntax locations>:3>
 \end(block)
 --- rawast
 +UCALL
@@ -37,6 +37,9 @@
       -ARG
       +ARG
         =ENUM Boolean "false"
+      -ARG
+      +ARG
+        =VOID
       -ARG
     -RCALL
     +RCALL
@@ -68,6 +71,9 @@
       +ARG
         =ENUM Boolean "false"
       -ARG
+      +ARG
+        =VOID
+      -ARG
     -RCALL
     +RCALL
       +TARGET
@@ -98,6 +104,9 @@
       +ARG
         =ENUM Boolean "false"
       -ARG
+      +ARG
+        =VOID
+      -ARG
     -RCALL
     +RCALL
       +TARGET
@@ -127,6 +136,9 @@
       -ARG
       +ARG
         =ENUM Boolean "false"
+      -ARG
+      +ARG
+        =VOID
       -ARG
     -RCALL
     +RCALL
@@ -164,6 +176,9 @@
       +ARG
         =ENUM Boolean "false"
       -ARG
+      +ARG
+        =VOID
+      -ARG
     -RCALL
     +RCALL
       +TARGET
@@ -186,6 +201,9 @@
       -ARG
       +ARG
         =ENUM Boolean "false"
+      -ARG
+      +ARG
+        =HEADER :<syntax locations>:3>
       -ARG
     -RCALL
   -PROTO

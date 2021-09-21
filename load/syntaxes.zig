@@ -11,10 +11,13 @@ pub const SpecialSyntax = struct {
     special_char: u21,
     node: *data.Node,
     newlines: usize, // 1 for newlines, >1 for parseps.
+    block_header: *data.Value.BlockHeader,
   };
 
   pub const Processor = struct {
-    push: fn(self: *@This(), pos: data.Position.Input, item: Item) std.mem.Allocator.Error!void,
+    pub const Action = enum {none, read_block_header};
+
+    push: fn(self: *@This(), pos: data.Position.Input, item: Item) std.mem.Allocator.Error!Action,
     finish: fn(self: *@This(), pos: data.Position.Input) std.mem.Allocator.Error!*data.Node,
   };
 
@@ -24,12 +27,14 @@ pub const SpecialSyntax = struct {
 
 pub const SymbolDefs = struct {
   const State = enum {
-    initial, names, after_name, ltype, after_ltype, flags, after_flag, after_flags, expr, at_end
+    initial, names, after_name, ltype, after_ltype, flags, after_flag, after_flags,
+    block_header, expr, at_end
   };
   const Variant = enum {locs, defs};
+  const Processor = SpecialSyntax.Processor;
 
   ctx: *Context,
-  proc: SpecialSyntax.Processor,
+  proc: Processor,
   state: State,
   produced: std.ArrayListUnmanaged(*data.Node),
   variant: Variant,
@@ -40,12 +45,16 @@ pub const SymbolDefs = struct {
   varargs: ?data.Position.Input,
   varmap: ?data.Position.Input,
   root: ?data.Position.Input,
+  header: ?*data.Value.BlockHeader,
   ltype: ?*data.Node,
   expr: ?*data.Node,
   // -------------------------
 
   const after_name_items_arr = [_]errors.WrongItemError.ItemDescr{
     .{.character = ','}, .{.character = '{'}, .{.character = '='}, .{.character = ':'}
+  };
+  const after_flags_items_arr = [_]errors.WrongItemError.ItemDescr{
+    .{.character = '='}, .{.character = ';'}, .{.character = ':'}, .{.token = .ws_break}
   };
 
   fn afterNameItems(self: *@This()) []const errors.WrongItemError.ItemDescr {
@@ -66,7 +75,7 @@ pub const SymbolDefs = struct {
     };
   }
 
-  fn init(ctx: *Context, variant: Variant) std.mem.Allocator.Error!*SpecialSyntax.Processor {
+  fn init(ctx: *Context, variant: Variant) std.mem.Allocator.Error!*Processor {
     const alloc = &ctx.temp_nodes.allocator;
     const ret = try alloc.create(SymbolDefs);
     ret.ctx = ctx;
@@ -82,11 +91,11 @@ pub const SymbolDefs = struct {
     return &ret.proc;
   }
 
-  fn initLocations(ctx: *Context) !*SpecialSyntax.Processor {
+  fn initLocations(ctx: *Context) !*Processor {
     return init(ctx, .locs);
   }
 
-  fn initDefinitions(ctx: *Context) !*SpecialSyntax.Processor {
+  fn initDefinitions(ctx: *Context) !*Processor {
     return init(ctx, .defs);
   }
 
@@ -94,26 +103,27 @@ pub const SymbolDefs = struct {
     l.primary = null;
     l.varargs = null;
     l.varmap = null;
+    l.header = null;
     l.root = null;
     l.ltype = null;
     l.expr = null;
     l.names.clearRetainingCapacity();
   }
 
-  fn push(p: *SpecialSyntax.Processor, pos: data.Position.Input,
-          item: SpecialSyntax.Item) std.mem.Allocator.Error!void {
+  fn push(p: *Processor, pos: data.Position.Input,
+          item: SpecialSyntax.Item) std.mem.Allocator.Error!Processor.Action {
     const self = @fieldParentPtr(SymbolDefs, "proc", p);
     self.state = while (true) {
       switch (self.state) {
         .initial => switch(item) {
-          .space, .newlines => return,
+          .space, .newlines => return .none,
           else => {
             self.start = pos.start;
             self.state = .names;
           },
         },
         .names => switch (item) {
-          .space => return,
+          .space => return .none,
           .literal => |name| {
             const name_node = try self.ctx.temp_nodes.allocator.create(data.Node);
             name_node.pos = .{.input = pos};
@@ -130,7 +140,7 @@ pub const SymbolDefs = struct {
             self.ctx.eh.IllegalItem(pos,
                 &[_]errors.WrongItemError.ItemDescr{.{.token = .identifier}},
                 .{.token = .escape});
-            return;
+            return .none;
           },
           .special_char => |c| switch (c) {
             '=', '{' => {
@@ -148,7 +158,7 @@ pub const SymbolDefs = struct {
               self.ctx.eh.ExpectedXGotY(pos,
                 &[_]errors.WrongItemError.ItemDescr{.{.token = .identifier}},
                 .{.character = c});
-              return;
+              return .none;
             },
             ';' => {
               self.ctx.eh.PrematureToken(pos,
@@ -160,32 +170,33 @@ pub const SymbolDefs = struct {
               self.ctx.eh.ExpectedXGotY(pos,
                   &[_]errors.WrongItemError.ItemDescr{.{.token = .identifier}},
                   .{.character = c});
-              return;
+              return .none;
             },
           },
           .node => {
             self.ctx.eh.IllegalItem(pos,
                 &[_]errors.WrongItemError.ItemDescr{.{.token = .identifier}},
                 .node);
-            return;
+            return .none;
           },
           .newlines => {
             self.ctx.eh.PrematureToken(pos,
                 &[_]errors.WrongItemError.ItemDescr{.{.token = .identifier}},
                 .{.token = .ws_break});
             self.reset();
-            return;
-          }
+            return .none;
+          },
+          .block_header => unreachable,
         },
         .after_name => switch (item) {
-          .space => return,
+          .space => return .none,
           .literal => |name| {
             self.ctx.eh.MissingToken(pos, self.afterNameItems(), .{.token = .identifier});
             self.state = .names;
           },
           .escaped => {
             self.ctx.eh.IllegalItem(pos, self.afterNameItems(), .{.token = .escape});
-            return;
+            return .none;
           },
           .special_char => |c| switch (c) {
             ',' => break .names,
@@ -198,26 +209,27 @@ pub const SymbolDefs = struct {
             ';' => self.state = .at_end,
             else => {
               self.ctx.eh.IllegalItem(pos, self.afterNameItems(), .{.character = c});
-              return;
+              return .none;
             },
           },
           .node => {
             self.ctx.eh.IllegalItem(pos, self.afterNameItems(), .node);
-            return;
+            return .none;
           },
           .newlines => self.state = .at_end,
+          .block_header => unreachable,
         },
         .ltype => switch(item) {
-          .space => return,
+          .space => return .none,
           .literal => {
             self.ctx.eh.IllegalItem(pos, &[_]errors.WrongItemError.ItemDescr{.node}, .{.token = .literal});
-            return;
+            return .none;
           },
           .escaped => {
             self.ctx.eh.IllegalItem(pos,
                 &[_]errors.WrongItemError.ItemDescr{.node},
                 .{.token = .escape});
-            return;
+            return .none;
           },
           .special_char => |c| switch (c) {
             '{', '=', ';' => {
@@ -228,7 +240,7 @@ pub const SymbolDefs = struct {
             else => {
               self.ctx.eh.IllegalItem(pos,
                   &[_]errors.WrongItemError.ItemDescr{.node}, .{.character = c});
-              return;
+              return .none;
             },
           },
           .node => |n| {
@@ -240,22 +252,23 @@ pub const SymbolDefs = struct {
                 &[_]errors.WrongItemError.ItemDescr{.node}, .{.token = .ws_break});
             self.state = .after_ltype;
           },
+          .block_header => unreachable,
         },
         .after_ltype => switch (item) {
-          .space => return,
+          .space => return .none,
           .literal => {
             self.ctx.eh.IllegalItem(pos,
                 &[_]errors.WrongItemError.ItemDescr{
                   .{.character = '='}, .{.character = ';'}, .{.token = .ws_break}
                 }, .{.token = .identifier});
-            return;
+            return .none;
           },
           .escaped => {
             self.ctx.eh.IllegalItem(pos,
                 &[_]errors.WrongItemError.ItemDescr{
                   .{.character = '='}, .{.character = ';'}, .{.token = .ws_break}
                 }, .{.token = .escape});
-            return;
+            return .none;
           },
           .special_char => |c| switch (c) {
             '{' => break .flags,
@@ -266,7 +279,7 @@ pub const SymbolDefs = struct {
                   &[_]errors.WrongItemError.ItemDescr{
                     .{.character = '='}, .{.character = ';'}, .{.token = .ws_break}
                   }, .{.character = c});
-              return;
+              return .none;
             },
           },
           .node => {
@@ -274,12 +287,13 @@ pub const SymbolDefs = struct {
                 &[_]errors.WrongItemError.ItemDescr{
                   .{.character = '='}, .{.character = ';'}, .{.token = .ws_break}
                 }, .node);
-            return;
+            return .none;
           },
           .newlines => self.state = .at_end,
+          .block_header => unreachable,
         },
         .flags => switch (item) {
-          .space => return,
+          .space => return .none,
           .literal => |id| {
             const target = switch (std.hash.Adler32.hash(id)) {
               std.hash.Adler32.hash("primary") => &self.primary,
@@ -288,7 +302,7 @@ pub const SymbolDefs = struct {
               std.hash.Adler32.hash("root") => &self.root,
               else => {
                 self.ctx.eh.UnknownFlag(pos);
-                return;
+                return .none;
               }
             };
             if (target.*) |prev| {
@@ -301,7 +315,7 @@ pub const SymbolDefs = struct {
                 &[_]errors.WrongItemError.ItemDescr{
                     .{.token = .identifier}, .{.character = '}'}
                 }, .{.token = .escape});
-            return;
+            return .none;
           },
           .special_char => |c| switch (c) {
             '}' => break .after_flags,
@@ -310,7 +324,7 @@ pub const SymbolDefs = struct {
                   &[_]errors.WrongItemError.ItemDescr{
                     .{.token = .identifier}, .{.character = '}'}
                   }, .{.character = ','});
-              return;
+              return .none;
             },
             ';' => {
               self.ctx.eh.PrematureToken(pos,
@@ -324,7 +338,7 @@ pub const SymbolDefs = struct {
                   &[_]errors.WrongItemError.ItemDescr{
                     .{.token = .identifier}, .{.character = '}'}},
                     .{.character = c});
-              return;
+              return .none;
             }
           },
           .node => {
@@ -341,22 +355,23 @@ pub const SymbolDefs = struct {
                 .{.token = .ws_break});
             self.state = .at_end;
           },
+          .block_header => unreachable,
         },
         .after_flag => switch(item) {
-          .space => return,
+          .space => return .none,
           .literal => {
             self.ctx.eh.IllegalItem(pos,
                 &[_]errors.WrongItemError.ItemDescr{
                   .{.character = ','}, .{.character = '}'}
                 }, .{.token = .identifier});
-            return;
+            return .none;
           },
           .escaped => {
             self.ctx.eh.IllegalItem(pos,
                 &[_]errors.WrongItemError.ItemDescr{
                     .{.character = ','}, .{.character = '}'}
                 }, .{.token = .escape});
-            return;
+            return .none;
           },
           .special_char => |c| switch (c) {
             ',' => break .flags,
@@ -372,7 +387,7 @@ pub const SymbolDefs = struct {
               self.ctx.eh.IllegalItem(pos,
                   &[_]errors.WrongItemError.ItemDescr{
                       .{.character = ','}, .{.character = '}'}}, .{.character = c});
-              return;
+              return .none;
             }
           },
           .node => {
@@ -380,7 +395,7 @@ pub const SymbolDefs = struct {
                 &[_]errors.WrongItemError.ItemDescr{
                     .{.character = ','}, .{.character = '}'}},
                     .node);
-            return;
+            return .none;
           },
           .newlines => {
             self.ctx.eh.PrematureToken(pos,
@@ -389,53 +404,55 @@ pub const SymbolDefs = struct {
                 .{.character = ';'});
             self.state = .at_end;
           },
+          .block_header => unreachable,
         },
         .after_flags => switch (item) {
-          .space => return,
+          .space => return .none,
           .literal => {
-            self.ctx.eh.IllegalItem(pos,
-                &[_]errors.WrongItemError.ItemDescr{
-                  .{.character = '='}, .{.character = ';'}, .{.token = .ws_break}
-                }, .{.token = .identifier});
-            return;
+            self.ctx.eh.IllegalItem(pos, &after_flags_items_arr, .{.token = .identifier});
+            return .none;
           },
           .escaped => {
-            self.ctx.eh.IllegalItem(pos,
-                &[_]errors.WrongItemError.ItemDescr{
-                  .{.character = '='}, .{.character = ';'}, .{.token = .ws_break}
-                }, .{.token = .escape});
-            return;
+            self.ctx.eh.IllegalItem(pos, &after_flags_items_arr, .{.token = .escape});
+            return .none;
           },
           .special_char => |c| switch (c) {
             '=' => break .expr,
             ';' => self.state = .at_end,
             '{' => break .flags,
+            ':' => {
+              self.state = .block_header;
+              return .read_block_header;
+            },
             else => {
-              self.ctx.eh.IllegalItem(pos,
-                  &[_]errors.WrongItemError.ItemDescr{.{.character = '='}, .{.character = ';'}, .{.token = .ws_break}},
-                  .{.character = c});
-              return;
+              self.ctx.eh.IllegalItem(pos, &after_flags_items_arr, .{.character = c});
+              return .none;
             },
           },
           .node => {
-            self.ctx.eh.IllegalItem(pos,
-                &[_]errors.WrongItemError.ItemDescr{.{.character = '='}, .{.character = ';'}, .{.token = .ws_break}},
-                .node);
-            return;
+            self.ctx.eh.IllegalItem(pos, &after_flags_items_arr, .node);
+            return .none;
           },
           .newlines => self.state = .at_end,
+          .block_header => unreachable,
+        },
+        .block_header => {
+          if (self.header != null) {
+            self.ctx.eh.DuplicateBlockHeader("block header", pos, item.block_header.value().origin);
+          } else self.header = item.block_header;
+          break .after_flags;
         },
         .expr => switch(item) {
-          .space => return,
+          .space => return .none,
           .literal => {
             self.ctx.eh.IllegalItem(pos,
                 &[_]errors.WrongItemError.ItemDescr{.node}, .{.token = .identifier});
-            return;
+            return .none;
           },
           .escaped => {
             self.ctx.eh.IllegalItem(pos,
                 &[_]errors.WrongItemError.ItemDescr{.node}, .{.token = .escape});
-            return;
+            return .none;
           },
           .special_char => |c| switch (c) {
             ';' => {
@@ -446,7 +463,7 @@ pub const SymbolDefs = struct {
             else => {
               self.ctx.eh.IllegalItem(pos,
                   &[_]errors.WrongItemError.ItemDescr{.node}, .{.character = c});
-              return;
+              return .none;
             },
           },
           .node => |n| {
@@ -458,20 +475,21 @@ pub const SymbolDefs = struct {
                 &[_]errors.WrongItemError.ItemDescr{.node}, .{.token = .ws_break});
             self.state = .at_end;
           },
+          .block_header => unreachable,
         },
         .at_end => switch (item) {
-          .space => return,
+          .space => return .none,
           .literal => {
             self.ctx.eh.IllegalItem(pos,
                 &[_]errors.WrongItemError.ItemDescr{.{.character = ';'}, .{.token = .ws_break}},
                 .{.token = .identifier});
-            return;
+            return .none;
           },
           .escaped => {
             self.ctx.eh.IllegalItem(pos,
                 &[_]errors.WrongItemError.ItemDescr{.{.character = ';'}, .{.token = .ws_break}},
                 .{.token = .escape});
-            return;
+            return .none;
           },
           .special_char => |c| switch (c) {
             ';' => {
@@ -482,25 +500,27 @@ pub const SymbolDefs = struct {
               self.ctx.eh.IllegalItem(pos,
                   &[_]errors.WrongItemError.ItemDescr{.{.character = ';'}, .{.token = .ws_break}},
                   .{.character = c});
-              return;
+              return .none;
             },
           },
           .node => {
             self.ctx.eh.IllegalItem(pos,
                 &[_]errors.WrongItemError.ItemDescr{.{.character = ';'}, .{.token = .ws_break}},
                 .node);
-            return;
-          },
+            return .none;
+          } ,
           .newlines => {
             try self.finishLine(pos);
             break .initial;
           },
+          .block_header => unreachable,
         },
       }
     } else unreachable;
+    return .none;
   }
 
-  fn finish(p: *SpecialSyntax.Processor, pos: data.Position.Input) std.mem.Allocator.Error!*data.Node {
+  fn finish(p: *Processor, pos: data.Position.Input) std.mem.Allocator.Error!*data.Node {
     const self = @fieldParentPtr(SymbolDefs, "proc", p);
     const ret = try self.ctx.temp_nodes.allocator.create(data.Node);
     ret.pos = .{.input = pos};
@@ -525,26 +545,28 @@ pub const SymbolDefs = struct {
         self.ctx.eh.MissingSymbolEntity(pos);
       return;
     }
-    const line_pos = .{.input = self.ctx.input.between(self.start, pos.end)};
+    const line_pos = self.ctx.input.between(self.start, pos.end);
 
     const lexpr = try self.ctx.source_content.allocator.create(data.Expression);
-    lexpr.pos = line_pos;
+    lexpr.pos = .{.input = line_pos};
     lexpr.data = .{
       .literal = .{
         .value = .{
           .origin = line_pos,
           .data = .{
             .typeval = .{
-              .intrinsic = if (self.variant == .locs) .location else .definition
-            }
-          }
-        }
-      }
+              .t = .{
+                .intrinsic = if (self.variant == .locs) .location else .definition
+              },
+            },
+          },
+        },
+      },
     };
 
     for (self.names.items) |name| {
       const args = try self.ctx.temp_nodes.allocator.alloc(*data.Node,
-          switch (self.variant) {.locs => @as(usize, 6), .defs => 3});
+          switch (self.variant) {.locs => @as(usize, 7), .defs => 3});
       args[0] = name;
       const additionals = switch (self.variant) {
         .locs => ptr: {
@@ -569,6 +591,17 @@ pub const SymbolDefs = struct {
           additionals[1] = try self.boolFrom(self.primary, pos);
           additionals[2] = try self.boolFrom(self.varargs, pos);
           additionals[3] = try self.boolFrom(self.varmap, pos);
+          const bhn = try self.ctx.temp_nodes.allocator.create(data.Node);
+          if (self.header) |bh| {
+            bhn.pos = .{.input = bh.value().origin};
+            bhn.data = .{
+              .expression = @fieldParentPtr(data.Expression.Literal, "value", bh.value()).expr(),
+            };
+          } else {
+            bhn.pos = .{.input = pos};
+            bhn.data = .voidNode;
+          }
+          additionals[4] = bhn;
           if (self.root) |rpos| self.ctx.eh.NonLocationFlag(rpos);
         },
         .defs => {
@@ -576,11 +609,12 @@ pub const SymbolDefs = struct {
           if (self.primary) |ppos| self.ctx.eh.NonDefinitionFlag(ppos);
           if (self.varargs) |vpos| self.ctx.eh.NonDefinitionFlag(vpos);
           if (self.varmap) |mpos| self.ctx.eh.NonDefinitionFlag(mpos);
+          if (self.header) |bh| self.ctx.eh.BlockHeaderNotAllowedForDefinition(bh.value().origin);
         }
       }
 
       const constructor = try self.ctx.temp_nodes.allocator.create(data.Node);
-      constructor.pos = line_pos;
+      constructor.pos = .{.input = line_pos};
       constructor.data = .{
         .resolved_call = .{
           .target = lexpr,
@@ -597,7 +631,7 @@ pub const SymbolDefs = struct {
     expr.data = .{
       .literal = .{
         .value = .{
-          .origin = expr.pos,
+          .origin = pos orelse at,
           .data = .{
             .enumval = .{
               .t = self.ctx.getBoolean(),

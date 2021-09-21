@@ -4,6 +4,8 @@ const unicode = @import("unicode.zig");
 const Context = @import("interpret.zig").Context;
 const Token = data.Token;
 
+pub const EncodedCharacter = unicode.EncodedCharacter;
+
 /// Walks a source and returns Unicode code points.
 pub const Walker = struct {
   /// The source.
@@ -165,6 +167,10 @@ pub const Lexer = struct {
     /// can yield diamond_close and transitions to at_header.
     /// can yield swallow_depth and transitions to at_swallow then.
     /// else transitions to at_header.
+    ///
+    /// used for instructing the lexer to read a block header in special syntax.
+    /// in that case, the state chain from here returns to special_syntax
+    /// instead of eventually transitioning to at_header.
     after_blocks_colon,
     /// line behind blocks start, block name or swallow.
     /// may yield space, comment and illegal_content_at_header.
@@ -179,10 +185,10 @@ pub const Lexer = struct {
     /// can yield diamond_close and transitions to after_config then.
     config_item_arg,
     /// can yield blocks_sep and transitions to after_blocks_colon then.
-    /// else transitions to at_header.
+    /// else transitions to at_header or special_syntax.
     after_config,
     /// may yield diamond_close (it's an error if it doesn't), then
-    /// transitions to at_header.
+    /// transitions to at_header or special_syntax.
     after_depth,
     /// like indent_capture, but transitions to special_syntax_check_indent
     special_syntax_indent_capture,
@@ -589,7 +595,7 @@ pub const Lexer = struct {
             return .diamond_open;
           },
           '>' => {
-            l.state = .at_header;
+            l.state = if (l.level.special == .disabled) .at_header else .special_syntax;
             l.cur_stored = l.walker.nextInline();
             l.recent_end = l.walker.before;
             return .diamond_close;
@@ -597,10 +603,9 @@ pub const Lexer = struct {
           '0'...'9' => {
             l.readNumber(&cur);
             l.state = .after_depth;
-
             return .swallow_depth;
           },
-          else => l.state = .at_header,
+          else => l.state = if (l.level.special == .disabled) .at_header else .special_syntax,
         },
         .at_header => {
           const res = try l.processContent(.block, &cur);
@@ -663,11 +668,11 @@ pub const Lexer = struct {
             l.recent_end = l.walker.before;
             return .blocks_sep;
           } else {
-            l.state = .at_header;
+            l.state = if (l.level.special == .disabled) .at_header else .special_syntax;
           }
         },
         .after_depth => {
-          l.state = .at_header;
+          l.state = if (l.level.special == .disabled) .at_header else .special_syntax;
           if (cur == '>') {
             l.cur_stored = l.walker.nextInline();
             l.recent_end = l.walker.before;
@@ -1209,5 +1214,10 @@ pub const Lexer = struct {
     l.level.special = if (comments_include_newline) .standard_comments else .comments_without_newline;
     std.debug.assert(l.state == .check_indent);
     l.state = .special_syntax_check_indent;
+  }
+
+  pub fn readBlockHeader(l: *Lexer) void {
+    std.debug.assert(l.state == .special_syntax);
+    l.state = .after_blocks_colon;
   }
 };

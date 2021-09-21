@@ -377,6 +377,12 @@ pub const Symbol = struct {
   data: Data,
 };
 
+/// workaround for https://github.com/ziglang/zig/issues/6611
+fn offset(comptime T: type, comptime field: []const u8) usize {
+  var data = @unionInit(T, field, undefined);
+  return @ptrToInt(&@field(data, field)) - @ptrToInt(&data);
+}
+
 pub const Type = union(enum) {
   pub const Signature = struct {
     pub const Parameter = struct {
@@ -518,12 +524,6 @@ pub const Type = union(enum) {
       float: Float,
       tenum: Enum,
       record: Record,
-
-      /// workaround for https://github.com/ziglang/zig/issues/6611
-      fn offset(comptime field: []const u8) usize {
-        var data = @unionInit(Data, field, undefined);
-        return @ptrToInt(&@field(data, field)) - @ptrToInt(&data);
-      }
     };
     /// position at which the type has been declared.
     at: Position,
@@ -533,16 +533,13 @@ pub const Type = union(enum) {
     data: Data,
 
     fn parent(it: anytype) *Instantiated {
-      var data: Data = undefined;
-      var base_ptr = &data;
-
       const t = @typeInfo(@TypeOf(it)).Pointer.child;
       const addr = @ptrToInt(it) - switch(t) {
-        Textual =>  Data.offset("textual"),
-        Numeric => Data.offset("numeric"),
-        Float => Data.offset("float"),
-        Enum => Data.offset("tenum"),
-        Record => Data.offset("record"),
+        Textual =>  offset(Data, "textual"),
+        Numeric => offset(Data, "numeric"),
+        Float => offset(Data, "float"),
+        Enum => offset(Data, "tenum"),
+        Record => offset(Data, "record"),
         else => unreachable
       };
       return @fieldParentPtr(Instantiated, "data", @intToPtr(*Data, addr));
@@ -561,7 +558,7 @@ pub const Type = union(enum) {
 
   /// unique types predefined by Nyarna
   intrinsic: enum {
-    void, prototype, schema, extension, ast_node,
+    void, prototype, schema, extension, ast_node, block_header,
     space, literal, raw,
     location, definition, backend
   },
@@ -573,39 +570,43 @@ pub const Type = union(enum) {
 
 pub const Expression = struct {
   /// a call to a type constructor.
-  const ConstrCall = struct {
+  pub const ConstrCall = struct {
     target_type: Type,
     exprs: []*Expression,
   };
   /// a call to an external function.
-  const ExtCall = struct {
+  pub const ExtCall = struct {
     target: *Symbol.ExtFunc,
     exprs: []*Expression,
   };
   /// a call to an internal function.
-  const Call = struct {
+  pub const Call = struct {
     target: *Symbol.NyFunc,
     exprs: []*Expression,
   };
   /// assignment to a variable or one of its inner values
-  const Assignment = struct {
+  pub const Assignment = struct {
     target: *Symbol.Variable,
     /// list of indexes that identify which part of the variable is to be assigned.
     path: []usize,
     expr: *Expression,
   };
   /// retrieval of the value of a substructure
-  const Access = struct {
+  pub const Access = struct {
     subject: *Expression,
     /// the index of the field or item to be retrieved
     index: usize
   };
   /// a literal value
-  const Literal = struct {
+  pub const Literal = struct {
     value: Value,
+
+    pub fn expr(self: *@This()) *Expression {
+      return Expression.parent(self);
+    }
   };
   /// an ast subtree
-  const Ast = struct {
+  pub const Ast = struct {
     root: *Node,
   };
 
@@ -621,6 +622,20 @@ pub const Expression = struct {
 
   pos: Position,
   data: Data,
+
+  fn parent(it: anytype) *Expression {
+    const t = @typeInfo(@TypeOf(it)).Pointer.child;
+    const addr = @ptrToInt(it) - switch(t) {
+      ConstrCall => offset(Data, "constr_call"),
+      ExtCall => offset(Data, "ext_call"),
+      Call => offset(Data, "call"),
+      Assignment => offset(Data, "assignment"),
+      Access => offset(Data, "access"),
+      Literal => offset(Data, "literal"),
+      else => unreachable
+    };
+    return @fieldParentPtr(Expression, "data", @intToPtr(*Data, addr));
+  }
 };
 
 pub const Value = struct {
@@ -670,8 +685,22 @@ pub const Value = struct {
     items: std.HashMap(*Value, *Value, Value.hash, Value.eql, 50),
   };
 
-  origin: Position,
-  data: union(enum) {
+  pub const TypeVal = struct {
+    t: Type,
+  };
+
+  /// a block header. This value type is used to read in block headers within
+  /// SpecialSyntax, e.g. the default block configuration of function parameters.
+  pub const BlockHeader = struct {
+    config: ?BlockConfig,
+    swallow_depth: ?u21,
+
+    pub fn value(self: *@This()) *Value {
+      return Value.parent(self);
+    }
+  };
+
+  const Data = union(enum) {
     text: TextScalar,
     number: Number,
     float: FloatNumber,
@@ -680,8 +709,31 @@ pub const Value = struct {
     concat: Concat,
     list: List,
     map: Map,
-    typeval: Type,
-  },
+    typeval: TypeVal,
+    block_header: BlockHeader,
+  };
+
+  /// a value always originates from input.
+  origin: Position.Input,
+  data: Data,
+
+  fn parent(it: anytype) *Value {
+    const t = @typeInfo(@TypeOf(it)).Pointer.child;
+    const addr = @ptrToInt(it) - switch(t) {
+      TextScalar =>  offset(Data, "text"),
+      Number => offset(Data, "number"),
+      FloatNumber => offset(Data, "float"),
+      Enum => offset(Data, "enumval"),
+      Record => offset(Data, "record"),
+      Concat => offset(Data, "concat"),
+      List => offset(Data, "list"),
+      Map => offset(Data, "map"),
+      TypeVal => offset(Data, "typeval"),
+      BlockHeader => offset(Data, "block_header"),
+      else => unreachable
+    };
+    return @fieldParentPtr(Value, "data", @intToPtr(*Data, addr));
+  }
 
   fn hash(v: *@This()) u64 {
     return switch (v.data) {
