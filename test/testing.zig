@@ -268,6 +268,9 @@ fn AstEmitter(Handler: anytype) type {
         .literal => |l| {
           try self.processValue(&l.value);
         },
+        .var_retrieval => |vr| {
+          unreachable;
+        },
         .poison => try self.emitLine("=POISON", .{}),
         .void => try self.emitLine("=VOID", .{}),
       }
@@ -327,6 +330,9 @@ fn AstEmitter(Handler: anytype) type {
           unreachable;
         },
         .typeval => |tv| try self.processType(tv.t),
+        .funcref => |fr| unreachable,
+        .poison => try self.emitLine("=POISON", .{}),
+        .void => try self.emitLine("=VOID", .{}),
         .block_header => |*h| {
           const hf = std.fmt.Formatter(formatBlockHeader){.data = .{.header = h, .context = self.context}};
           try self.emitLine("=HEADER {}", .{hf});

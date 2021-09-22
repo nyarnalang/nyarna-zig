@@ -11,7 +11,8 @@ pub const LexerError = enum {
 pub const GenericParserError = enum {
   NamedArgumentInAssignment, MissingBlockNameEnd, UnknownFlag,
   NonLocationFlag, NonDefinitionFlag, BlockHeaderNotAllowedForDefinition,
-  MissingSymbolName, MissingSymbolType, MissingSymbolEntity, UnknownSyntax
+  MissingSymbolName, MissingSymbolType, MissingSymbolEntity, UnknownSyntax,
+  PrefixedFunctionMustBeCalled
 };
 
 pub const WrongItemError = enum {

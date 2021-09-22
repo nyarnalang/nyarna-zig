@@ -1,7 +1,6 @@
 const std = @import("std");
 const data = @import("data");
 const lex = @import("lex.zig");
-const Source = @import("source.zig").Source;
 const Context = @import("interpret.zig").Context;
 const mapper = @import("mapper.zig");
 const unicode = @import("unicode.zig");
@@ -123,17 +122,27 @@ pub const Parser = struct {
     syntax_proc: ?*syntaxes.SpecialSyntax.Processor = null,
     dangling_space: ?*data.Node = null,
 
-    fn append(l: *ContentLevel, alloc: *std.mem.Allocator, item: *data.Node) !void {
+    fn append(l: *ContentLevel, c: *Context, item: *data.Node) !void {
       if (l.syntax_proc) |proc| {
         const res = try proc.push(proc, item.pos.input, .{.node = item});
         std.debug.assert(res == .none);
       } else {
         if (l.dangling_space) |space_node| {
           std.debug.print("appending dangling space (kind={s})\n", .{@tagName(space_node.data.literal.kind)});
-          try l.nodes.append(alloc, space_node);
+          try l.nodes.append(&c.temp_nodes.allocator, space_node);
           l.dangling_space = null;
         }
-        try l.nodes.append(alloc, item);
+        switch (item.data) {
+          .literal, .unresolved_call, .unresolved_symref, .expression, .voidNode => {},
+          else => blk: {
+            const expr = c.interpret(item) catch |e| switch (e) {
+              error.failed_to_interpret_node => break :blk,
+              error.OutOfMemory => return e,
+            };
+            item.data = .{.expression = expr};
+          }
+        }
+        try l.nodes.append(&c.temp_nodes.allocator, item);
       }
     }
 
@@ -484,7 +493,7 @@ pub const Parser = struct {
                 try self.leaveLevel();
                 const parent = &self.levels.items[self.levels.items.len - 1];
                 try parent.command.shift(self.ctx(), self.cur_start);
-                try parent.append(self.int(), parent.command.info.unknown);
+                try parent.append(self.ctx(), parent.command.info.unknown);
               }
               return self.levels.items[0].finalize(self);
             },
@@ -635,7 +644,7 @@ pub const Parser = struct {
               std.debug.print("  push literal (kind={s}): \"{}\"\n", .{@tagName(node.data.literal.kind), std.zig.fmtEscapes(content.items)});
               // dangling space will be postponed for the case of a following,
               // swallowing command that ends the current level.
-              if (non_space_len > 0) try lvl.append(self.int(), node)
+              if (non_space_len > 0) try lvl.append(self.ctx(), node)
               else lvl.dangling_space = node;
               self.state = .default;
             }
@@ -678,7 +687,7 @@ pub const Parser = struct {
               const target = lvl.command.info.unknown;
               switch (target.data) {
                 .resolved_symref, .unresolved_symref, .access => {
-                  const res = try self.ctx().resolveChain(target, self.ext());
+                  const res = try self.ctx().resolveChain(target);
                   switch (res) {
                     .var_chain => |chain| {
                       unreachable; // TODO
@@ -704,12 +713,12 @@ pub const Parser = struct {
               self.advance();
             },
             .closer => {
-              try lvl.append(self.int(), lvl.command.info.unknown);
+              try lvl.append(self.ctx(), lvl.command.info.unknown);
               self.advance();
               self.state = if (self.levels.items[self.levels.items.len - 1].syntax_proc != null) .special else .default;
             },
             else => {
-              try lvl.append(self.int(), lvl.command.info.unknown);
+              try lvl.append(self.ctx(), lvl.command.info.unknown);
               self.state = if (self.levels.items[self.levels.items.len - 1].syntax_proc != null) .special else .default;
               std.debug.print("state reset after command, now {s}\n", .{@tagName(self.state)});
             }
@@ -1108,7 +1117,7 @@ pub const Parser = struct {
               const cur_parent = &self.levels.items[i - 1];
               try cur_parent.command.pushArg(self.int(), try self.levels.items[i].finalize(self));
               try cur_parent.command.shift(self.ctx(), end_cursor);
-              try cur_parent.append(self.int(), cur_parent.command.info.unknown);
+              try cur_parent.append(self.ctx(), cur_parent.command.info.unknown);
             }
             // target_level's command has now been closed.
             // therefore it is safe to assign it to the previous parent's command

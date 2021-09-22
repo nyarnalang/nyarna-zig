@@ -594,9 +594,14 @@ pub const Expression = struct {
   /// retrieval of the value of a substructure
   pub const Access = struct {
     subject: *Expression,
-    /// the index of the field or item to be retrieved
-    index: usize
+    /// list of indexes that identify which part of the value is to be retrieved.
+    path: []usize,
   };
+  /// retrieval of a variable's value
+  pub const VarRetrieval = struct {
+    variable: *Symbol.Variable,
+  };
+
   /// a literal value
   pub const Literal = struct {
     value: Value,
@@ -616,6 +621,7 @@ pub const Expression = struct {
     call: Call,
     assignment: Assignment,
     access: Access,
+    var_retrieval: VarRetrieval,
     literal: Literal,
     poison, void,
   };
@@ -689,6 +695,11 @@ pub const Value = struct {
     t: Type,
   };
 
+  pub const FuncRef = struct {
+    /// ExtFunc or NyFunc
+    func: *Symbol,
+  };
+
   /// a block header. This value type is used to read in block headers within
   /// SpecialSyntax, e.g. the default block configuration of function parameters.
   pub const BlockHeader = struct {
@@ -710,7 +721,9 @@ pub const Value = struct {
     list: List,
     map: Map,
     typeval: TypeVal,
+    funcref: FuncRef,
     block_header: BlockHeader,
+    void, poison
   };
 
   /// a value always originates from input.

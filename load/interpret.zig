@@ -100,8 +100,150 @@ pub const Context = struct {
   /// the current source, while anything else will be allocated in the public
   /// region containing the current file's content.
   pub fn interpret(self: *Context, input: *data.Node) InterpretError!*data.Expression {
-    // TODO
-    return InterpretError.failed_to_interpret_node;
+    return switch (input.data) {
+      .access => switch (try self.resolveChain(input)) {
+        .var_chain => |vc| {
+          const retr = try self.source_content.allocator.create(data.Expression);
+          retr.* = .{
+            .pos = .{.input = vc.target.pos},
+            .data = .{
+              .var_retrieval = .{
+                .variable = vc.target.variable
+              },
+            }
+          };
+          const expr = try self.source_content.allocator.create(data.Expression);
+          expr.* = .{
+            .pos = input.pos,
+            .data = .{
+              .access = .{
+                .subject = retr,
+                .path = vc.field_chain.items
+              },
+            },
+          };
+          return expr;
+        },
+        .func_ref => |ref| {
+          const expr = try self.source_content.allocator.create(data.Expression);
+          if (ref.prefix != null) {
+            self.eh.PrefixedFunctionMustBeCalled(input.pos.input);
+            expr.* = .{
+              .pos = input.pos,
+              .data = .poison
+            };
+          } else {
+            expr.* = .{
+              .pos = input.pos,
+              .data = .{
+                .literal = .{
+                  .value = .{
+                    .origin = input.pos.input,
+                    .data = .{
+                      .funcref = .{
+                        .func = ref.target
+                      },
+                    },
+                  },
+                },
+              },
+            };
+          }
+          return expr;
+        },
+        .type_ref => |ref| {
+          const expr = try self.source_content.allocator.create(data.Expression);
+          expr.* = .{
+            .pos = input.pos,
+            .data = .{
+              .literal = .{
+                .value = .{
+                  .origin = input.pos.input,
+                  .data = .{
+                    .typeval = .{
+                      .t = ref.*,
+                    },
+                  },
+                },
+              },
+            },
+          };
+          return expr;
+        },
+        .expr_chain => |ec| {
+          const expr = try self.source_content.allocator.create(data.Expression);
+          expr.* = .{
+            .pos = input.pos,
+            .data = .{
+              .access = .{
+                .subject = ec.expr,
+                .path = ec.field_chain.items,
+              },
+            },
+          };
+          return expr;
+        },
+        .failed => InterpretError.failed_to_interpret_node,
+        .poison => {
+          const expr = try self.source_content.allocator.create(data.Expression);
+          expr.* = .{
+            .pos = input.pos,
+            .data = .poison
+          };
+          return expr;
+        },
+      },
+      // TODO: assignment (needs type checking)
+      // TODO: concatenation (needs type lattice)
+      // TODO: paragraphs (needs type lattice)
+      .resolved_symref => |ref| {
+        const expr = try self.source_content.allocator.create(data.Expression);
+        expr.pos = input.pos;
+        expr.data = switch (ref.data) {
+          .ext_func, .ny_func => .{
+            .literal = .{
+              .value = .{
+                .origin = input.pos.input,
+                .data = .{
+                  .funcref = .{
+                    .func = ref
+                  },
+                },
+              },
+            },
+          },
+          .variable => |v| .{
+            .var_retrieval = .{
+              .variable = v
+            },
+          },
+          .ny_type => |*t| .{
+            .literal = .{
+              .value = .{
+                .origin = input.pos.input,
+                .data = .{
+                  .typeval = .{
+                    .t = t.*
+                  },
+                },
+              },
+            },
+          },
+        };
+        return expr;
+      },
+      // TODO: resolved call (needs type checking)
+      .expression => |e| return e,
+      .voidNode => {
+        const expr = try self.source_content.allocator.create(data.Expression);
+        expr.* = .{
+          .pos = input.pos,
+          .data = .void
+        };
+        return expr;
+      },
+      else => InterpretError.failed_to_interpret_node
+    };
   }
 
   /// Evaluates the given expression, which must be a call to a keyword that
@@ -135,9 +277,11 @@ pub const Context = struct {
   pub const ChainResolution = union(enum) {
     /// chain starts at a variable reference and descends into its fields.
     var_chain: struct {
-      /// the target symbol that is to be indexed.
-      /// May be a function reference or a variable reference.
-      target: *data.Symbol,
+      /// the target variable that is to be indexed.
+      target: struct {
+        variable: *data.Symbol.Variable,
+        pos: data.Position.Input,
+      },
       /// chain into the fields of a variable. Each item is the index of a nested
       /// field.
       field_chain: std.ArrayListUnmanaged(usize) = .{},
@@ -145,6 +289,7 @@ pub const Context = struct {
     },
     /// last chain item was resolved to a function.
     func_ref: struct {
+      /// must be ExtFunc or NyFunc
       target: *data.Symbol,
       /// set if targt is a function reference in the namespace of a type,
       /// which has been accessed via an expression of that type. That is only
@@ -152,8 +297,8 @@ pub const Context = struct {
       /// enforce this.
       prefix: ?*data.Expression = null,
     },
-    /// last chain item was resolved to a type.
-    type_ref: *data.Symbol,
+    /// last chain item was resolved to a type. Type is a pointer into a data.Symbol.
+    type_ref: *data.Type,
     /// chain starts at an expression and descends into the returned value.
     expr_chain: struct {
       expr: *data.Expression,
@@ -167,10 +312,10 @@ pub const Context = struct {
   };
 
   /// resolves an accessor chain of *data.Node.
-  pub fn resolveChain(self: *Context, chain: *data.Node, alloc: *std.mem.Allocator) std.mem.Allocator.Error!ChainResolution {
+  pub fn resolveChain(self: *Context, chain: *data.Node) std.mem.Allocator.Error!ChainResolution {
     switch (chain.data) {
       .access => |value| {
-        const inner = try self.resolveChain(value.subject, alloc);
+        const inner = try self.resolveChain(value.subject);
         switch (inner) {
           .var_chain => |vc| {
             // TODO: find field in value's type, update value's type and the
@@ -206,15 +351,18 @@ pub const Context = struct {
             .prefix = null,
           },
         },
-        .ny_type => ChainResolution{
-          .type_ref = sym,
+        .ny_type => |*t| ChainResolution{
+          .type_ref = t,
         },
-        .variable => blk: {
-          const expr = try alloc.create(data.Expression);
+        .variable => |v| blk: {
+          const expr = try self.source_content.allocator.create(data.Expression);
           // TODO: set expr to be variable reference
           break :blk ChainResolution{
             .var_chain = .{
-              .target = sym,
+              .target = .{
+                .variable = v,
+                .pos = chain.pos.input,
+              },
               .field_chain = .{},
             },
           };
