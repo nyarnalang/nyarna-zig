@@ -61,7 +61,7 @@ pub const Context = struct {
       .eh = .{
         .reporter = reporter,
       },
-      .lattice = .{.alloc = allocator},
+      .lattice = types.Lattice.init(allocator),
       .boolean = .{.at = .intrinsic, .name = null, .data = .{.tenum = undefined}},
       .syntax_registry = .{syntaxes.SymbolDefs.locations(), syntaxes.SymbolDefs.definitions()},
     };

@@ -560,12 +560,37 @@ pub const Type = union(enum) {
   intrinsic: enum {
     void, prototype, schema, extension, ast_node, block_header,
     space, literal, raw,
-    location, definition, backend
+    location, definition, backend,
+    poison, every
   },
 
   structural: *Structural,
   /// types with name equivalence that are instantiated by user code
   instantiated: *Instantiated,
+
+  pub fn hash(t: @This()) u64 {
+    return switch (t) {
+      .intrinsic => |i| @intCast(u64, @enumToInt(i)),
+      .structural => |s| @intCast(u64, @ptrToInt(s)),
+      .instantiated => |in| @intCast(u64, @ptrToInt(in)),
+    };
+  }
+
+  pub fn eql(a: @This(), b: @This()) bool {
+    return switch (a) {
+      .intrinsic => |ia| switch (b) { .intrinsic => |ib| ia == ib, else => false},
+      .instantiated => |ia| switch (b) {.instantiated => |ib| ia == ib, else => false},
+      .structural => |sa| switch (b) {.structural => |sb| sa == sb, else => false},
+    };
+  }
+
+  pub fn isScalar(t: @This()) bool {
+    return switch (t) {
+      .intrinsic => |it| switch (it) {.space, .literal, .raw => true, else => false},
+      .structural => false,
+      .instantiated => |it| switch (it.data) {.textual, .numeric, .float, .tenum => true, else => false},
+    };
+  }
 };
 
 pub const Expression = struct {
