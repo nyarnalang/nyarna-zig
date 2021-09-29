@@ -135,11 +135,9 @@ pub const Parser = struct {
         switch (item.data) {
           .literal, .unresolved_call, .unresolved_symref, .expression, .voidNode => {},
           else => blk: {
-            const expr = c.interpret(item) catch |e| switch (e) {
-              error.failed_to_interpret_node => break :blk,
-              error.OutOfMemory => return e,
-            };
-            item.data = .{.expression = expr};
+            if (try c.interpret(item)) |expr| {
+              item.data = .{.expression = expr};
+            } else break :blk;
           }
         }
         try l.nodes.append(&c.temp_nodes.allocator, item);

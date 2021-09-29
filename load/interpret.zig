@@ -6,13 +6,7 @@ const types = @import("types");
 const syntaxes = @import("syntaxes.zig");
 
 pub const Errors = error {
-  failed_to_interpret_node,
   referred_source_unavailable,
-};
-
-const InterpretError = error {
-  failed_to_interpret_node,
-  OutOfMemory
 };
 
 /// The Context is a view of the loader for the various processing steps
@@ -90,7 +84,7 @@ pub const Context = struct {
   }
 
   pub fn removeNamespace(self: *Context, character: u21) void {
-    const ns_index = self.command_characters.remove(character).?;
+    const ns_index = self.command_characters.fetchRemove(character).?;
     std.debug.assert(ns_index.value == self.namespaces.items.len - 1);
     _ = self.namespaces.pop();
   }
@@ -99,7 +93,7 @@ pub const Context = struct {
   /// A call of a keyword will be allocated inside the temporary allocator of
   /// the current source, while anything else will be allocated in the public
   /// region containing the current file's content.
-  pub fn interpret(self: *Context, input: *data.Node) InterpretError!*data.Expression {
+  pub fn interpret(self: *Context, input: *data.Node) !?*data.Expression {
     return switch (input.data) {
       .access => switch (try self.resolveChain(input)) {
         .var_chain => |vc| {
@@ -110,7 +104,8 @@ pub const Context = struct {
               .var_retrieval = .{
                 .variable = vc.target.variable
               },
-            }
+            },
+            .expected_type = vc.target.variable.t,
           };
           const expr = try self.source_content.allocator.create(data.Expression);
           expr.* = .{
@@ -121,6 +116,7 @@ pub const Context = struct {
                 .path = vc.field_chain.items
               },
             },
+            .expected_type = vc.t,
           };
           return expr;
         },
@@ -128,46 +124,23 @@ pub const Context = struct {
           const expr = try self.source_content.allocator.create(data.Expression);
           if (ref.prefix != null) {
             self.eh.PrefixedFunctionMustBeCalled(input.pos.input);
-            expr.* = .{
-              .pos = input.pos,
-              .data = .poison
-            };
+            expr.* = data.Expression.poison(input.pos.input);
           } else {
-            expr.* = .{
-              .pos = input.pos,
-              .data = .{
-                .literal = .{
-                  .value = .{
-                    .origin = input.pos.input,
-                    .data = .{
-                      .funcref = .{
-                        .func = ref.target
-                      },
-                    },
-                  },
-                },
+            expr.* = data.Expression.literal(input.pos.input, .{
+              .funcref = .{
+                .func = ref.target
               },
-            };
+            });
           }
           return expr;
         },
         .type_ref => |ref| {
           const expr = try self.source_content.allocator.create(data.Expression);
-          expr.* = .{
-            .pos = input.pos,
-            .data = .{
-              .literal = .{
-                .value = .{
-                  .origin = input.pos.input,
-                  .data = .{
-                    .typeval = .{
-                      .t = ref.*,
-                    },
-                  },
-                },
-              },
+          expr.* = data.Expression.literal(input.pos.input, .{
+            .typeval = .{
+              .t = ref.*,
             },
-          };
+          });
           return expr;
         },
         .expr_chain => |ec| {
@@ -180,16 +153,14 @@ pub const Context = struct {
                 .path = ec.field_chain.items,
               },
             },
+            .expected_type = ec.t,
           };
           return expr;
         },
-        .failed => InterpretError.failed_to_interpret_node,
+        .failed => null,
         .poison => {
           const expr = try self.source_content.allocator.create(data.Expression);
-          expr.* = .{
-            .pos = input.pos,
-            .data = .poison
-          };
+          expr.* = data.Expression.poison(input.pos.input);
           return expr;
         },
       },
@@ -198,38 +169,27 @@ pub const Context = struct {
       // TODO: paragraphs (needs type lattice)
       .resolved_symref => |ref| {
         const expr = try self.source_content.allocator.create(data.Expression);
-        expr.pos = input.pos;
-        expr.data = switch (ref.data) {
-          .ext_func, .ny_func => .{
-            .literal = .{
-              .value = .{
-                .origin = input.pos.input,
-                .data = .{
-                  .funcref = .{
-                    .func = ref
-                  },
-                },
+        switch (ref.data) {
+          .ext_func, .ny_func => expr.* = data.Expression.literal(input.pos.input, .{
+            .funcref = .{
+              .func = ref
+            },
+          }),
+          .variable => |*v| {
+            expr.pos = input.pos;
+            expr.data = .{
+              .var_retrieval = .{
+                .variable = v
               },
-            },
+            };
+            expr.expected_type = v.t;
           },
-          .variable => |v| .{
-            .var_retrieval = .{
-              .variable = v
+          .ny_type => |*t| expr.* = data.Expression.literal(input.pos.input, .{
+            .typeval = .{
+              .t = t.*
             },
-          },
-          .ny_type => |*t| .{
-            .literal = .{
-              .value = .{
-                .origin = input.pos.input,
-                .data = .{
-                  .typeval = .{
-                    .t = t.*
-                  },
-                },
-              },
-            },
-          },
-        };
+          }),
+        }
         return expr;
       },
       // TODO: resolved call (needs type checking)
@@ -238,11 +198,12 @@ pub const Context = struct {
         const expr = try self.source_content.allocator.create(data.Expression);
         expr.* = .{
           .pos = input.pos,
-          .data = .void
+          .data = .void,
+          .expected_type = .{.intrinsic = .void},
         };
         return expr;
       },
-      else => InterpretError.failed_to_interpret_node
+      else => null
     };
   }
 
@@ -285,7 +246,7 @@ pub const Context = struct {
       /// chain into the fields of a variable. Each item is the index of a nested
       /// field.
       field_chain: std.ArrayListUnmanaged(usize) = .{},
-      // TODO: needs a field containing the current type.
+      t: data.Type,
     },
     /// last chain item was resolved to a function.
     func_ref: struct {
@@ -303,6 +264,7 @@ pub const Context = struct {
     expr_chain: struct {
       expr: *data.Expression,
       field_chain: std.ArrayListUnmanaged(usize) = .{},
+      t: data.Type,
     },
     /// the resolution failed because an identifier in the chain could not be resolved –
     /// this is not necessarily an error since the chain may be successfully resolved later.
@@ -354,30 +316,174 @@ pub const Context = struct {
         .ny_type => |*t| ChainResolution{
           .type_ref = t,
         },
-        .variable => |v| blk: {
-          const expr = try self.source_content.allocator.create(data.Expression);
-          // TODO: set expr to be variable reference
-          break :blk ChainResolution{
-            .var_chain = .{
-              .target = .{
-                .variable = v,
-                .pos = chain.pos.input,
-              },
-              .field_chain = .{},
+        .variable => |*v| ChainResolution{
+          .var_chain = .{
+            .target = .{
+              .variable = v,
+              .pos = chain.pos.input,
             },
-          };
+            .field_chain = .{},
+            .t = v.t,
+          },
         },
       },
       else => {
-        const expr = self.interpret(chain) catch |err| switch(err) {
-          InterpretError.failed_to_interpret_node => return @as(ChainResolution, .failed),
-          InterpretError.OutOfMemory => |oom| return oom,
-        };
-        // TODO: resolve accessor chain in context of expression's type and
-        // return expr_chain
-        unreachable;
+        return if (try self.interpret(chain)) |expr| {
+          // TODO: resolve accessor chain in context of expression's type and
+          // return expr_chain
+          unreachable;
+        } else @as(ChainResolution, .failed);
       }
     }
+  }
+
+  /// returns the given node's type, if it can be calculated.
+  ///
+  /// this will modify the given node by interpreting all substructures that
+  /// are guaranteed not to be type-dependent on context. This means that all
+  /// nodes are evaluated except for literal nodes, paragraphs, concatenations
+  /// transitively.
+  fn probeType(self: *Context, node: *data.Node) !?data.Type {
+    return switch (node.data) {
+      .literal => .{.intrinsic = if (l.kind == space) .space else .literal},
+      .access, .assignment => if (try self.interpret(node)) |expr| blk: {
+        node.data = .{
+          .expression = expr
+        };
+        break :blk expr.expected_type;
+      } else null,
+      .concatenation => |con| blk: {
+        var t = .{.intrinsic = .every};
+        for (con.content) |item| {
+          t = try self.lattice.sup(t, try self.probeType(item) orelse break :blk null);
+        }
+        break :blk t;
+      },
+      .paragraphs => unreachable, // TODO
+      .unresolved_symref => null,
+      .resolved_symref => |ref| switch (ref.data) {
+        .ext_func => |ext| unreachable,
+        .ny_func => |nyf| unreachable,
+        .variable => |va| unreachable,
+        .ny_type => |t| switch (t) {
+          .intrinsic => |it| switch (it) {
+            .location, .definition => unreachable, // TODO
+            else => .{.intrinsic = .non_callable_type},
+          },
+          .structural => |st| switch (st) {
+            .concat, .paragraphs, .list, .map => unreachable, // TODO
+            else => .{.intrinsic = .non_callable_type},
+          },
+          .instantiated => |it| switch (it.data) {
+            .textual, .numeric, .float, .tenum => unreachable, // TODO
+            .record => |rt| .{.structural = .{.callable_type = &rt.signature}},
+          },
+        },
+      },
+      .unresolved_call => null,
+      .resolved_call => |rc| rc.target.expected_type.structural.callable.returns,
+      .expression => |e| e.expected_type,
+      .voidNode => .{.intrinsic = .void},
+    };
+  }
+
+  fn createLiteralExpr(self: *Context, l: *data.Node.Literal, t: data.Type, e: *data.Expression) void {
+    e.* = switch (t) {
+      .intrinsic => |it| switch (it) {
+        .space => if (l.kind == .space) data.Expression.literal(node.pos.input, .{
+          .text = .{
+            .t = t,
+            .value = try std.mem.dupe(self.source_content, u8, l.content),
+          },
+        }) else blk: {
+          self.eh.ExpectedExprOfTypeXGotY(l.pos().input, t, .{.intrinsic = .literal});
+          break :blk data.Expression.poison(l.pos());
+        },
+        .literal, .raw => data.Expression.literal(l.pos().input, .{
+          .text = .{
+            .t = t,
+            .value = try std.mem.dupe(self.source_content, u8, l.content),
+          },
+        }),
+        else => data.Expression.literal(l.pos().input, .{
+          .text = .{
+            .t = .{.intrinsic = if (l.kind == .text) .literal else .space},
+            .value = try std.mem.dupe(self.source_content, u8, l.content),
+          },
+        }),
+      },
+      .structural => |struc| switch (struc) {
+        .optional => |op| { self.createLiteralExpr(t, op.inner, e); return; },
+        .concat => |con| {self.createLiteralExpr(t, con.inner, e); return; },
+        .paragraphs => unreachable,
+        .list => |list| {self.createLiteralExpr(t, list.inner, e); return; },
+        .map, .callable, .callable_type => blk: {
+          self.eh.ExpectedExprOfTypeXGotY(l.pos().input, t, .{.intrinsic = .literal});
+          break :blk data.Expression.poison(l.pos());
+        },
+        .intersection => |inter| blk: {
+          if (inter.scalar) |scalar| {self.createLiteralExpr(t, scalar, e); return; }
+          self.eh.ExpectedExprOfTypeXGotY(l.pos().input, t, .{.intrinsic = .literal});
+          break :blk data.Expression.poison(l.pos());
+        }
+      },
+      .instantiated => |ti| switch (ti.data) {
+        .textual => unreachable, // TODO
+        .numeric => unreachable, // TODO
+        .float => unreachable, // TODO
+        .tenum => unreachable, // TODO
+        .record => blk: {
+          self.eh.ExpectedExprOfTypeXGotY(node.pos.input, t,
+            .{.intrinsic = if (l.kind == .text) .literal else .space});
+          break :blk data.Expression.poison(node.pos.input);
+        },
+      },
+    };
+  }
+
+  /// same as interpret, but takes a target type that may be used to generate
+  /// typed literal values from text literals. fills an already
+  fn interpretWithTargetType(self: *Context, node: *data.Node, t: data.Type) !?*data.Expression {
+    return switch (node.data) {
+      // for text literals, do compile-time type conversions if possible
+      .literal => |*l| blk: {
+        const e = try self.source_content.allocator.create(data.Expression);
+        self.createLiteralExpr(l, t, e);
+        e.expected_type = t;
+        break :blk e;
+      },
+      .access, .assignment, .resolved_symref, .resolved_call => try self.interpret(node),
+      .concatenation => unreachable,
+      .paragraphs => unreachable,
+      .unresolved_symref, .unresolved_call => null,
+      .expression => |e| e,
+      .voidNode => blk: {
+        const e = try self.source_content.allocator.create(data.Expression);
+        e.* = data.Expression.voidExpr(node.pos.input);
+        break :blk e;
+      }
+    };
+  }
+
+  /// associates the given node with the given data type, returning an expression.
+  /// association takes care of:
+  ///  * interpreting the node
+  ///  * checking whether the resulting expression is compatible with t – if not,
+  ///    generate a poison expression
+  ///  * checking whether the resulting expression needs to be converted to conform
+  ///    to the given type, and if yes, wraps the expression in a conversion.
+  /// null is returned if the association cannot be made currently because of
+  /// unresolved symbols.
+  pub fn associate(self: *Context, node: *data.Node, t: data.Type) !?*data.Expression {
+    const e = try self.interpretWithTargetType(node, t) orelse return null;
+    if (self.lattice.lesserEqual(e.expected_type, t)) {
+      e.expected_type = t;
+      return e;
+    }
+    // TODO: semantic conversions here
+    self.eh.ExpectedExprOfTypeXGotY(node.pos.input, t, e.expected_type);
+    e.* = data.Expression.poison(node.pos.input);
+    return e;
   }
 
   /// returns Nyarna's builtin boolean type

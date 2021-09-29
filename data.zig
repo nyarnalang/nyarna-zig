@@ -280,6 +280,9 @@ pub const Node = struct {
     kind: enum {text, space},
     content: []const u8,
 
+    pub fn pos(self: *Literal) Position {
+      return Node.posOf(self);
+    }
   };
   pub const Concatenation = struct {
     content: []*Node,
@@ -349,6 +352,29 @@ pub const Node = struct {
 
   pos: Position,
   data: Data,
+
+  fn parent(it: anytype) *Node {
+    const t = @typeInfo(@TypeOf(it)).Pointer.child;
+    const addr = @ptrToInt(it) - switch(t) {
+      Access =>  offset(Data, "access"),
+      Assignment => offset(Data, "assignment"),
+      Literal => offset(Data, "literal"),
+      Concatenation => offset(Data, "concatenation"),
+      Paragraphs => offset(Data, "paragraphs"),
+      UnresolvedSymref => offset(Data, "unresolved_symref"),
+      *Symbol => offset(Data, "resolved_symref"),
+      UnresolvedCall => offset(Data, "unresolved_call"),
+      ResolvedCall => offset(Data, "resolved_call"),
+      *Expression => offset(Data, "expression"),
+      else => unreachable
+    };
+    return @fieldParentPtr(Node, "data", @intToPtr(*Data, addr));
+  }
+
+  /// calculates the position from a pointer to any node kind
+  fn posOf(it: anytype) Position {
+    return parent(it).pos;
+  }
 };
 
 pub const Symbol = struct {
@@ -362,6 +388,7 @@ pub const Symbol = struct {
   };
   /// A variable defined in Nyarna code.
   pub const Variable = struct {
+    t: Type,
     // TODO
   };
 
@@ -390,7 +417,7 @@ pub const Type = union(enum) {
       name: []const u8,
       ptype: Type,
       capture: enum {default, varargs},
-      default: *Expression,
+      default: ?*Expression,
       config: ?BlockConfig,
       mutable: bool,
     };
@@ -404,33 +431,97 @@ pub const Type = union(enum) {
       depth: usize,
     },
     returns: Type,
+    /// representative of this signature in the type lattice.
+    /// the representative has no primary, varmap, or auto_swallow value, and
+    /// its parameters have empty names, always default-capture, and have neither
+    /// config nor default.
+    ///
+    /// unset for keywords which cannot be used as Callable values and therefore
+    /// never interact with the type lattice.
+    repr: *Signature,
   };
 
   pub const Intersection = struct {
     scalar: ?Type,
     types: []Type,
+
+    pub inline fn pos(self: *@This()) Position {
+      return Structural.pos(self);
+    }
+
+    pub inline fn typedef(self: *const @This()) Type {
+      return Structural.typedef(self);
+    }
   };
 
   pub const Concat = struct {
     inner: Type,
+
+    pub inline fn pos(self: *@This()) Position {
+      return Structural.pos(self);
+    }
+
+    pub inline fn typedef(self: *const @This()) Type {
+      return Structural.typedef(self);
+    }
   };
 
   pub const Optional = struct {
     inner: Type,
+
+    pub inline fn pos(self: *@This()) Position {
+      return Structural.pos(self);
+    }
+
+    pub inline fn typedef(self: *const @This()) Type {
+      return Structural.typedef(self);
+    }
   };
 
   pub const Paragraphs = struct {
     inner: []Type,
     auto: ?u21,
+
+    pub inline fn pos(self: *@This()) Position {
+      return Structural.pos(self);
+    }
+
+    pub inline fn typedef(self: *const @This()) Type {
+      return Structural.typedef(self);
+    }
   };
 
   pub const List = struct {
     inner: Type,
+
+    pub inline fn pos(self: *@This()) Position {
+      return Structural.pos(self);
+    }
+
+    pub inline fn typedef(self: *const @This()) Type {
+      return Structural.typedef(self);
+    }
   };
 
   pub const Map = struct {
     key: Type,
     value: Type,
+
+    pub inline fn pos(self: *@This()) Position {
+      return Structural.pos(self);
+    }
+
+    pub inline fn typedef(self: *const @This()) Type {
+      return Structural.typedef(self);
+    }
+  };
+
+  pub const Callable = struct {
+    sig: *Signature,
+  };
+
+  pub const CallableType = struct {
+    sig: *Signature,
   };
 
   /// types with structural equivalence
@@ -440,8 +531,35 @@ pub const Type = union(enum) {
     paragraphs: Paragraphs,
     list: List,
     map: Map,
-    callable: *Signature,
+    /// general type for anything callable
+    callable: Callable,
+    /// specific type for callable types, with callable_type < callable.
+    callable_type: CallableType,
     intersection: Intersection,
+
+    fn parent(it: anytype) *Structural {
+      const t = @typeInfo(@TypeOf(it)).Pointer.child;
+      const addr = @ptrToInt(it) - switch(t) {
+        Optional => offset(Structural, "optional"),
+        Concat => offset(Structural, "concat"),
+        Paragraphs => offset(Structural, "paragraphs"),
+        List => offset(Structural, "list"),
+        Map => offset(Structural, "map"),
+        Intersection => offset(Structural, "intersection"),
+        else => unreachable
+      };
+      return @intToPtr(*Structural, addr);
+    }
+
+    /// calculates the position from a pointer to Textual, Numeric, Float,
+    /// Enum, or Record
+    fn pos(it: anytype) Position {
+      return parent(it).at;
+    }
+
+    fn typedef(it: anytype) Type {
+      return .{.structural = parent(it)};
+    }
   };
 
   /// parameters of a Textual type. The set of allowed characters is logically
@@ -457,8 +575,12 @@ pub const Type = union(enum) {
     },
     exclude: []u8,
 
-    pub fn pos(self: *@This()) Position {
+    pub inline fn pos(self: *@This()) Position {
       return Instantiated.pos(self);
+    }
+
+    pub inline fn typedef(self: *const @This()) Type {
+      return Instantiated.typedef(self);
     }
   };
 
@@ -468,8 +590,12 @@ pub const Type = union(enum) {
     max: i64,
     decimals: u32,
 
-    pub fn pos(self: *@This()) Position {
+    pub inline fn pos(self: *@This()) Position {
       return Instantiated.pos(self);
+    }
+
+    pub inline fn typedef(self: *const @This()) Type {
+      return Instantiated.typedef(self);
     }
   };
 
@@ -480,8 +606,12 @@ pub const Type = union(enum) {
     };
     precision: Precision,
 
-    pub fn pos(self: *@This()) Position {
+    pub inline fn pos(self: *@This()) Position {
       return Instantiated.pos(self);
+    }
+
+    pub inline fn typedef(self: *const @This()) Type {
+      return Instantiated.typedef(self);
     }
   };
 
@@ -514,6 +644,10 @@ pub const Type = union(enum) {
 
     pub fn pos(self: *@This()) Position {
       return Instantiated.pos(self);
+    }
+
+    pub inline fn typedef(self: *const @This()) Type {
+     return Instantiated.typedef(self);
     }
   };
 
@@ -558,7 +692,7 @@ pub const Type = union(enum) {
 
   /// unique types predefined by Nyarna
   intrinsic: enum {
-    void, prototype, schema, extension, ast_node, block_header,
+    void, prototype, schema, extension, ast_node, block_header, non_callable_type,
     space, literal, raw,
     location, definition, backend,
     poison, every
@@ -568,21 +702,23 @@ pub const Type = union(enum) {
   /// types with name equivalence that are instantiated by user code
   instantiated: *Instantiated,
 
-  pub fn hash(t: @This()) u64 {
-    return switch (t) {
-      .intrinsic => |i| @intCast(u64, @enumToInt(i)),
-      .structural => |s| @intCast(u64, @ptrToInt(s)),
-      .instantiated => |in| @intCast(u64, @ptrToInt(in)),
-    };
-  }
+  pub const HashContext = struct {
+    pub fn hash(_: HashContext, t: Type) u64 {
+      return switch (t) {
+        .intrinsic => |i| @intCast(u64, @enumToInt(i)),
+        .structural => |s| @intCast(u64, @ptrToInt(s)),
+        .instantiated => |in| @intCast(u64, @ptrToInt(in)),
+      };
+    }
 
-  pub fn eql(a: @This(), b: @This()) bool {
-    return switch (a) {
-      .intrinsic => |ia| switch (b) { .intrinsic => |ib| ia == ib, else => false},
-      .instantiated => |ia| switch (b) {.instantiated => |ib| ia == ib, else => false},
-      .structural => |sa| switch (b) {.structural => |sb| sa == sb, else => false},
-    };
-  }
+    pub fn eql(_: HashContext, a: Type, b: Type) bool {
+      return switch (a) {
+        .intrinsic => |ia| switch (b) { .intrinsic => |ib| ia == ib, else => false},
+        .instantiated => |ia| switch (b) {.instantiated => |ib| ia == ib, else => false},
+        .structural => |sa| switch (b) {.structural => |sb| sa == sb, else => false},
+      };
+    }
+  };
 
   pub fn isScalar(t: @This()) bool {
     return switch (t) {
@@ -653,6 +789,9 @@ pub const Expression = struct {
 
   pos: Position,
   data: Data,
+  /// The expected type of an expression may be imposed upon it by its context. [8.3]
+  /// evaluating this expression will yield a value with a Type in E_{expected_type}.
+  expected_type: Type,
 
   fn parent(it: anytype) *Expression {
     const t = @typeInfo(@TypeOf(it)).Pointer.child;
@@ -666,6 +805,53 @@ pub const Expression = struct {
       else => unreachable
     };
     return @fieldParentPtr(Expression, "data", @intToPtr(*Data, addr));
+  }
+
+  pub inline fn literal(at: Position.Input, data: Value.Data) Expression {
+    var e = Expression{
+      .pos = .{.input = at},
+      .data = .{
+        .literal = .{
+          .value = .{
+            .origin = at,
+            .data = data,
+          },
+        },
+      },
+      .expected_type = undefined,
+    };
+    e.expected_type = e.data.literal.value.vType();
+    return e;
+  }
+
+  pub inline fn poison(at: Position.Input) Expression {
+    return .{
+      .pos = .{.input = at},
+      .data = .{
+        .literal = .{
+          .value = .{
+            .origin = at,
+            .data = .poison
+          }
+        }
+      },
+      .expected_type = .{.intrinsic = .poison},
+    };
+  }
+
+  pub inline fn voidExpr(at: Position.Input) Expression {
+    return .{
+      .pos = .{.input = at},
+      .data = .{
+        .literal = .{
+          .value = .{
+            .origin = at,
+            .data = .void
+          }
+        }
+      },
+      .expected_type = .{.intrinsic = .void},
+    };
   }
 };
 
@@ -713,7 +899,7 @@ pub const Value = struct {
   /// a Map value
   pub const Map = struct {
     t: *const Type.Map,
-    items: std.HashMap(*Value, *Value, Value.hash, Value.eql, 50),
+    items: std.HashMap(*Value, *Value, Value.HashContext, 50),
   };
 
   pub const TypeVal = struct {
@@ -751,9 +937,59 @@ pub const Value = struct {
     void, poison
   };
 
+  const HashContext = struct {
+    pub fn hash(_: HashContext, v: *Value) u64 {
+      return switch (v.data) {
+        .text => |ts| std.hash_map.hashString(ts.value),
+        .number => |num| @bitCast(u64, num.value),
+        .float => |fl| switch (fl.t.precision) {
+          .half => @intCast(u64, @bitCast(u16, fl.value.half)),
+          .single => @intCast(u64, @bitCast(u32, fl.value.single)),
+          .double => @bitCast(u64, fl.value.double),
+          .quadruple, .octuple => @truncate(u64, @bitCast(u128, fl.value.quadruple)),
+        },
+        .enumval => |ev| @intCast(u64, ev.index),
+        else => unreachable,
+      };
+    }
+
+    pub fn eql(_: HashContext, a: *Value, b: *Value) bool {
+      return switch (a.data) {
+        .text => |ts| std.hash_map.eqlString(ts.value, b.data.text.value),
+        .number => |num| num.value == b.data.number.value,
+        .float => |fl| switch (fl.t.precision) {
+          .half => fl.value.half == b.data.float.value.half,
+          .single => fl.value.single == b.data.float.value.single,
+          .double => fl.value.double == b.data.float.value.double,
+          .quadruple, .octuple => fl.value.quadruple == b.data.float.value.quadruple,
+        },
+        .enumval => |ev| ev.index == b.data.enumval.index,
+        else => unreachable,
+      };
+    }
+  };
+
   /// a value always originates from input.
   origin: Position.Input,
   data: Data,
+
+  pub fn vType(self: *Value) Type {
+    return switch (self.data) {
+      .text => |txt| txt.t,
+      .number => |num| num.t.typedef(),
+      .float => |fl| fl.t.typedef(),
+      .enumval => |en| en.t.typedef(),
+      .record => |rec| rec.t.typedef(),
+      .concat => |con| con.t.typedef(),
+      .list => |list| list.t.typedef(),
+      .map => |map| map.t.typedef(),
+      .typeval => |tv| unreachable,
+      .funcref => |fr| unreachable,
+      .block_header => .{.intrinsic = .block_header},
+      .void => .{.intrinsic = .void},
+      .poison => .{.intrinsic = .poison},
+    };
+  }
 
   fn parent(it: anytype) *Value {
     const t = @typeInfo(@TypeOf(it)).Pointer.child;
@@ -771,35 +1007,5 @@ pub const Value = struct {
       else => unreachable
     };
     return @fieldParentPtr(Value, "data", @intToPtr(*Data, addr));
-  }
-
-  fn hash(v: *@This()) u64 {
-    return switch (v.data) {
-      .text => |ts| std.hash_map.hashString(ts.value),
-      .number => |num| @bitCast(u64, num.value),
-      .float => |fl| switch (fl.t.precision) {
-        .half => @intCast(u64, @bitCast(u16, fl.value.half)),
-        .single => @intCast(u64, @bitCast(u32, fl.value.single)),
-        .double => @bitCast(u64, fl.value.double),
-        .quadruple, .octuple => @truncate(u64, @bitCast(u128, fl.value.quadruple)),
-      },
-      .enumval => |ev| @intCast(u64, ev.index),
-      else => unreachable,
-    };
-  }
-
-  fn eql(a: *@This(), b: *@This()) bool {
-    return switch (a.data) {
-      .text => |ts| std.hash_map.eqlString(ts.value, b.data.text.value),
-      .number => |num| num.value == b.data.number.value,
-      .float => |fl| switch (fl.t.precision) {
-        .half => fl.value.half == b.data.float.value.half,
-        .single => fl.value.single == b.data.float.value.single,
-        .double => fl.value.double == b.data.float.value.double,
-        .quadruple, .octuple => fl.value.quadruple == b.data.float.value.quadruple,
-      },
-      .enumval => |ev| ev.index == b.data.enumval.index,
-      else => unreachable,
-    };
   }
 };

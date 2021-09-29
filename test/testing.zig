@@ -289,8 +289,8 @@ fn AstEmitter(Handler: anytype) type {
               .numeric => |num| unreachable,
               .float => |fl| unreachable,
               .tenum => |en| {
-                for (en.values.entries.items) |*entry| {
-                  try self.emitLine("=ITEM {s}", .{entry.key});
+                for (en.values.entries.items(.key)) |*key| {
+                  try self.emitLine("=ITEM {s}", .{key});
                 }
               },
               .record => |rec| unreachable,
@@ -315,7 +315,7 @@ fn AstEmitter(Handler: anytype) type {
         },
         .enumval => |ev| {
           const t = std.fmt.Formatter(formatTypeName){.data = ev.t.typedef()};
-          try self.emitLine("=ENUM {} \"{s}\"", .{t, ev.t.values.entries.items[ev.index].key});
+          try self.emitLine("=ENUM {} \"{s}\"", .{t, ev.t.values.entries.items(.key)[ev.index]});
         },
         .record => |rec| {
           unreachable;

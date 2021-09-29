@@ -1,9 +1,30 @@
 const std = @import("std");
 const data = @import("data.zig");
 
-
 /// This is Nyarna's type lattice. It calculates type intersections, checks type
 /// compatibility, and owns all data of structural types.
+///
+/// As it is defined, the type lattice defines only a partial order on types.
+/// To simplify processing, the Lattice additionally defines an internal,
+/// artificial total order on types. This total order has the single constraint
+/// of being stable: Adding new types must not change the relation between
+/// existing types. No information about the relation between types as per
+/// language specification can thus be extracted from the total order.
+///
+/// The total order is used for keeping type lists sorted. By having sorted type
+/// lists, operations like calculating the supremum of two intersections will
+/// be faster because they will be a single O(n) merge operation. This is also
+/// less complex to implement.
+///
+/// The lattice owns all allocated type information. Allocated type information
+/// exists for structural and instantiated types. The lattice ensures that for
+/// every distinct type, only a single data object exists. This makes type
+/// calculations fast, as the identity can be calculated as pointer equality.
+///
+/// To facilitate type uniqueness, the Lattice provides idempotent functions for
+/// obtaining structural types: optional(self, t) for example will, when called
+/// on some distinct t for the first time, allocate that type and return it, and
+/// any subsequent call with the same t will return that allocated type.
 pub const Lattice = struct {
   const Self = @This();
   /// This node is used to efficiently store and search for intersection types;
@@ -13,19 +34,45 @@ pub const Lattice = struct {
     value: ?*data.Type.Structural,
     next: ?*TreeNode,
     children: ?*TreeNode,
+
+    /// This type is used to navigate the intersections field. Given a node,
+    /// it will descend into its children and search the node matching the
+    /// given type, or create and insert a node for it if none exists.
+    const Iter = struct {
+      cur: *TreeNode,
+      lattice: *Lattice,
+
+      fn descend(self: *Iter, t: data.Type) !void {
+        var next = &self.cur.children;
+        while (next.*) |next_node| : (next = &next_node.next) {
+          if (!total_order_less(next_node.key, t)) break;
+        }
+        self.cur = (if (next.*) |succ| if (t.eql(succ.key)) succ else null else null) orelse blk: {
+          var new = try self.lattice.alloc.create(TreeNode);
+          new.* = .{
+            .key = cur_type,
+            .value = null,
+            .next = next.*,
+            .children = null,
+          };
+          next.* = new;
+          break :blk new;
+        };
+        self.count += 1;
+      }
+    };
   };
 
   /// allocator used for data of structural types
   alloc: *std.mem.Allocator,
-  optionals: std.HashMapUnmanaged(data.Type, *data.Type.Structural, data.Type.hash,
-      data.Type.eql, std.hash_map.default_max_load_percentage),
-  /// This is a search tree that holds all known intersection types. It is based
-  /// on an artificial total order on types, implemented in the `OrderedIndex.less` fn.
+  optionals: std.HashMapUnmanaged(data.Type, *data.Type.Structural,
+      data.Type.HashContext, std.hash_map.default_max_load_percentage),
+  /// This is a search tree that holds all known intersection types.
   ///
   /// A TreeNode and its `next` pointer form a list whose types adhere to the
   /// artifical total order on types. Each tree node may have a list of children.
   /// The field `intersections` is the root node that only contains children and
-  /// has an undefined key (this is mainly to avoid special cases for the root node).
+  /// has an undefined key.
   ///
   /// An intersection type is stored as value in a TreeNode `x`, so that the set of
   /// keys of those TreeNodes where you descend into children to reach `x`
@@ -35,7 +82,9 @@ pub const Lattice = struct {
   /// I expect the worst-case time of discovering the intersection type for a
   /// list of n types to be (n log(m)) where m is the number of existing types
   /// allowed in an intersection, but I didn't calculate it. Note that the farther
-  /// along the current list you descent, the fewer types can be in the child list.
+  /// along the current list you descent, the fewer types can be in the child list
+  /// since the child list can only contain types that come after the type you
+  /// descend on in the artificial total order.
   intersections: TreeNode,
 
   pub fn init(alloc: *std.mem.Allocator) Lattice {
@@ -51,6 +100,10 @@ pub const Lattice = struct {
     };
   }
 
+  /// this function implements the artificial total order. The total order's
+  /// constraint is satisfied by ordering all intrinsic types (which do not have
+  /// allocated information) before all other types, and ordering the other types
+  /// according to the pointers to their allocated memory.
   fn total_order_less(a: data.Type, b: data.Type) bool {
     const a_int = switch (a) {
       .intrinsic => |ia| {
@@ -69,29 +122,6 @@ pub const Lattice = struct {
     };
     return a_int < b_int;
   }
-
-  const NodeIter = struct {
-    cur: *TreeNode,
-
-    fn descend(self: *NodeIter, t: data.Type) !void {
-      var next = &self.cur.children;
-      while (next.*) |next_node| : (next = &next_node.next) {
-        if (!total_order_less(next_node.key, t)) break;
-      }
-      self.cur = (if (next.*) |succ| if (t.eql(succ.key)) succ else null else null) orelse blk: {
-        var new = try self.alloc.create(TreeNode);
-        new.* = .{
-          .key = cur_type,
-          .value = null,
-          .next = next.*,
-          .children = null,
-        };
-        next.* = new;
-        break :blk new;
-      };
-      self.count += 1;
-    }
-  };
 
   pub fn greaterEqual(self: *Self, left: *data.Type, right: *data.Type) bool {
     return left.eql(self.sup(left, right));
@@ -160,7 +190,7 @@ pub const Lattice = struct {
   }
 
   fn calcIntersection(self: *Self, input: anytype) data.Type {
-    var iter = NodeIter{.cur = &self.intersections};
+    var iter = TreeNode.Iter{.cur = &self.intersections, .lattice = self};
     var tcount = @as(usize, 0);
     var indexes: [input.len]usize = undefined;
     for (indexes) |*ptr| ptr.* = 0;

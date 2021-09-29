@@ -46,6 +46,7 @@ fn internalPackages(s: *std.build.LibExeObjStep) void {
 }
 
 pub fn build(b: *Builder) !void {
+  // TODO: use these constants
   const mode = b.standardReleaseOptions();
   const target = b.standardTargetOptions(.{});
   const test_filter = b.option([]const u8, "test-filter", "filters tests when testing");
