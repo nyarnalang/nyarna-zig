@@ -64,15 +64,15 @@ pub const PreviousOccurenceError = enum {
   }
 };
 
-// pub const WrongTypeError = enum {
-//   ExpectedExprOfTypeXGotY,
+pub const WrongTypeError = enum {
+   ExpectedExprOfTypeXGotY,
 
-//   fn msg(e: WrongTypeError) []const u8 {
-//     return switch (e) {
-//       .ExpectedExprOfTypeXGotY => "expression has incompatible type"
-//     };
-//   }
-// };
+  fn errorMsg(e: WrongTypeError) []const u8 {
+    return switch (e) {
+      .ExpectedExprOfTypeXGotY => "expression has incompatible type",
+    };
+  }
+};
 
 pub const Reporter = struct {
   lexerErrorFn: fn(reporter: *Reporter, id: LexerError, pos: data.Position.Input) void,
@@ -81,7 +81,7 @@ pub const Reporter = struct {
                        expected: []const WrongItemError.ItemDescr, got: WrongItemError.ItemDescr) void,
   wrongIdErrorFn: fn(reporter: *Reporter, id: WrongIdError, pos: data.Position.Input, expected: []const u8, got: []const u8, defined_at: data.Position.Input) void,
   previousOccurenceFn: fn(reporter: *Reporter, id: PreviousOccurenceError, repr: []const u8, pos: data.Position.Input, previous: data.Position.Input) void,
-  //wrongTypeErrorFn: fn(reporter: *Reporter, id: WrongTypeError, pos: data.Position.Input, expected: data.Type, got: data.Type) void,
+  wrongTypeErrorFn: fn(reporter: *Reporter, id: WrongTypeError, pos: data.Position.Input, expected: data.Type, got: data.Type) void,
 };
 
 fn formatItemDescr(d: WrongItemError.ItemDescr, comptime fmt: []const u8,
@@ -110,63 +110,58 @@ fn formatItemArr(i: []const WrongItemError.ItemDescr, comptime fmt: []const u8,
   }
 }
 
-// fn formatParameterizedType(comptime fmt: []const u8, options: std.fmt.FormatOptions,
-//                            name: []const u8, inners: []const data.Type,
-//                            writer: anytype) @TypeOf(writer).Error!void {
-//   try writer.writeAll(name);
-//   try writer.writeByte('<');
-//   for (inners) |inner, index| {
-//     if (index > 0) {
-//       try writer.writeAll(", ");
-//     }
-//     try formatType(inner, fmt, options, writer);
-//   }
-//   try writer.writeByte('>');
-// }
+fn formatParameterizedType(comptime fmt: []const u8, options: std.fmt.FormatOptions,
+                           name: []const u8, inners: []const data.Type,
+                           writer: anytype) @TypeOf(writer).Error!void {
+  try writer.writeAll(name);
+  try writer.writeByte('<');
+  for (inners) |inner, index| {
+    if (index > 0) {
+      try writer.writeAll(", ");
+    }
+    try formatType(inner, fmt, options, writer);
+  }
+  try writer.writeByte('>');
+}
 
 fn formatType(t: data.Type, comptime fmt: []const u8,
               options: std.fmt.FormatOptions, writer: anytype) @TypeOf(writer).Error!void {
-
+  switch (t) {
+    .intrinsic => |it| try writer.writeAll(@tagName(it)),
+    .structural => |struc| try switch (struc.*) {
+      .optional => |op|
+        formatParameterizedType(fmt, options, "Optional", &[_]data.Type{op.inner}, writer),
+      .concat => |con|
+        formatParameterizedType(fmt, options, "Concat", &[_]data.Type{con.inner}, writer),
+      .paragraphs => |para|
+        formatParameterizedType(fmt, options, "Paragraphs", para.inner, writer),
+      .list => |list|
+        formatParameterizedType(fmt, options, "List", &[_]data.Type{list.inner}, writer),
+      .map => |map|
+        formatParameterizedType(fmt, options, "Optional", &[_]data.Type{map.key, map.value}, writer),
+      .callable => |sig| unreachable,
+      .callable_type => writer.writeAll("Type"),
+      .intersection => |inter| {
+        try writer.writeByte('{');
+        if (inter.scalar) |scalar| try formatType(scalar, fmt, options, writer);
+        for (inter.types) |inner, i| {
+          if (i > 0 or inter.scalar != null) try writer.writeAll(", ");
+          try formatType(inner, fmt, options, writer);
+        }
+        try writer.writeByte('}');
+        return;
+      },
+    },
+    .instantiated => |it| {
+      if (it.name) |sym| {
+        try writer.writeAll(sym.name);
+      } else {
+        // TODO: write representation of type
+        try writer.writeAll("<anonymous>");
+      }
+    }
+  }
 }
-
-// fn formatType(t: data.Type, comptime fmt: []const u8,
-//               options: std.fmt.FormatOptions, writer: anytype) @TypeOf(writer).Error!void {
-//   switch (t) {
-//     .intrinsic => |it| try writer.writeAll(@tagName(it)),
-//     .structural => |struc| try switch (struc.*) {
-//       .optional => |op|
-//         formatParameterizedType(fmt, options, "Optional", &[_]data.Type{op.inner}, writer),
-//       .concat => |con|
-//         formatParameterizedType(fmt, options, "Concat", &[_]data.Type{con.inner}, writer),
-//       .paragraphs => |para|
-//         formatParameterizedType(fmt, options, "Paragraphs", para.inner, writer),
-//       .list => |list|
-//         formatParameterizedType(fmt, options, "List", &[_]data.Type{list.inner}, writer),
-//       .map => |map|
-//         formatParameterizedType(fmt, options, "Optional", &[_]data.Type{map.key, map.value}, writer),
-//       .callable => |sig| unreachable,
-//       .callable_type => writer.writeAll("Type"),
-//       .intersection => |inter| {
-//         try writer.writeByte('{');
-//         if (inter.scalar) |scalar| try formatType(scalar, fmt, options, writer);
-//         for (inter.types) |inner, i| {
-//           if (i > 0 or inter.scalar != null) try writer.writeAll(", ");
-//           try formatType(inner, fmt, options, writer);
-//         }
-//         try writer.writeByte('}');
-//         return;
-//       },
-//     },
-//     .instantiated => |it| {
-//       if (it.name) |sym| {
-//         try writer.writeAll(sym.name);
-//       } else {
-//         // TODO: write representation of type
-//         try writer.writeAll("<anonymous>");
-//       }
-//     }
-//   }
-// }
 
 pub const CmdLineReporter = struct {
   const Style = enum(u8) {
@@ -196,7 +191,7 @@ pub const CmdLineReporter = struct {
         .previousOccurenceFn = CmdLineReporter.previousOccurence,
         .wrongItemErrorFn = CmdLineReporter.wrongItemError,
         .wrongIdErrorFn = CmdLineReporter.wrongIdError,
-        //.wrongTypeErrorFn = CmdLineReporter.wrongTypeError,
+        .wrongTypeErrorFn = CmdLineReporter.wrongTypeError,
       },
       .writer = stdout.writer(),
       .do_style = std.os.isatty(stdout.handle),
@@ -276,8 +271,11 @@ pub const CmdLineReporter = struct {
                     expected: data.Type, got: data.Type) void {
     const self = @fieldParentPtr(CmdLineReporter, "reporter", reporter);
     self.renderPos(.{.bold}, pos);
+    // TODO: for unknown reasons, the compiler crashes when using id.errorMsg() here.
+    // this needs to be fixed in the compiler.
+    const name = "expression has incompatible type";
     self.renderError("{s}: expected '{}', got '{}'", .{
-      WrongTypeError.msg(id), std.fmt.Formatter(formatType){.data = expected},
+      name, std.fmt.Formatter(formatType){.data = expected},
       std.fmt.Formatter(formatType){.data = got},
     });
   }

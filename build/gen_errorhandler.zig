@@ -17,7 +17,7 @@ pub fn main() !void {
   );
   inline for (@typeInfo(errors.LexerError).Enum.fields) |f| {
     _ = try eh.write("  pub fn " ++ f.name ++ "(self: *@This(), pos: data.Position.Input) void {\n" ++
-    \\    self.count = self.count + 1;
+    \\    self.count += 1;
     \\    self.reporter.lexerErrorFn(self.reporter,
     ++ "." ++ f.name ++ ", pos);\n" ++
     \\  }
@@ -26,7 +26,7 @@ pub fn main() !void {
   }
   inline for (@typeInfo(errors.GenericParserError).Enum.fields) |f| {
     _ = try eh.write("  pub fn " ++ f.name ++ "(self: *@This(), pos: data.Position.Input) void {\n" ++
-    \\    self.count = self.count + 1;
+    \\    self.count += 1;
     \\    self.reporter.parserErrorFn(self.reporter,
     ++ "." ++ f.name ++ ", pos);\n" ++
     \\  }
@@ -36,7 +36,7 @@ pub fn main() !void {
   inline for (@typeInfo(errors.WrongItemError).Enum.fields) |f| {
     _ = try eh.write("  pub fn " ++ f.name ++
     \\(self: *@This(), pos: data.Position.Input, expected: []const WrongItemError.ItemDescr, got: WrongItemError.ItemDescr) void {
-    \\    self.count = self.count + 1;
+    \\    self.count += 1;
     \\    self.reporter.wrongItemErrorFn(self.reporter,
     ++ "." ++ f.name ++ ", pos, expected, got);\n" ++
     \\  }
@@ -45,7 +45,7 @@ pub fn main() !void {
   }
   inline for (@typeInfo(errors.PreviousOccurenceError).Enum.fields) |f| {
     _ = try eh.write("  pub fn " ++ f.name ++ "(self: *@This(), repr: []const u8, pos: data.Position.Input, previous: data.Position.Input) void {\n" ++
-    \\    self.count = self.count + 1;
+    \\    self.count += 1;
     \\    self.reporter.previousOccurenceFn(self.reporter,
     ++ "." ++ f.name ++ ", repr, pos, previous);\n" ++
     \\  }
@@ -54,9 +54,18 @@ pub fn main() !void {
   }
   inline for (@typeInfo(errors.WrongIdError).Enum.fields) |f| {
     _ = try eh.write("  pub fn " ++ f.name ++ "(self: *@This(), pos: data.Position.Input, expected: []const u8, got: []const u8, defined_at: data.Position.Input) void {\n" ++
-    \\    self.count = self.count + 1;
+    \\    self.count += 1;
     \\    self.reporter.wrongIdErrorFn(self.reporter,
     ++ "." ++ f.name ++ ", pos, expected, got, defined_at);\n" ++
+    \\  }
+    \\
+    );
+  }
+  inline for (@typeInfo(errors.WrongTypeError).Enum.fields) |f| {
+    _ = try eh.write("  pub fn " ++ f.name ++ "(self: *@This(), pos: data.Position.Input, expected: data.Type, got: data.Type) void {\n" ++
+    \\    self.count += 1;
+    \\    self.reporter.wrongTypeErrorFn(self.reporter,
+    ++ "." ++ f.name ++ ", pos, expected, got);\n" ++
     \\  }
     \\
     );
