@@ -3,6 +3,7 @@ const data = @import("data");
 const parse = @import("parse.zig");
 const errors = @import("errors");
 const types = @import("types");
+const lib = @import("lib.zig");
 const syntaxes = @import("syntaxes.zig");
 
 pub const Errors = error {
@@ -44,6 +45,8 @@ pub const Context = struct {
   boolean: data.Type.Instantiated,
   /// Array of known syntaxes. TODO: make this user-extensible
   syntax_registry: [2]syntaxes.SpecialSyntax,
+  /// intrinsic function definitions
+  intrinsics: lib.Intrinsics,
 
   pub fn init(allocator: *std.mem.Allocator, reporter: *errors.Reporter) !Context {
     var ret = Context{
@@ -58,6 +61,7 @@ pub const Context = struct {
       .lattice = types.Lattice.init(allocator),
       .boolean = .{.at = .intrinsic, .name = null, .data = .{.tenum = undefined}},
       .syntax_registry = .{syntaxes.SymbolDefs.locations(), syntaxes.SymbolDefs.definitions()},
+      .intrinsics = lib.Intrinsics.init(),
     };
     errdefer ret.deinit().deinit();
     ret.boolean.data.tenum = try data.Type.Enum.predefBoolean(&ret.source_content.allocator);
