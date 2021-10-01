@@ -1,6 +1,7 @@
 const std = @import("std");
 const data = @import("data");
 const Type = data.Type;
+const Context = @import("interpret.zig").Context;
 
 pub const Mapper = struct {
   const Self = @This();
@@ -51,8 +52,9 @@ pub const SignatureMapper = struct {
   signature: *Type.Signature,
   cur_pos: ?u31 = 0,
   args: []*data.Node,
+  context: *Context,
 
-  pub fn init(alloc: *std.mem.Allocator, subject: *data.Expression, sig: *data.Signature) !SignatureMapper {
+  pub fn init(ctx: *Context, subject: *data.Expression, sig: *data.Signature) !SignatureMapper {
     return .{
       .mapper = .{
         .mapFn = SignatureMapper.map,
@@ -63,7 +65,8 @@ pub const SignatureMapper = struct {
       },
       .subject = subject,
       .signature = sig,
-      .args = try alloc.alloc(*data.Node, sig.parameter.len),
+      .context = ctx,
+      .args = try ctx.temp_nodes.allocator.alloc(*data.Node, sig.parameter.len),
     };
   }
 
@@ -127,14 +130,27 @@ pub const SignatureMapper = struct {
     };
   }
 
-  fn push(mapper: *Mapper, alloc: *self.mem.Allocator, at: Cursor, content: *data.Node) void {
+  fn push(mapper: *Mapper, alloc: *self.mem.Allocator, at: Cursor, content: *data.Node) !void {
     const self = @fieldParentPtr(SignatureMapper, "mapper", mapper);
-    if (self.signature.parameter[at.index].capture == .varargs and !c.direct) {
-      unreachable; // TODO
-    } else if (self.signature.parameter[at.index].capture == .varmap and !c.direct) {
-      unreachable; // TODO
-    } else {
-      self.args[c.index] = content;
+    const param = &self.signature.parameter[at.index];
+    const target_type = if (c.direct) param.ptype else switch (param.capture) {
+      .varargs => unreachable,
+      .varmap => unreachable,
+      else => param.ptype,
+    };
+    if (switch (target_type) {
+      .intrinsic => |it| it == .ast_node,
+      else => false
+    }) {
+      // TODO: create AST expression
+      unreachable;
+    } else if (try self.context.associate(content, param.ptype)) |expr| {
+      context.data = .{.expression = expr};
+    }
+    switch (param.capture) {
+      .varargs => unreachable,
+      .varmap => unreachable,
+      else => self.args[c.index] = content,
     }
   }
 
