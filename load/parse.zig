@@ -36,7 +36,7 @@ pub const Parser = struct {
     /// when a parent scope ends.
     swallow_depth: ?u21 = null,
 
-    fn pushName(c: *Command, pos: data.Position.Input, name: []const u8, direct: bool,
+    fn pushName(c: *Command, pos: data.Position, name: []const u8, direct: bool,
         flag: mapper.Mapper.ProtoArgFlag) void {
       c.cur_cursor = if (c.mapper.map(pos,
           if (direct) .{.direct = name} else .{.named = name}, flag)
@@ -50,12 +50,12 @@ pub const Parser = struct {
       const cursor = switch (c.cur_cursor) {
         .mapped => |val| val,
         .failed => return,
-        .not_pushed => c.mapper.map(arg.pos.input, .position, .flow) orelse return,
+        .not_pushed => c.mapper.map(arg.pos, .position, .flow) orelse return,
       };
       try c.mapper.push(alloc, cursor, arg);
     }
 
-    fn pushPrimary(c: *Command, pos: data.Position.Input, config: bool) void {
+    fn pushPrimary(c: *Command, pos: data.Position, config: bool) void {
       c.cur_cursor = if (c.mapper.map(pos, .primary,
           if (config) .block_with_config else .block_no_config)) |cursor| .{
             .mapped = cursor,
@@ -124,7 +124,7 @@ pub const Parser = struct {
 
     fn append(l: *ContentLevel, c: *Context, item: *data.Node) !void {
       if (l.syntax_proc) |proc| {
-        const res = try proc.push(proc, item.pos.input, .{.node = item});
+        const res = try proc.push(proc, item.pos, .{.node = item});
         std.debug.assert(res == .none);
       } else {
         if (l.dangling_space) |space_node| {
@@ -134,10 +134,8 @@ pub const Parser = struct {
         }
         switch (item.data) {
           .literal, .unresolved_call, .unresolved_symref, .expression, .voidNode => {},
-          else => blk: {
-            if (try c.interpret(item)) |expr| {
-              item.data = .{.expression = expr};
-            } else break :blk;
+          else => if (try c.tryInterpret(item, false)) |expr| {
+            item.data = .{.expression = expr};
           }
         }
         try l.nodes.append(&c.temp_nodes.allocator, item);
@@ -149,7 +147,7 @@ pub const Parser = struct {
         0 => {
           var ret = try c.temp_nodes.allocator.create(data.Node);
           ret.* = .{
-            .pos = .{.input = c.input.at(l.start)},
+            .pos = c.input.at(l.start),
             .data = .voidNode,
           };
           return ret;
@@ -158,7 +156,7 @@ pub const Parser = struct {
         else => {
           var ret = try c.temp_nodes.allocator.create(data.Node);
           ret.* = .{
-            .pos = .{.input = l.nodes.items[0].pos.input.span(l.nodes.items[l.nodes.items.len - 1].pos.input)},
+            .pos = l.nodes.items[0].pos.span(l.nodes.items[l.nodes.items.len - 1].pos),
             .data = .{
               .concatenation = .{
                 .content = l.nodes.items,
@@ -196,8 +194,8 @@ pub const Parser = struct {
 
         var target = try alloc.create(data.Node);
         target.* = .{
-          .pos = .{.input = l.paragraphs.items[0].content.pos.input.span(
-            l.paragraphs.items[l.paragraphs.items.len - 1].content.pos.input)},
+          .pos = l.paragraphs.items[0].content.pos.span(
+            l.paragraphs.items[l.paragraphs.items.len - 1].content.pos),
           .data = .{
             .paragraphs = .{
               .items = l.paragraphs.items,
@@ -500,7 +498,7 @@ pub const Parser = struct {
                 .start = self.cur_start,
                 .info = .{
                   .unknown = try self.ctx().resolveSymbol(
-                      .{.input = self.l.walker.posFrom(self.cur_start)},
+                      self.l.walker.posFrom(self.cur_start),
                       self.l.ns, self.l.recent_id),
                 },
                 .mapper = undefined,
@@ -631,7 +629,7 @@ pub const Parser = struct {
             } else {
               var node = try self.int().create(data.Node);
               node.* = .{
-                .pos = .{.input = pos},
+                .pos = pos,
                 .data = .{
                   .literal = .{
                     .kind = if (non_space_len > 0) .text else .space,
@@ -656,7 +654,7 @@ pub const Parser = struct {
               if (self.cur != .identifier) unreachable; // TODO: recover
               var node = try self.int().create(data.Node);
               node.* = .{
-                .pos = .{.input = self.l.walker.posFrom(lvl.command.info.unknown.pos.input.start)},
+                .pos = self.l.walker.posFrom(lvl.command.info.unknown.pos.start),
                 .data = .{
                   .access = .{
                     .subject = lvl.command.info.unknown,
@@ -685,7 +683,7 @@ pub const Parser = struct {
               const target = lvl.command.info.unknown;
               switch (target.data) {
                 .resolved_symref, .unresolved_symref, .access => {
-                  const res = try self.ctx().resolveChain(target);
+                  const res = try self.ctx().resolveChain(target, false);
                   switch (res) {
                     .var_chain => |chain| {
                       unreachable; // TODO
@@ -866,7 +864,7 @@ pub const Parser = struct {
               }
               const pos = self.ctx().input.between(start, self.cur_start);
               expr.data.literal.value.origin = pos;
-              expr.pos = .{.input = pos};
+              expr.pos = pos;
               _ = try proc.push(proc, pos, .{.block_header = bh});
             }
           }
@@ -939,13 +937,13 @@ pub const Parser = struct {
               switch (std.hash.Adler32.hash(self.l.walker.contentFrom(self.cur_start.byte_offset))) {
                 std.hash.Adler32.hash("locations") => {
                   into.syntax = .{
-                    .pos = .intrinsic,
+                    .pos = data.Position.intrinsic(),
                     .index = 0,
                   };
                 },
                 std.hash.Adler32.hash("definitions") => {
                   into.syntax = .{
-                    .pos = .intrinsic,
+                    .pos = data.Position.intrinsic(),
                     .index = 1,
                   };
                 },
@@ -1107,8 +1105,8 @@ pub const Parser = struct {
             // this cursor is not necesserily the start of the current
             // swallowing command, since whitespace before that command is dumped.
             const end_cursor = if (parent.nodes.items.len == 0)
-                parent.paragraphs.items[parent.paragraphs.items.len - 1].content.pos.input.end
-              else parent.nodes.items[parent.nodes.items.len - 1].pos.input.end;
+                parent.paragraphs.items[parent.paragraphs.items.len - 1].content.pos.end
+              else parent.nodes.items[parent.nodes.items.len - 1].pos.end;
 
             var i = self.levels.items.len - 2;
             while (i > target_level) : (i -= 1) {
@@ -1164,7 +1162,7 @@ pub const Parser = struct {
     };
   }
 
-  fn applyBlockConfig(self: *Parser, pos: data.Position.Input, config: *const data.BlockConfig) !void {
+  fn applyBlockConfig(self: *Parser, pos: data.Position, config: *const data.BlockConfig) !void {
     var sf = std.heap.stackFallback(128, self.int());
     var alloc = sf.get();
     const lvl = self.curLevel();

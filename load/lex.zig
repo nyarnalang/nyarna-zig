@@ -108,7 +108,7 @@ pub const Walker = struct {
     return (w.cur - w.recent_length)[0..w.recent_length];
   }
 
-  pub fn posFrom(w: *Walker, start: data.Cursor) data.Position.Input {
+  pub fn posFrom(w: *Walker, start: data.Cursor) data.Position {
     return .{.source = w.source.meta, .start = start, .end = w.before};
   }
 };

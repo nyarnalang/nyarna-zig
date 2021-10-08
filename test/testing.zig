@@ -202,7 +202,7 @@ fn AstEmitter(Handler: anytype) type {
           }
         },
         .unresolved_symref => |u| try self.emitLine("=SYMREF [{}]{s}", .{u.ns, u.name}),
-        .resolved_symref => |res| try self.emitLine("=SYMREF {s}.{s}", .{res.defined_at.input.source.name, res.name}),
+        .resolved_symref => |res| try self.emitLine("=SYMREF {s}.{s}", .{res.defined_at.source.name, res.name}),
         .unresolved_call => |uc| {
           const ucall = try self.push("UCALL");
           {
@@ -327,6 +327,15 @@ fn AstEmitter(Handler: anytype) type {
           unreachable;
         },
         .map => |map| {
+          unreachable;
+        },
+        .location => |loc| {
+          unreachable;
+        },
+        .definition => |def| {
+          unreachable;
+        },
+        .ast => |ast| {
           unreachable;
         },
         .typeval => |tv| try self.processType(tv.t),

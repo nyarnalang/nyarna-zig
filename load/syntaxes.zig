@@ -17,8 +17,8 @@ pub const SpecialSyntax = struct {
   pub const Processor = struct {
     pub const Action = enum {none, read_block_header};
 
-    push: fn(self: *@This(), pos: data.Position.Input, item: Item) std.mem.Allocator.Error!Action,
-    finish: fn(self: *@This(), pos: data.Position.Input) std.mem.Allocator.Error!*data.Node,
+    push: fn(self: *@This(), pos: data.Position, item: Item) std.mem.Allocator.Error!Action,
+    finish: fn(self: *@This(), pos: data.Position) std.mem.Allocator.Error!*data.Node,
   };
 
   init: fn init(ctx: *Context) std.mem.Allocator.Error!*Processor,
@@ -41,10 +41,11 @@ pub const SymbolDefs = struct {
   // ----- current line ------
   start: data.Cursor,
   names: std.ArrayListUnmanaged(*data.Node),
-  primary: ?data.Position.Input,
-  varargs: ?data.Position.Input,
-  varmap: ?data.Position.Input,
-  root: ?data.Position.Input,
+  primary: ?data.Position,
+  varargs: ?data.Position,
+  varmap: ?data.Position,
+  mutable: ?data.Position,
+  root: ?data.Position,
   header: ?*data.Value.BlockHeader,
   ltype: ?*data.Node,
   expr: ?*data.Node,
@@ -103,6 +104,7 @@ pub const SymbolDefs = struct {
     l.primary = null;
     l.varargs = null;
     l.varmap = null;
+    l.mutable = null;
     l.header = null;
     l.root = null;
     l.ltype = null;
@@ -110,7 +112,7 @@ pub const SymbolDefs = struct {
     l.names.clearRetainingCapacity();
   }
 
-  fn push(p: *Processor, pos: data.Position.Input,
+  fn push(p: *Processor, pos: data.Position,
           item: SpecialSyntax.Item) std.mem.Allocator.Error!Processor.Action {
     const self = @fieldParentPtr(SymbolDefs, "proc", p);
     self.state = while (true) {
@@ -126,7 +128,7 @@ pub const SymbolDefs = struct {
           .space => return .none,
           .literal => |name| {
             const name_node = try self.ctx.temp_nodes.allocator.create(data.Node);
-            name_node.pos = .{.input = pos};
+            name_node.pos = pos;
             name_node.data = .{
               .literal = .{
                 .kind = .text,
@@ -298,6 +300,7 @@ pub const SymbolDefs = struct {
             const target = switch (std.hash.Adler32.hash(id)) {
               std.hash.Adler32.hash("primary") => &self.primary,
               std.hash.Adler32.hash("varargs") => &self.varargs,
+              std.hash.Adler32.hash("mutable") => &self.mutable,
               std.hash.Adler32.hash("varmap") => &self.varmap,
               std.hash.Adler32.hash("root") => &self.root,
               else => {
@@ -520,10 +523,10 @@ pub const SymbolDefs = struct {
     return .none;
   }
 
-  fn finish(p: *Processor, pos: data.Position.Input) std.mem.Allocator.Error!*data.Node {
+  fn finish(p: *Processor, pos: data.Position) std.mem.Allocator.Error!*data.Node {
     const self = @fieldParentPtr(SymbolDefs, "proc", p);
     const ret = try self.ctx.temp_nodes.allocator.create(data.Node);
-    ret.pos = .{.input = pos};
+    ret.pos = pos;
     ret.data = .{
       .concatenation = .{
         .content = self.produced.items,
@@ -532,7 +535,7 @@ pub const SymbolDefs = struct {
     return ret;
   }
 
-  fn finishLine(self: *SymbolDefs, pos: data.Position.Input) !void {
+  fn finishLine(self: *SymbolDefs, pos: data.Position) !void {
     defer self.reset();
     if (self.names.items.len == 0) {
       self.ctx.eh.MissingSymbolName(pos);
@@ -548,31 +551,23 @@ pub const SymbolDefs = struct {
     const line_pos = self.ctx.input.between(self.start, pos.end);
 
     const lexpr = try self.ctx.source_content.allocator.create(data.Expression);
-    lexpr.pos = .{.input = line_pos};
-    lexpr.data = .{
-      .literal = .{
-        .value = .{
-          .origin = line_pos,
-          .data = .{
-            .typeval = .{
-              .t = .{
-                .intrinsic = if (self.variant == .locs) .location else .definition
-              },
-            },
-          },
+    lexpr.* = data.Expression.literal(line_pos, .{
+      .typeval = .{
+        .t = .{
+          .intrinsic = if (self.variant == .locs) .location else .definition
         },
       },
-    };
+    });
 
     for (self.names.items) |name| {
       const args = try self.ctx.temp_nodes.allocator.alloc(*data.Node,
-          switch (self.variant) {.locs => @as(usize, 7), .defs => 3});
+          switch (self.variant) {.locs => @as(usize, 8), .defs => 3});
       args[0] = name;
-      const additionals = switch (self.variant) {
+      var additionals = switch (self.variant) {
         .locs => ptr: {
           args[1] = self.ltype orelse blk: {
             const vn = try self.ctx.temp_nodes.allocator.create(data.Node);
-            vn.pos = .{.input = pos};
+            vn.pos = pos;
             vn.data = .voidNode;
             break :blk vn;
           };
@@ -580,41 +575,45 @@ pub const SymbolDefs = struct {
         },
         .defs => args.ptr + 1,
       };
-      additionals[0] = self.expr orelse blk: {
-        const vn = try self.ctx.temp_nodes.allocator.create(data.Node);
-        vn.pos = .{.input = pos};
-        vn.data = .voidNode;
-        break :blk vn;
-      };
       switch (self.variant) {
         .locs => {
-          additionals[1] = try self.boolFrom(self.primary, pos);
-          additionals[2] = try self.boolFrom(self.varargs, pos);
-          additionals[3] = try self.boolFrom(self.varmap, pos);
+          additionals[0] = try self.boolFrom(self.primary, pos);
+          additionals[1] = try self.boolFrom(self.varargs, pos);
+          additionals[2] = try self.boolFrom(self.varmap, pos);
+          additionals[3] = try self.boolFrom(self.mutable, pos);
           const bhn = try self.ctx.temp_nodes.allocator.create(data.Node);
           if (self.header) |bh| {
-            bhn.pos = .{.input = bh.value().origin};
+            bhn.pos = bh.value().origin;
             bhn.data = .{
               .expression = @fieldParentPtr(data.Expression.Literal, "value", bh.value()).expr(),
             };
           } else {
-            bhn.pos = .{.input = pos};
+            bhn.pos = pos;
             bhn.data = .voidNode;
           }
           additionals[4] = bhn;
           if (self.root) |rpos| self.ctx.eh.NonLocationFlag(rpos);
+          additionals += 5;
         },
         .defs => {
-          additionals[1] = try self.boolFrom(self.root, pos);
+          additionals[0] = try self.boolFrom(self.root, pos);
           if (self.primary) |ppos| self.ctx.eh.NonDefinitionFlag(ppos);
           if (self.varargs) |vpos| self.ctx.eh.NonDefinitionFlag(vpos);
           if (self.varmap) |mpos| self.ctx.eh.NonDefinitionFlag(mpos);
+          if (self.mutable) |mpos| self.ctx.eh.NonDefinitionFlag(mpos);
           if (self.header) |bh| self.ctx.eh.BlockHeaderNotAllowedForDefinition(bh.value().origin);
+          additionals += 1;
         }
       }
+      additionals.* = self.expr orelse blk: {
+        const vn = try self.ctx.temp_nodes.allocator.create(data.Node);
+        vn.pos = pos;
+        vn.data = .voidNode;
+        break :blk vn;
+      };
 
       const constructor = try self.ctx.temp_nodes.allocator.create(data.Node);
-      constructor.pos = .{.input = line_pos};
+      constructor.pos = line_pos;
       constructor.data = .{
         .resolved_call = .{
           .target = lexpr,
@@ -625,22 +624,15 @@ pub const SymbolDefs = struct {
     }
   }
 
-  fn boolFrom(self: *SymbolDefs, pos: ?data.Position.Input, at: data.Position.Input) !*data.Node {
+  fn boolFrom(self: *SymbolDefs, pos: ?data.Position, at: data.Position) !*data.Node {
     const expr = try self.ctx.source_content.allocator.create(data.Expression);
-    expr.pos = .{.input = pos orelse at};
-    expr.data = .{
-      .literal = .{
-        .value = .{
-          .origin = pos orelse at,
-          .data = .{
-            .enumval = .{
-              .t = self.ctx.getBoolean(),
-              .index = if (pos) |_| 1 else 0,
-            }
-          }
-        }
+    expr.pos = pos orelse at;
+    expr.* = data.Expression.literal(pos orelse at, .{
+      .enumval = .{
+        .t = self.ctx.types.getBoolean(),
+        .index = if (pos) |_| 1 else 0,
       }
-    };
+    });
     const ret = try self.ctx.temp_nodes.allocator.create(data.Node);
     ret.data = .{
       .expression = expr,

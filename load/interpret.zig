@@ -39,14 +39,17 @@ pub const Context = struct {
   /// source, the source is treated having failed to load.
   eh: errors.Handler,
   /// The type lattice that handles types for this interpreter.
-  /// it also owns the context's structural types.
-  lattice: types.Lattice,
-  /// predefined types. TODO: move these to system.ny
-  boolean: data.Type.Instantiated,
+  /// it owns the context's structural types.
+  types: types.Lattice,
   /// Array of known syntaxes. TODO: make this user-extensible
   syntax_registry: [2]syntaxes.SpecialSyntax,
+  /// list of known keyword implementations. They bear no name since they are
+  /// referenced via their index.
+  keyword_registry: std.ArrayListUnmanaged(lib.Provider.KeywordWrapper),
+  /// list of known builtin implementations, analoguous to keyword_registry.
+  builtin_registry: std.ArrayListUnmanaged(lib.Provider.BuiltinWrapper),
   /// intrinsic function definitions
-  intrinsics: lib.Intrinsics,
+  intrinsics: *data.Module,
 
   pub fn init(allocator: *std.mem.Allocator, reporter: *errors.Reporter) !Context {
     var ret = Context{
@@ -58,18 +61,14 @@ pub const Context = struct {
       .eh = .{
         .reporter = reporter,
       },
-      .lattice = types.Lattice.init(allocator),
-      .boolean = .{.at = .intrinsic, .name = null, .data = .{.tenum = undefined}},
+      .types = try types.Lattice.init(allocator),
       .syntax_registry = .{syntaxes.SymbolDefs.locations(), syntaxes.SymbolDefs.definitions()},
-      .intrinsics = lib.Intrinsics.init(),
+      .keyword_registry = .{},
+      .builtin_registry = .{},
+      .intrinsics = undefined,
     };
     errdefer ret.deinit().deinit();
-    ret.boolean.data.tenum = try data.Type.Enum.predefBoolean(&ret.source_content.allocator);
-    const boolsym = try ret.source_content.allocator.create(data.Symbol);
-    boolsym.defined_at = .intrinsic;
-    boolsym.name = "Boolean";
-    boolsym.data = .{.ny_type = .{.instantiated = &ret.boolean}};
-    ret.boolean.name = boolsym;
+    ret.intrinsics = try lib.intrinsicModule(&ret);
     try ret.addNamespace(&ret.temp_nodes.allocator, '\\');
     return ret;
   }
@@ -83,8 +82,19 @@ pub const Context = struct {
 
   pub fn addNamespace(self: *Context, alloc: *std.mem.Allocator, character: u21) !void {
     // TODO: error message when too many namespaces are used (?)
-    try self.command_characters.put(alloc, character, @intCast(u15, self.namespaces.items.len));
+    const index = self.namespaces.items.len;
+    try self.command_characters.put(alloc, character, @intCast(u15, index));
     try self.namespaces.append(alloc, .{});
+    const ns = &self.namespaces.items[index];
+    // intrinsic symbols of every namespace.
+    try self.importModuleSyms(self.intrinsics, index);
+  }
+
+  pub fn importModuleSyms(self: *Context, module: *data.Module, ns_index: usize) !void {
+    const ns = &self.namespaces.items[ns_index];
+    for (module.symbols) |sym| {
+      try ns.put(&self.source_content.allocator, sym.name, sym);
+    }
   }
 
   pub fn removeNamespace(self: *Context, character: u21) void {
@@ -93,17 +103,21 @@ pub const Context = struct {
     _ = self.namespaces.pop();
   }
 
-  /// Interprets the given node and returns an expression.
+  /// Interprets the given node and returns an expression, if possible.
   /// A call of a keyword will be allocated inside the temporary allocator of
   /// the current source, while anything else will be allocated in the public
   /// region containing the current file's content.
-  pub fn interpret(self: *Context, input: *data.Node) !?*data.Expression {
+  ///
+  /// if report_failure is set, emits errors if this or a child node cannot be
+  /// interpreted. Regardless of whether report_failure is set, null is returned
+  /// if the node cannot be interpreted.
+  pub fn tryInterpret(self: *Context, input: *data.Node, report_failure: bool) !?*data.Expression {
     return switch (input.data) {
-      .access => switch (try self.resolveChain(input)) {
+      .access => switch (try self.resolveChain(input, report_failure)) {
         .var_chain => |vc| {
           const retr = try self.source_content.allocator.create(data.Expression);
           retr.* = .{
-            .pos = .{.input = vc.target.pos},
+            .pos = vc.target.pos,
             .data = .{
               .var_retrieval = .{
                 .variable = vc.target.variable
@@ -127,10 +141,10 @@ pub const Context = struct {
         .func_ref => |ref| {
           const expr = try self.source_content.allocator.create(data.Expression);
           if (ref.prefix != null) {
-            self.eh.PrefixedFunctionMustBeCalled(input.pos.input);
-            expr.* = data.Expression.poison(input.pos.input);
+            self.eh.PrefixedFunctionMustBeCalled(input.pos);
+            expr.* = data.Expression.poison(input.pos);
           } else {
-            expr.* = data.Expression.literal(input.pos.input, .{
+            expr.* = data.Expression.literal(input.pos, .{
               .funcref = .{
                 .func = ref.target
               },
@@ -140,7 +154,7 @@ pub const Context = struct {
         },
         .type_ref => |ref| {
           const expr = try self.source_content.allocator.create(data.Expression);
-          expr.* = data.Expression.literal(input.pos.input, .{
+          expr.* = data.Expression.literal(input.pos, .{
             .typeval = .{
               .t = ref.*,
             },
@@ -164,7 +178,7 @@ pub const Context = struct {
         .failed => null,
         .poison => {
           const expr = try self.source_content.allocator.create(data.Expression);
-          expr.* = data.Expression.poison(input.pos.input);
+          expr.* = data.Expression.poison(input.pos);
           return expr;
         },
       },
@@ -174,7 +188,7 @@ pub const Context = struct {
       .resolved_symref => |ref| {
         const expr = try self.source_content.allocator.create(data.Expression);
         switch (ref.data) {
-          .ext_func, .ny_func => expr.* = data.Expression.literal(input.pos.input, .{
+          .ext_func, .ny_func => expr.* = data.Expression.literal(input.pos, .{
             .funcref = .{
               .func = ref
             },
@@ -188,7 +202,7 @@ pub const Context = struct {
             };
             expr.expected_type = v.t;
           },
-          .ny_type => |*t| expr.* = data.Expression.literal(input.pos.input, .{
+          .ny_type => |*t| expr.* = data.Expression.literal(input.pos, .{
             .typeval = .{
               .t = t.*
             },
@@ -208,6 +222,14 @@ pub const Context = struct {
         return expr;
       },
       else => null
+    };
+  }
+
+  pub fn interpret(self: *Context, input: *data.Node) !*data.Expression {
+    return (try self.tryInterpret(input, true)) orelse blk: {
+      var ret = try self.source_content.allocator.create(data.Expression);
+      ret.* = data.Expression.poison(input.pos);
+      break :blk ret;
     };
   }
 
@@ -245,7 +267,7 @@ pub const Context = struct {
       /// the target variable that is to be indexed.
       target: struct {
         variable: *data.Symbol.Variable,
-        pos: data.Position.Input,
+        pos: data.Position,
       },
       /// chain into the fields of a variable. Each item is the index of a nested
       /// field.
@@ -278,10 +300,13 @@ pub const Context = struct {
   };
 
   /// resolves an accessor chain of *data.Node.
-  pub fn resolveChain(self: *Context, chain: *data.Node) std.mem.Allocator.Error!ChainResolution {
+  /// iff force_fail is true, failure to resolve the base symbol will be reported
+  /// as error and .poison will be returned; else no error will be reported and
+  /// .failed will be returned.
+  pub fn resolveChain(self: *Context, chain: *data.Node, force_fail: bool) std.mem.Allocator.Error!ChainResolution {
     switch (chain.data) {
       .access => |value| {
-        const inner = try self.resolveChain(value.subject);
+        const inner = try self.resolveChain(value.subject, force_fail);
         switch (inner) {
           .var_chain => |vc| {
             // TODO: find field in value's type, update value's type and the
@@ -324,7 +349,7 @@ pub const Context = struct {
           .var_chain = .{
             .target = .{
               .variable = v,
-              .pos = chain.pos.input,
+              .pos = chain.pos,
             },
             .field_chain = .{},
             .t = v.t,
@@ -332,11 +357,11 @@ pub const Context = struct {
         },
       },
       else => {
-        return if (try self.interpret(chain)) |expr| {
+        return if (try self.tryInterpret(chain, force_fail)) |expr| {
           // TODO: resolve accessor chain in context of expression's type and
           // return expr_chain
           unreachable;
-        } else @as(ChainResolution, .failed);
+        } else @as(ChainResolution, if (force_fail) .poison else .failed);
       }
     }
   }
@@ -350,7 +375,7 @@ pub const Context = struct {
   fn probeType(self: *Context, node: *data.Node) !?data.Type {
     return switch (node.data) {
       .literal => .{.intrinsic = if (l.kind == space) .space else .literal},
-      .access, .assignment => if (try self.interpret(node)) |expr| blk: {
+      .access, .assignment => if (try self.tryInterpret(node, false)) |expr| blk: {
         node.data = .{
           .expression = expr
         };
@@ -359,7 +384,7 @@ pub const Context = struct {
       .concatenation => |con| blk: {
         var t = .{.intrinsic = .every};
         for (con.content) |item| {
-          t = try self.lattice.sup(t, try self.probeType(item) orelse break :blk null);
+          t = try self.types.sup(t, try self.probeType(item) orelse break :blk null);
         }
         break :blk t;
       },
@@ -394,22 +419,22 @@ pub const Context = struct {
   fn createLiteralExpr(self: *Context, l: *data.Node.Literal, t: data.Type, e: *data.Expression) void {
     e.* = switch (t) {
       .intrinsic => |it| switch (it) {
-        .space => if (l.kind == .space) data.Expression.literal(node.pos.input, .{
+        .space => if (l.kind == .space) data.Expression.literal(node.pos, .{
           .text = .{
             .t = t,
             .value = try std.mem.dupe(self.source_content, u8, l.content),
           },
         }) else blk: {
-          self.eh.ExpectedExprOfTypeXGotY(l.pos().input, t, .{.intrinsic = .literal});
+          self.eh.ExpectedExprOfTypeXGotY(l.pos(), t, .{.intrinsic = .literal});
           break :blk data.Expression.poison(l.pos());
         },
-        .literal, .raw => data.Expression.literal(l.pos().input, .{
+        .literal, .raw => data.Expression.literal(l.pos(), .{
           .text = .{
             .t = t,
             .value = try std.mem.dupe(self.source_content, u8, l.content),
           },
         }),
-        else => data.Expression.literal(l.pos().input, .{
+        else => data.Expression.literal(l.pos(), .{
           .text = .{
             .t = .{.intrinsic = if (l.kind == .text) .literal else .space},
             .value = try std.mem.dupe(self.source_content, u8, l.content),
@@ -422,12 +447,12 @@ pub const Context = struct {
         .paragraphs => unreachable,
         .list => |list| {self.createLiteralExpr(t, list.inner, e); return; },
         .map, .callable, .callable_type => blk: {
-          self.eh.ExpectedExprOfTypeXGotY(l.pos().input, t, .{.intrinsic = .literal});
+          self.eh.ExpectedExprOfTypeXGotY(l.pos(), t, .{.intrinsic = .literal});
           break :blk data.Expression.poison(l.pos());
         },
         .intersection => |inter| blk: {
           if (inter.scalar) |scalar| {self.createLiteralExpr(t, scalar, e); return; }
-          self.eh.ExpectedExprOfTypeXGotY(l.pos().input, t, .{.intrinsic = .literal});
+          self.eh.ExpectedExprOfTypeXGotY(l.pos(), t, .{.intrinsic = .literal});
           break :blk data.Expression.poison(l.pos());
         }
       },
@@ -437,15 +462,15 @@ pub const Context = struct {
         .float => unreachable, // TODO
         .tenum => unreachable, // TODO
         .record => blk: {
-          self.eh.ExpectedExprOfTypeXGotY(node.pos.input, t,
+          self.eh.ExpectedExprOfTypeXGotY(node.pos, t,
             .{.intrinsic = if (l.kind == .text) .literal else .space});
-          break :blk data.Expression.poison(node.pos.input);
+          break :blk data.Expression.poison(node.pos);
         },
       },
     };
   }
 
-  /// same as interpret, but takes a target type that may be used to generate
+  /// same as tryInterpret, but takes a target type that may be used to generate
   /// typed literal values from text literals. fills an already
   fn interpretWithTargetType(self: *Context, node: *data.Node, t: data.Type) !?*data.Expression {
     return switch (node.data) {
@@ -456,14 +481,14 @@ pub const Context = struct {
         e.expected_type = t;
         break :blk e;
       },
-      .access, .assignment, .resolved_symref, .resolved_call => try self.interpret(node),
+      .access, .assignment, .resolved_symref, .resolved_call => try self.tryInterpret(node, false),
       .concatenation => unreachable,
       .paragraphs => unreachable,
       .unresolved_symref, .unresolved_call => null,
       .expression => |e| e,
       .voidNode => blk: {
         const e = try self.source_content.allocator.create(data.Expression);
-        e.* = data.Expression.voidExpr(node.pos.input);
+        e.* = data.Expression.voidExpr(node.pos);
         break :blk e;
       }
     };
@@ -480,19 +505,14 @@ pub const Context = struct {
   /// unresolved symbols.
   pub fn associate(self: *Context, node: *data.Node, t: data.Type) !?*data.Expression {
     const e = try self.interpretWithTargetType(node, t) orelse return null;
-    if (self.lattice.lesserEqual(e.expected_type, t)) {
+    if (self.types.lesserEqual(e.expected_type, t)) {
       e.expected_type = t;
       return e;
     }
     // TODO: semantic conversions here
-    self.eh.ExpectedExprOfTypeXGotY(node.pos.input, t, e.expected_type);
-    e.* = data.Expression.poison(node.pos.input);
+    self.eh.ExpectedExprOfTypeXGotY(node.pos, t, e.expected_type);
+    e.* = data.Expression.poison(node.pos);
     return e;
   }
 
-  /// returns Nyarna's builtin boolean type
-  pub fn getBoolean(self: *Context) *const data.Type.Enum {
-    return &self.boolean.data.tenum;
-  }
 };
-

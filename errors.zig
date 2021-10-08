@@ -12,7 +12,7 @@ pub const GenericParserError = enum {
   NamedArgumentInAssignment, MissingBlockNameEnd, UnknownFlag,
   NonLocationFlag, NonDefinitionFlag, BlockHeaderNotAllowedForDefinition,
   MissingSymbolName, MissingSymbolType, MissingSymbolEntity, UnknownSyntax,
-  PrefixedFunctionMustBeCalled
+  PrefixedFunctionMustBeCalled, AstNodeInNonKeyword
 };
 
 pub const WrongItemError = enum {
@@ -37,7 +37,8 @@ pub const WrongIdError = enum {
 };
 
 pub const PreviousOccurenceError = enum {
-  IsNotANamespaceCharacter, AlreadyANamespaceCharacter, DuplicateFlag, DuplicateBlockHeader,
+  IsNotANamespaceCharacter, AlreadyANamespaceCharacter, DuplicateFlag,
+  DuplicateBlockHeader, IncompatibleFlag, DuplicateAutoSwallow,
 
   fn errorMsg(e: PreviousOccurenceError) []const u8 {
     return switch (e) {
@@ -45,21 +46,25 @@ pub const PreviousOccurenceError = enum {
       .AlreadyANamespaceCharacter => " is already a namespace character",
       .DuplicateFlag => " has been seen previously",
       .DuplicateBlockHeader => " can only be given once per definition",
+      .IncompatibleFlag =>  " is incompatible with previously declared flag",
+      .DuplicateAutoSwallow => " conflicts with another auto-swallow definition",
     };
   }
 
   fn entityName(e: PreviousOccurenceError) []const u8 {
     return switch (e) {
       .IsNotANamespaceCharacter, .AlreadyANamespaceCharacter => "character",
-      .DuplicateFlag => "flag",
-      .DuplicateBlockHeader => "block header"
+      .DuplicateFlag, .IncompatibleFlag => "flag",
+      .DuplicateBlockHeader => "block header",
+      .DuplicateAutoSwallow => "swallow def",
     };
   }
 
   fn prevOccurenceKind(e: PreviousOccurenceError) []const u8 {
     return switch (e) {
       .IsNotANamespaceCharacter, .AlreadyANamespaceCharacter, .DuplicateFlag,
-      .DuplicateBlockHeader => "given"
+      .DuplicateBlockHeader, .DuplicateAutoSwallow => "given",
+      .IncompatibleFlag => "other flag",
     };
   }
 };
@@ -75,13 +80,13 @@ pub const WrongTypeError = enum {
 };
 
 pub const Reporter = struct {
-  lexerErrorFn: fn(reporter: *Reporter, id: LexerError, pos: data.Position.Input) void,
-  parserErrorFn: fn(reporter: *Reporter, id: GenericParserError, pos: data.Position.Input) void,
-  wrongItemErrorFn: fn(reporter: *Reporter, id: WrongItemError, pos: data.Position.Input,
+  lexerErrorFn: fn(reporter: *Reporter, id: LexerError, pos: data.Position) void,
+  parserErrorFn: fn(reporter: *Reporter, id: GenericParserError, pos: data.Position) void,
+  wrongItemErrorFn: fn(reporter: *Reporter, id: WrongItemError, pos: data.Position,
                        expected: []const WrongItemError.ItemDescr, got: WrongItemError.ItemDescr) void,
-  wrongIdErrorFn: fn(reporter: *Reporter, id: WrongIdError, pos: data.Position.Input, expected: []const u8, got: []const u8, defined_at: data.Position.Input) void,
-  previousOccurenceFn: fn(reporter: *Reporter, id: PreviousOccurenceError, repr: []const u8, pos: data.Position.Input, previous: data.Position.Input) void,
-  wrongTypeErrorFn: fn(reporter: *Reporter, id: WrongTypeError, pos: data.Position.Input, expected: data.Type, got: data.Type) void,
+  wrongIdErrorFn: fn(reporter: *Reporter, id: WrongIdError, pos: data.Position, expected: []const u8, got: []const u8, defined_at: data.Position) void,
+  previousOccurenceFn: fn(reporter: *Reporter, id: PreviousOccurenceError, repr: []const u8, pos: data.Position, previous: data.Position) void,
+  wrongTypeErrorFn: fn(reporter: *Reporter, id: WrongTypeError, pos: data.Position, expected: data.Type, got: data.Type) void,
 };
 
 fn formatItemDescr(d: WrongItemError.ItemDescr, comptime fmt: []const u8,
@@ -208,7 +213,7 @@ pub const CmdLineReporter = struct {
     if (self.do_style) self.writer.writeAll("\x1b[m") catch unreachable;
   }
 
-  fn renderPos(self: *CmdLineReporter, styles: anytype, pos: data.Position.Input) void {
+  fn renderPos(self: *CmdLineReporter, styles: anytype, pos: data.Position) void {
     if (pos.source.argument)
       self.style(styles, "arg \"{s}\"({}:{}): ", .{pos.source.name, pos.start.at_line, pos.start.before_column})
     else
@@ -227,19 +232,19 @@ pub const CmdLineReporter = struct {
     self.writer.writeByte('\n') catch unreachable;
   }
 
-  fn lexerError(reporter: *Reporter, id: LexerError, pos: data.Position.Input) void {
+  fn lexerError(reporter: *Reporter, id: LexerError, pos: data.Position) void {
     const self = @fieldParentPtr(CmdLineReporter, "reporter", reporter);
     self.renderPos(.{.bold}, pos);
     self.renderError("(lex) {s}", .{@tagName(id)});
   }
 
-  fn parserError(reporter: *Reporter, id: GenericParserError, pos: data.Position.Input) void {
+  fn parserError(reporter: *Reporter, id: GenericParserError, pos: data.Position) void {
     const self = @fieldParentPtr(CmdLineReporter, "reporter", reporter);
     self.renderPos(.{.bold}, pos);
     self.renderError("(parse) {s}", .{@tagName(id)});
   }
 
-  fn wrongItemError(reporter: *Reporter, id: WrongItemError, pos: data.Position.Input,
+  fn wrongItemError(reporter: *Reporter, id: WrongItemError, pos: data.Position,
                     expected: []const WrongItemError.ItemDescr, got: WrongItemError.ItemDescr) void {
     const self = @fieldParentPtr(CmdLineReporter, "reporter", reporter);
     self.renderPos(.{.bold}, pos);
@@ -248,8 +253,8 @@ pub const CmdLineReporter = struct {
     self.renderError("wrong token: expected {}, got {}", .{arr, single});
   }
 
-  fn wrongIdError(reporter: *Reporter, id: WrongIdError, pos: data.Position.Input,
-                  expected: []const u8, got: []const u8, defined_at: data.Position.Input) void {
+  fn wrongIdError(reporter: *Reporter, id: WrongIdError, pos: data.Position,
+                  expected: []const u8, got: []const u8, defined_at: data.Position) void {
     const self = @fieldParentPtr(CmdLineReporter, "reporter", reporter);
     self.renderPos(.{.bold}, pos);
     self.renderError("{s} id: expected '{s}', got '{s}'",
@@ -259,7 +264,7 @@ pub const CmdLineReporter = struct {
   }
 
   fn previousOccurence(reporter: *Reporter, id: PreviousOccurenceError, repr: []const u8,
-                       pos: data.Position.Input, previous: data.Position.Input) void {
+                       pos: data.Position, previous: data.Position) void {
     const self = @fieldParentPtr(CmdLineReporter, "reporter", reporter);
     self.renderPos(.{.bold}, pos);
     self.renderError("{s} '{s}'{s}", .{id.entityName(), repr, id.errorMsg()});
@@ -267,7 +272,7 @@ pub const CmdLineReporter = struct {
     self.writer.print("{s} here\n", .{id.prevOccurenceKind()}) catch unreachable;
   }
 
-  fn wrongTypeError(reporter: *Reporter, id: WrongTypeError, pos: data.Position.Input,
+  fn wrongTypeError(reporter: *Reporter, id: WrongTypeError, pos: data.Position,
                     expected: data.Type, got: data.Type) void {
     const self = @fieldParentPtr(CmdLineReporter, "reporter", reporter);
     self.renderPos(.{.bold}, pos);

@@ -1,6 +1,5 @@
 const std = @import("std");
 const unicode = @import("load/unicode.zig");
-const Context = @import("load/interpret.zig").Context;
 
 /// A cursor inside a source file
 pub const Cursor = struct {
@@ -17,28 +16,31 @@ pub const Cursor = struct {
 };
 
 /// Describes the origin of a construct. Usually start and end cursor in a
-/// source file, but some constructs originate elsewhere.
-pub const Position = union(enum) {
-  /// Position in some kind of source code input.
-  pub const Input = struct {
-    source: *const Source.Descriptor,
-    start: Cursor,
-    end: Cursor,
+/// source file, but can also come from command line parameters.
+pub const Position = struct {
+  source: *const Source.Descriptor,
+  start: Cursor,
+  end: Cursor,
 
-    /// Creates a new position starting at the start of left and ending at the end of right.
-    pub inline fn span(left: Input, right: Input) Input {
-      std.debug.assert(left.source == right.source);
-      return .{.source = left.source, .start = left.start, .end = right.end};
-    }
+  const IntrinsicSource = Source.Descriptor{
+    .name = "<intrinsic>",
+    .locator = ".std.intrinsic",
+    .argument = false
   };
 
-  /// Construct has no source position since it is intrinsic to the language.
-  intrinsic: void,
-  /// Construct originates from input source
-  input: Input,
-  /// The invokation position is where the interpreter is called.
-  /// This is an singleton, there is only one invokation position.
-  invokation: void,
+  /// Creates a new position starting at the start of left and ending at the end of right.
+  pub inline fn span(left: Position, right: Position) Position {
+    std.debug.assert(left.source == right.source);
+    return .{.source = left.source, .start = left.start, .end = right.end};
+  }
+
+  pub inline fn intrinsic() Position {
+    return .{
+      .start = Cursor.unknown(),
+      .end = Cursor.unknown(),
+      .source = &IntrinsicSource,
+    };
+  }
 };
 
 /// A source provides content to be parsed. This is either a source file or a
@@ -47,6 +49,8 @@ pub const Source = struct {
   /// A source's descriptor specifies metadata about the source.
   /// This is used to refer to the source in position data of nodes and expressions.
   pub const Descriptor = struct {
+    /// for files, the path to the file. for command line arguments, the name of
+    /// the argument.
     name: []const u8,
     /// the absolute locator that identifies this source.
     locator: []const u8,
@@ -72,12 +76,12 @@ pub const Source = struct {
   locator_ctx: []const u8,
 
   /// returns the position inside the source at the given cursor (starts & ends there)
-  pub inline fn at(s: *const Source, cursor: Cursor) Position.Input {
+  pub inline fn at(s: *const Source, cursor: Cursor) Position {
     return s.between(cursor, cursor);
   }
 
   /// returns the position inside the source between start and end
-  pub inline fn between(s: *const Source, start: Cursor, end: Cursor) Position.Input {
+  pub inline fn between(s: *const Source, start: Cursor, end: Cursor) Position {
     return .{.source = s.meta, .start = start, .end = end};
   }
 };
@@ -252,7 +256,7 @@ pub const BlockConfig = struct {
   pub const Map = struct {
     /// mappings are not defined by intrinsic functions, therefore position is
     /// always in some Input.
-    pos: Position.Input,
+    pos: Position,
     from: u21,
     to: u21
   };
@@ -264,9 +268,9 @@ pub const BlockConfig = struct {
 
   syntax: ?SyntaxDef,
   map: []Map,
-  off_colon: ?Position.Input,
-  off_comment: ?Position.Input,
-  full_ast: ?Position.Input,
+  off_colon: ?Position,
+  off_comment: ?Position,
+  full_ast: ?Position,
 
   pub fn empty() BlockConfig {
     return .{
@@ -378,12 +382,19 @@ pub const Node = struct {
 };
 
 pub const Symbol = struct {
-  /// External function, pre-defined by Nyarna or registered via Nyarna's API.
+  /// externally defined function, pre-defined by Nyarna or registered via
+  /// Nyarna's API.
   pub const ExtFunc = struct {
-    // TODO
+    signature: *Type.Signature,
+    /// tells the interpreter under which index to look up the implementation.
+    impl_index: usize,
+
+    // TODO: stackframe
   };
+
   /// Internal function, defined in Nyarna code.
   pub const NyFunc = struct {
+    signature: *Type.Signature,
     // TODO
   };
   /// A variable defined in Nyarna code.
@@ -416,14 +427,12 @@ pub const Type = union(enum) {
       pos: Position,
       name: []const u8,
       ptype: Type,
-      capture: enum {default, varargs},
+      capture: enum {default, varargs, mutable},
       default: ?*Expression,
       config: ?BlockConfig,
-      mutable: bool,
     };
 
-    parameter: []Parameter,
-    keyword: bool,
+    parameters: []Parameter,
     primary: ?u21,
     varmap: ?u21,
     auto_swallow: ?struct{
@@ -439,6 +448,10 @@ pub const Type = union(enum) {
     /// unset for keywords which cannot be used as Callable values and therefore
     /// never interact with the type lattice.
     repr: *Signature,
+
+    pub fn isKeyword(sig: *const Signature) bool {
+      return sig.returns.is(.ast_node);
+    }
   };
 
   pub const Intersection = struct {
@@ -545,6 +558,8 @@ pub const Type = union(enum) {
         Paragraphs => offset(Structural, "paragraphs"),
         List => offset(Structural, "list"),
         Map => offset(Structural, "map"),
+        Callable => offset(Structural, "callable"),
+        CallableType => offset(Structural, "callable_type"),
         Intersection => offset(Structural, "intersection"),
         else => unreachable
       };
@@ -681,7 +696,7 @@ pub const Type = union(enum) {
 
     /// calculates the position from a pointer to Textual, Numeric, Float,
     /// Enum, or Record
-    fn pos(it: anytype) Position {
+    pub fn pos(it: anytype) Position {
       return parent(it).at;
     }
 
@@ -712,11 +727,7 @@ pub const Type = union(enum) {
     }
 
     pub fn eql(_: HashContext, a: Type, b: Type) bool {
-      return switch (a) {
-        .intrinsic => |ia| switch (b) { .intrinsic => |ib| ia == ib, else => false},
-        .instantiated => |ia| switch (b) {.instantiated => |ib| ia == ib, else => false},
-        .structural => |sa| switch (b) {.structural => |sb| sa == sb, else => false},
-      };
+      return a.eql(b);
     }
   };
 
@@ -725,6 +736,21 @@ pub const Type = union(enum) {
       .intrinsic => |it| switch (it) {.space, .literal, .raw => true, else => false},
       .structural => false,
       .instantiated => |it| switch (it.data) {.textual, .numeric, .float, .tenum => true, else => false},
+    };
+  }
+
+  pub inline fn is(t: Type, comptime expected: anytype) bool {
+    return switch (t) {
+      .intrinsic => |it| it == expected,
+      else => false
+    };
+  }
+
+  pub inline fn eql(a: Type, b: Type) bool {
+    return switch (a) {
+      .intrinsic => |ia| switch (b) { .intrinsic => |ib| ia == ib, else => false},
+      .instantiated => |ia| switch (b) {.instantiated => |ib| ia == ib, else => false},
+      .structural => |sa| switch (b) {.structural => |sb| sa == sb, else => false},
     };
   }
 };
@@ -807,9 +833,9 @@ pub const Expression = struct {
     return @fieldParentPtr(Expression, "data", @intToPtr(*Data, addr));
   }
 
-  pub inline fn literal(at: Position.Input, data: Value.Data) Expression {
+  pub inline fn literal(at: Position, data: Value.Data) Expression {
     var e = Expression{
-      .pos = .{.input = at},
+      .pos = at,
       .data = .{
         .literal = .{
           .value = .{
@@ -824,9 +850,9 @@ pub const Expression = struct {
     return e;
   }
 
-  pub inline fn poison(at: Position.Input) Expression {
+  pub inline fn poison(at: Position) Expression {
     return .{
-      .pos = .{.input = at},
+      .pos = at,
       .data = .{
         .literal = .{
           .value = .{
@@ -839,9 +865,9 @@ pub const Expression = struct {
     };
   }
 
-  pub inline fn voidExpr(at: Position.Input) Expression {
+  pub inline fn voidExpr(at: Position) Expression {
     return .{
-      .pos = .{.input = at},
+      .pos = at,
       .data = .{
         .literal = .{
           .value = .{
@@ -860,11 +886,19 @@ pub const Value = struct {
   pub const TextScalar = struct {
     t: Type,
     value: []const u8,
+
+    pub fn value(self: *@This()) *Value {
+      return Value.parent(self);
+    }
   };
   /// a Numeric value
   pub const Number = struct {
     t: *const Type.Numeric,
     value: i64,
+
+    pub fn value(self: *@This()) *Value {
+      return Value.parent(self);
+    }
   };
   /// a Float value
   pub const FloatNumber = struct {
@@ -875,40 +909,121 @@ pub const Value = struct {
       double: f64,
       quadruple: f128,
     },
+
+    pub fn value(self: *@This()) *Value {
+      return Value.parent(self);
+    }
   };
   /// an Enum value
   pub const Enum = struct {
     t: *const Type.Enum,
     index: usize,
+
+    pub fn value(self: *@This()) *Value {
+      return Value.parent(self);
+    }
   };
   /// a Record value
   pub const Record = struct {
     t: *const Type.Record,
     fields: []*Value,
+
+    pub fn value(self: *@This()) *Value {
+      return Value.parent(self);
+    }
   };
   /// a Concat value
   pub const Concat = struct {
     t: *const Type.Concat,
     items: std.ArrayList(*Value),
+
+    pub fn value(self: *@This()) *Value {
+      return Value.parent(self);
+    }
   };
   /// a List value
   pub const List = struct {
     t: *const Type.List,
     items: std.ArrayList(*Value),
+
+    pub fn value(self: *@This()) *Value {
+      return Value.parent(self);
+    }
   };
   /// a Map value
   pub const Map = struct {
     t: *const Type.Map,
     items: std.HashMap(*Value, *Value, Value.HashContext, 50),
+
+    pub fn value(self: *@This()) *Value {
+      return Value.parent(self);
+    }
   };
 
   pub const TypeVal = struct {
     t: Type,
+
+    pub fn value(self: *@This()) *Value {
+      return Value.parent(self);
+    }
   };
 
   pub const FuncRef = struct {
     /// ExtFunc or NyFunc
     func: *Symbol,
+
+    pub fn value(self: *@This()) *Value {
+      return Value.parent(self);
+    }
+  };
+
+  pub const Location = struct {
+    name: []const u8,
+    tloc: Type,
+    default: ?*Expression,
+    primary: ?Position,
+    varargs: ?Position,
+    varmap: ?Position,
+    mutable: ?Position,
+    block_header: ?*BlockHeader,
+
+    pub fn value(self: *@This()) *Value {
+      return Value.parent(self);
+    }
+
+    pub fn simple(name: []const u8, t: Type, default: ?*Expression) Location {
+      return .{
+        .name = name, .tloc = t, .default = default,
+        .primary = null, .varargs = null, .varmap = null, .mutable = null,
+        .block_header = null
+      };
+    }
+
+    pub fn primary(name: []const u8, t: Type, default: ?*Expression) Location {
+      return .{
+        .name = name, .tloc = t, .default = default,
+        .primary = Position.intrinsic(), .varargs = null, .varmap = null, .mutable = null,
+        .block_header = null
+      };
+    }
+  };
+
+  pub const Definition = struct {
+    name: []const u8,
+    content: *Ast,
+    root: bool,
+
+    pub fn value(self: *@This()) *Value {
+      return Value.parent(self);
+    }
+  };
+
+  pub const Ast = struct {
+    root: *Node,
+
+    pub fn value(self: *@This()) *Value {
+      return Value.parent(self);
+    }
   };
 
   /// a block header. This value type is used to read in block headers within
@@ -933,6 +1048,9 @@ pub const Value = struct {
     map: Map,
     typeval: TypeVal,
     funcref: FuncRef,
+    location: Location,
+    definition: Definition,
+    ast: Ast,
     block_header: BlockHeader,
     void, poison
   };
@@ -969,8 +1087,7 @@ pub const Value = struct {
     }
   };
 
-  /// a value always originates from input.
-  origin: Position.Input,
+  origin: Position,
   data: Data,
 
   pub fn vType(self: *Value) Type {
@@ -985,6 +1102,9 @@ pub const Value = struct {
       .map => |map| map.t.typedef(),
       .typeval => |tv| unreachable,
       .funcref => |fr| unreachable,
+      .location => .{.intrinsic = .location},
+      .definition => .{.intrinsic = .definition},
+      .ast => .{.intrinsic = .ast_node},
       .block_header => .{.intrinsic = .block_header},
       .void => .{.intrinsic = .void},
       .poison => .{.intrinsic = .poison},
@@ -1003,9 +1123,22 @@ pub const Value = struct {
       List => offset(Data, "list"),
       Map => offset(Data, "map"),
       TypeVal => offset(Data, "typeval"),
+      FuncRef => offset(Data, "funcref"),
+      Location => offset(Data, "location"),
+      Definition => offset(Data, "definition"),
+      Ast => offset(Data, "ast"),
       BlockHeader => offset(Data, "block_header"),
       else => unreachable
     };
     return @fieldParentPtr(Value, "data", @intToPtr(*Data, addr));
   }
+};
+
+/// A module represents a loaded file.
+pub const Module = struct {
+  /// exported symbols
+  symbols: []*Symbol,
+  /// the root expression contained in the file
+  root: *Expression,
+  // TODO: locator (?)
 };

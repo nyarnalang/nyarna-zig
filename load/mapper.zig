@@ -19,13 +19,13 @@ pub const Mapper = struct {
   };
   const ArgKind = data.Node.UnresolvedCall.ArgKind;
 
-  mapFn: fn(self: *Self, pos: data.Position.Input, input: ArgKind, flag: ProtoArgFlag) ?Cursor,
+  mapFn: fn(self: *Self, pos: data.Position, input: ArgKind, flag: ProtoArgFlag) ?Cursor,
   pushFn: fn(self: *Self, alloc: *std.mem.Allocator, at: Cursor, content: *data.Node) std.mem.Allocator.Error!void,
   configFn: fn(self: *Self, at: Cursor) ?*data.BlockConfig,
   paramTypeFn: fn(self: *Self, at: Cursor) ?data.Type,
   finalizeFn: fn(self: *Self, alloc: *std.mem.Allocator, pos: data.Position) std.mem.Allocator.Error!*data.Node,
 
-  pub fn map(self: *Self, pos: data.Position.Input, input: ArgKind, flag: ProtoArgFlag) ?Cursor {
+  pub fn map(self: *Self, pos: data.Position, input: ArgKind, flag: ProtoArgFlag) ?Cursor {
     return self.mapFn(self, pos, input, flag);
   }
 
@@ -41,8 +41,8 @@ pub const Mapper = struct {
     try self.pushFn(self, alloc, at, content);
   }
 
-  pub fn finalize(self: *Self, alloc: *std.mem.Allocator, pos: data.Position.Input) std.mem.Allocator.Error!*data.Node {
-    return self.finalizeFn(self, alloc, .{.input = pos});
+  pub fn finalize(self: *Self, alloc: *std.mem.Allocator, pos: data.Position) std.mem.Allocator.Error!*data.Node {
+    return self.finalizeFn(self, alloc, pos);
   }
 };
 
@@ -70,7 +70,7 @@ pub const SignatureMapper = struct {
     };
   }
 
-  fn map(mapper: *Mapper, pos: data.Position.Input,
+  fn map(mapper: *Mapper, pos: data.Position,
          input: Mapper.ArgKind, flag: Mapper.ProtoArgFlag) ?Mapper.Cursor {
     const self = @fieldParentPtr(SignatureMapper, "mapper", mapper);
 
@@ -189,7 +189,7 @@ pub const CollectingMapper = struct {
     };
   }
 
-  fn map(mapper: *Mapper, pos: data.Position.Input,
+  fn map(mapper: *Mapper, pos: data.Position,
          input: Mapper.ArgKind, flag: Mapper.ProtoArgFlag) ?Mapper.Cursor {
     const self = @fieldParentPtr(CollectingMapper, "mapper", mapper);
     if (flag != .flow and self.first_block == null) {
@@ -247,7 +247,7 @@ pub const AssignmentMapper = struct {
     };
   }
 
-  pub fn map(mapper: *Mapper, pos: data.Position.Input,
+  pub fn map(mapper: *Mapper, pos: data.Position,
              input: Mapper.ArgKind, flag: Mapper.ProtoArgFlag) ?Mapper.Cursor {
     const self = @fieldParentPtr(AssignmentMapper, "mapper", mapper);
     if (input == .named or input == .direct) {
