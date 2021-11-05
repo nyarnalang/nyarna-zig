@@ -1,5 +1,6 @@
 const std = @import("std");
 const data = @import("data.zig");
+const interpret = @import("load/interpret.zig");
 
 /// This is Nyarna's type lattice. It calculates type intersections, checks type
 /// compatibility, and owns all data of structural types.
@@ -127,7 +128,7 @@ pub const Lattice = struct {
     const index = switch (t) {
       .intrinsic => |it| switch (it) {
         .location => 0,
-        eles => unreachable,
+        else => unreachable,
       },
       else => unreachable,
     };
@@ -186,29 +187,29 @@ pub const Lattice = struct {
       else => {},
     };
     const inst_types = [_]*data.Type.Instantiated{t1.instantiated, t2.instantiated};
-    for (inst_types) |t, i| switch (t.data) {
+    for (inst_types) |t| switch (t.data) {
       .record => {
         return self.calcIntersection(.{&[_]data.Type{t1}, &[_]data.Type{t2}});
       },
       else => {},
     };
     for (inst_types) |t, i| switch (t.data) {
-      .numeric => |n| {
+      .numeric => |_| {
         const other = inst_types[(i + 1) % 2];
         return switch (other.data) {
           .float => if (i == 0) t2 else t1,
-          .numeric => |other_n| unreachable, // TODO
+          .numeric => |_| unreachable, // TODO
           else => .{.intrinsic = .raw},
         };
       },
       else => {},
     };
     for (inst_types) |t, i| switch (t.data) {
-      .tenum => |e| {
+      .tenum => |_| {
         const other = inst_types[(i + 1) % 2];
         return switch (other.data) {
           .tenum => unreachable, // TODO: return predefined Identifier type
-          .textual => |text| unreachable, // TODO: return sup of Identifier with text
+          .textual => |_| unreachable, // TODO: return sup of Identifier with text
           else => .{.intrinsic = .raw},
         };
       },
@@ -495,7 +496,7 @@ const SigBuilderEnv = enum{
   fn contextType(comptime e: SigBuilderEnv) type {
     return switch (e) {
       .intrinsic => *std.mem.Allocator,
-      .userdef => *Context
+      .userdef => *interpret.Context
     };
   }
 

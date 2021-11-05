@@ -85,7 +85,7 @@ pub const Context = struct {
     const index = self.namespaces.items.len;
     try self.command_characters.put(alloc, character, @intCast(u15, index));
     try self.namespaces.append(alloc, .{});
-    const ns = &self.namespaces.items[index];
+    //const ns = &self.namespaces.items[index]; TODO: do we need this?
     // intrinsic symbols of every namespace.
     try self.importModuleSyms(self.intrinsics, index);
   }
@@ -93,7 +93,9 @@ pub const Context = struct {
   pub fn importModuleSyms(self: *Context, module: *data.Module, ns_index: usize) !void {
     const ns = &self.namespaces.items[ns_index];
     for (module.symbols) |sym| {
-      try ns.put(&self.source_content.allocator, sym.name, sym);
+      const name = sym.name;
+      std.debug.print("adding symbol {s}\n", .{name});
+      try ns.put(&self.source_content.allocator, name, sym);
     }
   }
 
@@ -237,9 +239,9 @@ pub const Context = struct {
   /// returns an AstNode. Can return .referred_source_unavailable, in which case
   /// current interpretation must pause and the referred source must be
   /// interpreted instead. Afterwards, interpretation can continue.
-  pub fn evaluateToAstNode(self: *Context, expr: *data.Expression) !*data.Node {
+  pub fn evaluateToAstNode(_: *Context, _: *data.Expression) !*data.Node {
     // TODO
-    return referred_source_unavailable;
+    return Errors.referred_source_unavailable;
   }
 
   pub fn resolveSymbol(self: *Context, pos: data.Position, ns: u15, name: []const u8) !*data.Node {
@@ -308,7 +310,7 @@ pub const Context = struct {
       .access => |value| {
         const inner = try self.resolveChain(value.subject, force_fail);
         switch (inner) {
-          .var_chain => |vc| {
+          .var_chain => |_| {
             // TODO: find field in value's type, update value's type and the
             // field_chain, return it.
             unreachable;
@@ -322,11 +324,11 @@ pub const Context = struct {
             // in that expression's type for the symbol.
             unreachable;
           },
-          .type_ref => |ref| {
+          .type_ref => |_| {
             // TODO: search in the namespace of the type for the given name.
             unreachable;
           },
-          .expr_chain => |ec| {
+          .expr_chain => |_| {
             // TODO: same as var_chain basically
             unreachable;
           },
@@ -357,7 +359,7 @@ pub const Context = struct {
         },
       },
       else => {
-        return if (try self.tryInterpret(chain, force_fail)) |expr| {
+        return if (try self.tryInterpret(chain, force_fail)) |_| {
           // TODO: resolve accessor chain in context of expression's type and
           // return expr_chain
           unreachable;
@@ -374,7 +376,7 @@ pub const Context = struct {
   /// transitively.
   fn probeType(self: *Context, node: *data.Node) !?data.Type {
     return switch (node.data) {
-      .literal => .{.intrinsic = if (l.kind == space) .space else .literal},
+      .literal => |l| .{.intrinsic = if (l.kind == .space) .space else .literal},
       .access, .assignment => if (try self.tryInterpret(node, false)) |expr| blk: {
         node.data = .{
           .expression = expr
@@ -391,9 +393,9 @@ pub const Context = struct {
       .paragraphs => unreachable, // TODO
       .unresolved_symref => null,
       .resolved_symref => |ref| switch (ref.data) {
-        .ext_func => |ext| unreachable,
-        .ny_func => |nyf| unreachable,
-        .variable => |va| unreachable,
+        .ext_func => |_| unreachable,
+        .ny_func => |_| unreachable,
+        .variable => |_| unreachable,
         .ny_type => |t| switch (t) {
           .intrinsic => |it| switch (it) {
             .location, .definition => unreachable, // TODO
@@ -419,7 +421,7 @@ pub const Context = struct {
   fn createLiteralExpr(self: *Context, l: *data.Node.Literal, t: data.Type, e: *data.Expression) void {
     e.* = switch (t) {
       .intrinsic => |it| switch (it) {
-        .space => if (l.kind == .space) data.Expression.literal(node.pos, .{
+        .space => if (l.kind == .space) data.Expression.literal(l.pos(), .{
           .text = .{
             .t = t,
             .value = try std.mem.dupe(self.source_content, u8, l.content),
@@ -462,9 +464,9 @@ pub const Context = struct {
         .float => unreachable, // TODO
         .tenum => unreachable, // TODO
         .record => blk: {
-          self.eh.ExpectedExprOfTypeXGotY(node.pos, t,
+          self.eh.ExpectedExprOfTypeXGotY(l.pos(), t,
             .{.intrinsic = if (l.kind == .text) .literal else .space});
-          break :blk data.Expression.poison(node.pos);
+          break :blk data.Expression.poison(l.pos());
         },
       },
     };

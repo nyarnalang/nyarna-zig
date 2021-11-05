@@ -3,35 +3,35 @@ const Builder = std.build.Builder;
 
 const data_pkg = std.build.Pkg{
   .name = "data",
-  .path = "data.zig",
+  .path = .{.path = "data.zig"},
 };
 
 const types_pkg = std.build.Pkg{
   .name = "types",
-  .path = "types.zig"
+  .path = .{.path = "types.zig"}
 };
 
 const errors_pkg = std.build.Pkg{
   .name = "errors",
-  .path = "errors_generated.zig",
+  .path = .{.path = "errors_generated.zig"},
   .dependencies = &.{data_pkg},
 };
 
 const interpret_pkg = std.build.Pkg{
   .name = "interpret",
-  .path = "load/interpret.zig",
+  .path = .{.path = "load/interpret.zig"},
   .dependencies = &.{errors_pkg, data_pkg, types_pkg},
 };
 
 const lex_pkg = std.build.Pkg{
   .name = "lex",
-  .path = "load/lex.zig",
+  .path = .{.path = "load/lex.zig"},
   .dependencies = &.{data_pkg},
 };
 
 const parse_pkg = std.build.Pkg{
   .name = "parse",
-  .path = "load/parse.zig",
+  .path = .{.path = "load/parse.zig"},
   .dependencies = &.{data_pkg, types_pkg, errors_pkg},
 };
 
@@ -47,14 +47,14 @@ fn internalPackages(s: *std.build.LibExeObjStep) void {
 
 pub fn build(b: *Builder) !void {
   // TODO: use these constants
-  const mode = b.standardReleaseOptions();
-  const target = b.standardTargetOptions(.{});
+  //const mode = b.standardReleaseOptions();
+  //const target = b.standardTargetOptions(.{});
   const test_filter = b.option([]const u8, "test-filter", "filters tests when testing");
 
   var ehgen_exe = b.addExecutable("ehgen", "build/gen_errorhandler.zig");
   ehgen_exe.addPackage(.{
     .name = "errors",
-    .path = "errors.zig"
+    .path = .{.path = "errors.zig"}
   });
   var ehgen_cmd = ehgen_exe.run();
   ehgen_cmd.cwd = ".";
@@ -63,7 +63,7 @@ pub fn build(b: *Builder) !void {
   var testgen_exe = b.addExecutable("testgen", "build/gen_tests.zig");
   testgen_exe.addPackage(.{
     .name = "tml",
-    .path = "test/tml.zig",
+    .path = .{.path = "test/tml.zig"},
   });
   var testgen_cmd = testgen_exe.run();
   testgen_cmd.cwd = "test";
@@ -75,7 +75,7 @@ pub fn build(b: *Builder) !void {
   internalPackages(lex_test);
   lex_test.addPackage(.{
     .name = "testing",
-    .path = "test/testing.zig",
+    .path = .{.path = "test/testing.zig"},
     .dependencies = &internal_pkgs,
   });
   lex_test.setFilter(test_filter);
@@ -89,7 +89,7 @@ pub fn build(b: *Builder) !void {
   internalPackages(parse_test);
   parse_test.addPackage(.{
     .name = "testing",
-    .path = "test/testing.zig",
+    .path = .{.path = "test/testing.zig"},
     .dependencies = &internal_pkgs,
   });
   parse_test.setFilter(test_filter);
@@ -102,7 +102,7 @@ pub fn build(b: *Builder) !void {
   internalPackages(parse_test_orig);
   parse_test_orig.addPackage(.{
     .name = "testing",
-    .path = "test/testing.zig",
+    .path = .{.path = "test/testing.zig"},
     .dependencies = &internal_pkgs,
   });
   parse_test_orig.setFilter(test_filter);

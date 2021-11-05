@@ -3,11 +3,16 @@ const Context = @import("interpret.zig").Context;
 const data = @import("data");
 const types = @import("types");
 
+// TODO: dummy, refactor!
+pub const RuntimeContext = struct {
+  source_content: std.heap.ArenaAllocator,
+};
+
 /// A provider implements all external functions for a certain Nyarna module.
 pub const Provider = struct {
   pub const KeywordWrapper = fn(ctx: *Context, pos: data.Position, args: []*data.Value) std.mem.Allocator.Error!*data.Value;
   /// TODO: proper context type for runtime fns
-  pub const BuiltinWrapper = fn(ctx: i32, pos: data.Position, args: []*data.Value) std.mem.Allocator.Error!*data.Value;
+  pub const BuiltinWrapper = fn(ctx: *RuntimeContext, pos: data.Position, args: []*data.Value) std.mem.Allocator.Error!*data.Value;
 
   getKeyword: fn(name: []const u8) ?KeywordWrapper,
   getBuiltin: fn(name: []const u8) ?BuiltinWrapper,
@@ -67,7 +72,7 @@ pub const Provider = struct {
               data.Value.TypeVal => &v.data.typeval,
               data.Value.FuncRef => &v.data.funcref,
               data.Value.BlockHeader => &v.data.block_header,
-              data.Value => &args[index],
+              data.Value => |cval| getTypedValue(T, &cval),
               else => unreachable,
             },
             else => unreachable,
@@ -101,19 +106,6 @@ pub const Provider = struct {
                 unreachable;
               }
               if (@typeInfo(decl.data.Fn.fn_type).Fn.args[0].arg_type.? != FirstArg) continue;
-              const dummy_ns = struct {
-                fn wrapper(ctx: FirstArg, pos: data.Position, args: []*data.Value) std.mem.Allocator.Error!*data.Value {
-                  var unwrapped: Params(@typeInfo(decl.data.Fn.fn_type).Fn) = undefined;
-                  inline for (@typeInfo(@TypeOf(unwrapped)).Struct.fields) |f, index| {
-                    unwrapped[index] = switch (index) {
-                      0 => ctx,
-                      1 => pos,
-                      else => getTypedValue(f.field_type, args[index - 2]),
-                    };
-                  }
-                  return @call(.{}, @field(impls, decl.name), unwrapped);
-                }
-              };
               if (std.hash_map.eqlString(name, decl.name)) {
                 return SingleWrapper(FirstArg, decl).wrapper;
               }
@@ -128,7 +120,7 @@ pub const Provider = struct {
       }
 
       fn getBuiltin(name: []const u8) ?BuiltinWrapper {
-        return ImplWrapper(i32, BuiltinWrapper).getImpl(name);
+        return ImplWrapper(*RuntimeContext, BuiltinWrapper).getImpl(name);
       }
 
       pub fn init() Self {
@@ -144,7 +136,7 @@ pub const Provider = struct {
 };
 
 pub const Intrinsics = Provider.Wrapper(struct {
-  fn location(context: i32, pos: data.Position,
+  fn location(context: *Context, pos: data.Position,
               name: []const u8, t: ?data.Type, primary: *data.Value.Enum,
               varargs: *data.Value.Enum, varmap: *data.Value.Enum,
               mutable: *data.Value.Enum, header: ?*data.Value.BlockHeader,
@@ -207,19 +199,25 @@ pub const Intrinsics = Provider.Wrapper(struct {
     return ret;
   }
 
-  fn declare(context: *Context, pos: data.Position,
-             nsType: ?data.Type, public: *data.Value.Concat, private: *data.Value.Concat) !*data.Value {
+  fn declare(_: *RuntimeContext, _: data.Position,
+             _: ?data.Type, _: *data.Value.Concat, _: *data.Value.Concat) !*data.Value {
     unreachable;
   }
 });
 
 fn extFunc(context: *Context, name: []const u8, sig: *data.Type.Signature, p: *Provider) !data.Symbol.ExtFunc {
   const impl_index = if (sig.isKeyword()) blk: {
-    const impl = p.getKeyword(name).?;
+    const impl = p.getKeyword(name) orelse {
+      std.debug.print("don't know keyword: {s}\n", .{name});
+      unreachable;
+    };
     try context.keyword_registry.append(&context.source_content.allocator, impl);
     break :blk context.keyword_registry.items.len - 1;
   } else blk: {
-    const impl = p.getBuiltin(name).?;
+    const impl = p.getBuiltin(name) orelse {
+      std.debug.print("don't know keyword: {s}\n", .{name});
+      unreachable;
+    };
     try context.builtin_registry.append(&context.source_content.allocator, impl);
     break :blk context.builtin_registry.items.len - 1;
   };
@@ -243,7 +241,7 @@ pub fn intrinsicModule(context: *Context) !*data.Module {
   var ret = try context.source_content.allocator.create(data.Module);
   ret.root = try context.source_content.allocator.create(data.Expression);
   ret.root.* = data.Expression.literal(data.Position.intrinsic(), .void);
-  ret.symbols = try context.source_content.allocator.alloc(*data.Symbol, 2);
+  ret.symbols = try context.source_content.allocator.alloc(*data.Symbol, 1);
   var index = @as(usize, 0);
 
   var ip = Intrinsics.init();
@@ -253,7 +251,7 @@ pub fn intrinsicModule(context: *Context) !*data.Module {
   //-------------------
 
   // location
-  var b = try types.SigBuilder(.intrinsic).init(&context.source_content.allocator, 8, .{.intrinsic = .location});
+  var b = try types.SigBuilder(.intrinsic).init(&context.source_content.allocator, 8, .{.intrinsic = .ast_node});
   try b.push(&data.Value.Location.simple("name", .{.intrinsic = .literal}, null)); // TODO: identifier
   try b.push(&data.Value.Location.simple("type", .{.intrinsic = .non_callable_type}, null));
   try b.push(&data.Value.Location.simple("primary", .{.instantiated = &context.types.boolean}, null));

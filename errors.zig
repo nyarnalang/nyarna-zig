@@ -89,7 +89,7 @@ pub const Reporter = struct {
   wrongTypeErrorFn: fn(reporter: *Reporter, id: WrongTypeError, pos: data.Position, expected: data.Type, got: data.Type) void,
 };
 
-fn formatItemDescr(d: WrongItemError.ItemDescr, comptime fmt: []const u8,
+fn formatItemDescr(d: WrongItemError.ItemDescr, comptime _: []const u8,
                    options: std.fmt.FormatOptions, writer: anytype) @TypeOf(writer).Error!void {
   switch (d) {
     .token => |t| try writer.writeAll(@tagName(t)),
@@ -144,7 +144,7 @@ fn formatType(t: data.Type, comptime fmt: []const u8,
         formatParameterizedType(fmt, options, "List", &[_]data.Type{list.inner}, writer),
       .map => |map|
         formatParameterizedType(fmt, options, "Optional", &[_]data.Type{map.key, map.value}, writer),
-      .callable => |sig| unreachable,
+      .callable => |_| unreachable,
       .callable_type => writer.writeAll("Type"),
       .intersection => |inter| {
         try writer.writeByte('{');
@@ -244,7 +244,7 @@ pub const CmdLineReporter = struct {
     self.renderError("(parse) {s}", .{@tagName(id)});
   }
 
-  fn wrongItemError(reporter: *Reporter, id: WrongItemError, pos: data.Position,
+  fn wrongItemError(reporter: *Reporter, _: WrongItemError, pos: data.Position,
                     expected: []const WrongItemError.ItemDescr, got: WrongItemError.ItemDescr) void {
     const self = @fieldParentPtr(CmdLineReporter, "reporter", reporter);
     self.renderPos(.{.bold}, pos);
@@ -272,7 +272,7 @@ pub const CmdLineReporter = struct {
     self.writer.print("{s} here\n", .{id.prevOccurenceKind()}) catch unreachable;
   }
 
-  fn wrongTypeError(reporter: *Reporter, id: WrongTypeError, pos: data.Position,
+  fn wrongTypeError(reporter: *Reporter, _: WrongTypeError, pos: data.Position,
                     expected: data.Type, got: data.Type) void {
     const self = @fieldParentPtr(CmdLineReporter, "reporter", reporter);
     self.renderPos(.{.bold}, pos);

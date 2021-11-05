@@ -56,7 +56,7 @@ pub const File = struct {
   }
 
   pub fn load(name: []const u8, input: []const u8) !File {
-    var lines = std.mem.split(input, "\n");
+    var lines = std.mem.split(u8, input, "\n");
 
     var line = lines.next() orelse {
       return failWith(name, "missing header", .{});

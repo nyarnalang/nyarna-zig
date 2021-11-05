@@ -192,7 +192,7 @@ pub const SymbolDefs = struct {
         },
         .after_name => switch (item) {
           .space => return .none,
-          .literal => |name| {
+          .literal => {
             self.ctx.eh.MissingToken(pos, self.afterNameItems(), .{.token = .identifier});
             self.state = .names;
           },

@@ -8,9 +8,13 @@ pub fn main() !void {
     \\const std = @import("std");
     \\
     \\const data = @import("data.zig");
-    \\pub usingnamespace @import("errors.zig");
+    \\const errors = @import("errors.zig");
+    \\pub usingnamespace errors;
     \\
     \\pub const Handler = struct {
+    \\  const Reporter = errors.Reporter;
+    \\  const WrongItemError = errors.WrongItemError;
+    \\
     \\  count: usize = 0,
     \\  reporter: *Reporter,
     \\

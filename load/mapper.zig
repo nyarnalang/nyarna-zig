@@ -12,6 +12,9 @@ pub const Mapper = struct {
       kind: ArgKind,
     },
     config: bool,
+    // true iff kind in {direct,primary}. exists to preserve this fact after
+    // resolving the argument to an index.
+    direct: bool,
   };
 
   pub const ProtoArgFlag = enum {
@@ -70,8 +73,9 @@ pub const SignatureMapper = struct {
     };
   }
 
-  fn map(mapper: *Mapper, pos: data.Position,
+  fn map(mapper: *Mapper, _: data.Position,
          input: Mapper.ArgKind, flag: Mapper.ProtoArgFlag) ?Mapper.Cursor {
+    // TODO: process ProtoArgFlag (?)
     const self = @fieldParentPtr(SignatureMapper, "mapper", mapper);
 
     switch (input) {
@@ -80,7 +84,8 @@ pub const SignatureMapper = struct {
         for (self.signature.parameter) |i, p| {
           if ((p.capture != .varmap or input == .direct) and
               std.mem.eql(u8, name, p.name)) {
-            return Cursor{.param = .{.index = i}, .direct = input == .direct};
+            return Mapper.Cursor{.param = .{.index = i},
+              .config = flag == .block_with_config, .direct = input == .named};
           }
         }
         // TODO: errmsg?
@@ -89,7 +94,8 @@ pub const SignatureMapper = struct {
       .primary => {
         self.cur_pos = null;
         if (self.signature.primary) |index| {
-          return Mapper.Cursor{.index = index, .direct = false};
+          return Mapper.Cursor{.index = index,
+            .config = flag == .block_with_config, .direct = true};
         } else {
           // TODO: errmsg?
           return null;
@@ -101,7 +107,8 @@ pub const SignatureMapper = struct {
             if (self.signature.parameter[index].capture != .varargs) {
               self.cur_pos = index + 1;
             }
-            return Cursor{.param = .{.index = index}, .direct = false};
+            return Mapper.Cursor{.param = .{.index = index},
+              .config = flag == .block_with_config, .direct = false};
           } else {
             // TODO: errmsg
             return null;
@@ -130,10 +137,10 @@ pub const SignatureMapper = struct {
     };
   }
 
-  fn push(mapper: *Mapper, alloc: *self.mem.Allocator, at: Cursor, content: *data.Node) !void {
+  fn push(mapper: *Mapper, _: *std.mem.Allocator, at: Mapper.Cursor, content: *data.Node) !void {
     const self = @fieldParentPtr(SignatureMapper, "mapper", mapper);
     const param = &self.signature.parameter[at.index];
-    const target_type = if (c.direct) param.ptype else switch (param.capture) {
+    const target_type = if (at.direct) param.ptype else switch (param.capture) {
       .varargs => unreachable,
       .varmap => unreachable,
       else => param.ptype,
@@ -145,12 +152,12 @@ pub const SignatureMapper = struct {
       // TODO: create AST expression
       unreachable;
     } else if (try self.context.associate(content, param.ptype)) |expr| {
-      context.data = .{.expression = expr};
+      self.context.data = .{.expression = expr};
     }
     switch (param.capture) {
       .varargs => unreachable,
       .varmap => unreachable,
-      else => self.args[c.index] = content,
+      else => self.args[at.index] = content,
     }
   }
 
@@ -189,20 +196,21 @@ pub const CollectingMapper = struct {
     };
   }
 
-  fn map(mapper: *Mapper, pos: data.Position,
+  fn map(mapper: *Mapper, _: data.Position,
          input: Mapper.ArgKind, flag: Mapper.ProtoArgFlag) ?Mapper.Cursor {
     const self = @fieldParentPtr(CollectingMapper, "mapper", mapper);
     if (flag != .flow and self.first_block == null) {
       self.first_block = self.items.items.len;
     }
-    return Mapper.Cursor{.param = .{.kind = input}, .config = flag == .block_with_config};
+    return Mapper.Cursor{.param = .{.kind = input}, .config = flag == .block_with_config,
+      .direct = input.isDirect()};
   }
 
-  fn config(mapper: *Mapper, at: Mapper.Cursor) ?*data.BlockConfig {
+  fn config(_: *Mapper, _: Mapper.Cursor) ?*data.BlockConfig {
     return null;
   }
 
-  fn paramType(mapper: *Mapper, at: Mapper.Cursor) ?data.Type {
+  fn paramType(_: *Mapper, _: Mapper.Cursor) ?data.Type {
     return null;
   }
 
@@ -247,7 +255,7 @@ pub const AssignmentMapper = struct {
     };
   }
 
-  pub fn map(mapper: *Mapper, pos: data.Position,
+  pub fn map(mapper: *Mapper, _: data.Position,
              input: Mapper.ArgKind, flag: Mapper.ProtoArgFlag) ?Mapper.Cursor {
     const self = @fieldParentPtr(AssignmentMapper, "mapper", mapper);
     if (input == .named or input == .direct) {
@@ -257,20 +265,21 @@ pub const AssignmentMapper = struct {
       // TODO: report error
       return null;
     }
-    return Mapper.Cursor{.param = .{.index = 0}, .config = flag == .block_with_config};
+    return Mapper.Cursor{.param = .{.index = 0}, .config = flag == .block_with_config,
+      .direct = input == .primary};
   }
 
-  fn push(mapper: *Mapper, alloc: *std.mem.Allocator, at: Mapper.Cursor, content: *data.Node) !void {
+  fn push(mapper: *Mapper, _: *std.mem.Allocator, _: Mapper.Cursor, content: *data.Node) !void {
     const self = @fieldParentPtr(AssignmentMapper, "mapper", mapper);
     self.replacement = content;
   }
 
-  fn config(mapper: *Mapper, at: Mapper.Cursor) ?*data.BlockConfig {
+  fn config(_: *Mapper, _: Mapper.Cursor) ?*data.BlockConfig {
     // TODO: block config on variable definition
     return null;
   }
 
-  fn paramType(mapper: *Mapper, at: Mapper.Cursor) ?data.Type {
+  fn paramType(_: *Mapper, _: Mapper.Cursor) ?data.Type {
     // TODO: param type of subject
     return null;
   }

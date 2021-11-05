@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const data = @import("data");
 const lex = @import("lex.zig");
 const Context = @import("interpret.zig").Context;
@@ -81,7 +82,7 @@ pub const Parser = struct {
       c.cur_cursor = .not_pushed;
     }
 
-    fn startUnresolvedCall(c: *Command, alloc: *std.mem.Allocator) !void {
+    fn startUnresolvedCall(c: *Command, _: *std.mem.Allocator) !void {
       const subject = c.info.unknown;
       c.info = .{.unresolved_call = mapper.CollectingMapper.init(subject)};
       c.mapper = &c.info.unresolved_call.mapper;
@@ -308,8 +309,8 @@ pub const Parser = struct {
     const file = try std.fs.cwd().openFile(path, .{});
     defer file.close();
     const file_contents = try std.fs.cwd().readFileAlloc(std.testing.allocator, path, (try file.stat()).size + 4);
-    file_contents[file_contents.len - 4..] = "\x04\x04\x04\x04";
-    return self.parseSource(&Source{
+    std.mem.copy(u8, file_contents[(file_contents.len - 4)..], "\x04\x04\x04\x04");
+    return self.parseSource(&data.Source{
       .content = file_contents,
       .offsets = .{.line = 0, .column = 0},
       .name = path,
@@ -361,7 +362,7 @@ pub const Parser = struct {
   inline fn advance(self: *Parser) void {
     while (true) {
       self.cur_start = self.l.recent_end;
-      (switch (self.l.next() catch |e| blk: {
+      (switch (self.l.next() catch blk: {
         const start = self.cur_start;
         const next = while (true) {
           break self.l.next() catch continue;
@@ -388,7 +389,7 @@ pub const Parser = struct {
         }
       })(&self.ctx().eh, self.l.walker.posFrom(self.cur_start));
     }
-    if (std.builtin.mode == .Debug) {
+    if (builtin.mode == .Debug) {
       if (@enumToInt(self.cur) >= @enumToInt(data.Token.skipping_call_id)) {
         std.debug.print("  << skipping_call_id({})\n", .{@enumToInt(self.cur) - @enumToInt(data.Token.skipping_call_id) + 1});
       } else {
@@ -401,7 +402,7 @@ pub const Parser = struct {
   /// if false is returned, self.cur must be considered undefined.
   inline fn getNext(self: *Parser) bool {
     self.cur_start = self.l.recent_end;
-    (switch (self.l.next() catch |e| {
+    (switch (self.l.next() catch {
       self.ctx().eh.InvalidUtf8Encoding(self.l.walker.posFrom(self.cur_start));
       return false;
     }) {
@@ -421,7 +422,7 @@ pub const Parser = struct {
         if (@enumToInt(t) > @enumToInt(data.Token.skipping_call_id))
           unreachable;
         self.cur = t;
-        if (std.builtin.mode == .Debug) {
+        if (builtin.mode == .Debug) {
           std.debug.print("  << {s}\n", .{@tagName(self.cur)});
         }
         return true;
@@ -434,7 +435,7 @@ pub const Parser = struct {
     var lvl = &self.levels.items[self.levels.items.len - 1];
     var parent = &self.levels.items[self.levels.items.len - 2];
     const lvl_node = try lvl.finalize(self);
-    if (std.builtin.mode == .Debug) {
+    if (builtin.mode == .Debug) {
       if (@enumToInt(self.cur) >= @enumToInt(data.Token.skipping_call_id)) {
         std.debug.print("skipping_call_id({}): pushing {s} into command {s}\n",
             .{@enumToInt(self.cur) - @enumToInt(data.Token.skipping_call_id) + 1,
@@ -685,16 +686,16 @@ pub const Parser = struct {
                 .resolved_symref, .unresolved_symref, .access => {
                   const res = try self.ctx().resolveChain(target, false);
                   switch (res) {
-                    .var_chain => |chain| {
+                    .var_chain => |_| {
                       unreachable; // TODO
                     },
-                    .func_ref => |func| {
+                    .func_ref => |_| {
                       unreachable; // TODO
                     },
-                    .expr_chain => |chain| {
+                    .expr_chain => |_| {
                       unreachable; // TODO
                     },
-                    .type_ref => |t| {
+                    .type_ref => |_| {
                       unreachable; // TODO
                     },
                     .failed => {
@@ -739,7 +740,6 @@ pub const Parser = struct {
             std.debug.print("  … swallowing.\n", .{});
             self.state = if (self.curLevel().syntax_proc != null) .special else .default;
           } else {
-            const pos = self.ctx().input.at(self.cur_start);
             while (self.cur == .space or self.cur == .indent) self.advance();
             if (self.cur == .block_name_sep) {
               std.debug.print("  … no primary block.\n", .{});

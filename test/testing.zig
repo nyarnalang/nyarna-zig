@@ -61,11 +61,11 @@ pub fn lexTest(f: *tml.File) !void {
   }
 }
 
-fn formatTypeName(t: data.Type, comptime fmt: []const u8,
-                  options: std.fmt.FormatOptions, writer: anytype) !void {
+fn formatTypeName(t: data.Type, comptime _: []const u8,
+                  _: std.fmt.FormatOptions, writer: anytype) !void {
   switch (t) {
     .intrinsic => |i| try writer.writeAll(@tagName(i)),
-    .structural => |s| unreachable,
+    .structural => |_| unreachable,
     .instantiated => |i| try writer.writeAll(if (i.name) |sym| sym.name else "<anon>"),
   }
 }
@@ -75,8 +75,8 @@ const HeaderWithContext = struct {
   context: *Context,
 };
 
-fn formatBlockHeader(hc: HeaderWithContext, comptime fmt: []const u8,
-                     options: std.fmt.FormatOptions, writer: anytype) !void {
+fn formatBlockHeader(hc: HeaderWithContext, comptime _: []const u8,
+                     _: std.fmt.FormatOptions, writer: anytype) !void {
   if (hc.header.config) |config| {
     try writer.writeAll(":<");
     var first = true;
@@ -253,22 +253,22 @@ fn AstEmitter(Handler: anytype) type {
           }
           try constr.pop();
         },
-        .ext_call => |ec| {
+        .ext_call => |_| {
           unreachable;
         },
-        .call => |c| {
+        .call => |_| {
           unreachable;
         },
-        .assignment => |ass| {
+        .assignment => |_| {
           unreachable;
         },
-        .access => |acc| {
+        .access => |_| {
           unreachable;
         },
         .literal => |l| {
           try self.processValue(&l.value);
         },
-        .var_retrieval => |vr| {
+        .var_retrieval => |_| {
           unreachable;
         },
         .poison => try self.emitLine("=POISON", .{}),
@@ -285,15 +285,15 @@ fn AstEmitter(Handler: anytype) type {
           else {
             const tc = try self.pushWithKey("TYPE", "", @tagName(i.data));
             switch (i.data) {
-              .textual => |txt| unreachable,
-              .numeric => |num| unreachable,
-              .float => |fl| unreachable,
+              .textual => |_| unreachable,
+              .numeric => |_| unreachable,
+              .float => |_| unreachable,
               .tenum => |en| {
                 for (en.values.entries.items(.key)) |*key| {
                   try self.emitLine("=ITEM {s}", .{key});
                 }
               },
-              .record => |rec| unreachable,
+              .record => |_| unreachable,
             }
             try tc.pop();
           }
@@ -307,39 +307,39 @@ fn AstEmitter(Handler: anytype) type {
           const t = std.fmt.Formatter(formatTypeName){.data = txt.t};
           try self.emitLine("=TEXT {} \"{}\"", .{t, std.zig.fmtEscapes(txt.value)});
         },
-        .number => |num| {
+        .number => |_| {
           unreachable;
         },
-        .float => |fl| {
+        .float => |_| {
           unreachable;
         },
         .enumval => |ev| {
           const t = std.fmt.Formatter(formatTypeName){.data = ev.t.typedef()};
           try self.emitLine("=ENUM {} \"{s}\"", .{t, ev.t.values.entries.items(.key)[ev.index]});
         },
-        .record => |rec| {
+        .record => |_| {
           unreachable;
         },
-        .concat => |con| {
+        .concat => |_| {
           unreachable;
         },
-        .list => |lst| {
+        .list => |_| {
           unreachable;
         },
-        .map => |map| {
+        .map => |_| {
           unreachable;
         },
-        .location => |loc| {
+        .location => |_| {
           unreachable;
         },
-        .definition => |def| {
+        .definition => |_| {
           unreachable;
         },
-        .ast => |ast| {
+        .ast => |_| {
           unreachable;
         },
         .typeval => |tv| try self.processType(tv.t),
-        .funcref => |fr| unreachable,
+        .funcref => |_| unreachable,
         .poison => try self.emitLine("=POISON", .{}),
         .void => try self.emitLine("=VOID", .{}),
         .block_header => |*h| {
@@ -356,7 +356,7 @@ pub fn parseTest(f: *tml.File) !void {
   try input.content.appendSlice(f.alloc(), "\x04\x04\x04\x04");
   const expected_data = f.items.get("rawast").?;
   var checker = struct {
-    expected_iter: std.mem.TokenIterator,
+    expected_iter: std.mem.TokenIterator(u8),
     line: usize,
     full_output: std.ArrayListUnmanaged(u8),
     failed: bool,
@@ -389,7 +389,7 @@ pub fn parseTest(f: *tml.File) !void {
         }
       }
     }
-  }{.expected_iter = std.mem.tokenize(expected_data.content.items, "\n"),
+  }{.expected_iter = std.mem.tokenize(u8, expected_data.content.items, "\n"),
     .line = expected_data.line_offset + 1,
     .full_output = .{}, .failed = false};
   defer checker.full_output.deinit(std.testing.allocator);

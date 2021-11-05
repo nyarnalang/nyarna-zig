@@ -1,6 +1,6 @@
 const std = @import("std");
 
-pub const Category = enum {
+pub const Category = enum(u5) {
   Lu = 0, Ll = 1, Lt = 2, Lm = 3, Lo = 4,
   Mn = 5, Mc = 6, Me = 7,
   Nd = 8, Nl = 9, No = 10,

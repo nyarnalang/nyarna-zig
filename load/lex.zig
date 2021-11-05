@@ -283,7 +283,7 @@ pub const Lexer = struct {
     return ret;
   }
 
-  pub fn deinit(l: *Lexer) void {
+  pub fn deinit(_: *Lexer) void {
     // nothing to do – all allocated data managed by upstream Context.
   }
 
@@ -396,8 +396,6 @@ pub const Lexer = struct {
       l.cur_stored = l.walker.nextInline();
       return e;
     };
-    var seen_text = false;
-    var recent_start = l.walker.before;
     while (true) {
       switch (l.state) {
         .indent_capture, .special_syntax_indent_capture => {
@@ -880,7 +878,6 @@ pub const Lexer = struct {
   }
 
   inline fn readLiteral(l: *Lexer, cur: *u21, comptime ctx: Surrounding) void {
-    const start = l.walker.before.byte_offset;
     while (true) {
       switch (cur.*) {
         0...32 => break,
@@ -915,7 +912,6 @@ pub const Lexer = struct {
   }
 
   inline fn genCommand(l: *Lexer, cur: *u21) ContentResult {
-    const start = l.walker.before.byte_offset;
     l.code_point = cur.*;
     cur.* = l.walker.nextInline() catch |e| {
       l.cur_stored = e;
@@ -1006,7 +1002,6 @@ pub const Lexer = struct {
   }
 
   fn readNumber(l: *Lexer, cur: *u21) void {
-    const num_start = l.walker.before.byte_offset;
     l.code_point = cur.* - '0';
     while (true) {
       cur.* = l.walker.nextInline() catch |e| {
@@ -1079,7 +1074,7 @@ pub const Lexer = struct {
     while (cur) |val| {
       if (val != '\t' and val != ' ') break;
       cur = l.walker.nextInline();
-    } else |err| {}
+    } else |_| {}
     const start = l.walker.before.byte_offset;
     while (true) {
       const val = cur catch break;
@@ -1090,7 +1085,7 @@ pub const Lexer = struct {
     while (cur) |val| {
       if (val != '\t' and val != ' ') break;
       cur = l.walker.nextInline();
-    } else |err| {}
+    } else |_| {}
     var ret: Token = undefined;
     l.cur_stored = cur;
     if (std.mem.eql(u8, l.level.id, l.recent_id)) {

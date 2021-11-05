@@ -319,7 +319,11 @@ pub const Node = struct {
       named: []const u8,
       direct: []const u8,
       primary,
-      position
+      position,
+
+      pub inline fn isDirect(self: ArgKind) bool {
+        return self == .direct or self == .primary;
+      }
     };
     pub const ProtoArg = struct {
       kind: ArgKind,
@@ -365,7 +369,7 @@ pub const Node = struct {
       Literal => offset(Data, "literal"),
       Concatenation => offset(Data, "concatenation"),
       Paragraphs => offset(Data, "paragraphs"),
-      UnresolvedSymref => offset(Data, "unresolved_symref"),
+      UnresolvedSymRef => offset(Data, "unresolved_symref"),
       *Symbol => offset(Data, "resolved_symref"),
       UnresolvedCall => offset(Data, "unresolved_call"),
       ResolvedCall => offset(Data, "resolved_call"),
@@ -1100,8 +1104,8 @@ pub const Value = struct {
       .concat => |con| con.t.typedef(),
       .list => |list| list.t.typedef(),
       .map => |map| map.t.typedef(),
-      .typeval => |tv| unreachable,
-      .funcref => |fr| unreachable,
+      .typeval => |_| unreachable,
+      .funcref => |_| unreachable,
       .location => .{.intrinsic = .location},
       .definition => .{.intrinsic = .definition},
       .ast => .{.intrinsic = .ast_node},
