@@ -237,6 +237,7 @@ fn AstEmitter(Handler: anytype) type {
           try rcall.pop();
         },
         .expression => |e| try self.processExpr(e),
+        .poisonNode => try self.emitLine("=POISON", .{}),
         .voidNode => try self.emitLine("=VOID", .{}),
       }
     }

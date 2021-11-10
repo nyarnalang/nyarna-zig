@@ -61,13 +61,14 @@ pub const Context = struct {
       .eh = .{
         .reporter = reporter,
       },
-      .types = try types.Lattice.init(allocator),
+      .types = undefined,
       .syntax_registry = .{syntaxes.SymbolDefs.locations(), syntaxes.SymbolDefs.definitions()},
       .keyword_registry = .{},
       .builtin_registry = .{},
       .intrinsics = undefined,
     };
     errdefer ret.deinit().deinit();
+    ret.types = try types.Lattice.init(&ret.source_content.allocator);
     ret.intrinsics = try lib.intrinsicModule(&ret);
     try ret.addNamespace(&ret.temp_nodes.allocator, '\\');
     return ret;

@@ -18,6 +18,9 @@
         =LIT text "Money"
       -ARG
       +ARG
+        =ENUM Boolean "false"
+      -ARG
+      +ARG
         +UCALL
           +TARGET
             =SYMREF [0]numeric
@@ -27,9 +30,6 @@
           -PROTO
         -UCALL
       -ARG
-      +ARG
-        =ENUM Boolean "false"
-      -ARG
     -RCALL
     +RCALL
       +TARGET
@@ -37,6 +37,9 @@
       -TARGET
       +ARG
         =LIT text "PostalNumber"
+      -ARG
+      +ARG
+        =ENUM Boolean "false"
       -ARG
       +ARG
         +UCALL
@@ -48,9 +51,6 @@
           -PROTO
         -UCALL
       -ARG
-      +ARG
-        =ENUM Boolean "false"
-      -ARG
     -RCALL
     +RCALL
       +TARGET
@@ -58,6 +58,9 @@
       -TARGET
       +ARG
         =LIT text "TrafficLight"
+      -ARG
+      +ARG
+        =ENUM Boolean "true"
       -ARG
       +ARG
         +UCALL
@@ -74,9 +77,6 @@
             =LIT text "green"
           -PROTO
         -UCALL
-      -ARG
-      +ARG
-        =ENUM Boolean "true"
       -ARG
     -RCALL
   -PROTO

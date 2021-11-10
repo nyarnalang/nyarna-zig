@@ -355,6 +355,7 @@ pub const Node = struct {
     unresolved_call: UnresolvedCall,
     resolved_call: ResolvedCall,
     expression: *Expression,
+    poisonNode,
     voidNode,
   };
 
@@ -382,6 +383,27 @@ pub const Node = struct {
   /// calculates the position from a pointer to any node kind
   fn posOf(it: anytype) Position {
     return parent(it).pos;
+  }
+
+  pub fn poison(allocator: *std.mem.Allocator, pos: Position) !*Node {
+    var ret = try allocator.create(Node);
+    ret.* = .{
+      .pos = pos,
+      .data = .poisonNode,
+    };
+    return ret;
+  }
+
+  pub fn valueNode(allocator: *std.mem.Allocator, expr: *Expression, pos: Position, data: Value.Data) !*Node {
+    expr.* = Expression.literal(pos, data);
+    var ret = try allocator.create(Node);
+    ret.* = .{
+      .pos = pos,
+      .data = .{
+        .expression = expr,
+      },
+    };
+    return ret;
   }
 };
 
@@ -1015,7 +1037,7 @@ pub const Value = struct {
   pub const Definition = struct {
     name: []const u8,
     content: *Ast,
-    root: bool,
+    root: ?Position,
 
     pub fn value(self: *@This()) *Value {
       return Value.parent(self);
@@ -1104,7 +1126,7 @@ pub const Value = struct {
       .concat => |con| con.t.typedef(),
       .list => |list| list.t.typedef(),
       .map => |map| map.t.typedef(),
-      .typeval => |_| unreachable,
+      .typeval => .{.intrinsic = .non_callable_type}, // TODO
       .funcref => |_| unreachable,
       .location => .{.intrinsic = .location},
       .definition => .{.intrinsic = .definition},

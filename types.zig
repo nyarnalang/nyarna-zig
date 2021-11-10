@@ -110,7 +110,7 @@ pub const Lattice = struct {
         .next = null,
         .children = null,
       },
-      .type_constructors = try alloc.alloc(data.Symbol.ExtFunc, 1),
+      .type_constructors = try alloc.alloc(data.Symbol.ExtFunc, 2),
       .boolean = .{.at = data.Position.intrinsic(), .name = null, .data = .{.tenum = undefined}},
     };
     ret.boolean.data.tenum = try data.Type.Enum.predefBoolean(alloc);

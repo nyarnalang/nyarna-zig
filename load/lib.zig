@@ -10,7 +10,7 @@ pub const RuntimeContext = struct {
 
 /// A provider implements all external functions for a certain Nyarna module.
 pub const Provider = struct {
-  pub const KeywordWrapper = fn(ctx: *Context, pos: data.Position, args: []*data.Value) std.mem.Allocator.Error!*data.Value;
+  pub const KeywordWrapper = fn(ctx: *Context, pos: data.Position, args: []*data.Value) std.mem.Allocator.Error!*data.Node;
   /// TODO: proper context type for runtime fns
   pub const BuiltinWrapper = fn(ctx: *RuntimeContext, pos: data.Position, args: []*data.Value) std.mem.Allocator.Error!*data.Value;
 
@@ -80,9 +80,10 @@ pub const Provider = struct {
         };
       }
 
-      fn SingleWrapper(comptime FirstArg: type, comptime decl: std.builtin.TypeInfo.Declaration) type {
+      fn SingleWrapper(comptime FirstArg: type, comptime decl: std.builtin.TypeInfo.Declaration,
+                       comptime Ret: type) type {
         return struct {
-          fn wrapper(ctx: FirstArg, pos: data.Position, args: []*data.Value) std.mem.Allocator.Error!*data.Value {
+          fn wrapper(ctx: FirstArg, pos: data.Position, args: []*data.Value) std.mem.Allocator.Error!*Ret {
             var unwrapped: Params(@typeInfo(decl.data.Fn.fn_type).Fn) = undefined;
             inline for (@typeInfo(@TypeOf(unwrapped)).Struct.fields) |f, index| {
               unwrapped[index] = switch (index) {
@@ -96,7 +97,8 @@ pub const Provider = struct {
         };
       }
 
-      fn ImplWrapper(comptime FirstArg: type, comptime F: type) type {
+      fn ImplWrapper(comptime keyword: bool, comptime F: type) type {
+        const FirstArg = if (keyword) *Context else *RuntimeContext;
         return struct {
           fn getImpl(name: []const u8) ?F {
             inline for (decls) |decl| {
@@ -107,7 +109,7 @@ pub const Provider = struct {
               }
               if (@typeInfo(decl.data.Fn.fn_type).Fn.args[0].arg_type.? != FirstArg) continue;
               if (std.hash_map.eqlString(name, decl.name)) {
-                return SingleWrapper(FirstArg, decl).wrapper;
+                return SingleWrapper(FirstArg, decl, if (keyword) data.Node else data.Value).wrapper;
               }
             }
             return null;
@@ -116,11 +118,11 @@ pub const Provider = struct {
       }
 
       fn getKeyword(name: []const u8) ?KeywordWrapper {
-        return ImplWrapper(*Context, KeywordWrapper).getImpl(name);
+        return ImplWrapper(true, KeywordWrapper).getImpl(name);
       }
 
       fn getBuiltin(name: []const u8) ?BuiltinWrapper {
-        return ImplWrapper(*RuntimeContext, BuiltinWrapper).getImpl(name);
+        return ImplWrapper(false, BuiltinWrapper).getImpl(name);
       }
 
       pub fn init() Self {
@@ -140,16 +142,13 @@ pub const Intrinsics = Provider.Wrapper(struct {
               name: []const u8, t: ?data.Type, primary: *data.Value.Enum,
               varargs: *data.Value.Enum, varmap: *data.Value.Enum,
               mutable: *data.Value.Enum, header: ?*data.Value.BlockHeader,
-              default: ?*data.Value.Ast) !*data.Value {
-    var ret = try context.source_content.allocator.create(data.Value);
-
+              default: ?*data.Value.Ast) !*data.Node {
     var expr = if (default) |node| blk: {
       var val = try context.interpret(node.root);
       if (t) |given_type| {
         if (!context.types.lesserEqual(val.expected_type, given_type) and !val.expected_type.is(.poison)) {
           context.eh.ExpectedExprOfTypeXGotY(val.pos, given_type, val.expected_type);
-          ret.* = .{.origin = pos, .data = .poison};
-          return ret;
+          return data.Node.poison(&context.temp_nodes.allocator, pos);
         }
       }
       break :blk val;
@@ -166,37 +165,43 @@ pub const Intrinsics = Provider.Wrapper(struct {
       if (varargs.index == 1) {
         context.eh.IncompatibleFlag("varmap",
           varmap.value().origin, varargs.value().origin);
-        ret.* = .{.origin = pos, .data = .poison};
-        return ret;
+        return data.Node.poison(&context.temp_nodes.allocator, pos);
       } else if (mutable.index == 1) {
         context.eh.IncompatibleFlag("varmap",
           varmap.value().origin, mutable.value().origin);
-        ret.* = .{.origin = pos, .data = .poison};
-        return ret;
+        return data.Node.poison(&context.temp_nodes.allocator, pos);
       }
     } else if (varargs.index == 1) if (mutable.index == 1) {
       context.eh.IncompatibleFlag("mutable",
         mutable.value().origin, varargs.value().origin);
-      ret.* = .{.origin = pos, .data = .poison};
-      return ret;
+      return data.Node.poison(&context.temp_nodes.allocator, pos);
     };
 
-    ret.* = .{
-      .origin = pos,
-      .data = .{
-        .location = .{
-          .name = name,
-          .tloc = ltype,
-          .default = expr,
-          .primary = if (primary.index == 1) primary.value().origin else null,
-          .varargs = if (varargs.index == 1) varargs.value().origin else null,
-          .varmap  = if (varmap.index  == 1)  varmap.value().origin else null,
-          .mutable = if (mutable.index == 1) mutable.value().origin else null,
-          .block_header = header,
-        },
+    var lit_expr = try context.source_content.allocator.create(data.Expression);
+    return data.Node.valueNode(&context.temp_nodes.allocator, lit_expr, pos, .{
+      .location = .{
+        .name = name,
+        .tloc = ltype,
+        .default = expr,
+        .primary = if (primary.index == 1) primary.value().origin else null,
+        .varargs = if (varargs.index == 1) varargs.value().origin else null,
+        .varmap  = if (varmap.index  == 1)  varmap.value().origin else null,
+        .mutable = if (mutable.index == 1) mutable.value().origin else null,
+        .block_header = header,
       },
-    };
-    return ret;
+    });
+  }
+
+  fn definition(context: *Context, pos: data.Position, name: []const u8,
+                root: *data.Value.Enum, node: *data.Value.Ast) !*data.Node {
+    var lit_expr = try context.source_content.allocator.create(data.Expression);
+    return data.Node.valueNode(&context.temp_nodes.allocator, lit_expr, pos, .{
+      .definition = .{
+        .name = name,
+        .content = node,
+        .root = if (root.index == 1) root.value().origin else null,
+      },
+    });
   }
 
   fn declare(_: *RuntimeContext, _: data.Position,
@@ -258,13 +263,20 @@ pub fn intrinsicModule(context: *Context) !*data.Module {
   try b.push(&data.Value.Location.simple("varargs", .{.instantiated = &context.types.boolean}, null));
   try b.push(&data.Value.Location.simple("varmap", .{.instantiated = &context.types.boolean}, null));
   try b.push(&data.Value.Location.simple("mutable", .{.instantiated = &context.types.boolean}, null));
-  try b.push(&data.Value.Location.simple("header", .{.intrinsic = .block_header}, null));
+  try b.push(&data.Value.Location.simple("header", (try context.types.optional(.{.intrinsic = .block_header})).?, null));
   try b.push(&data.Value.Location.primary("default", (try context.types.optional(.{.intrinsic = .ast_node})).?, null));
   context.types.type_constructors[0] = try extFunc(context, "location", b.finish(), &ip.provider);
 
-  // //-------------------
-  // // external symbols
-  // //-------------------
+  // definition
+  b = try types.SigBuilder(.intrinsic).init(&context.source_content.allocator, 3, .{.intrinsic = .ast_node});
+  try b.push(&data.Value.Location.simple("name", .{.intrinsic = .literal}, null)); // TODO: identifier
+  try b.push(&data.Value.Location.simple("root", .{.instantiated = &context.types.boolean}, null));
+  try b.push(&data.Value.Location.simple("item", .{.intrinsic = .ast_node}, null));
+  context.types.type_constructors[1] = try extFunc(context, "definition", b.finish(), &ip.provider);
+
+  //-------------------
+  // external symbols
+  //-------------------
 
   b = try types.SigBuilder(.intrinsic).init(
     &context.source_content.allocator, 3, .{.intrinsic = .void});
