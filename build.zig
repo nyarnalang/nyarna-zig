@@ -1,50 +1,6 @@
 const std = @import("std");
 const Builder = std.build.Builder;
 
-const data_pkg = std.build.Pkg{
-  .name = "data",
-  .path = .{.path = "data.zig"},
-};
-
-const types_pkg = std.build.Pkg{
-  .name = "types",
-  .path = .{.path = "types.zig"}
-};
-
-const errors_pkg = std.build.Pkg{
-  .name = "errors",
-  .path = .{.path = "errors_generated.zig"},
-  .dependencies = &.{data_pkg},
-};
-
-const interpret_pkg = std.build.Pkg{
-  .name = "interpret",
-  .path = .{.path = "load/interpret.zig"},
-  .dependencies = &.{errors_pkg, data_pkg, types_pkg},
-};
-
-const lex_pkg = std.build.Pkg{
-  .name = "lex",
-  .path = .{.path = "load/lex.zig"},
-  .dependencies = &.{data_pkg},
-};
-
-const parse_pkg = std.build.Pkg{
-  .name = "parse",
-  .path = .{.path = "load/parse.zig"},
-  .dependencies = &.{data_pkg, types_pkg, errors_pkg},
-};
-
-const internal_pkgs = [_]std.build.Pkg{
-  data_pkg, types_pkg, errors_pkg, lex_pkg, parse_pkg, interpret_pkg
-};
-
-fn internalPackages(s: *std.build.LibExeObjStep) void {
-  for (internal_pkgs) |pkg| {
-    s.addPackage(pkg);
-  }
-}
-
 pub fn build(b: *Builder) !void {
   // TODO: use these constants
   //const mode = b.standardReleaseOptions();
@@ -52,10 +8,7 @@ pub fn build(b: *Builder) !void {
   const test_filter = b.option([]const u8, "test-filter", "filters tests when testing");
 
   var ehgen_exe = b.addExecutable("ehgen", "build/gen_errorhandler.zig");
-  ehgen_exe.addPackage(.{
-    .name = "errors",
-    .path = .{.path = "errors.zig"}
-  });
+  ehgen_exe.main_pkg_path = ".";
   var ehgen_cmd = ehgen_exe.run();
   ehgen_cmd.cwd = ".";
   ehgen_cmd.step.dependOn(&ehgen_exe.step);
@@ -69,15 +22,28 @@ pub fn build(b: *Builder) !void {
   testgen_cmd.cwd = "test";
   testgen_cmd.step.dependOn(&testgen_exe.step);
 
+  const errors_pkg = std.build.Pkg{
+    .name = "errors",
+    .path = .{.path = "errors_generated.zig"},
+  };
+
+  const nyarna_pkg = std.build.Pkg{
+    .name = "nyarna",
+    .path = .{.path = "nyarna.zig"},
+    .dependencies = &.{errors_pkg},
+  };
+
+  const testing_pkg = std.build.Pkg{
+    .name = "testing",
+    .path = .{.path = "test/testing.zig"},
+    .dependencies = &.{nyarna_pkg},
+  };
+
   var lex_test = b.addTest("test/lex_test.zig");
   lex_test.step.dependOn(&testgen_cmd.step);
   lex_test.step.dependOn(&ehgen_cmd.step);
-  internalPackages(lex_test);
-  lex_test.addPackage(.{
-    .name = "testing",
-    .path = .{.path = "test/testing.zig"},
-    .dependencies = &internal_pkgs,
-  });
+  lex_test.addPackage(nyarna_pkg);
+  lex_test.addPackage(testing_pkg);
   lex_test.setFilter(test_filter);
 
   var lex_test_step = b.step("lexTest", "Run lexer tests");
@@ -86,12 +52,7 @@ pub fn build(b: *Builder) !void {
   var parse_test = b.addTest("test/parse_test.zig");
   parse_test.step.dependOn(&testgen_cmd.step);
   parse_test.step.dependOn(&ehgen_cmd.step);
-  internalPackages(parse_test);
-  parse_test.addPackage(.{
-    .name = "testing",
-    .path = .{.path = "test/testing.zig"},
-    .dependencies = &internal_pkgs,
-  });
+  parse_test.addPackage(testing_pkg);
   parse_test.setFilter(test_filter);
 
   var parse_test_step = b.step("parseTest", "Run parser tests");
@@ -99,12 +60,9 @@ pub fn build(b: *Builder) !void {
 
   var parse_test_orig = b.addTest("test/parse_test_orig.zig");
   parse_test_orig.step.dependOn(&ehgen_cmd.step);
-  internalPackages(parse_test_orig);
-  parse_test_orig.addPackage(.{
-    .name = "testing",
-    .path = .{.path = "test/testing.zig"},
-    .dependencies = &internal_pkgs,
-  });
+  parse_test_orig.addPackage(testing_pkg);
+  parse_test_orig.addPackage(nyarna_pkg);
+  parse_test_orig.addPackage(errors_pkg);
   parse_test_orig.setFilter(test_filter);
 
   var parse_test_orig_step = b.step("parseTestOrig", "Run original parser tests");

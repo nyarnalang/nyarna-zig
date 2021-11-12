@@ -1,15 +1,15 @@
 const std = @import("std");
-const data = @import("data");
+const data = @import("../data.zig");
 const unicode = @import("unicode.zig");
-const Context = @import("interpret.zig").Context;
+const Interpreter = @import("interpret.zig").Interpreter;
 const Token = data.Token;
 
-pub const EncodedCharacter = unicode.EncodedCharacter;
+const EncodedCharacter = unicode.EncodedCharacter;
 
 /// Walks a source and returns Unicode code points.
 pub const Walker = struct {
   /// The source.
-  source: *data.Source,
+  source: *const data.Source,
   /// Next character to be read.
   cur: [*]const u8,
   /// Cursor position before recently returned code point.
@@ -20,7 +20,7 @@ pub const Walker = struct {
   marked: data.Cursor,
 
   /// Initializes a walker to walk the given source, starting at the beginning
-  pub fn init(s: *data.Source) Walker {
+  pub fn init(s: *const data.Source) Walker {
     return .{
       .source = s,
       .cur = s.content.ptr,
@@ -95,7 +95,8 @@ pub const Walker = struct {
   pub fn resetToMark(w: *Walker) void {
     w.before = w.marked;
     w.cur = w.source.content.ptr + w.before.byte_offset;
-    w.recent_length = std.unicode.utf8ByteSequenceLength(w.cur[0]) catch unreachable;
+    w.recent_length = std.unicode.utf8ByteSequenceLength(w.cur[0])
+      catch unreachable;
     w.cur += w.recent_length;
   }
 
@@ -214,7 +215,7 @@ pub const Lexer = struct {
 
   const newline = @as([]const u8, "\n");
 
-  context: *Context,
+  context: *Interpreter,
   cur_stored: (@typeInfo(@TypeOf(Walker.next)).Fn.return_type.?),
   state: State,
   walker: Walker,
@@ -252,7 +253,7 @@ pub const Lexer = struct {
   level: Level,
   newline_count: u16,
 
-  pub fn init(context: *Context) !Lexer {
+  pub fn init(context: *Interpreter) !Lexer {
     var ret = Lexer{
       .context = context,
       .cur_stored = undefined,
@@ -261,7 +262,9 @@ pub const Lexer = struct {
       .paren_depth = 0,
       .colons_disabled_at = null,
       .comments_disabled_at = null,
-      .levels = try std.ArrayListUnmanaged(Level).initCapacity(&context.temp_nodes.allocator, 32),
+      .levels =
+        try std.ArrayListUnmanaged(Level).initCapacity(
+          &context.storage.allocator, 32),
       .level = .{
         .indentation = 0,
         .tabs = null,
@@ -387,8 +390,10 @@ pub const Lexer = struct {
 
   /// transition to a new state via the offset between base_from and base_to.
   /// used for transparently handling special_syntax transitions.
-  inline fn transition(l: *Lexer, comptime base_from: State, base_to: State) void {
-    l.state = @intToEnum(State, @enumToInt(l.state) + (@enumToInt(base_to) - @enumToInt(base_from)));
+  inline fn transition(l: *Lexer, comptime base_from: State, base_to: State)
+      void {
+    l.state = @intToEnum(State,
+      @enumToInt(l.state) + (@enumToInt(base_to) - @enumToInt(base_from)));
   }
 
   pub fn next(l: *Lexer) !Token {
@@ -427,9 +432,12 @@ pub const Lexer = struct {
           if (cur == 4) {
             return .end_source;
           }
-          l.transition(.check_indent, if (l.colons_disabled_at == null) State.check_block_name else .in_block);
+          l.transition(.check_indent,
+            if (l.colons_disabled_at == null) State.check_block_name
+            else .in_block);
           if (l.recent_end.byte_offset != l.walker.before.byte_offset) {
-            l.level.indentation = @intCast(u16, l.recent_end.byte_offset - l.line_start.byte_offset);
+            l.level.indentation = @intCast(
+              u16, l.recent_end.byte_offset - l.line_start.byte_offset);
             l.recent_end = l.walker.before;
             if (l.indent_char_seen.tab and l.indent_char_seen.space) {
               return .mixed_indentation;
@@ -474,8 +482,9 @@ pub const Lexer = struct {
           l.transition(.check_block_name, .in_block);
         },
         .in_block, .special_syntax => {
-          const res = try if (l.state == .in_block) l.processContent(.block, &cur)
-          else l.processContent(.special, &cur);
+          const res = try
+            if (l.state == .in_block) l.processContent(.block, &cur)
+            else l.processContent(.special, &cur);
 
           if (res.hit_line_end) {
             l.transition(.in_block, .check_parsep);
@@ -593,7 +602,8 @@ pub const Lexer = struct {
             return .diamond_open;
           },
           '>' => {
-            l.state = if (l.level.special == .disabled) .at_header else .special_syntax;
+            l.state = if (l.level.special == .disabled) .at_header
+                      else .special_syntax;
             l.cur_stored = l.walker.nextInline();
             l.recent_end = l.walker.before;
             return .diamond_close;
@@ -603,7 +613,8 @@ pub const Lexer = struct {
             l.state = .after_depth;
             return .swallow_depth;
           },
-          else => l.state = if (l.level.special == .disabled) .at_header else .special_syntax,
+          else => l.state = if (l.level.special == .disabled) .at_header
+                            else .special_syntax,
         },
         .at_header => {
           const res = try l.processContent(.block, &cur);
@@ -666,11 +677,13 @@ pub const Lexer = struct {
             l.recent_end = l.walker.before;
             return .blocks_sep;
           } else {
-            l.state = if (l.level.special == .disabled) .at_header else .special_syntax;
+            l.state = if (l.level.special == .disabled) .at_header
+                      else .special_syntax;
           }
         },
         .after_depth => {
-          l.state = if (l.level.special == .disabled) .at_header else .special_syntax;
+          l.state = if (l.level.special == .disabled) .at_header
+                    else .special_syntax;
           if (cur == '>') {
             l.cur_stored = l.walker.nextInline();
             l.recent_end = l.walker.before;
@@ -719,11 +732,15 @@ pub const Lexer = struct {
   }
 
   const Surrounding = enum {block, args, config, block_name, special};
-  const ContentResult = struct {hit_line_end: bool = false, token: ?Token = null};
+  const ContentResult = struct {
+    hit_line_end: bool = false,
+    token: ?Token = null
+  };
 
   /// return null for an unescaped line end since it may be part of a parsep.
   /// hit_line_end is true if the recently processed character was a line break.
-  inline fn processContent(l: *Lexer, comptime ctx: Surrounding, cur: *u21) !ContentResult {
+  inline fn processContent(l: *Lexer, comptime ctx: Surrounding, cur: *u21)
+      !ContentResult {
     switch (cur.*) {
       4 => {
         return ContentResult{.token = .end_source};
@@ -789,7 +806,8 @@ pub const Lexer = struct {
         return l.advanceAndReturn(.diamond_close, .after_config);
       },
       ':' => switch (ctx) {
-        .block_name => return l.advanceAndReturn(.block_name_sep, .after_blocks_colon),
+        .block_name =>
+          return l.advanceAndReturn(.block_name_sep, .after_blocks_colon),
         .args => {
           cur.* = l.walker.nextInline() catch |e| {
             l.cur_stored = e;
@@ -869,7 +887,8 @@ pub const Lexer = struct {
     };
   }
 
-  inline fn advanceAndReturn(l: *Lexer, value: Token, comptime new_state: ?State) ContentResult {
+  inline fn advanceAndReturn(l: *Lexer, value: Token,
+                             comptime new_state: ?State) ContentResult {
     l.cur_stored = l.walker.nextInline();
     if (new_state) |state| {
       l.state = state;
@@ -1014,7 +1033,8 @@ pub const Lexer = struct {
     l.cur_stored = cur.*;
   }
 
-  inline fn advancing(l: *Lexer, cur: *u21, f: @TypeOf(Walker.nextInline)) !bool {
+  inline fn advancing(l: *Lexer, cur: *u21, f: @TypeOf(Walker.nextInline))
+      !bool {
     cur.* = f(&l.walker) catch |e| {
       if (l.recent_end.byte_offset != l.walker.before.byte_offset) {
         l.cur_stored = e;
@@ -1177,7 +1197,7 @@ pub const Lexer = struct {
   }
 
   fn pushLevel(l: *Lexer) !void {
-    try l.levels.append(&l.context.temp_nodes.allocator, l.level);
+    try l.levels.append(&l.context.storage.allocator, l.level);
     l.level = .{
       .indentation = undefined,
       .tabs = null,
@@ -1188,8 +1208,9 @@ pub const Lexer = struct {
   }
 
   inline fn curBaseState(l: *Lexer) State {
-    return if (l.paren_depth > 0) .in_arg else
-        if (l.level.special == .disabled) State.in_block else State.special_syntax;
+    return if (l.paren_depth > 0) .in_arg
+           else if (l.level.special == .disabled) State.in_block
+           else State.special_syntax;
   }
 
   pub fn disableColons(l: *Lexer) void {
@@ -1205,8 +1226,10 @@ pub const Lexer = struct {
   }
 
   pub fn enableSpecialSyntax(l: *Lexer, comments_include_newline: bool) void {
-    std.debug.print("  lex: enabling special syntax at state {s}\n", .{@tagName(l.state)});
-    l.level.special = if (comments_include_newline) .standard_comments else .comments_without_newline;
+    std.debug.print(
+      "  lex: enabling special syntax at state {s}\n", .{@tagName(l.state)});
+    l.level.special = if (comments_include_newline) .standard_comments
+                      else .comments_without_newline;
     std.debug.assert(l.state == .check_indent);
     l.state = .special_syntax_check_indent;
   }

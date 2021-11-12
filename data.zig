@@ -28,7 +28,8 @@ pub const Position = struct {
     .argument = false
   };
 
-  /// Creates a new position starting at the start of left and ending at the end of right.
+  /// Creates a new position starting at the start of left and ending at the end
+  /// of right.
   pub inline fn span(left: Position, right: Position) Position {
     std.debug.assert(left.source == right.source);
     return .{.source = left.source, .start = left.start, .end = right.end};
@@ -46,8 +47,8 @@ pub const Position = struct {
 /// A source provides content to be parsed. This is either a source file or a
 /// (command-line) argument
 pub const Source = struct {
-  /// A source's descriptor specifies metadata about the source.
-  /// This is used to refer to the source in position data of nodes and expressions.
+  /// A source's descriptor specifies metadata about the source. This is used to
+  /// refer to the source in position data of nodes and expressions.
   pub const Descriptor = struct {
     /// for files, the path to the file. for command line arguments, the name of
     /// the argument.
@@ -58,9 +59,9 @@ pub const Source = struct {
     argument: bool,
   };
 
-  /// This source's metadata. The metadata will live longer than the source itself,
-  /// which will be deallocated once it has been parsed completely. Therefore it
-  /// is a pointer and is owned by the context.
+  /// This source's metadata. The metadata will live longer than the source
+  /// itself, which will be deallocated once it has been parsed completely.
+  /// Therefore it is a pointer and is owned by the context.
   meta: *const Descriptor,
   /// the content of the source that is to be parsed
   content: []const u8,
@@ -75,7 +76,8 @@ pub const Source = struct {
   /// relative locators inside this source.
   locator_ctx: []const u8,
 
-  /// returns the position inside the source at the given cursor (starts & ends there)
+  /// returns the position inside the source at the given cursor
+  /// (starts & ends there)
   pub inline fn at(s: *const Source, cursor: Cursor) Position {
     return s.between(cursor, cursor);
   }
@@ -223,7 +225,8 @@ pub const Locator = struct {
     }
     var ret = Locator{.repr = input, .resolver = null, .path = undefined};
     if (input[0] == '.') {
-      const end = std.mem.indexOfScalar(u8, input[1..], '.') orelse return Error.parse_error;
+      const end = std.mem.indexOfScalar(u8, input[1..], '.') orelse
+        return Error.parse_error;
       ret.resolver = input[1..end];
       ret.path = input[end+1..];
     } else {
@@ -274,7 +277,8 @@ pub const BlockConfig = struct {
 
   pub fn empty() BlockConfig {
     return .{
-      .syntax = null, .map = &.{}, .off_colon = null, .off_comment = null, .full_ast = null
+      .syntax = null, .map = &.{}, .off_colon = null, .off_comment = null,
+      .full_ast = null
     };
   }
 };
@@ -394,7 +398,8 @@ pub const Node = struct {
     return ret;
   }
 
-  pub fn valueNode(allocator: *std.mem.Allocator, expr: *Expression, pos: Position, data: Value.Data) !*Node {
+  pub fn valueNode(allocator: *std.mem.Allocator, expr: *Expression,
+                   pos: Position, data: Value.Data) !*Node {
     expr.* = Expression.literal(pos, data);
     var ret = try allocator.create(Node);
     ret.* = .{
@@ -468,8 +473,8 @@ pub const Type = union(enum) {
     returns: Type,
     /// representative of this signature in the type lattice.
     /// the representative has no primary, varmap, or auto_swallow value, and
-    /// its parameters have empty names, always default-capture, and have neither
-    /// config nor default.
+    /// its parameters have empty names, always default-capture, and have
+    /// neither config nor default.
     ///
     /// unset for keywords which cannot be used as Callable values and therefore
     /// never interact with the type lattice.
@@ -733,8 +738,8 @@ pub const Type = union(enum) {
 
   /// unique types predefined by Nyarna
   intrinsic: enum {
-    void, prototype, schema, extension, ast_node, block_header, non_callable_type,
-    space, literal, raw,
+    void, prototype, schema, extension, ast_node, block_header,
+    non_callable_type, space, literal, raw,
     location, definition, backend,
     poison, every
   },
@@ -759,24 +764,29 @@ pub const Type = union(enum) {
 
   pub fn isScalar(t: @This()) bool {
     return switch (t) {
-      .intrinsic => |it| switch (it) {.space, .literal, .raw => true, else => false},
+      .intrinsic => |it|
+        switch (it) {.space, .literal, .raw => true, else => false},
       .structural => false,
-      .instantiated => |it| switch (it.data) {.textual, .numeric, .float, .tenum => true, else => false},
+      .instantiated => |it|
+        switch (it.data) {
+          .textual, .numeric, .float, .tenum => true, else => false,
+        },
     };
   }
 
   pub inline fn is(t: Type, comptime expected: anytype) bool {
-    return switch (t) {
-      .intrinsic => |it| it == expected,
-      else => false
-    };
+    return switch (t) {.intrinsic => |it| it == expected, else => false};
   }
 
   pub inline fn eql(a: Type, b: Type) bool {
     return switch (a) {
-      .intrinsic => |ia| switch (b) { .intrinsic => |ib| ia == ib, else => false},
-      .instantiated => |ia| switch (b) {.instantiated => |ib| ia == ib, else => false},
-      .structural => |sa| switch (b) {.structural => |sb| sa == sb, else => false},
+      .intrinsic => |ia| switch (b) {
+        .intrinsic => |ib| ia == ib, else => false,
+      },
+      .instantiated => |ia|
+        switch (b) {.instantiated => |ib| ia == ib, else => false},
+      .structural => |sa|
+        switch (b) {.structural => |sb| sa == sb, else => false},
     };
   }
 };
@@ -800,14 +810,16 @@ pub const Expression = struct {
   /// assignment to a variable or one of its inner values
   pub const Assignment = struct {
     target: *Symbol.Variable,
-    /// list of indexes that identify which part of the variable is to be assigned.
+    /// list of indexes that identify which part of the variable is to be
+    /// assigned.
     path: []usize,
     expr: *Expression,
   };
   /// retrieval of the value of a substructure
   pub const Access = struct {
     subject: *Expression,
-    /// list of indexes that identify which part of the value is to be retrieved.
+    /// list of indexes that identify which part of the value is to be
+    /// retrieved.
     path: []usize,
   };
   /// retrieval of a variable's value
@@ -841,8 +853,8 @@ pub const Expression = struct {
 
   pos: Position,
   data: Data,
-  /// The expected type of an expression may be imposed upon it by its context. [8.3]
-  /// evaluating this expression will yield a value with a Type in E_{expected_type}.
+  /// May be imposed upon it by its context [8.3]. Evaluating this expression
+  /// will yield a value with a Type in E_{expected_type}.
   expected_type: Type,
 
   fn parent(it: anytype) *Expression {
@@ -1028,8 +1040,8 @@ pub const Value = struct {
     pub fn primary(name: []const u8, t: Type, default: ?*Expression) Location {
       return .{
         .name = name, .tloc = t, .default = default,
-        .primary = Position.intrinsic(), .varargs = null, .varmap = null, .mutable = null,
-        .block_header = null
+        .primary = Position.intrinsic(), .varargs = null, .varmap = null,
+        .mutable = null, .block_header = null
       };
     }
   };
@@ -1052,8 +1064,8 @@ pub const Value = struct {
     }
   };
 
-  /// a block header. This value type is used to read in block headers within
-  /// SpecialSyntax, e.g. the default block configuration of function parameters.
+  /// This value type is used to read in block headers within SpecialSyntax,
+  /// e.g. the default block configuration of function parameters.
   pub const BlockHeader = struct {
     config: ?BlockConfig,
     swallow_depth: ?u21,
@@ -1090,7 +1102,8 @@ pub const Value = struct {
           .half => @intCast(u64, @bitCast(u16, fl.value.half)),
           .single => @intCast(u64, @bitCast(u32, fl.value.single)),
           .double => @bitCast(u64, fl.value.double),
-          .quadruple, .octuple => @truncate(u64, @bitCast(u128, fl.value.quadruple)),
+          .quadruple, .octuple =>
+            @truncate(u64, @bitCast(u128, fl.value.quadruple)),
         },
         .enumval => |ev| @intCast(u64, ev.index),
         else => unreachable,
@@ -1105,7 +1118,8 @@ pub const Value = struct {
           .half => fl.value.half == b.data.float.value.half,
           .single => fl.value.single == b.data.float.value.single,
           .double => fl.value.double == b.data.float.value.double,
-          .quadruple, .octuple => fl.value.quadruple == b.data.float.value.quadruple,
+          .quadruple, .octuple =>
+            fl.value.quadruple == b.data.float.value.quadruple,
         },
         .enumval => |ev| ev.index == b.data.enumval.index,
         else => unreachable,

@@ -1,10 +1,8 @@
 const std = @import("std");
-const data = @import("data");
+const nyarna = @import("nyarna");
+const data = nyarna.data;
 const tml = @import("tml.zig");
-const lex = @import("lex");
-const parse = @import("parse");
-const errors = @import("errors");
-const Context = @import("interpret").Context;
+const errors = nyarna.errors;
 
 const TestError = error {
   no_match
@@ -14,7 +12,7 @@ pub fn lexTest(f: *tml.File) !void {
   var input = f.items.get("input").?;
   try input.content.appendSlice(f.alloc(), "\x04\x04\x04\x04");
   const expected_data = f.items.get("tokens").?;
-  var expected_content = std.mem.split(expected_data.content.items, "\n");
+  var expected_content = std.mem.split(u8, expected_data.content.items, "\n");
   var src_meta = data.Source.Descriptor{
     .name = "input",
     .locator = ".doc.document",
@@ -29,33 +27,41 @@ pub fn lexTest(f: *tml.File) !void {
     .locator_ctx = ".doc.",
   };
   var r = errors.CmdLineReporter.init();
-  var ctx = try Context.init(std.testing.allocator, &r.reporter);
-  ctx.input = &src;
-  defer ctx.deinit().deinit();
-  var l = try lex.Lexer.init(&ctx);
-  var startpos = l.recent_end;
-  defer l.deinit();
-  var t = try l.next();
-  while(true) : (t = try l.next()) {
-    const actual = try if (@enumToInt(t) >= @enumToInt(data.Token.skipping_call_id))
-      std.fmt.allocPrint(std.testing.allocator, "{}:{}[{}] skipping_call_id({})",
-          .{startpos.at_line, startpos.before_column, startpos.byte_offset,
-            @enumToInt(t) - @enumToInt(data.Token.skipping_call_id) + 1})
-    else
-      std.fmt.allocPrint(std.testing.allocator, "{}:{}[{}] {s}",
-          .{startpos.at_line, startpos.before_column, startpos.byte_offset, @tagName(t)});
+  var loader = try nyarna.Loader.init(std.testing.allocator, &r.reporter);
+  defer loader.deinit();
+  var ml = try nyarna.Loader.ModuleLoader.create(&loader, &src, &.{});
+  defer ml.destroy();
+  var lexer = try ml.initLexer();
+  defer lexer.deinit();
+  var startpos = lexer.recent_end;
+  var t = try lexer.next();
+  while(true) : (t = try lexer.next()) {
+    const actual =
+      try if (@enumToInt(t) >= @enumToInt(data.Token.skipping_call_id))
+        std.fmt.allocPrint(
+          std.testing.allocator, "{}:{}[{}] skipping_call_id({})", .{
+            startpos.at_line, startpos.before_column, startpos.byte_offset,
+            @enumToInt(t) - @enumToInt(data.Token.skipping_call_id) + 1
+          })
+      else
+        std.fmt.allocPrint(std.testing.allocator, "{}:{}[{}] {s}", .{
+            startpos.at_line, startpos.before_column, startpos.byte_offset,
+            @tagName(t)
+          });
     defer std.testing.allocator.free(actual);
     const expected = expected_content.next() orelse {
-      std.log.err("got more tokens than expected, first unexpected token: {s}", .{actual});
+      std.log.err("got more tokens than expected, first unexpected token: {s}",
+        .{actual});
       return TestError.no_match;
     };
     try std.testing.expectEqualStrings(expected, actual);
     if (t == .end_source) break;
-    startpos = l.recent_end;
+    startpos = lexer.recent_end;
   }
   while (expected_content.next()) |unmatched| {
     if (unmatched.len > 0) {
-      std.log.err("got fewer tokens than expected, first missing token: {s}", .{unmatched});
+      std.log.err("got fewer tokens than expected, first missing token: {s}",
+        .{unmatched});
       return TestError.no_match;
     }
   }
@@ -66,13 +72,14 @@ fn formatTypeName(t: data.Type, comptime _: []const u8,
   switch (t) {
     .intrinsic => |i| try writer.writeAll(@tagName(i)),
     .structural => |_| unreachable,
-    .instantiated => |i| try writer.writeAll(if (i.name) |sym| sym.name else "<anon>"),
+    .instantiated => |i|
+      try writer.writeAll(if (i.name) |sym| sym.name else "<anon>"),
   }
 }
 
 const HeaderWithContext = struct {
   header: *const data.Value.BlockHeader,
-  context: *Context,
+  context: *nyarna.Loader,
 };
 
 fn formatBlockHeader(hc: HeaderWithContext, comptime _: []const u8,
@@ -83,22 +90,22 @@ fn formatBlockHeader(hc: HeaderWithContext, comptime _: []const u8,
     for (config.map) |*item| {
       if (item.to == 0) {
         if (first) first = false else try writer.writeAll(", ");
-        const ec = lex.EncodedCharacter.init(item.from);
+        const ec = nyarna.EncodedCharacter.init(item.from);
         try writer.print("off {s}", .{ec.repr()});
       }
     }
     for (config.map) |*item| {
       if (item.from == 0) {
         if (first) first = false else try writer.writeAll(", ");
-        const ec = lex.EncodedCharacter.init(item.to);
+        const ec = nyarna.EncodedCharacter.init(item.to);
         try writer.print("csym {s}", .{ec.repr()});
       }
     }
     for (config.map) |*item| {
       if (item.from != 0 and item.to != 0) {
         if (first) first = false else try writer.writeAll(", ");
-        const fc = lex.EncodedCharacter.init(item.from);
-        const tc = lex.EncodedCharacter.init(item.to);
+        const fc = nyarna.EncodedCharacter.init(item.from);
+        const tc = nyarna.EncodedCharacter.init(item.to);
         try writer.print("map {s} {s}", .{fc.repr(), tc.repr()});
       }
     }
@@ -110,13 +117,15 @@ fn formatBlockHeader(hc: HeaderWithContext, comptime _: []const u8,
       if (first) first = false else try writer.writeAll(", ");
       // TODO: user-define syntaxes
       try writer.print("syntax {s}", .{switch (def.index) {
-        0 => @as([]const u8, "locations"), 1 => "definitions", else => unreachable
+        0 => @as([]const u8, "locations"), 1 => "definitions",
+        else => unreachable
       }});
     }
     try writer.writeByte('>');
   }
   if (hc.header.swallow_depth) |swallow_depth| {
-    try if (swallow_depth > 0) writer.print(":{}>", .{swallow_depth}) else writer.writeAll(":>");
+    try if (swallow_depth > 0) writer.print(":{}>", .{swallow_depth})
+        else writer.writeAll(":>");
   } else if (hc.header.config == null) try writer.writeAll("null");
 }
 
@@ -136,7 +145,7 @@ fn AstEmitter(Handler: anytype) type {
 
     handler: Handler,
     depth: usize,
-    context: *Context,
+    context: *nyarna.Loader,
 
     fn emitLine(self: *Self, comptime fmt: []const u8, args: anytype) !void {
       var buffer: [1024]u8 = undefined;
@@ -151,7 +160,8 @@ fn AstEmitter(Handler: anytype) type {
       return Popper{.e = self, .name = name};
     }
 
-    fn pushWithKey(self: *Self, comptime name: []const u8, comptime key: []const u8, value: ?[]const u8) !Popper {
+    fn pushWithKey(self: *Self, comptime name: []const u8,
+                   comptime key: []const u8, value: ?[]const u8) !Popper {
       if (name.len == 0) try self.emitLine("+{s} " ++ value.?) else
       if (value) |v| try self.emitLine("+{s} " ++ key ++ "=\"{s}\"", .{name, v})
       else try self.emitLine("+{s} " ++ key, .{name});
@@ -189,7 +199,8 @@ fn AstEmitter(Handler: anytype) type {
           try ass.pop();
         },
         .literal => |a| {
-          try self.emitLine("=LIT {s} \"{}\"", .{@tagName(a.kind), std.zig.fmtEscapes(a.content)});
+          try self.emitLine("=LIT {s} \"{}\"",
+            .{@tagName(a.kind), std.zig.fmtEscapes(a.content)});
         },
         .concatenation => |c| {
           for (c.content) |item| try self.process(item);
@@ -201,8 +212,11 @@ fn AstEmitter(Handler: anytype) type {
             try para.pop();
           }
         },
-        .unresolved_symref => |u| try self.emitLine("=SYMREF [{}]{s}", .{u.ns, u.name}),
-        .resolved_symref => |res| try self.emitLine("=SYMREF {s}.{s}", .{res.defined_at.source.name, res.name}),
+        .unresolved_symref => |u|
+          try self.emitLine("=SYMREF [{}]{s}", .{u.ns, u.name}),
+        .resolved_symref => |res|
+          try self.emitLine("=SYMREF {s}.{s}",
+            .{res.defined_at.source.name, res.name}),
         .unresolved_call => |uc| {
           const ucall = try self.push("UCALL");
           {
@@ -282,7 +296,8 @@ fn AstEmitter(Handler: anytype) type {
         .intrinsic => |i| try self.emitLine("=TYPE {s}", .{@tagName(i)}),
         .structural => unreachable,
         .instantiated => |i| {
-          if (i.name) |sym| try self.emitLine("=TYPE {s} \"{s}\"", .{@tagName(i.data), sym.name})
+          if (i.name) |sym| try self.emitLine("=TYPE {s} \"{s}\"",
+            .{@tagName(i.data), sym.name})
           else {
             const tc = try self.pushWithKey("TYPE", "", @tagName(i.data));
             switch (i.data) {
@@ -306,7 +321,8 @@ fn AstEmitter(Handler: anytype) type {
       switch (v.data) {
         .text => |txt| {
           const t = std.fmt.Formatter(formatTypeName){.data = txt.t};
-          try self.emitLine("=TEXT {} \"{}\"", .{t, std.zig.fmtEscapes(txt.value)});
+          try self.emitLine("=TEXT {} \"{}\"",
+            .{t, std.zig.fmtEscapes(txt.value)});
         },
         .number => |_| {
           unreachable;
@@ -316,7 +332,8 @@ fn AstEmitter(Handler: anytype) type {
         },
         .enumval => |ev| {
           const t = std.fmt.Formatter(formatTypeName){.data = ev.t.typedef()};
-          try self.emitLine("=ENUM {} \"{s}\"", .{t, ev.t.values.entries.items(.key)[ev.index]});
+          try self.emitLine("=ENUM {} \"{s}\"",
+            .{t, ev.t.values.entries.items(.key)[ev.index]});
         },
         .record => |_| {
           unreachable;
@@ -344,7 +361,9 @@ fn AstEmitter(Handler: anytype) type {
         .poison => try self.emitLine("=POISON", .{}),
         .void => try self.emitLine("=VOID", .{}),
         .block_header => |*h| {
-          const hf = std.fmt.Formatter(formatBlockHeader){.data = .{.header = h, .context = self.context}};
+          const hf = std.fmt.Formatter(formatBlockHeader){
+            .data = .{.header = h, .context = self.context}
+          };
           try self.emitLine("=HEADER {}", .{hf});
         },
       }
@@ -364,12 +383,15 @@ pub fn parseTest(f: *tml.File) !void {
     fn handle(self: *@This(), line: []const u8) !void {
       defer {
         self.line += 1;
-        self.full_output.appendSlice(std.testing.allocator, line) catch unreachable;
+        self.full_output.appendSlice(std.testing.allocator, line)
+          catch unreachable;
         self.full_output.append(std.testing.allocator, '\n') catch unreachable;
       }
       const expected = self.expected_iter.next() orelse {
         if (!self.failed) {
-          std.log.err("got more output than expected, first unexpected line:\n  {s}", .{line});
+          std.log.err(
+            "got more output than expected, first unexpected line:\n  {s}",
+            .{line});
           self.failed = true;
         }
         return;
@@ -409,20 +431,21 @@ pub fn parseTest(f: *tml.File) !void {
     .locator_ctx = ".doc.",
   };
   var r = errors.CmdLineReporter.init();
-  var ctx = try Context.init(std.testing.allocator, &r.reporter);
-  ctx.input = &src;
-  defer ctx.deinit().deinit();
-  var p = parse.Parser.init();
-  var res = try p.parseSource(&ctx, true);
+  var l = try nyarna.Loader.init(std.testing.allocator, &r.reporter);
+  defer l.deinit();
+  var ml = try nyarna.Loader.ModuleLoader.create(&l, &src, &.{});
+  defer ml.destroy();
+  var res = try ml.loadAsNode(true);
   var emitter = AstEmitter(@TypeOf(&checker)){
     .depth = 0,
     .handler = &checker,
-    .context = &ctx,
+    .context = &l,
   };
   try emitter.process(res);
   if (checker.expected_iter.next()) |line| {
     if (!checker.failed) {
-      std.log.err("got less output than expected, line {} missing:\n{s}\n", .{checker.line, line});
+      std.log.err("got less output than expected, line {} missing:\n{s}\n",
+        .{checker.line, line});
       checker.failed = true;
     }
   }
@@ -435,5 +458,5 @@ pub fn parseTest(f: *tml.File) !void {
       , .{checker.full_output.items});
     return TestError.no_match;
   }
-  try std.testing.expectEqual(@as(usize, 0), ctx.eh.count);
+  try std.testing.expectEqual(@as(usize, 0), l.logger.count);
 }

@@ -1,5 +1,5 @@
 const std = @import("std");
-const data = @import("data");
+const data = @import("data.zig");
 
 pub const LexerError = enum {
   UnknownConfigDirective, MissingClosingParenthesis, InvalidUtf8Encoding,

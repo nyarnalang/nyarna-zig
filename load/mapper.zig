@@ -1,7 +1,7 @@
 const std = @import("std");
-const data = @import("data");
+const data = @import("../data.zig");
 const Type = data.Type;
-const Context = @import("interpret.zig").Context;
+const Interpreter = @import("interpret.zig").Interpreter;
 
 pub const Mapper = struct {
   const Self = @This();
@@ -22,13 +22,17 @@ pub const Mapper = struct {
   };
   const ArgKind = data.Node.UnresolvedCall.ArgKind;
 
-  mapFn: fn(self: *Self, pos: data.Position, input: ArgKind, flag: ProtoArgFlag) ?Cursor,
-  pushFn: fn(self: *Self, alloc: *std.mem.Allocator, at: Cursor, content: *data.Node) std.mem.Allocator.Error!void,
+  mapFn: fn(self: *Self, pos: data.Position, input: ArgKind,
+            flag: ProtoArgFlag) ?Cursor,
+  pushFn: fn(self: *Self, alloc: *std.mem.Allocator, at: Cursor,
+             content: *data.Node) std.mem.Allocator.Error!void,
   configFn: fn(self: *Self, at: Cursor) ?*data.BlockConfig,
   paramTypeFn: fn(self: *Self, at: Cursor) ?data.Type,
-  finalizeFn: fn(self: *Self, alloc: *std.mem.Allocator, pos: data.Position) std.mem.Allocator.Error!*data.Node,
+  finalizeFn: fn(self: *Self, alloc: *std.mem.Allocator,
+                 pos: data.Position) std.mem.Allocator.Error!*data.Node,
 
-  pub fn map(self: *Self, pos: data.Position, input: ArgKind, flag: ProtoArgFlag) ?Cursor {
+  pub fn map(self: *Self, pos: data.Position, input: ArgKind,
+             flag: ProtoArgFlag) ?Cursor {
     return self.mapFn(self, pos, input, flag);
   }
 
@@ -40,11 +44,13 @@ pub const Mapper = struct {
     return self.paramTypeFn(self, at);
   }
 
-  pub fn push(self: *Self, alloc: *std.mem.Allocator, at: Cursor, content: *data.Node) !void {
+  pub fn push(self: *Self, alloc: *std.mem.Allocator, at: Cursor,
+              content: *data.Node) !void {
     try self.pushFn(self, alloc, at, content);
   }
 
-  pub fn finalize(self: *Self, alloc: *std.mem.Allocator, pos: data.Position) std.mem.Allocator.Error!*data.Node {
+  pub fn finalize(self: *Self, alloc: *std.mem.Allocator, pos: data.Position)
+      std.mem.Allocator.Error!*data.Node {
     return self.finalizeFn(self, alloc, pos);
   }
 };
@@ -55,9 +61,10 @@ pub const SignatureMapper = struct {
   signature: *Type.Signature,
   cur_pos: ?u31 = 0,
   args: []*data.Node,
-  context: *Context,
+  context: *Interpreter,
 
-  pub fn init(ctx: *Context, subject: *data.Expression, sig: *data.Signature) !SignatureMapper {
+  pub fn init(ctx: *Interpreter, subject: *data.Expression,
+              sig: *data.Signature) !SignatureMapper {
     return .{
       .mapper = .{
         .mapFn = SignatureMapper.map,
@@ -137,7 +144,8 @@ pub const SignatureMapper = struct {
     };
   }
 
-  fn push(mapper: *Mapper, _: *std.mem.Allocator, at: Mapper.Cursor, content: *data.Node) !void {
+  fn push(mapper: *Mapper, _: *std.mem.Allocator, at: Mapper.Cursor,
+          content: *data.Node) !void {
     const self = @fieldParentPtr(SignatureMapper, "mapper", mapper);
     const param = &self.signature.parameter[at.index];
     const target_type = if (at.direct) param.ptype else switch (param.capture) {
@@ -161,7 +169,8 @@ pub const SignatureMapper = struct {
     }
   }
 
-  fn finalize(mapper: *Mapper, alloc: *std.mem.Allocator, pos: data.Position) !*data.Node {
+  fn finalize(mapper: *Mapper, alloc: *std.mem.Allocator, pos: data.Position)
+      !*data.Node {
     const self = @fieldParentPtr(SignatureMapper, "mapper", mapper);
     const ret = try alloc.create(data.Node);
     ret.* = .{
@@ -202,8 +211,10 @@ pub const CollectingMapper = struct {
     if (flag != .flow and self.first_block == null) {
       self.first_block = self.items.items.len;
     }
-    return Mapper.Cursor{.param = .{.kind = input}, .config = flag == .block_with_config,
-      .direct = input.isDirect()};
+    return Mapper.Cursor{
+      .param = .{.kind = input}, .config = flag == .block_with_config,
+      .direct = input.isDirect()
+    };
   }
 
   fn config(_: *Mapper, _: Mapper.Cursor) ?*data.BlockConfig {
@@ -214,12 +225,17 @@ pub const CollectingMapper = struct {
     return null;
   }
 
-  fn push(mapper: *Mapper, alloc: *std.mem.Allocator, at: Mapper.Cursor, content: *data.Node) !void {
+  fn push(mapper: *Mapper, alloc: *std.mem.Allocator, at: Mapper.Cursor,
+          content: *data.Node) !void {
     const self = @fieldParentPtr(CollectingMapper, "mapper", mapper);
-    try self.items.append(alloc, .{.kind = at.param.kind, .content = content, .had_explicit_block_config = at.config});
+    try self.items.append(alloc, .{
+        .kind = at.param.kind, .content = content,
+        .had_explicit_block_config = at.config
+      });
   }
 
-  fn finalize(mapper: *Mapper, alloc: *std.mem.Allocator, pos: data.Position) std.mem.Allocator.Error!*data.Node {
+  fn finalize(mapper: *Mapper, alloc: *std.mem.Allocator, pos: data.Position)
+      std.mem.Allocator.Error!*data.Node {
     const self = @fieldParentPtr(CollectingMapper, "mapper", mapper);
     var ret = try alloc.create(data.Node);
     ret.* = .{
@@ -265,11 +281,14 @@ pub const AssignmentMapper = struct {
       // TODO: report error
       return null;
     }
-    return Mapper.Cursor{.param = .{.index = 0}, .config = flag == .block_with_config,
-      .direct = input == .primary};
+    return Mapper.Cursor{
+      .param = .{.index = 0}, .config = flag == .block_with_config,
+      .direct = input == .primary,
+    };
   }
 
-  fn push(mapper: *Mapper, _: *std.mem.Allocator, _: Mapper.Cursor, content: *data.Node) !void {
+  fn push(mapper: *Mapper, _: *std.mem.Allocator, _: Mapper.Cursor,
+          content: *data.Node) !void {
     const self = @fieldParentPtr(AssignmentMapper, "mapper", mapper);
     self.replacement = content;
   }
@@ -284,7 +303,8 @@ pub const AssignmentMapper = struct {
     return null;
   }
 
-  fn finalize(mapper: *Mapper, alloc: *std.mem.Allocator, pos: data.Position) !*data.Node {
+  fn finalize(mapper: *Mapper, alloc: *std.mem.Allocator, pos: data.Position)
+      !*data.Node {
     const self = @fieldParentPtr(AssignmentMapper, "mapper", mapper);
     const ret = try alloc.create(data.Node);
     ret.* = .{

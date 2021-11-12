@@ -1,10 +1,12 @@
 const std = @import("std");
-const data = @import("data");
-const parse = @import("parse");
-const Context = @import("interpret").Context;
+const nyarna = @import("nyarna");
+const data = nyarna.data;
+const Interpreter = nyarna.Interpreter;
 const errors = @import("errors");
 
-fn ensureLiteral(node: *data.Node, kind: @typeInfo(data.Node.Literal).Struct.fields[0].field_type, content: []const u8) !void {
+fn ensureLiteral(node: *data.Node,
+                 kind: @typeInfo(data.Node.Literal).Struct.fields[0].field_type,
+                 content: []const u8) !void {
   try std.testing.expectEqual(data.Node.Data.literal, node.data);
   try std.testing.expectEqual(kind, node.data.literal.kind);
   try std.testing.expectEqualStrings(content, node.data.literal.content);
@@ -32,11 +34,11 @@ test "parse simple line" {
   };
 
   var r = errors.CmdLineReporter.init();
-  var p = parse.Parser.init();
-  var ctx = try Context.init(std.testing.allocator, &r.reporter);
-  ctx.input = &src;
-  defer ctx.deinit().deinit();
-  var res = try p.parseSource(&ctx, true);
+  var l = try nyarna.Loader.init(std.testing.allocator, &r.reporter);
+  defer l.deinit();
+  var ml = try nyarna.Loader.ModuleLoader.create(&l, &src, &.{});
+  defer ml.destroy();
+  var res = try ml.loadAsNode(true);
   try ensureLiteral(res, .text, "Hello, World!");
 }
 
@@ -56,11 +58,11 @@ test "parse assignment" {
   };
 
   var r = errors.CmdLineReporter.init();
-  var p = parse.Parser.init();
-  var ctx = try Context.init(std.testing.allocator, &r.reporter);
-  defer ctx.deinit().deinit();
-  ctx.input = &src;
-  var res = try p.parseSource(&ctx, true);
+  var l = try nyarna.Loader.init(std.testing.allocator, &r.reporter);
+  defer l.deinit();
+  var ml = try nyarna.Loader.ModuleLoader.create(&l, &src, &.{});
+  defer ml.destroy();
+  var res = try ml.loadAsNode(true);
   try std.testing.expectEqual(data.Node.Data.assignment, res.data);
   try ensureUnresSymref(res.data.assignment.target.unresolved, 0, "foo");
   try ensureLiteral(res.data.assignment.replacement, .text, "bar");
@@ -82,16 +84,18 @@ test "parse access" {
   };
 
   var r = errors.CmdLineReporter.init();
-  var p = parse.Parser.init();
-  var ctx = try Context.init(std.testing.allocator, &r.reporter);
-  ctx.input = &src;
-  defer ctx.deinit().deinit();
-  var res = try p.parseSource(&ctx, true);
+  var l = try nyarna.Loader.init(std.testing.allocator, &r.reporter);
+  defer l.deinit();
+  var ml = try nyarna.Loader.ModuleLoader.create(&l, &src, &.{});
+  defer ml.destroy();
+  var res = try ml.loadAsNode(true);
   try std.testing.expectEqual(data.Node.Data.access, res.data);
-  try std.testing.expectEqual(data.Node.Data.access, res.data.access.subject.data);
+  try std.testing.expectEqual(
+    data.Node.Data.access, res.data.access.subject.data);
   try std.testing.expectEqualStrings("c", res.data.access.id);
   try ensureUnresSymref(res.data.access.subject.data.access.subject, 0, "a");
-  try std.testing.expectEqualStrings("b", res.data.access.subject.data.access.id);
+  try std.testing.expectEqualStrings(
+    "b", res.data.access.subject.data.access.id);
 }
 
 test "parse concat" {
@@ -110,11 +114,11 @@ test "parse concat" {
   };
 
   var r = errors.CmdLineReporter.init();
-  var p = parse.Parser.init();
-  var ctx = try Context.init(std.testing.allocator, &r.reporter);
-  ctx.input = &src;
-  defer ctx.deinit().deinit();
-  var res = try p.parseSource(&ctx, true);
+  var l = try nyarna.Loader.init(std.testing.allocator, &r.reporter);
+  defer l.deinit();
+  var ml = try nyarna.Loader.ModuleLoader.create(&l, &src, &.{});
+  defer ml.destroy();
+  var res = try ml.loadAsNode(true);
   try std.testing.expectEqual(data.Node.Data.concatenation, res.data);
   try ensureLiteral(res.data.concatenation.content[0], .text, "lorem");
   try ensureUnresSymref(res.data.concatenation.content[1], 0, "a");
@@ -140,16 +144,18 @@ test "parse paragraphs" {
   };
 
   var r = errors.CmdLineReporter.init();
-  var p = parse.Parser.init();
-  var ctx = try Context.init(std.testing.allocator, &r.reporter);
-  ctx.input = &src;
-  defer ctx.deinit().deinit();
-  var res = try p.parseSource(&ctx, true);
+  var l = try nyarna.Loader.init(std.testing.allocator, &r.reporter);
+  defer l.deinit();
+  var ml = try nyarna.Loader.ModuleLoader.create(&l, &src, &.{});
+  defer ml.destroy();
+  var res = try ml.loadAsNode(true);
   try std.testing.expectEqual(data.Node.Data.paragraphs, res.data);
   try ensureLiteral(res.data.paragraphs.items[0].content, .text, "lorem");
-  try std.testing.expectEqual(@as(usize, 2), res.data.paragraphs.items[0].lf_after);
+  try std.testing.expectEqual(
+    @as(usize, 2), res.data.paragraphs.items[0].lf_after);
   try ensureLiteral(res.data.paragraphs.items[1].content, .text, "ipsum");
-  try std.testing.expectEqual(@as(usize, 3), res.data.paragraphs.items[1].lf_after);
+  try std.testing.expectEqual(
+    @as(usize, 3), res.data.paragraphs.items[1].lf_after);
   try ensureLiteral(res.data.paragraphs.items[2].content, .text, "dolor");
 }
 
@@ -167,16 +173,18 @@ test "parse unknown call" {
   };
 
   var r = errors.CmdLineReporter.init();
-  var p = parse.Parser.init();
-  var ctx = try Context.init(std.testing.allocator, &r.reporter);
-  ctx.input = &src;
-  defer ctx.deinit().deinit();
-  var res = try p.parseSource(&ctx, true);
+  var l = try nyarna.Loader.init(std.testing.allocator, &r.reporter);
+  defer l.deinit();
+  var ml = try nyarna.Loader.ModuleLoader.create(&l, &src, &.{});
+  defer ml.destroy();
+  var res = try ml.loadAsNode(true);
   try std.testing.expectEqual(data.Node.Data.unresolved_call, res.data);
   try ensureUnresSymref(res.data.unresolved_call.target, 0, "spam");
-  try std.testing.expectEqual(@as(usize, 2), res.data.unresolved_call.proto_args.len);
+  try std.testing.expectEqual(
+    @as(usize, 2), res.data.unresolved_call.proto_args.len);
   const p1 = &res.data.unresolved_call.proto_args[0];
-  try std.testing.expectEqual(data.Node.UnresolvedCall.ArgKind.position, p1.kind);
+  try std.testing.expectEqual(
+    data.Node.UnresolvedCall.ArgKind.position, p1.kind);
   try std.testing.expectEqual(false, p1.had_explicit_block_config);
   try ensureLiteral(p1.content, .text, "egg");
   const p2 = &res.data.unresolved_call.proto_args[1];
@@ -200,16 +208,18 @@ test "parse block" {
   };
 
   var r = errors.CmdLineReporter.init();
-  var p = parse.Parser.init();
-  var ctx = try Context.init(std.testing.allocator, &r.reporter);
-  ctx.input = &src;
-  defer ctx.deinit().deinit();
-  var res = try p.parseSource(&ctx, true);
+  var l = try nyarna.Loader.init(std.testing.allocator, &r.reporter);
+  defer l.deinit();
+  var ml = try nyarna.Loader.ModuleLoader.create(&l, &src, &.{});
+  defer ml.destroy();
+  var res = try ml.loadAsNode(true);
   try std.testing.expectEqual(data.Node.Data.unresolved_call, res.data);
   try ensureUnresSymref(res.data.unresolved_call.target, 0, "block");
-  try std.testing.expectEqual(@as(usize, 2), res.data.unresolved_call.proto_args.len);
+  try std.testing.expectEqual(
+    @as(usize, 2), res.data.unresolved_call.proto_args.len);
   const p1 = &res.data.unresolved_call.proto_args[0];
-  try std.testing.expectEqual(data.Node.UnresolvedCall.ArgKind.primary, p1.kind);
+  try std.testing.expectEqual(
+    data.Node.UnresolvedCall.ArgKind.primary, p1.kind);
   try std.testing.expectEqual(true, p1.had_explicit_block_config);
   try ensureLiteral(p1.content, .text, "rock");
   const p2 = &res.data.unresolved_call.proto_args[1];

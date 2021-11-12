@@ -49,7 +49,8 @@ pub const Lattice = struct {
           if (!total_order_less(next_node.key, t)) break;
         }
         // inlining this causes a compiler bug :)
-        const hit = if (next.*) |succ| if (t.eql(succ.key)) succ else null else null;
+        const hit =
+          if (next.*) |succ| if (t.eql(succ.key)) succ else null else null;
         self.cur = hit orelse blk: {
           var new = try self.lattice.alloc.create(TreeNode);
           new.* = .{
@@ -76,21 +77,21 @@ pub const Lattice = struct {
   /// This is a search tree that holds all known intersection types.
   ///
   /// A TreeNode and its `next` pointer form a list whose types adhere to the
-  /// artifical total order on types. Each tree node may have a list of children.
-  /// The field `intersections` is the root node that only contains children and
-  /// has an undefined key.
+  /// artifical total order on types. Each tree node may have a list of
+  /// children. The field `intersections` is the root node that only contains
+  /// children and has an undefined key.
   ///
-  /// An intersection type is stored as value in a TreeNode `x`, so that the set of
-  /// keys of those TreeNodes where you descend into children to reach `x`
+  /// An intersection type is stored as value in a TreeNode `x`, so that the set
+  /// of keys of those TreeNodes where you descend into children to reach `x`
   /// equals the set of types inside the intersection type. The order of the
   /// keys follows the artificial total order on types.
   ///
   /// I expect the worst-case time of discovering the intersection type for a
   /// list of n types to be (n log(m)) where m is the number of existing types
-  /// allowed in an intersection, but I didn't calculate it. Note that the farther
-  /// along the current list you descent, the fewer types can be in the child list
-  /// since the child list can only contain types that come after the type you
-  /// descend on in the artificial total order.
+  /// allowed in an intersection, but I didn't calculate it. Note that the
+  /// farther along the current list you descent, the fewer types can be in the
+  /// child list since the child list can only contain types that come after the
+  /// type you descend on in the artificial total order.
   intersections: TreeNode,
   /// constructors for all types that have constructors.
   /// these are to be queried via fn constructor().
@@ -98,9 +99,9 @@ pub const Lattice = struct {
   /// predefined types. TODO: move these to system.ny
   boolean: data.Type.Instantiated,
 
-  pub fn init(alloc: *std.mem.Allocator) !Lattice {
+  pub fn init(alloc: *std.heap.ArenaAllocator) !Lattice {
     var ret = Lattice{
-      .alloc = alloc,
+      .alloc = &alloc.allocator,
       .optionals = .{},
       .concats = .{},
       .lists = .{},
@@ -110,17 +111,25 @@ pub const Lattice = struct {
         .next = null,
         .children = null,
       },
-      .type_constructors = try alloc.alloc(data.Symbol.ExtFunc, 2),
-      .boolean = .{.at = data.Position.intrinsic(), .name = null, .data = .{.tenum = undefined}},
+      .type_constructors = try alloc.allocator.alloc(data.Symbol.ExtFunc, 2),
+      .boolean = .{
+        .at = data.Position.intrinsic(), .name = null,
+        .data = .{.tenum = undefined}
+      },
     };
-    ret.boolean.data.tenum = try data.Type.Enum.predefBoolean(alloc);
-    const boolsym = try alloc.create(data.Symbol);
+    ret.boolean.data.tenum = try data.Type.Enum.predefBoolean(ret.alloc);
+    const boolsym = try ret.alloc.create(data.Symbol);
     boolsym.defined_at = data.Position.intrinsic();
     boolsym.name = "Boolean";
     boolsym.data = .{.ny_type = .{.instantiated = &ret.boolean}};
     ret.boolean.name = boolsym;
 
     return ret;
+  }
+
+  pub fn deinit(_: *Self) void {
+    // nothing to do – the supplied ArenaAllocator will take care of freeing
+    // the instantiated types.
   }
 
   /// may only be called on types that do have constructors
@@ -137,8 +146,8 @@ pub const Lattice = struct {
 
   /// this function implements the artificial total order. The total order's
   /// constraint is satisfied by ordering all intrinsic types (which do not have
-  /// allocated information) before all other types, and ordering the other types
-  /// according to the pointers to their allocated memory.
+  /// allocated information) before all other types, and ordering the other
+  /// types according to the pointers to their allocated memory.
   fn total_order_less(a: data.Type, b: data.Type) bool {
     const a_int = switch (a) {
       .intrinsic => |ia| {
@@ -174,23 +183,26 @@ pub const Lattice = struct {
     return self.greaterEqual(right, left);
   }
 
-  pub fn sup(self: *Self, t1: data.Type, t2: data.Type) std.mem.Allocator.Error!data.Type {
+  pub fn sup(self: *Self, t1: data.Type, t2: data.Type)
+      std.mem.Allocator.Error!data.Type {
     if (t1.eql(t2)) return t1;
     // defer structural and intrinsic cases to their respective functions
     const types = [_]data.Type{t1, t2};
     for (types) |t, i| switch (t) {
-      .structural => |struc| return try self.supWithStructure(struc, types[(i + 1) % 2]),
+      .structural => |struc|
+        return try self.supWithStructure(struc, types[(i + 1) % 2]),
       else => {},
     };
     for (types) |t, i| switch (t) {
-      .intrinsic => |intr| return try self.supWithIntrinsic(intr, types[(i + 1) % 2]),
+      .intrinsic => |intr|
+        return try self.supWithIntrinsic(intr, types[(i + 1) % 2]),
       else => {},
     };
-    const inst_types = [_]*data.Type.Instantiated{t1.instantiated, t2.instantiated};
+    const inst_types =
+      [_]*data.Type.Instantiated{t1.instantiated, t2.instantiated};
     for (inst_types) |t| switch (t.data) {
-      .record => {
-        return self.calcIntersection(.{&[_]data.Type{t1}, &[_]data.Type{t2}});
-      },
+      .record =>
+        return self.calcIntersection(.{&[_]data.Type{t1}, &[_]data.Type{t2}}),
       else => {},
     };
     for (inst_types) |t, i| switch (t.data) {
@@ -216,8 +228,8 @@ pub const Lattice = struct {
       else => {},
     };
     if (inst_types[0].data == .float and inst_types[1].data == .float)
-      return if (@enumToInt(inst_types[0].data.float.precision) < @enumToInt(inst_types[1].data.float.precision))
-        t2 else t1;
+      return if (@enumToInt(inst_types[0].data.float.precision) <
+                 @enumToInt(inst_types[1].data.float.precision)) t2 else t1;
     if (inst_types[0].data == .textual and inst_types[1].data == .textual)
       unreachable; // TODO: form type that allows all characters accepted by any of the two types
     // at this point, we have two different instantiated types that are not records,
@@ -239,7 +251,8 @@ pub const Lattice = struct {
         if (indexes[index] < vals.len) {
           const next_in_list = vals[indexes[index]];
           if (cur_type) |previous| {
-            if (total_order_less(next_in_list, previous)) cur_type = next_in_list;
+            if (total_order_less(next_in_list, previous))
+              cur_type = next_in_list;
           } else cur_type = next_in_list;
         }
       }
@@ -274,7 +287,8 @@ pub const Lattice = struct {
           if (indexes[index] < vals.len) {
             const next_in_list = vals[indexes[index]];
             if (cur_type) |previous| {
-              if (total_order_less(next_in_list, previous)) cur_type = next_in_list;
+              if (total_order_less(next_in_list, previous))
+                cur_type = next_in_list;
             } else cur_type = next_in_list;
           }
         }
@@ -296,42 +310,51 @@ pub const Lattice = struct {
     }};
   }
 
-  fn supWithStructure(self: *Self, struc: *data.Type.Structural, other: data.Type) !data.Type {
+  fn supWithStructure(
+      self: *Self, struc: *data.Type.Structural, other: data.Type) !data.Type {
     switch (other) {
       .intrinsic => |other_in| switch (other_in) {
         .every => return data.Type{.structural = struc},
         .void => return switch (struc.*) {
           .concat => data.Type{.structural = struc},
-          else => (try self.optional(.{.structural = struc})) orelse data.Type{.intrinsic = .poison},
+          else => (try self.optional(.{.structural = struc})) orelse
+            data.Type{.intrinsic = .poison},
         },
         .space, .literal, .raw => {},
         else => return data.Type{.intrinsic = .poison},
       },
-      // we're handling some special cases here, but most are handled by the switch below.
+      // we're handling some special cases here, but most are handled by the
+      // switch below.
       .structural => |other_struc| switch (struc.*) {
         .optional => |*op| switch (other_struc.*) {
           .optional => |*other_op| return
-            (try self.optional(try self.sup(other_op.inner, op.inner))) orelse data.Type{.intrinsic = .poison},
+            (try self.optional(try self.sup(other_op.inner, op.inner))) orelse
+              data.Type{.intrinsic = .poison},
           .concat => |*other_con| return
-            (try self.concat(try self.sup(other_con.inner, op.inner))) orelse data.Type{.intrinsic = .poison},
+            (try self.concat(try self.sup(other_con.inner, op.inner))) orelse
+              data.Type{.intrinsic = .poison},
           else => {},
         },
         .concat => |*other_con| switch (struc.*) {
           .optional => |*op| return
-            (try self.concat(try self.sup(op.inner, other_con.inner))) orelse data.Type{.intrinsic = .poison},
+            (try self.concat(try self.sup(op.inner, other_con.inner))) orelse
+              data.Type{.intrinsic = .poison},
           .concat => |*con| return
-            (try self.concat(try self.sup(other_con.inner, con.inner))) orelse data.Type{.intrinsic = .poison},
+            (try self.concat(try self.sup(other_con.inner, con.inner))) orelse
+              data.Type{.intrinsic = .poison},
           else => {},
         },
         .intersection => |*other_inter| switch (struc.*) {
           .intersection => |*inter| {
             const scalar_type = if (inter.scalar) |inter_scalar|
-              if (other_inter.scalar) |other_scalar| try self.sup(inter_scalar, other_scalar)
+              if (other_inter.scalar) |other_scalar| try
+                self.sup(inter_scalar, other_scalar)
               else inter_scalar
             else other_inter.scalar;
 
             return if (scalar_type) |st|
-              self.calcIntersection(.{&[1]data.Type{st}, inter.types, other_inter.types})
+              self.calcIntersection(.{&[1]data.Type{st}, inter.types,
+                other_inter.types})
             else self.calcIntersection(.{inter.types, other_inter.types});
           },
           else => {},
@@ -341,12 +364,18 @@ pub const Lattice = struct {
       .instantiated => {},
     }
     return switch (struc.*) {
-      .optional => |*o| (try self.optional(try self.sup(o.inner, other))) orelse data.Type{.intrinsic = .poison},
-      .concat => |*c| (try self.concat(try self.sup(c.inner, other))) orelse data.Type{.intrinsic = .poison},
+      .optional => |*o|
+        (try self.optional(try self.sup(o.inner, other))) orelse
+          data.Type{.intrinsic = .poison},
+      .concat => |*c|
+        (try self.concat(try self.sup(c.inner, other))) orelse
+          data.Type{.intrinsic = .poison},
       .paragraphs => {
         unreachable; // TODO
       },
-      .list => |*l| (try self.list(try self.sup(l.inner, other))) orelse data.Type{.intrinsic = .poison},
+      .list => |*l|
+        (try self.list(try self.sup(l.inner, other))) orelse
+          data.Type{.intrinsic = .poison},
       .map => {
         unreachable; // TODO
       },
@@ -358,12 +387,16 @@ pub const Lattice = struct {
       },
       .intersection => |*inter| blk: {
         if (other.isScalar()) {
-          const scalar_type = if (inter.scalar) |inter_scalar| try self.sup(other, inter_scalar) else other;
-          break :blk try self.calcIntersection(.{&[_]data.Type{scalar_type}, inter.types});
+          const scalar_type = if (inter.scalar) |inter_scalar|
+            try self.sup(other, inter_scalar) else other;
+          break :blk try self.calcIntersection(
+            .{&[_]data.Type{scalar_type}, inter.types});
         } else switch (other) {
           .instantiated => |other_inst| if (other_inst.data == .record) {
             break :blk try if (inter.scalar) |inter_scalar|
-              self.calcIntersection(.{&[_]data.Type{inter_scalar}, &[_]data.Type{other}, inter.types})
+              self.calcIntersection(
+                .{&[_]data.Type{inter_scalar}, &[_]data.Type{other},
+                inter.types})
             else self.calcIntersection(.{&[_]data.Type{other}, inter.types});
           },
           else => {},
@@ -373,18 +406,23 @@ pub const Lattice = struct {
     };
   }
 
-  fn supWithIntrinsic(self: *Self, intr: @typeInfo(data.Type).Union.fields[0].field_type, other: data.Type) !data.Type {
+  fn supWithIntrinsic(
+      self: *Self, intr: @typeInfo(data.Type).Union.fields[0].field_type,
+      other: data.Type) !data.Type {
     return switch(intr) {
-      .void => (try self.optional(other)) orelse data.Type{.intrinsic = .poison},
+      .void =>
+        (try self.optional(other)) orelse data.Type{.intrinsic = .poison},
       .prototype, .schema, .extension, .ast_node => .{.intrinsic = .poison},
       .space, .literal, .raw => switch (other) {
         .intrinsic => |other_intr| switch (other_intr) {
           .every => data.Type{.intrinsic = intr},
           .void => (try self.optional(other)).?,
-          .space, .literal, .raw => data.Type{.intrinsic = @intToEnum(@TypeOf(intr), std.math.max(@enumToInt(intr), @enumToInt(other_intr)))},
+          .space, .literal, .raw =>
+            data.Type{.intrinsic = @intToEnum(@TypeOf(intr),
+              std.math.max(@enumToInt(intr), @enumToInt(other_intr)))},
           else => data.Type{.intrinsic = .poison},
         },
-        .structural => unreachable, // this case is handled in supWithStructural.
+        .structural => unreachable, // case is handled in supWithStructural.
         .instantiated => data.Type{.intrinsic = .poison},
       },
       .every => other,
@@ -507,14 +545,16 @@ const SigBuilderEnv = enum{
     };
   }
 
-  fn alloc(comptime e: SigBuilderEnv, ctx: anytype, comptime T: type, num: usize) ![]T {
+  fn alloc(comptime e: SigBuilderEnv, ctx: anytype, comptime T: type,
+           num: usize) ![]T {
     return switch (e) {
       .intrinsic => ctx.alloc(T, num),
       .userdef => ctx.source_content.allocator.alloc(T, num),
     };
   }
 
-  fn errorMsg(comptime e: SigBuilderEnv, ctx: anytype, comptime error_name: []const u8, args: anytype) void {
+  fn errorMsg(comptime e: SigBuilderEnv, ctx: anytype,
+              comptime error_name: []const u8, args: anytype) void {
     switch (e) {
       .intrinsic => unreachable,
       .userdef => @call(.{}, @field(ctx.eh, error_name), args),
@@ -534,7 +574,8 @@ pub fn SigBuilder(comptime kind: SigBuilderEnv) type {
 
     /// if returns type is yet to be determined, give .{.intrinsic = .every}.
     /// the returns type is given early to know whether this is a keyword.
-    pub fn init(context: kind.contextType(), num_params: usize, returns: data.Type) !Self {
+    pub fn init(context: kind.contextType(), num_params: usize,
+                returns: data.Type) !Self {
       var ret = Self{
         .val = try kind.create(context, data.Type.Signature),
         .ctx = context,
@@ -543,7 +584,8 @@ pub fn SigBuilder(comptime kind: SigBuilderEnv) type {
         .seen_error = false,
       };
       ret.val.* = .{
-        .parameters = try kind.alloc(context, data.Type.Signature.Parameter, num_params),
+        .parameters =
+          try kind.alloc(context, data.Type.Signature.Parameter, num_params),
         .primary = null,
         .varmap = null,
         .auto_swallow = null,
@@ -559,7 +601,8 @@ pub fn SigBuilder(comptime kind: SigBuilderEnv) type {
         .pos = loc.value().origin,
         .name = loc.name,
         .ptype = loc.tloc,
-        .capture = if (loc.varargs) |_| .varargs else if (loc.mutable) |_| @as(@TypeOf(param.capture), .mutable) else .default,
+        .capture = if (loc.varargs) |_| .varargs else if (loc.mutable) |_|
+          @as(@TypeOf(param.capture), .mutable) else .default,
         .default = loc.default,
         .config = if (loc.block_header) |bh| bh.config else null,
       };
@@ -570,7 +613,8 @@ pub fn SigBuilder(comptime kind: SigBuilderEnv) type {
       }
       if (loc.primary) |p| {
         if (self.val.primary) |pindex| {
-          kind.errorMsg(self.ctx, "DuplicateFlag", .{"primary", p, self.val.parameters[pindex].pos});
+          kind.errorMsg(self.ctx, "DuplicateFlag",
+            .{"primary", p, self.val.parameters[pindex].pos});
           self.seen_error = true;
         } else {
           self.val.primary = self.next_param;
@@ -583,8 +627,10 @@ pub fn SigBuilder(comptime kind: SigBuilderEnv) type {
             var buf: [4]u8 = undefined;
             // inlining this into the errorMsg call leads to a compiler bug :)
             const repr = if (as.depth == 0) blk: {
-              std.mem.copy(u8, &buf, ":>"); break :blk @as([]const u8, buf[0..2]);
-            } else std.fmt.bufPrint(&buf, ":{}>", .{as.depth}) catch unreachable;
+              std.mem.copy(u8, &buf, ":>");
+              break :blk @as([]const u8, buf[0..2]);
+            } else std.fmt.bufPrint(&buf, ":{}>", .{as.depth})
+              catch unreachable;
             kind.errorMsg(self.ctx, "DuplicateAutoSwallow", .{
               repr, bh.value().origin, self.val.parameters[as.param_index].pos
             });
@@ -599,12 +645,15 @@ pub fn SigBuilder(comptime kind: SigBuilderEnv) type {
         }
       }
 
-      if (param.capture != .default or param.config != null or param.default != null)
+      if (param.capture != .default or param.config != null or
+          param.default != null)
         self.needs_different_repr = true;
       self.next_param += 1;
     }
 
-    pub fn finish(self: *Self) if (kind == .intrinsic) *data.Type.Signature else ?*data.Type.Signature {
+    pub fn finish(self: *Self)
+      if (kind == .intrinsic) *data.Type.Signature else ?*data.Type.Signature
+    {
       std.debug.assert(self.next_param == self.val.parameters.len);
       if (self.seen_error) if (kind == .intrinsic) unreachable else return null;
       if (self.needs_different_repr) {

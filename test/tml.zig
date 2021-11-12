@@ -31,7 +31,8 @@ pub const File = struct {
     errors: Values,
   },
 
-  fn failWith(path: []const u8, comptime msg: []const u8, args: anytype) ParseError {
+  fn failWith(path: []const u8, comptime msg: []const u8, args: anytype)
+      ParseError {
     std.log.err("{s}: " ++ msg ++ "\n", .{path} ++ args);
     return ParseError.parsing_failed;
   }
@@ -43,12 +44,14 @@ pub const File = struct {
   pub fn loadPath(path: []const u8) !File {
     const file = try std.fs.cwd().openFile(path, .{});
     defer file.close();
-    const file_contents = try std.fs.cwd().readFileAlloc(std.testing.allocator, path, (try file.stat()).size + 1);
+    const file_contents = try std.fs.cwd().readFileAlloc(
+      std.testing.allocator, path, (try file.stat()).size + 1);
     defer std.testing.allocator.free(file_contents);
     return load(path, file_contents);
   }
 
-  pub fn loadFile(dir: *std.fs.Dir, path: []const u8, file: *std.fs.File) !File {
+  pub fn loadFile(dir: *std.fs.Dir, path: []const u8, file: *std.fs.File)
+      !File {
     const file_contents = try dir.readFileAlloc(
       std.testing.allocator, path, (try file.stat()).size + 1);
     defer std.testing.allocator.free(file_contents);
@@ -93,10 +96,13 @@ pub const File = struct {
        const item_name = std.mem.trim(u8, try ret.alloc().dupe(u8, blk: {
          if (name_end) |val| {
           if (tag_start) |tval| {
-            if (val > tval) return failWith(name, "`{{` before `:` in value header", .{});
-            sub_name = try ret.alloc().dupe(u8, std.mem.trim(u8, header[val + 1..tval], " \t"));
+            if (val > tval) return failWith(
+              name, "`{{` before `:` in value header", .{});
+            sub_name = try ret.alloc().dupe(
+              u8, std.mem.trim(u8, header[val + 1..tval], " \t"));
           } else {
-            sub_name = try ret.alloc().dupe(u8, std.mem.trim(u8, header[val + 1..], " \t"));
+            sub_name = try ret.alloc().dupe(
+              u8, std.mem.trim(u8, header[val + 1..], " \t"));
           }
           break :blk header[0..val];
         } else if (tag_start) |tval| {
@@ -117,7 +123,8 @@ pub const File = struct {
           tags_str = std.mem.trimLeft(u8, tags_str[b + 1..], " \t");
           if (tags_str.len == 0) break;
           sep = std.mem.indexOfScalar(u8, tags_str, ',');
-          const tag = std.mem.trim(u8, if (sep) |e| tags_str[0..e] else tags_str, " \t");
+          const tag = std.mem.trim(
+            u8, if (sep) |e| tags_str[0..e] else tags_str, " \t");
           if (std.mem.eql(u8, tag, "strip")) {
             tags.strip = true;
           } else if (std.mem.eql(u8, tag , "crlf")) {
@@ -166,7 +173,8 @@ pub const File = struct {
       var found = false;
       inline for (.{"inline", "file", "lib", "output", "errors"}) |field| {
         if (std.mem.eql(u8, field, item_name)) {
-          try @field(ret.params, field).put(sub_name, .{.line_offset = start, .content = content});
+          try @field(ret.params, field).put(
+            sub_name, .{.line_offset = start, .content = content});
           found = true;
           break;
         }
@@ -175,7 +183,8 @@ pub const File = struct {
         if (sub_name.len > 0) {
           return failWith(name, "unknown selector: `{s}`", .{item_name});
         } else {
-          try ret.items.put(item_name, .{.line_offset = start, .content = content});
+          try ret.items.put(
+            item_name, .{.line_offset = start, .content = content});
         }
       }
     }
