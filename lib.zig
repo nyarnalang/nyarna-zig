@@ -1,8 +1,9 @@
 const std = @import("std");
-const Interpreter = @import("interpret.zig").Interpreter;
-const Loader = @import("load.zig").Loader;
-const data = @import("../data.zig");
-const types = @import("../types.zig");
+const nyarna = @import("nyarna.zig");
+const Interpreter = nyarna.Interpreter;
+const Context = nyarna.Context;
+const data = nyarna.data;
+const types = nyarna.types;
 
 // TODO: dummy, refactor!
 pub const RuntimeContext = struct {
@@ -151,19 +152,19 @@ pub const Provider = struct {
 };
 
 pub const Intrinsics = Provider.Wrapper(struct {
-  fn location(context: *Interpreter, pos: data.Position,
+  fn location(intpr: *Interpreter, pos: data.Position,
               name: []const u8, t: ?data.Type, primary: *data.Value.Enum,
               varargs: *data.Value.Enum, varmap: *data.Value.Enum,
               mutable: *data.Value.Enum, header: ?*data.Value.BlockHeader,
               default: ?*data.Value.Ast) !*data.Node {
     var expr = if (default) |node| blk: {
-      var val = try context.interpret(node.root);
+      var val = try intpr.interpret(node.root);
       if (t) |given_type| {
-        if (!context.loader.types.lesserEqual(val.expected_type, given_type)
+        if (!intpr.types().lesserEqual(val.expected_type, given_type)
             and !val.expected_type.is(.poison)) {
-          context.loader.logger.ExpectedExprOfTypeXGotY(
+          intpr.loader.logger.ExpectedExprOfTypeXGotY(
             val.pos, given_type, val.expected_type);
-          return data.Node.poison(&context.storage.allocator, pos);
+          return data.Node.poison(&intpr.storage.allocator, pos);
         }
       }
       break :blk val;
@@ -179,22 +180,22 @@ pub const Intrinsics = Provider.Wrapper(struct {
     // - special syntax in block config must yield expected type (?)
     if (varmap.index == 1) {
       if (varargs.index == 1) {
-        context.loader.logger.IncompatibleFlag("varmap",
+        intpr.loader.logger.IncompatibleFlag("varmap",
           varmap.value().origin, varargs.value().origin);
-        return data.Node.poison(&context.storage.allocator, pos);
+        return data.Node.poison(&intpr.storage.allocator, pos);
       } else if (mutable.index == 1) {
-        context.loader.logger.IncompatibleFlag("varmap",
+        intpr.loader.logger.IncompatibleFlag("varmap",
           varmap.value().origin, mutable.value().origin);
-        return data.Node.poison(&context.storage.allocator, pos);
+        return data.Node.poison(&intpr.storage.allocator, pos);
       }
     } else if (varargs.index == 1) if (mutable.index == 1) {
-      context.loader.logger.IncompatibleFlag("mutable",
+      intpr.loader.logger.IncompatibleFlag("mutable",
         mutable.value().origin, varargs.value().origin);
-      return data.Node.poison(&context.storage.allocator, pos);
+      return data.Node.poison(&intpr.storage.allocator, pos);
     };
 
-    var lit_expr = try context.createPublic(data.Expression);
-    return data.Node.valueNode(&context.storage.allocator, lit_expr, pos, .{
+    var lit_expr = try intpr.createPublic(data.Expression);
+    return data.Node.valueNode(&intpr.storage.allocator, lit_expr, pos, .{
       .location = .{
         .name = name,
         .tloc = ltype,
@@ -208,10 +209,10 @@ pub const Intrinsics = Provider.Wrapper(struct {
     });
   }
 
-  fn definition(context: *Interpreter, pos: data.Position, name: []const u8,
+  fn definition(intpr: *Interpreter, pos: data.Position, name: []const u8,
                 root: *data.Value.Enum, node: *data.Value.Ast) !*data.Node {
-    var lit_expr = try context.createPublic(data.Expression);
-    return data.Node.valueNode(&context.storage.allocator, lit_expr, pos, .{
+    var lit_expr = try intpr.createPublic(data.Expression);
+    return data.Node.valueNode(&intpr.storage.allocator, lit_expr, pos, .{
       .definition = .{
         .name = name,
         .content = node,
@@ -227,7 +228,7 @@ pub const Intrinsics = Provider.Wrapper(struct {
   }
 });
 
-fn extFunc(context: *Loader, name: []const u8, sig: *data.Type.Signature,
+fn extFunc(context: *Context, name: []const u8, sig: *data.Type.Signature,
            p: *Provider) !data.Symbol.ExtFunc {
   const impl_index = if (sig.isKeyword()) blk: {
     const impl = p.getKeyword(name) orelse {
@@ -250,7 +251,7 @@ fn extFunc(context: *Loader, name: []const u8, sig: *data.Type.Signature,
   };
 }
 
-fn extFuncSymbol(context: *Loader, name: []const u8, sig: *data.Type.Signature,
+fn extFuncSymbol(context: *Context, name: []const u8, sig: *data.Type.Signature,
                  p: *Provider) !*data.Symbol {
   const ret = try context.storage.allocator.create(data.Symbol);
   ret.defined_at = data.Position.intrinsic();
@@ -261,7 +262,7 @@ fn extFuncSymbol(context: *Loader, name: []const u8, sig: *data.Type.Signature,
   return ret;
 }
 
-pub fn intrinsicModule(context: *Loader) !*data.Module {
+pub fn intrinsicModule(context: *Context) !*data.Module {
   var ret = try context.storage.allocator.create(data.Module);
   ret.root = try context.storage.allocator.create(data.Expression);
   ret.root.* = data.Expression.literal(data.Position.intrinsic(), .void);

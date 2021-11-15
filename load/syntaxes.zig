@@ -1,7 +1,8 @@
 const std = @import("std");
-const data = @import("../data.zig");
-const Interpreter = @import("interpret.zig").Interpreter;
-const errors = @import("errors");
+const nyarna = @import("../nyarna.zig");
+const data = nyarna.data;
+const Interpreter = nyarna.Interpreter;
+const errors = nyarna.errors;
 
 pub const SpecialSyntax = struct {
   pub const Item = union(enum) {
@@ -23,7 +24,7 @@ pub const SpecialSyntax = struct {
       std.mem.Allocator.Error!*data.Node,
   };
 
-  init: fn init(ctx: *Interpreter) std.mem.Allocator.Error!*Processor,
+  init: fn init(intpr: *Interpreter) std.mem.Allocator.Error!*Processor,
   comments_include_newline: bool,
 };
 
@@ -35,7 +36,7 @@ pub const SymbolDefs = struct {
   const Variant = enum {locs, defs};
   const Processor = SpecialSyntax.Processor;
 
-  ctx: *Interpreter,
+  intpr: *Interpreter,
   proc: Processor,
   state: State,
   produced: std.ArrayListUnmanaged(*data.Node),
@@ -81,11 +82,11 @@ pub const SymbolDefs = struct {
     };
   }
 
-  fn init(ctx: *Interpreter, variant: Variant)
+  fn init(intpr: *Interpreter, variant: Variant)
       std.mem.Allocator.Error!*Processor {
-    const alloc = &ctx.storage.allocator;
+    const alloc = &intpr.storage.allocator;
     const ret = try alloc.create(SymbolDefs);
-    ret.ctx = ctx;
+    ret.intpr = intpr;
     ret.proc = .{
       .push = SymbolDefs.push,
       .finish = SymbolDefs.finish,
@@ -98,16 +99,16 @@ pub const SymbolDefs = struct {
     return &ret.proc;
   }
 
-  inline fn logger(l: *SymbolDefs) *errors.Handler {
-    return &l.ctx.loader.logger;
+  inline fn logger(self: *SymbolDefs) *errors.Handler {
+    return &self.intpr.loader.logger;
   }
 
-  fn initLocations(ctx: *Interpreter) !*Processor {
-    return init(ctx, .locs);
+  fn initLocations(intpr: *Interpreter) !*Processor {
+    return init(intpr, .locs);
   }
 
-  fn initDefinitions(ctx: *Interpreter) !*Processor {
-    return init(ctx, .defs);
+  fn initDefinitions(intpr: *Interpreter) !*Processor {
+    return init(intpr, .defs);
   }
 
   fn reset(l: *SymbolDefs) void {
@@ -138,7 +139,7 @@ pub const SymbolDefs = struct {
           .space => return .none,
           .literal => |name| {
             const name_node =
-              try self.ctx.storage.allocator.create(data.Node);
+              try self.intpr.storage.allocator.create(data.Node);
             name_node.pos = pos;
             name_node.data = .{
               .literal = .{
@@ -146,7 +147,7 @@ pub const SymbolDefs = struct {
                 .content = name,
               }
             };
-            try self.names.append(&self.ctx.storage.allocator, name_node);
+            try self.names.append(&self.intpr.storage.allocator, name_node);
             break .after_name;
           },
           .escaped => {
@@ -549,7 +550,7 @@ pub const SymbolDefs = struct {
   fn finish(p: *Processor, pos: data.Position)
       std.mem.Allocator.Error!*data.Node {
     const self = @fieldParentPtr(SymbolDefs, "proc", p);
-    const ret = try self.ctx.storage.allocator.create(data.Node);
+    const ret = try self.intpr.storage.allocator.create(data.Node);
     ret.pos = pos;
     ret.data = .{
       .concatenation = .{
@@ -572,9 +573,9 @@ pub const SymbolDefs = struct {
         self.logger().MissingSymbolEntity(pos);
       return;
     }
-    const line_pos = self.ctx.input.between(self.start, pos.end);
+    const line_pos = self.intpr.input.between(self.start, pos.end);
 
-    const lexpr = try self.ctx.createPublic(data.Expression);
+    const lexpr = try self.intpr.createPublic(data.Expression);
     lexpr.* = data.Expression.literal(line_pos, .{
       .typeval = .{
         .t = .{
@@ -584,13 +585,13 @@ pub const SymbolDefs = struct {
     });
 
     for (self.names.items) |name| {
-      const args = try self.ctx.storage.allocator.alloc(*data.Node,
+      const args = try self.intpr.storage.allocator.alloc(*data.Node,
           switch (self.variant) {.locs => @as(usize, 8), .defs => 3});
       args[0] = name;
       var additionals = switch (self.variant) {
         .locs => ptr: {
           args[1] = self.ltype orelse blk: {
-            const vn = try self.ctx.storage.allocator.create(data.Node);
+            const vn = try self.intpr.storage.allocator.create(data.Node);
             vn.pos = pos;
             vn.data = .voidNode;
             break :blk vn;
@@ -605,7 +606,7 @@ pub const SymbolDefs = struct {
           additionals[1] = try self.boolFrom(self.varargs, pos);
           additionals[2] = try self.boolFrom(self.varmap, pos);
           additionals[3] = try self.boolFrom(self.mutable, pos);
-          const bhn = try self.ctx.storage.allocator.create(data.Node);
+          const bhn = try self.intpr.storage.allocator.create(data.Node);
           if (self.header) |bh| {
             bhn.pos = bh.value().origin;
             bhn.data = .{
@@ -632,13 +633,13 @@ pub const SymbolDefs = struct {
         }
       }
       additionals.* = self.expr orelse blk: {
-        const vn = try self.ctx.storage.allocator.create(data.Node);
+        const vn = try self.intpr.storage.allocator.create(data.Node);
         vn.pos = pos;
         vn.data = .voidNode;
         break :blk vn;
       };
 
-      const constructor = try self.ctx.storage.allocator.create(data.Node);
+      const constructor = try self.intpr.storage.allocator.create(data.Node);
       constructor.pos = line_pos;
       constructor.data = .{
         .resolved_call = .{
@@ -646,21 +647,21 @@ pub const SymbolDefs = struct {
           .args = args,
         }
       };
-      try self.produced.append(&self.ctx.storage.allocator, constructor);
+      try self.produced.append(&self.intpr.storage.allocator, constructor);
     }
   }
 
   fn boolFrom(self: *SymbolDefs, pos: ?data.Position, at: data.Position)
       !*data.Node {
-    const expr = try self.ctx.createPublic(data.Expression);
+    const expr = try self.intpr.createPublic(data.Expression);
     expr.pos = pos orelse at;
     expr.* = data.Expression.literal(pos orelse at, .{
       .enumval = .{
-        .t = self.ctx.loader.types.getBoolean(),
+        .t = self.intpr.loader.context.types.getBoolean(),
         .index = if (pos) |_| 1 else 0,
       }
     });
-    const ret = try self.ctx.storage.allocator.create(data.Node);
+    const ret = try self.intpr.storage.allocator.create(data.Node);
     ret.data = .{
       .expression = expr,
     };

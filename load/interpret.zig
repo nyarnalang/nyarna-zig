@@ -1,11 +1,14 @@
 const std = @import("std");
-const data = @import("../data.zig");
+const nyarna = @import("../nyarna.zig");
+const data = nyarna.data;
+const errors = nyarna.errors;
+const types = nyarna.types;
+const lib = nyarna.lib;
+
+const ModuleLoader = @import("load.zig").ModuleLoader;
 const parse = @import("parse.zig");
-const errors = @import("errors");
-const types = @import("../types.zig");
-const lib = @import("lib.zig");
 const syntaxes = @import("syntaxes.zig");
-const Loader = @import("load.zig").Loader;
+
 
 pub const Errors = error {
   referred_source_unavailable,
@@ -25,8 +28,8 @@ pub const Interpreter = struct {
   /// The source that is being parsed. Must not be changed during an
   /// interpreter's operation.
   input: *const data.Source,
-  /// The loader that instantiated this interpreter.
-  loader: *Loader,
+  /// The loader that owns this interpreter.
+  loader: *ModuleLoader,
   /// Maps each existing command character to the index of the namespace it
   /// references. Lexer uses this to check whether a character is a command
   /// character; the namespace mapping is relevant later for the interpreter.
@@ -53,11 +56,11 @@ pub const Interpreter = struct {
   /// TODO: make this user-extensible
   syntax_registry: [2]syntaxes.SpecialSyntax,
 
-  pub fn init(loader: *Loader, input: *const data.Source) !Interpreter {
+  pub fn init(loader: *ModuleLoader, input: *const data.Source) !Interpreter {
     var ret = Interpreter{
       .input = input,
       .loader = loader,
-      .storage = std.heap.ArenaAllocator.init(loader.allocator),
+      .storage = std.heap.ArenaAllocator.init(loader.context.allocator),
       .command_characters = .{},
       .namespaces = .{},
       .syntax_registry = .{syntaxes.SymbolDefs.locations(),
@@ -75,7 +78,11 @@ pub const Interpreter = struct {
 
   /// create an object in the public (Loader-wide) storage.
   pub inline fn createPublic(self: *Interpreter, comptime T: type) !*T {
-    return self.loader.storage.allocator.create(T);
+    return self.loader.context.storage.allocator.create(T);
+  }
+
+  pub inline fn types(self: *Interpreter) *nyarna.types.Lattice {
+    return &self.loader.context.types;
   }
 
   pub fn addNamespace(self: *Interpreter, character: u21) !void {
@@ -86,7 +93,7 @@ pub const Interpreter = struct {
     try self.namespaces.append(&self.storage.allocator, .{});
     //const ns = &self.namespaces.items[index]; TODO: do we need this?
     // intrinsic symbols of every namespace.
-    try self.importModuleSyms(self.loader.intrinsics, index);
+    try self.importModuleSyms(self.loader.context.intrinsics, index);
   }
 
   pub fn importModuleSyms(self: *Interpreter, module: *const data.Module,

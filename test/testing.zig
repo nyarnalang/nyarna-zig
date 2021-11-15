@@ -27,9 +27,9 @@ pub fn lexTest(f: *tml.File) !void {
     .locator_ctx = ".doc.",
   };
   var r = errors.CmdLineReporter.init();
-  var loader = try nyarna.Loader.init(std.testing.allocator, &r.reporter);
-  defer loader.deinit();
-  var ml = try nyarna.Loader.ModuleLoader.create(&loader, &src, &.{});
+  var ctx = try nyarna.Context.init(std.testing.allocator, &r.reporter);
+  defer ctx.deinit();
+  var ml = try nyarna.ModuleLoader.create(&ctx, &src, &.{});
   defer ml.destroy();
   var lexer = try ml.initLexer();
   defer lexer.deinit();
@@ -79,7 +79,7 @@ fn formatTypeName(t: data.Type, comptime _: []const u8,
 
 const HeaderWithContext = struct {
   header: *const data.Value.BlockHeader,
-  context: *nyarna.Loader,
+  context: *nyarna.Context,
 };
 
 fn formatBlockHeader(hc: HeaderWithContext, comptime _: []const u8,
@@ -145,7 +145,7 @@ fn AstEmitter(Handler: anytype) type {
 
     handler: Handler,
     depth: usize,
-    context: *nyarna.Loader,
+    context: *nyarna.Context,
 
     fn emitLine(self: *Self, comptime fmt: []const u8, args: anytype) !void {
       var buffer: [1024]u8 = undefined;
@@ -431,15 +431,15 @@ pub fn parseTest(f: *tml.File) !void {
     .locator_ctx = ".doc.",
   };
   var r = errors.CmdLineReporter.init();
-  var l = try nyarna.Loader.init(std.testing.allocator, &r.reporter);
-  defer l.deinit();
-  var ml = try nyarna.Loader.ModuleLoader.create(&l, &src, &.{});
+  var ctx = try nyarna.Context.init(std.testing.allocator, &r.reporter);
+  defer ctx.deinit();
+  var ml = try nyarna.ModuleLoader.create(&ctx, &src, &.{});
   defer ml.destroy();
   var res = try ml.loadAsNode(true);
   var emitter = AstEmitter(@TypeOf(&checker)){
     .depth = 0,
     .handler = &checker,
-    .context = &l,
+    .context = &ctx,
   };
   try emitter.process(res);
   if (checker.expected_iter.next()) |line| {
@@ -458,5 +458,5 @@ pub fn parseTest(f: *tml.File) !void {
       , .{checker.full_output.items});
     return TestError.no_match;
   }
-  try std.testing.expectEqual(@as(usize, 0), l.logger.count);
+  try std.testing.expectEqual(@as(usize, 0), ml.logger.count);
 }

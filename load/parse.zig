@@ -1,11 +1,13 @@
 const std = @import("std");
 const builtin = @import("builtin");
-const data = @import("../data.zig");
+const nyarna = @import("../nyarna.zig");
+const data = nyarna.data;
+const errors = nyarna.errors;
+const Interpreter = nyarna.Interpreter;
+
 const lex = @import("lex.zig");
-const Interpreter = @import("interpret.zig").Interpreter;
 const mapper = @import("mapper.zig");
 const unicode = @import("unicode.zig");
-const errors = @import("errors");
 const syntaxes = @import("syntaxes.zig");
 
 const last = @import("../helpers.zig").last;
@@ -128,46 +130,48 @@ pub const Parser = struct {
     syntax_proc: ?*syntaxes.SpecialSyntax.Processor = null,
     dangling_space: ?*data.Node = null,
 
-    fn append(l: *ContentLevel, intpr: *Interpreter, item: *data.Node) !void {
-      if (l.syntax_proc) |proc| {
+    fn append(level: *ContentLevel, ip: *Interpreter, item: *data.Node)
+        !void {
+      if (level.syntax_proc) |proc| {
         const res = try proc.push(proc, item.pos, .{.node = item});
         std.debug.assert(res == .none);
       } else {
-        if (l.dangling_space) |space_node| {
+        if (level.dangling_space) |space_node| {
           std.debug.print("appending dangling space (kind={s})\n",
             .{@tagName(space_node.data.literal.kind)});
-          try l.nodes.append(&intpr.storage.allocator, space_node);
-          l.dangling_space = null;
+          try level.nodes.append(&ip.storage.allocator, space_node);
+          level.dangling_space = null;
         }
         switch (item.data) {
           .literal, .unresolved_call, .unresolved_symref, .expression,
           .voidNode => {},
-          else => if (try intpr.tryInterpret(item, false)) |expr| {
+          else => if (try ip.tryInterpret(item, false)) |expr| {
             item.data = .{.expression = expr};
           }
         }
-        try l.nodes.append(&intpr.storage.allocator, item);
+        try level.nodes.append(&ip.storage.allocator, item);
       }
     }
 
-    fn finalizeParagraph(l: *ContentLevel, intpr: *Interpreter) !*data.Node {
-      switch(l.nodes.items.len) {
+    fn finalizeParagraph(level: *ContentLevel, ip: *Interpreter)
+        !*data.Node {
+      switch(level.nodes.items.len) {
         0 => {
-          var ret = try intpr.storage.allocator.create(data.Node);
+          var ret = try ip.storage.allocator.create(data.Node);
           ret.* = .{
-            .pos = intpr.input.at(l.start),
+            .pos = ip.input.at(level.start),
             .data = .voidNode,
           };
           return ret;
         },
-        1 => return l.nodes.items[0],
+        1 => return level.nodes.items[0],
         else => {
-          var ret = try intpr.storage.allocator.create(data.Node);
+          var ret = try ip.storage.allocator.create(data.Node);
           ret.* = .{
-            .pos = l.nodes.items[0].pos.span(last(l.nodes.items).*.pos),
+            .pos = level.nodes.items[0].pos.span(last(level.nodes.items).*.pos),
             .data = .{
               .concatenation = .{
-                .content = l.nodes.items,
+                .content = level.nodes.items,
               },
             },
           };
@@ -176,37 +180,38 @@ pub const Parser = struct {
       }
     }
 
-    fn implicitBlockConfig(l: *ContentLevel) ?*data.BlockConfig {
-      return switch (l.command.cur_cursor) {
-        .mapped => |c| l.command.mapper.config(c),
+    fn implicitBlockConfig(level: *ContentLevel) ?*data.BlockConfig {
+      return switch (level.command.cur_cursor) {
+        .mapped => |c| level.command.mapper.config(c),
         else => null,
       };
     }
 
-    fn finalize(l: *ContentLevel, p: *Parser) !*data.Node {
-      if (l.block_config) |c| {
+    fn finalize(level: *ContentLevel, p: *Parser) !*data.Node {
+      if (level.block_config) |c| {
         try p.revertBlockConfig(c);
       }
       const alloc = p.int();
-      if (l.syntax_proc) |proc| {
-        return proc.finish(proc, p.ctx().input.between(l.start, p.cur_start));
-      } else if (l.paragraphs.items.len == 0) {
-        return l.finalizeParagraph(p.ctx());
+      if (level.syntax_proc) |proc| {
+        return proc.finish(
+          proc, p.intpr().input.between(level.start, p.cur_start));
+      } else if (level.paragraphs.items.len == 0) {
+        return level.finalizeParagraph(p.intpr());
       } else {
-        if (l.nodes.items.len > 0) {
-          try l.paragraphs.append(alloc, .{
-            .content = try l.finalizeParagraph(p.ctx()),
+        if (level.nodes.items.len > 0) {
+          try level.paragraphs.append(alloc, .{
+            .content = try level.finalizeParagraph(p.intpr()),
             .lf_after = 0,
           });
         }
 
         var target = try alloc.create(data.Node);
         target.* = .{
-          .pos = l.paragraphs.items[0].content.pos.span(
-            last(l.paragraphs.items).content.pos),
+          .pos = level.paragraphs.items[0].content.pos.span(
+            last(level.paragraphs.items).content.pos),
           .data = .{
             .paragraphs = .{
-              .items = l.paragraphs.items,
+              .items = level.paragraphs.items,
             },
           },
         };
@@ -214,14 +219,14 @@ pub const Parser = struct {
       }
     }
 
-    fn pushParagraph(l: *ContentLevel, intpr: *Interpreter, lf_after: usize)
+    fn pushParagraph(level: *ContentLevel, ip: *Interpreter, lf_after: usize)
         !void {
-      if (l.nodes.items.len > 0) {
-        try l.paragraphs.append(&intpr.storage.allocator, .{
-          .content = try l.finalizeParagraph(intpr),
+      if (level.nodes.items.len > 0) {
+        try level.paragraphs.append(&ip.storage.allocator, .{
+          .content = try level.finalizeParagraph(ip),
           .lf_after = lf_after
         });
-        l.nodes = .{};
+        level.nodes = .{};
       }
     }
   };
@@ -283,25 +288,21 @@ pub const Parser = struct {
   /// other operations push either ns_mapping_failed or ns_mapping_succeeded.
   ns_mapping_stack: std.ArrayListUnmanaged(u16),
 
-  l: lex.Lexer,
+  lexer: lex.Lexer,
   state: State,
   cur: data.Token,
   cur_start: data.Cursor,
 
-  fn int(self: *@This()) *std.mem.Allocator {
-    return &self.l.context.storage.allocator;
+  inline fn int(self: *@This()) *std.mem.Allocator {
+    return &self.intpr().storage.allocator;
   }
 
-  fn ext(self: *@This()) *std.mem.Allocator {
-    return &self.l.context.loader.storage.allocator;
+  inline fn intpr(self: *@This()) *Interpreter {
+    return self.lexer.intpr;
   }
 
-  fn ctx(self: *@This()) *Interpreter {
-    return self.l.context;
-  }
-
-  fn logger(self: *@This()) *errors.Handler {
-    return &self.ctx().loader.logger;
+  inline fn logger(self: *@This()) *errors.Handler {
+    return &self.intpr().loader.logger;
   }
 
   pub fn init() Parser {
@@ -310,7 +311,7 @@ pub const Parser = struct {
       .config_buffer = undefined,
       .levels = .{},
       .ns_mapping_stack = .{},
-      .l = undefined,
+      .lexer = undefined,
       .state = .start,
       .cur = undefined,
       .cur_start = undefined,
@@ -336,7 +337,7 @@ pub const Parser = struct {
 
   fn pushLevel(self: *Parser, fullast: bool) !void {
     try self.levels.append(self.int(), ContentLevel{
-      .start = self.l.recent_end,
+      .start = self.lexer.recent_end,
       .changes = null,
       .command = undefined,
       .nodes = .{},
@@ -355,7 +356,7 @@ pub const Parser = struct {
   /// errors have occurred, check for increase of the handler's error_count.
   pub fn parseSource(self: *Parser, context: *Interpreter, fullast: bool)
       !*data.Node {
-    self.l = try lex.Lexer.init(context);
+    self.lexer = try lex.Lexer.init(context);
     self.advance();
     return self.doParse(fullast);
   }
@@ -377,13 +378,13 @@ pub const Parser = struct {
   /// emits errors for any invalid token along the way.
   inline fn advance(self: *Parser) void {
     while (true) {
-      self.cur_start = self.l.recent_end;
-      (switch (self.l.next() catch blk: {
+      self.cur_start = self.lexer.recent_end;
+      (switch (self.lexer.next() catch blk: {
         const start = self.cur_start;
         const next = while (true) {
-          break self.l.next() catch continue;
+          break self.lexer.next() catch continue;
         } else unreachable;
-        self.logger().InvalidUtf8Encoding(self.l.walker.posFrom(start));
+        self.logger().InvalidUtf8Encoding(self.lexer.walker.posFrom(start));
         break :blk next;
       }) {
         // the following errors are not handled here since they indicate
@@ -406,7 +407,7 @@ pub const Parser = struct {
           self.cur = t;
           break;
         }
-      })(self.logger(), self.l.walker.posFrom(self.cur_start));
+      })(self.logger(), self.lexer.walker.posFrom(self.cur_start));
     }
     if (builtin.mode == .Debug) {
       if (@enumToInt(self.cur) >= @enumToInt(data.Token.skipping_call_id)) {
@@ -422,9 +423,10 @@ pub const Parser = struct {
   /// retrieves the next token from the lexer. true iff that token is valid.
   /// if false is returned, self.cur is to be considered undefined.
   inline fn getNext(self: *Parser) bool {
-    self.cur_start = self.l.recent_end;
-    (switch (self.l.next() catch {
-      self.logger().InvalidUtf8Encoding(self.l.walker.posFrom(self.cur_start));
+    self.cur_start = self.lexer.recent_end;
+    (switch (self.lexer.next() catch {
+      self.logger().InvalidUtf8Encoding(
+        self.lexer.walker.posFrom(self.cur_start));
       return false;
     }) {
       .missing_block_name_sep => errors.Handler.MissingBlockNameEnd,
@@ -448,7 +450,7 @@ pub const Parser = struct {
         }
         return true;
       }
-    })(self.logger(), self.l.walker.posFrom(self.cur_start));
+    })(self.logger(), self.lexer.walker.posFrom(self.cur_start));
     return false;
   }
 
@@ -516,8 +518,8 @@ pub const Parser = struct {
               while (self.levels.items.len > 1) {
                 try self.leaveLevel();
                 const parent = self.curLevel();
-                try parent.command.shift(self.ctx(), self.cur_start);
-                try parent.append(self.ctx(), parent.command.info.unknown);
+                try parent.command.shift(self.intpr(), self.cur_start);
+                try parent.append(self.intpr(), parent.command.info.unknown);
               }
               return self.levels.items[0].finalize(self);
             },
@@ -525,9 +527,9 @@ pub const Parser = struct {
               self.curLevel().command = .{
                 .start = self.cur_start,
                 .info = .{
-                  .unknown = try self.ctx().resolveSymbol(
-                      self.l.walker.posFrom(self.cur_start),
-                      self.l.ns, self.l.recent_id),
+                  .unknown = try self.intpr().resolveSymbol(
+                      self.lexer.walker.posFrom(self.cur_start),
+                      self.lexer.ns, self.lexer.recent_id),
                 },
                 .mapper = undefined,
                 .cur_cursor = undefined,
@@ -543,10 +545,10 @@ pub const Parser = struct {
               } else self.state = .after_list;
             },
             .parsep => {
-              const newline_count = self.l.newline_count;
+              const newline_count = self.lexer.newline_count;
               self.advance();
               if (self.cur != .block_end_open and self.cur != .end_source) {
-                try self.curLevel().pushParagraph(self.ctx(), newline_count);
+                try self.curLevel().pushParagraph(self.intpr(), newline_count);
               }
             },
             .block_name_sep => {
@@ -561,9 +563,9 @@ pub const Parser = struct {
                   const cmd_start =
                     self.levels.items[self.levels.items.len - 2].command.start;
                   self.logger().WrongCallId(
-                    self.l.walker.posFrom(self.cur_start),
-                    self.l.recent_expected_id, self.l.recent_id,
-                    self.ctx().input.at(cmd_start));
+                    self.lexer.walker.posFrom(self.cur_start),
+                    self.lexer.recent_expected_id, self.lexer.recent_id,
+                    self.intpr().input.at(cmd_start));
                 },
                 else => {
                   std.debug.assert(@enumToInt(self.cur) >=
@@ -571,9 +573,9 @@ pub const Parser = struct {
                   const cmd_start =
                     self.levels.items[self.levels.items.len - 2].command.start;
                   self.logger().SkippingCallId(
-                    self.l.walker.posFrom(self.cur_start),
-                    self.l.recent_expected_id, self.l.recent_id,
-                    self.ctx().input.at(cmd_start));
+                    self.lexer.walker.posFrom(self.cur_start),
+                    self.lexer.recent_expected_id, self.lexer.recent_id,
+                    self.intpr().input.at(cmd_start));
                   var i = @as(u32, 0);
                   while (i < data.Token.numSkippedEnds(self.cur)): (i = i + 1) {
                     try self.leaveLevel();
@@ -586,11 +588,11 @@ pub const Parser = struct {
                 self.advance();
               } else {
                 self.logger().MissingClosingParenthesis(
-                  self.ctx().input.at(self.cur_start));
+                  self.intpr().input.at(self.cur_start));
               }
               self.state = .command;
               try self.curLevel().command.shift(
-                self.ctx(), self.cur_start);
+                self.intpr(), self.cur_start);
             },
             else => {
               std.debug.print(
@@ -609,13 +611,13 @@ pub const Parser = struct {
             switch (self.cur) {
               .space =>
                 try content.appendSlice(self.int(),
-                    self.l.walker.contentFrom(self.cur_start.byte_offset)),
+                    self.lexer.walker.contentFrom(self.cur_start.byte_offset)),
               .literal => {
                 try content.appendSlice(self.int(),
-                    self.l.walker.contentFrom(self.cur_start.byte_offset));
+                    self.lexer.walker.contentFrom(self.cur_start.byte_offset));
                 non_space_len = content.items.len;
                 non_space_line_len = non_space_len;
-                non_space_end = self.l.recent_end;
+                non_space_end = self.lexer.recent_end;
               },
               .ws_break => {
                 // dump whitespace before newline
@@ -624,10 +626,10 @@ pub const Parser = struct {
                 non_space_line_len = content.items.len;
               },
               .escape => {
-                try content.appendSlice(self.int(), self.l.recent_id);
+                try content.appendSlice(self.int(), self.lexer.recent_id);
                 non_space_len = content.items.len;
                 non_space_line_len = non_space_len;
-                non_space_end = self.l.recent_end;
+                non_space_end = self.lexer.recent_end;
               },
               .indent => {},
               .comment => {
@@ -646,9 +648,9 @@ pub const Parser = struct {
             .block_end_open, .block_name_sep, .comma, .name_sep, .list_end,
             .end_source => blk: {
               content.shrinkAndFree(self.int(), non_space_len);
-              break :blk self.ctx().input.between(textual_start, non_space_end);
+              break :blk self.intpr().input.between(textual_start, non_space_end);
             },
-            else => self.l.walker.posFrom(textual_start),
+            else => self.lexer.walker.posFrom(textual_start),
           };
           if (content.items.len > 0) {
             if (self.cur == .name_sep) {
@@ -679,7 +681,7 @@ pub const Parser = struct {
                 });
               // dangling space will be postponed for the case of a following,
               // swallowing command that ends the current level.
-              if (non_space_len > 0) try lvl.append(self.ctx(), node)
+              if (non_space_len > 0) try lvl.append(self.intpr(), node)
               else lvl.dangling_space = node;
               self.state = .default;
             }
@@ -694,11 +696,11 @@ pub const Parser = struct {
               var node = try self.int().create(data.Node);
               node.* = .{
                 .pos =
-                  self.l.walker.posFrom(lvl.command.info.unknown.pos.start),
+                  self.lexer.walker.posFrom(lvl.command.info.unknown.pos.start),
                 .data = .{
                   .access = .{
                     .subject = lvl.command.info.unknown,
-                    .id = self.l.recent_id,
+                    .id = self.lexer.recent_id,
                   },
                 },
               };
@@ -723,7 +725,7 @@ pub const Parser = struct {
               const target = lvl.command.info.unknown;
               switch (target.data) {
                 .resolved_symref, .unresolved_symref, .access => {
-                  const res = try self.ctx().resolveChain(target, false);
+                  const res = try self.intpr().resolveChain(target, false);
                   switch (res) {
                     .var_chain => |_| {
                       unreachable; // TODO
@@ -750,13 +752,13 @@ pub const Parser = struct {
               self.advance();
             },
             .closer => {
-              try lvl.append(self.ctx(), lvl.command.info.unknown);
+              try lvl.append(self.intpr(), lvl.command.info.unknown);
               self.advance();
               self.state = if (self.curLevel().syntax_proc != null) .special
                            else .default;
             },
             else => {
-              try lvl.append(self.ctx(), lvl.command.info.unknown);
+              try lvl.append(self.intpr(), lvl.command.info.unknown);
               self.state = if (self.curLevel().syntax_proc != null) .special
                            else .default;
               std.debug.print("state reset after command, now {s}\n",
@@ -765,7 +767,7 @@ pub const Parser = struct {
           }
         },
         .after_list => {
-          const end = self.l.recent_end;
+          const end = self.lexer.recent_end;
           self.advance();
           if (self.cur == .blocks_sep) {
             // call continues
@@ -773,7 +775,7 @@ pub const Parser = struct {
             self.advance();
           } else {
             self.state = .command;
-            try self.curLevel().command.shift(self.ctx(), end);
+            try self.curLevel().command.shift(self.intpr(), end);
           }
         },
         .after_blocks_start => {
@@ -819,8 +821,9 @@ pub const Parser = struct {
           }
           const parent = self.curLevel();
           if (self.cur == .identifier) {
-            const name = self.l.walker.contentFrom(self.cur_start.byte_offset);
-            const name_pos = self.l.walker.posFrom(self.cur_start);
+            const name =
+              self.lexer.walker.contentFrom(self.cur_start.byte_offset);
+            const name_pos = self.lexer.walker.posFrom(self.cur_start);
             var recover = false;
             while (true) {
               self.advance();
@@ -828,7 +831,7 @@ pub const Parser = struct {
                   self.cur == .missing_block_name_sep) break;
               if (self.cur != .space and !recover) {
                 self.logger().ExpectedXGotY(
-                  self.l.walker.posFrom(self.cur_start),
+                  self.lexer.walker.posFrom(self.cur_start),
                   &[_]errors.WrongItemError.ItemDescr{
                     .{.token = .block_name_sep}
                   }, .{.token = self.cur});
@@ -837,13 +840,13 @@ pub const Parser = struct {
             }
             if (self.cur == .missing_block_name_sep) {
               self.logger().MissingBlockNameEnd(
-                self.ctx().input.at(self.cur_start));
+                self.intpr().input.at(self.cur_start));
             }
             parent.command.pushName(name_pos, name, false,
               if (self.cur == .diamond_open) .block_with_config
               else .block_no_config);
           } else {
-            self.logger().ExpectedXGotY(self.ctx().input.at(self.cur_start),
+            self.logger().ExpectedXGotY(self.intpr().input.at(self.cur_start),
               &[_]errors.WrongItemError.ItemDescr{.{.token = .identifier}},
               .{.token = self.cur});
             while (self.cur != .block_name_sep and
@@ -869,24 +872,25 @@ pub const Parser = struct {
           const result = try switch (self.cur) {
             .indent => syntaxes.SpecialSyntax.Processor.Action.none,
             .space =>
-              proc.push(proc, self.l.walker.posFrom(self.cur_start), .{
-                  .space = self.l.walker.contentFrom(self.cur_start.byte_offset)
+              proc.push(proc, self.lexer.walker.posFrom(self.cur_start), .{
+                  .space = self.lexer.walker.contentFrom(
+                    self.cur_start.byte_offset)
                 }),
             .escape =>
-              proc.push(proc, self.l.walker.posFrom(self.cur_start),
-                .{.escaped = self.l.recent_id}),
+              proc.push(proc, self.lexer.walker.posFrom(self.cur_start),
+                .{.escaped = self.lexer.recent_id}),
             .identifier =>
-              proc.push(proc, self.l.walker.posFrom(self.cur_start),
-                .{.literal = self.l.recent_id}),
+              proc.push(proc, self.lexer.walker.posFrom(self.cur_start),
+                .{.literal = self.lexer.recent_id}),
             .special =>
-              proc.push(proc, self.l.walker.posFrom(self.cur_start),
-                .{.special_char = self.l.code_point}),
+              proc.push(proc, self.lexer.walker.posFrom(self.cur_start),
+                .{.special_char = self.lexer.code_point}),
             .ws_break => // TODO: discard if at end of block
-              proc.push(proc, self.l.walker.posFrom(self.cur_start),
+              proc.push(proc, self.lexer.walker.posFrom(self.cur_start),
                 .{.newlines = 1}),
             .parsep =>
-              proc.push(proc, self.l.walker.posFrom(self.cur_start),
-                .{.newlines = self.l.newline_count}),
+              proc.push(proc, self.lexer.walker.posFrom(self.cur_start),
+                .{.newlines = self.lexer.newline_count}),
             .end_source, .symref, .block_name_sep, .block_end_open => {
               self.state = .default;
               continue;
@@ -901,8 +905,8 @@ pub const Parser = struct {
             .none => self.advance(),
             .read_block_header => {
               const start = self.cur_start;
-              self.l.readBlockHeader();
-              const expr = try self.ext().create(data.Expression);
+              self.lexer.readBlockHeader();
+              const expr = try self.intpr().createPublic(data.Expression);
               expr.data = .{
                 .literal = .{
                   .value = .{
@@ -916,7 +920,8 @@ pub const Parser = struct {
               self.advance();
               const check_swallow = if (self.cur == .diamond_open) blk: {
                 bh.config = @as(data.BlockConfig, undefined);
-                try self.readBlockConfig(&bh.config.?, self.ext());
+                try self.readBlockConfig(
+                  &bh.config.?, &self.intpr().loader.context.storage.allocator);
                 if (self.cur == .blocks_sep) {
                   self.advance();
                   break :blk true;
@@ -925,7 +930,7 @@ pub const Parser = struct {
               if (check_swallow) {
                 bh.swallow_depth = self.checkSwallow();
               }
-              const pos = self.ctx().input.between(start, self.cur_start);
+              const pos = self.intpr().input.between(start, self.cur_start);
               expr.data.literal.value.origin = pos;
               expr.pos = pos;
               _ = try proc.push(proc, pos, .{.block_header = bh});
@@ -957,7 +962,7 @@ pub const Parser = struct {
       }
       if (self.cur == .diamond_close or self.cur == .end_source) {
         if (!first) {
-          self.logger().ExpectedXGotY(self.l.walker.posFrom(self.cur_start),
+          self.logger().ExpectedXGotY(self.lexer.walker.posFrom(self.cur_start),
               &[_]errors.WrongItemError.ItemDescr{.{.token = .identifier}},
               .{.token = self.cur});
         }
@@ -966,7 +971,7 @@ pub const Parser = struct {
       first = false;
       std.debug.assert(self.cur == .identifier);
       const start = self.cur_start;
-      const name = self.l.walker.contentFrom(self.cur_start.byte_offset);
+      const name = self.lexer.walker.contentFrom(self.cur_start.byte_offset);
       const kind: ConfigItemKind = switch (std.hash.Adler32.hash(name)) {
         std.hash.Adler32.hash("csym") => .csym,
         std.hash.Adler32.hash("syntax") => .syntax,
@@ -975,7 +980,8 @@ pub const Parser = struct {
         std.hash.Adler32.hash("fullast") => .fullast,
         std.hash.Adler32.hash("") => .empty,
         else => blk: {
-          self.logger().UnknownConfigDirective(self.l.walker.posFrom(start));
+          self.logger().UnknownConfigDirective(
+            self.lexer.walker.posFrom(start));
           break :blk .unknown;
         },
       };
@@ -987,19 +993,20 @@ pub const Parser = struct {
           .csym => {
             if (self.cur == .ns_sym) {
               try mapList.append(alloc, .{
-                .pos = self.l.walker.posFrom(start),
-                .from = 0, .to = self.l.code_point});
+                .pos = self.lexer.walker.posFrom(start),
+                .from = 0, .to = self.lexer.code_point});
             } else {
-              self.logger().ExpectedXGotY(self.l.walker.posFrom(self.cur_start),
-                  &[_]errors.WrongItemError.ItemDescr{.{.token = .ns_sym}},
-                  .{.token = self.cur});
+              self.logger().ExpectedXGotY(
+                self.lexer.walker.posFrom(self.cur_start),
+                &[_]errors.WrongItemError.ItemDescr{.{.token = .ns_sym}},
+                .{.token = self.cur});
               recover = true;
             }
           },
           .syntax => {
             if (self.cur == .literal) {
               switch (std.hash.Adler32.hash(
-                  self.l.walker.contentFrom(self.cur_start.byte_offset))) {
+                  self.lexer.walker.contentFrom(self.cur_start.byte_offset))) {
                 std.hash.Adler32.hash("locations") => {
                   into.syntax = .{
                     .pos = data.Position.intrinsic(),
@@ -1014,62 +1021,65 @@ pub const Parser = struct {
                 },
                 else =>
                   self.logger().UnknownSyntax(
-                    self.l.walker.posFrom(self.cur_start)),
+                    self.lexer.walker.posFrom(self.cur_start)),
               }
             } else {
-              self.logger().ExpectedXGotY(self.l.walker.posFrom(self.cur_start),
-                  &[_]errors.WrongItemError.ItemDescr{.{.token = .literal}},
-                  .{.token = self.cur});
+              self.logger().ExpectedXGotY(
+                self.lexer.walker.posFrom(self.cur_start),
+                &[_]errors.WrongItemError.ItemDescr{.{.token = .literal}},
+                .{.token = self.cur});
               recover = true;
             }
           },
           .map => {
             if (self.cur == .ns_sym) {
-              const from = self.l.code_point;
+              const from = self.lexer.code_point;
               recover = while (self.getNext()) {
                 if (self.cur != .space) break self.cur != .ns_sym;
               } else true;
               if (!recover) {
                 try mapList.append(alloc, .{
-                  .pos = self.l.walker.posFrom(start),
-                  .from = from, .to = self.l.code_point,
+                  .pos = self.lexer.walker.posFrom(start),
+                  .from = from, .to = self.lexer.code_point,
                 });
               }
             } else recover = true;
             if (recover) {
-              self.logger().ExpectedXGotY(self.l.walker.posFrom(self.cur_start),
-                  &[_]errors.WrongItemError.ItemDescr{.{.token = .ns_sym}},
-                  .{.token = self.cur});
+              self.logger().ExpectedXGotY(
+                self.lexer.walker.posFrom(self.cur_start),
+                &[_]errors.WrongItemError.ItemDescr{.{.token = .ns_sym}},
+                .{.token = self.cur});
             }
           },
           .off => {
             switch (self.cur) {
               .comment =>
-                into.off_comment = self.l.walker.posFrom(self.cur_start),
+                into.off_comment = self.lexer.walker.posFrom(self.cur_start),
               .block_name_sep =>
-                into.off_colon = self.l.walker.posFrom(self.cur_start),
+                into.off_colon = self.lexer.walker.posFrom(self.cur_start),
               .ns_sym =>
                 try mapList.append(alloc, .{
-                    .pos = self.l.walker.posFrom(start),
-                    .from = self.l.code_point, .to = 0,
+                    .pos = self.lexer.walker.posFrom(start),
+                    .from = self.lexer.code_point, .to = 0,
                   }),
               else => {
                 self.logger().ExpectedXGotY(
-                  self.l.walker.posFrom(self.cur_start),
+                  self.lexer.walker.posFrom(self.cur_start),
                   &[_]errors.WrongItemError.ItemDescr{
-                    .{.token = .ns_sym}, .{.character = '#'}, .{.character = ':'},
+                    .{.token = .ns_sym}, .{.character = '#'},
+                    .{.character = ':'},
                   }, .{.token = self.cur});
                 recover = true;
               }
             }
           },
           .fullast => {
-            into.full_ast = self.l.walker.posFrom(self.cur_start);
+            into.full_ast = self.lexer.walker.posFrom(self.cur_start);
             break :consume_next;
           },
           .empty => {
             self.logger().ExpectedXGotY(
-                self.l.walker.posFrom(self.cur_start),
+                self.lexer.walker.posFrom(self.cur_start),
                 &[_]errors.WrongItemError.ItemDescr{.{.token = .identifier}},
                 .{.token = self.cur});
             recover = true;
@@ -1082,7 +1092,7 @@ pub const Parser = struct {
       while (self.cur != .comma and self.cur != .diamond_close and
              self.cur != .end_source) : (while (!self.getNext()) {}) {
         if (self.cur != .space and !recover) {
-          self.logger().ExpectedXGotY(self.l.walker.posFrom(self.cur_start),
+          self.logger().ExpectedXGotY(self.lexer.walker.posFrom(self.cur_start),
               &[_]errors.WrongItemError.ItemDescr{
                 .{.character = ','}, .{.character = '>'}
               }, .{.token = self.cur});
@@ -1093,9 +1103,9 @@ pub const Parser = struct {
     if (self.cur == .diamond_close) {
       self.advance();
     } else {
-      self.logger().ExpectedXGotY(self.l.walker.posFrom(self.cur_start),
-          &[_]errors.WrongItemError.ItemDescr{.{.token = .diamond_close}},
-          .{.token = self.cur});
+      self.logger().ExpectedXGotY(self.lexer.walker.posFrom(self.cur_start),
+        &[_]errors.WrongItemError.ItemDescr{.{.token = .diamond_close}},
+        .{.token = self.cur});
     }
     into.map = mapList.items;
   }
@@ -1128,7 +1138,7 @@ pub const Parser = struct {
       try self.readBlockConfig(&self.config_buffer, self.int());
       std.debug.print("block header has map length of {}\n",
         .{self.config_buffer.map.len});
-      const pos = self.ctx().input.at(self.cur_start);
+      const pos = self.intpr().input.at(self.cur_start);
       if (pb_exists) |ind| {
         parent.command.pushPrimary(pos, true);
         try self.pushLevel(if (parent.command.choseAstNodeParam()) false
@@ -1146,11 +1156,11 @@ pub const Parser = struct {
         if (pb_exists) |ind| {
           if (ind.* == .unknown) {
             parent.command.pushPrimary(
-              self.ctx().input.at(self.cur_start), false);
+              self.intpr().input.at(self.cur_start), false);
             try self.pushLevel(if (parent.command.choseAstNodeParam()) false
                                else parent.fullast);
             if (parent.implicitBlockConfig()) |c| {
-              try self.applyBlockConfig(self.ctx().input.at(self.cur_start), c);
+              try self.applyBlockConfig(self.intpr().input.at(self.cur_start), c);
             }
           }
           ind.* = .yes;
@@ -1196,9 +1206,9 @@ pub const Parser = struct {
               const cur_parent = &self.levels.items[i - 1];
               try cur_parent.command.pushArg(
                 self.int(), try self.levels.items[i].finalize(self));
-              try cur_parent.command.shift(self.ctx(), end_cursor);
+              try cur_parent.command.shift(self.intpr(), end_cursor);
               try cur_parent.append(
-                self.ctx(), cur_parent.command.info.unknown);
+                self.intpr(), cur_parent.command.info.unknown);
             }
             // target_level's command has now been closed. therefore it is safe
             // to assign it to the previous parent's command
@@ -1216,12 +1226,12 @@ pub const Parser = struct {
       } else if (pb_exists) |ind| {
         if (ind.* == .unknown) {
           parent.command.pushPrimary(
-            self.ctx().input.at(self.cur_start), false);
+            self.intpr().input.at(self.cur_start), false);
           if (parent.implicitBlockConfig()) |c| {
             ind.* = .maybe;
             try self.pushLevel(if (parent.command.choseAstNodeParam()) false
                                else parent.fullast);
-            try self.applyBlockConfig(self.ctx().input.at(self.cur_start), c);
+            try self.applyBlockConfig(self.intpr().input.at(self.cur_start), c);
           }
         }
       }
@@ -1232,13 +1242,13 @@ pub const Parser = struct {
   fn checkSwallow(self: *Parser) ?u21 {
     return switch (self.cur) {
       .swallow_depth => blk: {
-        const swallow_depth = self.l.code_point;
+        const swallow_depth = self.lexer.code_point;
         self.advance();
         if (self.cur == .diamond_close) {
           self.advance();
         } else {
           self.logger().SwallowDepthWithoutDiamondClose(
-            self.ctx().input.at(self.cur_start));
+            self.intpr().input.at(self.cur_start));
           break :blk null;
         }
         break :blk swallow_depth;
@@ -1258,9 +1268,9 @@ pub const Parser = struct {
     const lvl = self.curLevel();
 
     if (config.syntax) |s| {
-      const syntax = self.ctx().syntax_registry[s.index];
-      lvl.syntax_proc = try syntax.init(self.ctx());
-      self.l.enableSpecialSyntax(syntax.comments_include_newline);
+      const syntax = self.intpr().syntax_registry[s.index];
+      lvl.syntax_proc = try syntax.init(self.intpr());
+      self.lexer.enableSpecialSyntax(syntax.comments_include_newline);
     }
 
     if (config.map.len > 0) {
@@ -1272,8 +1282,8 @@ pub const Parser = struct {
       for (config.map) |mapping, i| {
         resolved_indexes[i] =
           if (mapping.from == 0) ns_mapping_no_from
-          else if (self.ctx().command_characters.get(mapping.from)) |from_index|
-            @intCast(u16, from_index)
+          else if (self.intpr().command_characters.get(mapping.from))
+            |from_index| @intCast(u16, from_index)
           else blk: {
             const ec = unicode.EncodedCharacter.init(mapping.from);
             self.logger().IsNotANamespaceCharacter(ec.repr(), pos, mapping.pos);
@@ -1285,7 +1295,7 @@ pub const Parser = struct {
         if (mapping.to == 0) {
           const from_index = resolved_indexes[i];
           if (from_index != ns_mapping_failed) {
-            _ = self.ctx().command_characters.remove(mapping.from);
+            _ = self.intpr().command_characters.remove(mapping.from);
           }
           try self.ns_mapping_stack.append(self.int(), from_index);
         }
@@ -1296,7 +1306,7 @@ pub const Parser = struct {
         if (mapping.to != 0 and from_index != ns_mapping_no_from) {
           try self.ns_mapping_stack.append(self.int(), blk: {
             if (from_index != ns_mapping_failed) {
-              if (self.ctx().command_characters.get(mapping.to)) |_| {
+              if (self.intpr().command_characters.get(mapping.to)) |_| {
                 // check if an upcoming remapping will remove this character
                 var found = false;
                 for (config.map[i+1..]) |upcoming| {
@@ -1312,14 +1322,14 @@ pub const Parser = struct {
                   break :blk ns_mapping_failed;
                 }
               }
-              try self.ctx().command_characters.put(
+              try self.intpr().command_characters.put(
                 self.int(), mapping.to, @intCast(u15, from_index));
               // only remove old command character if it has not previously been
               // remapped.
-              if (self.ctx().command_characters.get(mapping.from))
+              if (self.intpr().command_characters.get(mapping.from))
                   |cur_from_index| {
                 if (cur_from_index == from_index) {
-                  _ = self.ctx().command_characters.remove(mapping.from);
+                  _ = self.intpr().command_characters.remove(mapping.from);
                 }
               }
               break :blk ns_mapping_succeeded;
@@ -1331,13 +1341,13 @@ pub const Parser = struct {
       for (config.map) |mapping, i| {
         if (resolved_indexes[i] == ns_mapping_no_from) {
           std.debug.assert(mapping.to != 0);
-          if (self.ctx().command_characters.get(mapping.to)) |_| {
+          if (self.intpr().command_characters.get(mapping.to)) |_| {
             // this is not an error, but we still record it as 'failed' so
             // that we know when reversing this block config, nothing needs to
             // be done.
             try self.ns_mapping_stack.append(self.int(), ns_mapping_failed);
           } else {
-            try self.ctx().addNamespace(mapping.to);
+            try self.intpr().addNamespace(mapping.to);
             try self.ns_mapping_stack.append(self.int(), ns_mapping_succeeded);
           }
         }
@@ -1345,10 +1355,10 @@ pub const Parser = struct {
     }
 
     if (config.off_colon) |_| {
-      self.l.disableColons();
+      self.lexer.disableColons();
     }
     if (config.off_comment) |_| {
-      self.l.disableComments();
+      self.lexer.disableComments();
     }
 
     if (config.full_ast) |_| lvl.fullast = true;
@@ -1370,7 +1380,7 @@ pub const Parser = struct {
         const mapping = &config.map[i];
         if (mapping.from == 0) {
           if (self.ns_mapping_stack.pop() == ns_mapping_succeeded) {
-            self.ctx().removeNamespace(mapping.to);
+            self.intpr().removeNamespace(mapping.to);
           }
         }
         if (i == 0) break;
@@ -1381,7 +1391,7 @@ pub const Parser = struct {
       defer alloc.free(ns_indexes);
       for (config.map) |mapping, j| {
         if (mapping.from != 0 and mapping.to != 0) {
-          ns_indexes[j] = self.ctx().command_characters.get(mapping.to).?;
+          ns_indexes[j] = self.intpr().command_characters.get(mapping.to).?;
         }
       }
 
@@ -1396,19 +1406,19 @@ pub const Parser = struct {
               const ns_index = ns_indexes[i];
               // only remove command character if it has not already been reset
               // to another namespace.
-              if (self.ctx().command_characters.get(mapping.to).? == ns_index) {
-                _ = self.ctx().command_characters.remove(mapping.to);
+              if (self.intpr().command_characters.get(mapping.to).? == ns_index) {
+                _ = self.intpr().command_characters.remove(mapping.to);
               }
               // this cannot fail because command_characters will always be
               // large enough to add another item without requiring allocation.
-              self.ctx().command_characters.put(
+              self.intpr().command_characters.put(
                 self.int(), mapping.from, ns_index) catch unreachable;
             }
           } else {
             const ns_index = self.ns_mapping_stack.pop();
             if (ns_index != ns_mapping_failed) {
               // like above
-              self.ctx().command_characters.put(
+              self.intpr().command_characters.put(
                 self.int(), mapping.from, @intCast(u15, ns_index))
                 catch unreachable;
             }

@@ -1,7 +1,9 @@
 const std = @import("std");
-const data = @import("../data.zig");
+const nyarna = @import("../nyarna.zig");
+const data = nyarna.data;
+const Interpreter = nyarna.Interpreter;
+
 const unicode = @import("unicode.zig");
-const Interpreter = @import("interpret.zig").Interpreter;
 const Token = data.Token;
 
 const EncodedCharacter = unicode.EncodedCharacter;
@@ -215,7 +217,7 @@ pub const Lexer = struct {
 
   const newline = @as([]const u8, "\n");
 
-  context: *Interpreter,
+  intpr: *Interpreter,
   cur_stored: (@typeInfo(@TypeOf(Walker.next)).Fn.return_type.?),
   state: State,
   walker: Walker,
@@ -253,18 +255,18 @@ pub const Lexer = struct {
   level: Level,
   newline_count: u16,
 
-  pub fn init(context: *Interpreter) !Lexer {
+  pub fn init(intpr: *Interpreter) !Lexer {
     var ret = Lexer{
-      .context = context,
+      .intpr = intpr,
       .cur_stored = undefined,
       .state = .indent_capture,
-      .walker = Walker.init(context.input),
+      .walker = Walker.init(intpr.input),
       .paren_depth = 0,
       .colons_disabled_at = null,
       .comments_disabled_at = null,
       .levels =
         try std.ArrayListUnmanaged(Level).initCapacity(
-          &context.storage.allocator, 32),
+          &intpr.storage.allocator, 32),
       .level = .{
         .indentation = 0,
         .tabs = null,
@@ -846,7 +848,7 @@ pub const Lexer = struct {
         return l.advanceAndReturn(.ns_sym, null);
       }
     } else {
-      if (l.context.command_characters.get(cur.*)) |ns| {
+      if (l.intpr.command_characters.get(cur.*)) |ns| {
         l.ns = ns;
         return l.genCommand(cur);
       } else if (cur.* == l.level.end_char and l.checkEndCommand()) {
@@ -866,7 +868,7 @@ pub const Lexer = struct {
             switch (cur.*) {
               4, ' ', '\t', '\r', '\n', ':' => break,
               else => {
-                if (l.context.command_characters.get(cur.*) != null or
+                if (l.intpr.command_characters.get(cur.*) != null or
                     unicode.L.contains(unicode.category(cur.*))) break;
               }
             }
@@ -920,7 +922,7 @@ pub const Lexer = struct {
         },
         ',' => if (ctx == .args or ctx == .config) break,
         '=', '(', ')' => if (ctx == .args) break,
-        else => if (l.context.command_characters.contains(cur.*)) break,
+        else => if (l.intpr.command_characters.contains(cur.*)) break,
       }
       cur.* = l.walker.nextInline() catch |e| {
         l.cur_stored = e;
@@ -1197,7 +1199,7 @@ pub const Lexer = struct {
   }
 
   fn pushLevel(l: *Lexer) !void {
-    try l.levels.append(&l.context.storage.allocator, l.level);
+    try l.levels.append(&l.intpr.storage.allocator, l.level);
     l.level = .{
       .indentation = undefined,
       .tabs = null,

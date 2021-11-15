@@ -2,7 +2,7 @@ const std = @import("std");
 const nyarna = @import("nyarna");
 const data = nyarna.data;
 const Interpreter = nyarna.Interpreter;
-const errors = @import("errors");
+const errors = nyarna.errors;
 
 fn ensureLiteral(node: *data.Node,
                  kind: @typeInfo(data.Node.Literal).Struct.fields[0].field_type,
@@ -34,9 +34,9 @@ test "parse simple line" {
   };
 
   var r = errors.CmdLineReporter.init();
-  var l = try nyarna.Loader.init(std.testing.allocator, &r.reporter);
-  defer l.deinit();
-  var ml = try nyarna.Loader.ModuleLoader.create(&l, &src, &.{});
+  var ctx = try nyarna.Context.init(std.testing.allocator, &r.reporter);
+  defer ctx.deinit();
+  var ml = try nyarna.ModuleLoader.create(&ctx, &src, &.{});
   defer ml.destroy();
   var res = try ml.loadAsNode(true);
   try ensureLiteral(res, .text, "Hello, World!");
@@ -58,9 +58,9 @@ test "parse assignment" {
   };
 
   var r = errors.CmdLineReporter.init();
-  var l = try nyarna.Loader.init(std.testing.allocator, &r.reporter);
-  defer l.deinit();
-  var ml = try nyarna.Loader.ModuleLoader.create(&l, &src, &.{});
+  var ctx = try nyarna.Context.init(std.testing.allocator, &r.reporter);
+  defer ctx.deinit();
+  var ml = try nyarna.ModuleLoader.create(&ctx, &src, &.{});
   defer ml.destroy();
   var res = try ml.loadAsNode(true);
   try std.testing.expectEqual(data.Node.Data.assignment, res.data);
@@ -84,9 +84,9 @@ test "parse access" {
   };
 
   var r = errors.CmdLineReporter.init();
-  var l = try nyarna.Loader.init(std.testing.allocator, &r.reporter);
-  defer l.deinit();
-  var ml = try nyarna.Loader.ModuleLoader.create(&l, &src, &.{});
+  var ctx = try nyarna.Context.init(std.testing.allocator, &r.reporter);
+  defer ctx.deinit();
+  var ml = try nyarna.ModuleLoader.create(&ctx, &src, &.{});
   defer ml.destroy();
   var res = try ml.loadAsNode(true);
   try std.testing.expectEqual(data.Node.Data.access, res.data);
@@ -114,9 +114,9 @@ test "parse concat" {
   };
 
   var r = errors.CmdLineReporter.init();
-  var l = try nyarna.Loader.init(std.testing.allocator, &r.reporter);
-  defer l.deinit();
-  var ml = try nyarna.Loader.ModuleLoader.create(&l, &src, &.{});
+  var ctx = try nyarna.Context.init(std.testing.allocator, &r.reporter);
+  defer ctx.deinit();
+  var ml = try nyarna.ModuleLoader.create(&ctx, &src, &.{});
   defer ml.destroy();
   var res = try ml.loadAsNode(true);
   try std.testing.expectEqual(data.Node.Data.concatenation, res.data);
@@ -144,9 +144,9 @@ test "parse paragraphs" {
   };
 
   var r = errors.CmdLineReporter.init();
-  var l = try nyarna.Loader.init(std.testing.allocator, &r.reporter);
-  defer l.deinit();
-  var ml = try nyarna.Loader.ModuleLoader.create(&l, &src, &.{});
+  var ctx = try nyarna.Context.init(std.testing.allocator, &r.reporter);
+  defer ctx.deinit();
+  var ml = try nyarna.ModuleLoader.create(&ctx, &src, &.{});
   defer ml.destroy();
   var res = try ml.loadAsNode(true);
   try std.testing.expectEqual(data.Node.Data.paragraphs, res.data);
@@ -173,9 +173,9 @@ test "parse unknown call" {
   };
 
   var r = errors.CmdLineReporter.init();
-  var l = try nyarna.Loader.init(std.testing.allocator, &r.reporter);
-  defer l.deinit();
-  var ml = try nyarna.Loader.ModuleLoader.create(&l, &src, &.{});
+  var ctx = try nyarna.Context.init(std.testing.allocator, &r.reporter);
+  defer ctx.deinit();
+  var ml = try nyarna.ModuleLoader.create(&ctx, &src, &.{});
   defer ml.destroy();
   var res = try ml.loadAsNode(true);
   try std.testing.expectEqual(data.Node.Data.unresolved_call, res.data);
@@ -208,9 +208,9 @@ test "parse block" {
   };
 
   var r = errors.CmdLineReporter.init();
-  var l = try nyarna.Loader.init(std.testing.allocator, &r.reporter);
-  defer l.deinit();
-  var ml = try nyarna.Loader.ModuleLoader.create(&l, &src, &.{});
+  var ctx = try nyarna.Context.init(std.testing.allocator, &r.reporter);
+  defer ctx.deinit();
+  var ml = try nyarna.ModuleLoader.create(&ctx, &src, &.{});
   defer ml.destroy();
   var res = try ml.loadAsNode(true);
   try std.testing.expectEqual(data.Node.Data.unresolved_call, res.data);
