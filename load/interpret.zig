@@ -248,15 +248,6 @@ pub const Interpreter = struct {
     };
   }
 
-  /// Evaluates the given expression, which must be a call to a keyword that
-  /// returns an AstNode. Can return .referred_source_unavailable, in which case
-  /// current interpretation must pause and the referred source must be
-  /// interpreted instead. Afterwards, interpretation can continue.
-  pub fn evaluateToAstNode(_: *Interpreter, _: *data.Expression) !*data.Node {
-    // TODO
-    return Errors.referred_source_unavailable;
-  }
-
   pub fn resolveSymbol(self: *Interpreter, pos: data.Position, ns: u15,
                        name: []const u8) !*data.Node {
     var ret = try self.storage.allocator.create(data.Node);

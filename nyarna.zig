@@ -4,11 +4,14 @@ pub const EncodedCharacter = @import("load/unicode.zig").EncodedCharacter;
 pub const Lexer       = @import("load/lex.zig").Lexer;
 pub const Interpreter = @import("load/interpret.zig").Interpreter;
 pub const ModuleLoader = @import("load/load.zig").ModuleLoader;
+pub const Evaluator = @import("runtime.zig").Evaluator;
 
 pub const data = @import("data.zig");
 pub const types = @import("types.zig");
 pub const errors = @import("errors");
 pub const lib = @import("lib.zig");
+
+pub const default_stack_size = 1024 * 1024; // 1MB
 
 /// the Context is the entry point to the API and the owner of all non-local
 /// resources allocated during operation. Local resources are internal data of
@@ -46,9 +49,13 @@ pub const Context = struct {
   keyword_registry: std.ArrayListUnmanaged(lib.Provider.KeywordWrapper),
   /// list of known builtin implementations, analoguous to keyword_registry.
   builtin_registry: std.ArrayListUnmanaged(lib.Provider.BuiltinWrapper),
+  /// stack for evaluation. Size can be set during initialization.
+  stack: []data.StackItem,
+  /// current top of the stack, where new stack allocations happen.
+  stack_ptr: [*]data.StackItem,
 
-  pub fn init(allocator: *std.mem.Allocator, reporter: *errors.Reporter)
-      !Context {
+  pub fn init(allocator: *std.mem.Allocator, reporter: *errors.Reporter,
+              stack_size: usize) !Context {
     var ret = Context{
       .reporter = reporter,
       .allocator = allocator,
@@ -57,8 +64,13 @@ pub const Context = struct {
       .intrinsics = undefined,
       .keyword_registry = .{},
       .builtin_registry = .{},
+      .stack = undefined,
+      .stack_ptr = undefined,
     };
     errdefer ret.storage.deinit();
+    ret.stack = try allocator.alloc(data.StackItem, stack_size);
+    ret.stack_ptr = ret.stack.ptr;
+    errdefer allocator.free(ret.stack);
     ret.types = try types.Lattice.init(&ret.storage);
     errdefer ret.types.deinit();
     ret.intrinsics = try lib.intrinsicModule(&ret);
@@ -68,5 +80,6 @@ pub const Context = struct {
   pub fn deinit(context: *Context) void {
     context.types.deinit();
     context.storage.deinit();
+    context.allocator.free(context.stack);
   }
 };

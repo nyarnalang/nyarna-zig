@@ -2,23 +2,18 @@ const std = @import("std");
 const nyarna = @import("nyarna.zig");
 const Interpreter = nyarna.Interpreter;
 const Context = nyarna.Context;
+const Evaluator = nyarna.Evaluator;
 const data = nyarna.data;
 const types = nyarna.types;
-
-// TODO: dummy, refactor!
-pub const RuntimeContext = struct {
-  storage: std.heap.ArenaAllocator,
-};
 
 /// A provider implements all external functions for a certain Nyarna module.
 pub const Provider = struct {
   pub const KeywordWrapper = fn(
     ctx: *Interpreter, pos: data.Position,
-    args: []*data.Value) std.mem.Allocator.Error!*data.Node;
-  /// TODO: proper context type for runtime fns
+    stack_frame: [*]data.StackItem) std.mem.Allocator.Error!*data.Node;
   pub const BuiltinWrapper = fn(
-    ctx: *RuntimeContext, pos: data.Position,
-    args: []*data.Value) std.mem.Allocator.Error!*data.Value;
+    ctx: *Evaluator, pos: data.Position,
+    stack_frame: [*]data.StackItem) std.mem.Allocator.Error!*data.Value;
 
   getKeyword: fn(name: []const u8) ?KeywordWrapper,
   getBuiltin: fn(name: []const u8) ?BuiltinWrapper,
@@ -93,7 +88,8 @@ pub const Provider = struct {
                        comptime Ret: type) type {
         return struct {
           fn wrapper(ctx: FirstArg, pos: data.Position,
-                     args: []*data.Value) std.mem.Allocator.Error!*Ret {
+                     stack_frame: [*]data.StackItem)
+              std.mem.Allocator.Error!*Ret {
             var unwrapped: Params(@typeInfo(decl.data.Fn.fn_type).Fn) =
               undefined;
             inline for (@typeInfo(@TypeOf(unwrapped)).Struct.fields)
@@ -101,7 +97,8 @@ pub const Provider = struct {
               unwrapped[index] = switch (index) {
                 0 => ctx,
                 1 => pos,
-                else => getTypedValue(f.field_type, args[index - 2]),
+                else =>
+                  getTypedValue(f.field_type, stack_frame[index - 2].value),
               };
             }
             return @call(.{}, @field(impls, decl.name), unwrapped);
@@ -110,7 +107,7 @@ pub const Provider = struct {
       }
 
       fn ImplWrapper(comptime keyword: bool, comptime F: type) type {
-        const FirstArg = if (keyword) *Interpreter else *RuntimeContext;
+        const FirstArg = if (keyword) *Interpreter else *Evaluator;
         return struct {
           fn getImpl(name: []const u8) ?F {
             inline for (decls) |decl| {
@@ -221,7 +218,7 @@ pub const Intrinsics = Provider.Wrapper(struct {
     });
   }
 
-  fn declare(_: *RuntimeContext, _: data.Position,
+  fn declare(_: *Evaluator, _: data.Position,
              _: ?data.Type, _: *data.Value.Concat,
              _: *data.Value.Concat) !*data.Value {
     unreachable;
@@ -248,6 +245,7 @@ fn extFunc(context: *Context, name: []const u8, sig: *data.Type.Signature,
   return data.Symbol.ExtFunc{
     .signature = sig,
     .impl_index = impl_index,
+    .cur_frame = null,
   };
 }
 
@@ -260,6 +258,16 @@ fn extFuncSymbol(context: *Context, name: []const u8, sig: *data.Type.Signature,
     .ext_func = try extFunc(context, name, sig, p),
   };
   return ret;
+}
+
+pub inline fn intLoc(context: *Context, content: data.Value.Location)
+    !*data.Value.Location {
+  const value = try context.storage.allocator.create(data.Value);
+  value.origin = data.Position.intrinsic();
+  value.data = .{
+    .location = content
+  };
+  return &value.data.location;
 }
 
 pub fn intrinsicModule(context: *Context) !*data.Module {
@@ -278,36 +286,36 @@ pub fn intrinsicModule(context: *Context) !*data.Module {
   // location
   var b = try types.SigBuilder(.intrinsic).init(
     &context.storage.allocator, 8, .{.intrinsic = .ast_node});
-  try b.push(&data.Value.Location.simple(
-    "name", .{.intrinsic = .literal}, null)); // TODO: identifier
-  try b.push(&data.Value.Location.simple(
-    "type", .{.intrinsic = .non_callable_type}, null));
-  try b.push(&data.Value.Location.simple(
-    "primary", .{.instantiated = &context.types.boolean}, null));
-  try b.push(&data.Value.Location.simple(
-    "varargs", .{.instantiated = &context.types.boolean}, null));
-  try b.push(&data.Value.Location.simple(
-    "varmap", .{.instantiated = &context.types.boolean}, null));
-  try b.push(&data.Value.Location.simple(
-    "mutable", .{.instantiated = &context.types.boolean}, null));
-  try b.push(&data.Value.Location.simple(
-    "header", (try context.types.optional(.{.intrinsic = .block_header})).?,
-    null));
-  try b.push(&data.Value.Location.primary(
-    "default", (try context.types.optional(.{.intrinsic = .ast_node})).?,
-    null));
+  try b.push(try intLoc(context, data.Value.Location.simple(
+    "name", .{.intrinsic = .literal}, null))); // TODO: identifier
+  try b.push(try intLoc(context, data.Value.Location.simple(
+    "type", .{.intrinsic = .non_callable_type}, null)));
+  try b.push(try intLoc(context, data.Value.Location.simple(
+    "primary", .{.instantiated = &context.types.boolean}, null)));
+  try b.push(try intLoc(context, data.Value.Location.simple(
+    "varargs", .{.instantiated = &context.types.boolean}, null)));
+  try b.push(try intLoc(context, data.Value.Location.simple(
+    "varmap", .{.instantiated = &context.types.boolean}, null)));
+  try b.push(try intLoc(context, data.Value.Location.simple(
+    "mutable", .{.instantiated = &context.types.boolean}, null)));
+  try b.push(try intLoc(context, data.Value.Location.simple(
+    "header", (try context.types.optional(
+      .{.intrinsic = .block_header})).?, null)));
+  try b.push(try intLoc(context, data.Value.Location.primary(
+    "default", (try context.types.optional(
+      .{.intrinsic = .ast_node})).?, null)));
   context.types.type_constructors[0] =
     try extFunc(context, "location", b.finish(), &ip.provider);
 
   // definition
   b = try types.SigBuilder(.intrinsic).init(
     &context.storage.allocator, 3, .{.intrinsic = .ast_node});
-  try b.push(&data.Value.Location.simple(
-    "name", .{.intrinsic = .literal}, null)); // TODO: identifier
-  try b.push(&data.Value.Location.simple(
-    "root", .{.instantiated = &context.types.boolean}, null));
-  try b.push(&data.Value.Location.simple(
-    "item", .{.intrinsic = .ast_node}, null));
+  try b.push(try intLoc(context, data.Value.Location.simple(
+    "name", .{.intrinsic = .literal}, null))); // TODO: identifier
+  try b.push(try intLoc(context, data.Value.Location.simple(
+    "root", .{.instantiated = &context.types.boolean}, null)));
+  try b.push(try intLoc(context, data.Value.Location.simple(
+    "item", .{.intrinsic = .ast_node}, null)));
   context.types.type_constructors[1] =
     try extFunc(context, "definition", b.finish(), &ip.provider);
 
@@ -319,11 +327,13 @@ pub fn intrinsicModule(context: *Context) !*data.Module {
     &context.storage.allocator, 3, .{.intrinsic = .void});
   var definition_concat =
     (try context.types.concat(.{.intrinsic = .definition})).?;
-  try b.push(&data.Value.Location.simple(
-    "type", (try context.types.optional(.{.intrinsic = .non_callable_type})).?,
-    null));
-  try b.push(&data.Value.Location.primary("public", definition_concat, null));
-  try b.push(&data.Value.Location.simple("private", definition_concat, null));
+  try b.push(try intLoc(context, data.Value.Location.simple(
+    "type", (try context.types.optional(
+      .{.intrinsic = .non_callable_type})).?, null)));
+  try b.push(try intLoc(context, data.Value.Location.primary(
+    "public", definition_concat, null)));
+  try b.push(try intLoc(context, data.Value.Location.simple(
+    "private", definition_concat, null)));
   ret.symbols[index] =
     try extFuncSymbol(context, "declare", b.finish(), &ip.provider);
 

@@ -1,6 +1,16 @@
 const std = @import("std");
 const unicode = @import("load/unicode.zig");
 
+/// an item on the stack
+pub const StackItem = union {
+  /// a value on the stack
+  value: *Value,
+  /// reference to a stackframe. this is the header of a stackframe, where
+  /// the entity owning this frame stores its previous frame.
+  frame_ref: ?[*]StackItem
+};
+
+
 /// A cursor inside a source file
 pub const Cursor = struct {
   /// The line of the position, 1-based.
@@ -419,19 +429,30 @@ pub const Symbol = struct {
     signature: *Type.Signature,
     /// tells the interpreter under which index to look up the implementation.
     impl_index: usize,
-
-    // TODO: stackframe
+    /// reference to the current stack frame of this function.
+    /// null if no calls to this function are currently being evaluated.
+    cur_frame: ?[*]StackItem
   };
 
   /// Internal function, defined in Nyarna code.
   pub const NyFunc = struct {
     signature: *Type.Signature,
-    // TODO
+    variables: VariableContainer,
+    /// reference to the current stack frame of this function.
+    /// null if no calls to this function are currently being evaluated.
+    cur_frame: ?[*]StackItem,
+    body: *Expression,
   };
   /// A variable defined in Nyarna code.
   pub const Variable = struct {
     t: Type,
-    // TODO
+    /// pointer to the stack position that contains the current value.
+    /// the variable's context (e.g. function, var- or const-block) is
+    /// responsible for updating this value.
+    ///
+    /// the initial value is null, however due to Nyarna's semantics, any access
+    /// will always happen when cur_value is non-null.
+    cur_value: ?*StackItem,
   };
 
   pub const Data = union(enum) {
@@ -445,6 +466,11 @@ pub const Symbol = struct {
   name: []const u8,
   data: Data,
 };
+
+/// part of any structure that defines variables.
+/// contains a list of variables, the list itself must not be modified after
+/// creation.
+pub const VariableContainer = []Symbol.Variable;
 
 /// workaround for https://github.com/ziglang/zig/issues/6611
 fn offset(comptime T: type, comptime field: []const u8) usize {
@@ -1129,6 +1155,28 @@ pub const Value = struct {
 
   origin: Position,
   data: Data,
+
+  pub inline fn create(allocator: *std.mem.Allocator, pos: Position,
+                       content: anytype) !*Value {
+    var ret = try allocator.create(Value);
+    ret.origin = pos;
+    ret.data = switch (@TypeOf(content)) {
+      TextScalar  => .{.text         = content},
+      Number      => .{.number       = content},
+      FloatNumber => .{.float        = content},
+      Enum        => .{.enumval      = content},
+      Record      => .{.record       = content},
+      Concat      => .{.concat       = content},
+      List        => .{.list         = content},
+      Map         => .{.map          = content},
+      TypeVal     => .{.typeval      = content},
+      FuncRef     => .{.funcref      = content},
+      Definition  => .{.definition   = content},
+      Ast         => .{.ast          = content},
+      BlockHeader => .{.block_header = content},
+      else        => content
+    };
+  }
 
   pub fn vType(self: *Value) Type {
     return switch (self.data) {

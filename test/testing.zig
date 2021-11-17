@@ -431,7 +431,8 @@ pub fn parseTest(f: *tml.File) !void {
     .locator_ctx = ".doc.",
   };
   var r = errors.CmdLineReporter.init();
-  var ctx = try nyarna.Context.init(std.testing.allocator, &r.reporter);
+  var ctx = try nyarna.Context.init(
+    std.testing.allocator, &r.reporter, nyarna.default_stack_size);
   defer ctx.deinit();
   var ml = try nyarna.ModuleLoader.create(&ctx, &src, &.{});
   defer ml.destroy();
