@@ -258,21 +258,17 @@ fn AstEmitter(Handler: anytype) type {
 
     pub fn processExpr(self: *Self, e: *data.Expression) anyerror!void {
       switch (e.data) {
-        .constr_call => |cc| {
-          const constr = try self.push("CONSTRUCT");
-          try self.processType(cc.target_type);
-          for (cc.exprs) |ex| {
+        .call => |call| {
+          const c = try self.push("CALL");
+          const t = try self.push("TARGET");
+          try self.processExpr(call.target);
+          try t.pop();
+          for (call.exprs) |expr| {
             const a = try self.push("ARG");
-            try self.processExpr(ex);
+            try self.processExpr(expr);
             try a.pop();
           }
-          try constr.pop();
-        },
-        .ext_call => |_| {
-          unreachable;
-        },
-        .call => |_| {
-          unreachable;
+          try c.pop();
         },
         .assignment => |_| {
           unreachable;

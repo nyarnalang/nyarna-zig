@@ -818,19 +818,9 @@ pub const Type = union(enum) {
 };
 
 pub const Expression = struct {
-  /// a call to a type constructor.
-  pub const ConstrCall = struct {
-    target_type: Type,
-    exprs: []*Expression,
-  };
-  /// a call to an external function.
-  pub const ExtCall = struct {
-    target: *Symbol.ExtFunc,
-    exprs: []*Expression,
-  };
-  /// a call to an internal function.
+  /// a call to a function or type constructor.
   pub const Call = struct {
-    target: *Symbol.NyFunc,
+    target: *Expression,
     exprs: []*Expression,
   };
   /// assignment to a variable or one of its inner values
@@ -867,8 +857,6 @@ pub const Expression = struct {
   };
 
   pub const Data = union(enum) {
-    constr_call: ConstrCall,
-    ext_call: ExtCall,
     call: Call,
     assignment: Assignment,
     access: Access,
@@ -886,8 +874,6 @@ pub const Expression = struct {
   fn parent(it: anytype) *Expression {
     const t = @typeInfo(@TypeOf(it)).Pointer.child;
     const addr = @ptrToInt(it) - switch(t) {
-      ConstrCall => offset(Data, "constr_call"),
-      ExtCall => offset(Data, "ext_call"),
       Call => offset(Data, "call"),
       Assignment => offset(Data, "assignment"),
       Access => offset(Data, "access"),

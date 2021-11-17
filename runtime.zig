@@ -57,27 +57,43 @@ pub const Evaluator = struct {
       .constr_call => |_| {
         unreachable; // TODO
       },
-      .ext_call => |*ext_call| blk: {
-        const target =
-          self.context.builtin_registry.items[ext_call.target.impl_index];
-        std.debug.assert(
-          ext_call.exprs.len == ext_call.target.signature.parameters.len);
-        ext_call.target.cur_frame = try self.setupParameterStackFrame(
-          ext_call.target.signature, ext_call.target.cur_frame.?);
-        defer self.resetParameterStackFrame(ext_call.target);
-        try self.fillParameterStackFrame(
-          ext_call.exprs, ext_call.target.cur_frame.? + 1);
-        break :blk target(self, expr.pos, ext_call.target.cur_frame.? + 1);
-      },
       .call => |*call| blk: {
-        defer bindVariables(&call.target.variables, call.target.cur_frame);
-        call.target.cur_frame = try self.setupParameterStackFrame(
-          call.target.signature, call.target.cur_frame);
-        defer self.resetParameterStackFrame(call.target);
-        try self.fillParameterStackFrame(
-          call.exprs, call.target.cur_frame.? + 1);
-        bindVariables(&call.target.variables, call.target.cur_frame);
-        break :blk self.evaluate(call.target.body);
+        const target = try self.evaluate(call.target);
+        break :blk switch (target.data) {
+          .funcref => |fr| innerblk: {
+            switch (fr.func.data) {
+              .ext_func => |*ef| {
+                const target_impl =
+                  self.context.builtin_registry.items[ef.impl_index];
+                std.debug.assert(
+                  call.exprs.len == ef.signature.parameters.len);
+                ef.cur_frame = try self.setupParameterStackFrame(
+                  ef.signature, ef.cur_frame.?);
+                defer self.resetParameterStackFrame(ef);
+                try self.fillParameterStackFrame(
+                  call.exprs, ef.cur_frame.? + 1);
+                break :innerblk target_impl(self, expr.pos, ef.cur_frame.? + 1);
+              },
+              .ny_func => |*nf| {
+                defer bindVariables(&nf.variables, nf.cur_frame);
+                nf.cur_frame = try self.setupParameterStackFrame(
+                  nf.signature, nf.cur_frame);
+                defer self.resetParameterStackFrame(nf);
+                try self.fillParameterStackFrame(
+                  call.exprs, nf.cur_frame.? + 1);
+                bindVariables(&nf.variables, nf.cur_frame);
+                break :blk self.evaluate(nf.body);
+              },
+              else => unreachable,
+            }
+          },
+          .typeval => |_| {
+            unreachable; // not implemented yet
+          },
+          .poison => data.Value.create(
+            &self.context.storage.allocator, expr.pos, .poison),
+          else => unreachable
+        };
       },
       .assignment => |*assignment| blk: {
         var cur_ptr = assignment.target.cur_value.?;
