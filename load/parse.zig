@@ -142,14 +142,12 @@ pub const Parser = struct {
           try level.nodes.append(&ip.storage.allocator, space_node);
           level.dangling_space = null;
         }
-        switch (item.data) {
+        const res = switch (item.data) {
           .literal, .unresolved_call, .unresolved_symref, .expression,
-          .voidNode => {},
-          else => if (try ip.tryInterpret(item, false)) |expr| {
-            item.data = .{.expression = expr};
-          }
-        }
-        try level.nodes.append(&ip.storage.allocator, item);
+          .voidNode => item,
+          else => try ip.tryInterpret(item, false)
+        };
+        try level.nodes.append(&ip.storage.allocator, res);
       }
     }
 

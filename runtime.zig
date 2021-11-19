@@ -2,10 +2,6 @@ const std = @import("std");
 const nyarna = @import("nyarna.zig");
 const data = nyarna.data;
 
-pub const Errors = error {
-  nyarna_stack_overflow
-};
-
 /// evaluates expressions and returns values.
 pub const Evaluator = struct {
   context: *nyarna.Context,
@@ -17,9 +13,10 @@ pub const Evaluator = struct {
   fn setupParameterStackFrame(
       self: *Evaluator, sig: *data.Type.Signature,
       prev_frame: ?[*]data.StackItem) ![*]data.StackItem {
-    if (self.context.stack_ptr + sig.parameters.len - self.context.stack.ptr >
+    if ((@ptrToInt(self.context.stack_ptr) - @ptrToInt(self.context.stack.ptr))
+        / @sizeOf(data.StackItem) + sig.parameters.len >
         self.context.stack.len) {
-      return Errors.nyarna_stack_overflow;
+      return nyarna.Error.nyarna_stack_overflow;
     }
     const ret = self.context.stack_ptr;
     self.context.stack_ptr += sig.parameters.len + 1;
@@ -28,7 +25,7 @@ pub const Evaluator = struct {
   }
 
   fn resetParameterStackFrame(self: *Evaluator, target: anytype) void {
-    target.cur_frame = target.cur_frame.?.frame_ref;
+    target.cur_frame = target.cur_frame.?[0].frame_ref;
     self.context.stack_ptr -= target.signature.parameters.len - 1;
   }
 
@@ -39,11 +36,11 @@ pub const Evaluator = struct {
     }
   }
 
-  fn bindVariables(vars: *data.VariableContainer,
+  fn bindVariables(vars: data.VariableContainer,
                    frame: ?[*]data.StackItem) void {
     if (frame) |base| {
       for (vars) |*v, i| {
-        v.cur_value = base + i;
+        v.cur_value = &base[i];
       }
     } else {
       for (vars) |*v| {
@@ -52,51 +49,94 @@ pub const Evaluator = struct {
     }
   }
 
-  pub fn evaluate(self: *Evaluator, expr: *data.Expression) !*data.Value {
-    return switch (expr.data) {
-      .constr_call => |_| {
-        unreachable; // TODO
-      },
-      .call => |*call| blk: {
-        const target = try self.evaluate(call.target);
-        break :blk switch (target.data) {
-          .funcref => |fr| innerblk: {
-            switch (fr.func.data) {
-              .ext_func => |*ef| {
-                const target_impl =
-                  self.context.builtin_registry.items[ef.impl_index];
-                std.debug.assert(
-                  call.exprs.len == ef.signature.parameters.len);
-                ef.cur_frame = try self.setupParameterStackFrame(
-                  ef.signature, ef.cur_frame.?);
-                defer self.resetParameterStackFrame(ef);
-                try self.fillParameterStackFrame(
-                  call.exprs, ef.cur_frame.? + 1);
-                break :innerblk target_impl(self, expr.pos, ef.cur_frame.? + 1);
-              },
-              .ny_func => |*nf| {
-                defer bindVariables(&nf.variables, nf.cur_frame);
-                nf.cur_frame = try self.setupParameterStackFrame(
-                  nf.signature, nf.cur_frame);
-                defer self.resetParameterStackFrame(nf);
-                try self.fillParameterStackFrame(
-                  call.exprs, nf.cur_frame.? + 1);
-                bindVariables(&nf.variables, nf.cur_frame);
-                break :blk self.evaluate(nf.body);
-              },
+  fn RetTypeForCtx(comptime ImplCtx: type) type {
+    return switch (ImplCtx) {
+      *Evaluator => *data.Value,
+      *nyarna.Interpreter => *data.Node,
+      else => unreachable
+    };
+  }
+
+  fn FnTypeForCtx(comptime ImplCtx: type) type {
+    return switch (ImplCtx) {
+      *Evaluator => nyarna.lib.Provider.BuiltinWrapper,
+      *nyarna.Interpreter => nyarna.lib.Provider.KeywordWrapper,
+      else => unreachable
+    };
+  }
+
+  fn registeredFnForCtx(self: *Evaluator, comptime ImplCtx: type, index: usize)
+      FnTypeForCtx(ImplCtx) {
+    return switch (ImplCtx) {
+      *Evaluator => self.context.builtin_registry.items[index],
+      *nyarna.Interpreter => self.context.keyword_registry.items[index],
+      else => unreachable
+    };
+  }
+
+  fn evaluateCall(
+      self: *Evaluator, impl_ctx: anytype, call: *data.Expression.Call)
+      nyarna.Error!RetTypeForCtx(@TypeOf(impl_ctx)) {
+    const target = try self.evaluate(call.target);
+    return switch (target.data) {
+      .funcref => |fr| blk: {
+        switch (fr.func.data) {
+          .ext_func => |*ef| {
+            const target_impl =
+              self.registeredFnForCtx(@TypeOf(impl_ctx), ef.impl_index);
+            std.debug.assert(
+              call.exprs.len == ef.signature.parameters.len);
+            ef.cur_frame = try self.setupParameterStackFrame(
+              ef.signature, ef.cur_frame.?);
+            defer self.resetParameterStackFrame(ef);
+            try self.fillParameterStackFrame(
+              call.exprs, ef.cur_frame.? + 1);
+            break :blk target_impl(
+              impl_ctx, call.expr().pos, ef.cur_frame.? + 1);
+          },
+          .ny_func => |*nf| {
+            defer bindVariables(nf.variables, nf.cur_frame);
+            nf.cur_frame = try self.setupParameterStackFrame(
+              nf.signature, nf.cur_frame);
+            defer self.resetParameterStackFrame(nf);
+            try self.fillParameterStackFrame(
+              call.exprs, nf.cur_frame.? + 1);
+            bindVariables(nf.variables, nf.cur_frame);
+            const val = try self.evaluate(nf.body);
+            break :blk switch (@TypeOf(impl_ctx)) {
+              *Evaluator => val,
+              *nyarna.Interpreter => val.data.ast.root,
               else => unreachable,
-            }
+            };
           },
-          .typeval => |_| {
-            unreachable; // not implemented yet
-          },
-          .poison => data.Value.create(
-            &self.context.storage.allocator, expr.pos, .poison),
-          else => unreachable
-        };
+          else => unreachable,
+        }
       },
+      .typeval => |_| {
+        unreachable; // not implemented yet
+      },
+      .poison => switch (@TypeOf(impl_ctx)) {
+        *Evaluator => data.Value.create(
+          &self.context.storage.allocator, call.expr().pos, .poison),
+        *nyarna.Interpreter => data.Node.poison(
+          &impl_ctx.storage.allocator,  call.expr().pos),
+        else => unreachable,
+      },
+      else => unreachable
+    };
+  }
+
+  pub fn evaluateKeywordCall(self: *Evaluator, intpr: *nyarna.Interpreter,
+                             call: *data.Expression.Call) !*data.Node {
+    return self.evaluateCall(intpr, call);
+  }
+
+  pub fn evaluate(self: *Evaluator, expr: *data.Expression)
+      nyarna.Error!*data.Value {
+    return switch (expr.data) {
+      .call => |*call| self.evaluateCall(self, call),
       .assignment => |*assignment| blk: {
-        var cur_ptr = assignment.target.cur_value.?;
+        var cur_ptr = &assignment.target.cur_value.?.*.value;
         for (assignment.path) |index| {
           cur_ptr = switch (cur_ptr.*.data) {
             .record => |*record| &record.fields[index],
@@ -105,7 +145,7 @@ pub const Evaluator = struct {
           };
         }
         cur_ptr.* = try self.evaluate(assignment.expr);
-        break :blk data.Value.create(
+        break :blk try data.Value.create(
           &self.context.storage.allocator, expr.pos, .void);
       },
       .access => |*access| blk: {
@@ -119,7 +159,7 @@ pub const Evaluator = struct {
         }
         break :blk cur;
       },
-      .var_retrieval => |*var_retr| var_retr.variable.cur_value.*,
+      .var_retrieval => |*var_retr| var_retr.variable.cur_value.?.value,
       .literal => |*literal| &literal.value,
       .poison =>
         data.Value.create(&self.context.storage.allocator, expr.pos, .poison),

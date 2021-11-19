@@ -822,6 +822,10 @@ pub const Expression = struct {
   pub const Call = struct {
     target: *Expression,
     exprs: []*Expression,
+
+    pub fn expr(self: *@This()) *Expression {
+      return Expression.parent(self);
+    }
   };
   /// assignment to a variable or one of its inner values
   pub const Assignment = struct {
@@ -1162,6 +1166,7 @@ pub const Value = struct {
       BlockHeader => .{.block_header = content},
       else        => content
     };
+    return ret;
   }
 
   pub fn vType(self: *Value) Type {

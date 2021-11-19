@@ -112,95 +112,101 @@ pub const Interpreter = struct {
     _ = self.namespaces.pop();
   }
 
-  /// Interprets the given node and returns an expression, if possible.
-  /// A call of a keyword will be allocated inside the temporary allocator of
-  /// the current source, while anything else will be allocated in the public
-  /// region containing the current file's content.
+  /// Tries to interpret the given node. Consumes the `input` node.
+  /// The node returned will be
   ///
-  /// if report_failure is set, emits errors if this or a child node cannot be
-  /// interpreted. Regardless of whether report_failure is set, null is returned
-  /// if the node cannot be interpreted.
+  ///  * equal to the input node on failure
+  ///  * an expression node containing the result of the interpretation
+  ///
+  /// If a keyword call is encountered, that call will be evaluated and its
+  /// result will be processed again via tryInterpret.
+  ///
+  /// if report_failure is set, emits errors to the handler if this or a child
+  /// node cannot be interpreted.
   pub fn tryInterpret(self: *Interpreter, input: *data.Node,
-                      report_failure: bool) !?*data.Expression {
+                      report_failure: bool) nyarna.Error!*data.Node {
     return switch (input.data) {
-      .access => switch (try self.resolveChain(input, report_failure)) {
-        .var_chain => |vc| {
-          const retr =
-            try self.createPublic(data.Expression);
-          retr.* = .{
-            .pos = vc.target.pos,
-            .data = .{
-              .var_retrieval = .{
-                .variable = vc.target.variable
+      .access => blk: {
+        switch (try self.resolveChain(input, report_failure)) {
+          .var_chain => |vc| {
+            const retr =
+              try self.createPublic(data.Expression);
+            retr.* = .{
+              .pos = vc.target.pos,
+              .data = .{
+                .var_retrieval = .{
+                  .variable = vc.target.variable
+                },
               },
-            },
-            .expected_type = vc.target.variable.t,
-          };
-          const expr =
-            try self.createPublic(data.Expression);
-          expr.* = .{
-            .pos = input.pos,
-            .data = .{
-              .access = .{
-                .subject = retr,
-                .path = vc.field_chain.items
+              .expected_type = vc.target.variable.t,
+            };
+            const expr =
+              try self.createPublic(data.Expression);
+            expr.* = .{
+              .pos = input.pos,
+              .data = .{
+                .access = .{
+                  .subject = retr,
+                  .path = vc.field_chain.items
+                },
               },
-            },
-            .expected_type = vc.t,
-          };
-          return expr;
-        },
-        .func_ref => |ref| {
-          const expr =
-            try self.createPublic(data.Expression);
-          if (ref.prefix != null) {
-            self.loader.logger.PrefixedFunctionMustBeCalled(input.pos);
-            expr.* = data.Expression.poison(input.pos);
-          } else {
+              .expected_type = vc.t,
+            };
+            input.data = .{.expression = expr};
+          },
+          .func_ref => |ref| {
+            const expr =
+              try self.createPublic(data.Expression);
+            if (ref.prefix != null) {
+              self.loader.logger.PrefixedFunctionMustBeCalled(input.pos);
+              expr.* = data.Expression.poison(input.pos);
+            } else {
+              expr.* = data.Expression.literal(input.pos, .{
+                .funcref = .{
+                  .func = ref.target
+                },
+              });
+            }
+            input.data = .{.expression = expr};
+          },
+          .type_ref => |ref| {
+            const expr =
+              try self.createPublic(data.Expression);
             expr.* = data.Expression.literal(input.pos, .{
-              .funcref = .{
-                .func = ref.target
+              .typeval = .{
+                .t = ref.*,
               },
             });
-          }
-          return expr;
-        },
-        .type_ref => |ref| {
-          const expr =
-            try self.createPublic(data.Expression);
-          expr.* = data.Expression.literal(input.pos, .{
-            .typeval = .{
-              .t = ref.*,
-            },
-          });
-          return expr;
-        },
-        .expr_chain => |ec| {
-          const expr =
-            try self.createPublic(data.Expression);
-          expr.* = .{
-            .pos = input.pos,
-            .data = .{
-              .access = .{
-                .subject = ec.expr,
-                .path = ec.field_chain.items,
+            input.data = .{.expression = expr};
+          },
+          .expr_chain => |ec| {
+            const expr =
+              try self.createPublic(data.Expression);
+            expr.* = .{
+              .pos = input.pos,
+              .data = .{
+                .access = .{
+                  .subject = ec.expr,
+                  .path = ec.field_chain.items,
+                },
               },
-            },
-            .expected_type = ec.t,
-          };
-          return expr;
-        },
-        .failed => null,
-        .poison => {
-          const expr = try self.createPublic(data.Expression);
-          expr.* = data.Expression.poison(input.pos);
-          return expr;
-        },
+              .expected_type = ec.t,
+            };
+            input.data = .{.expression = expr};
+          },
+          .failed => {},
+          .poison => {
+            const expr = try self.createPublic(data.Expression);
+            expr.* = data.Expression.poison(input.pos);
+            input.data = .{.expression = expr};
+          },
+        }
+        break :blk input;
       },
       // TODO: assignment (needs type checking)
       // TODO: concatenation (needs type lattice)
       // TODO: paragraphs (needs type lattice)
-      .resolved_symref => |ref| {
+      .resolved_symref => |ref| blk: {
         const expr = try self.createPublic(data.Expression);
         switch (ref.data) {
           .ext_func, .ny_func => expr.* = data.Expression.literal(input.pos, .{
@@ -223,28 +229,78 @@ pub const Interpreter = struct {
             },
           }),
         }
-        return expr;
+        input.data = .{.expression = expr};
+        break :blk input;
       },
-      // TODO: resolved call (needs type checking)
-      .expression => |e| return e,
-      .voidNode => {
+      .resolved_call => |*rc| blk: {
+        const sig = switch (rc.target.expected_type.structural.*) {
+          .callable => |*c| c.sig,
+          .callable_type => |*ct| ct.sig,
+          else => unreachable
+        };
+        const is_keyword = sig.returns.is(.ast_node);
+        const allocator = if (is_keyword) &self.storage.allocator
+                          else &self.loader.context.storage.allocator;
+        var args_failed_to_interpret = false;
+        for (rc.args) |*arg| {
+          arg.* = try self.tryInterpret(arg.*, report_failure or is_keyword);
+          if (arg.*.data != .expression) args_failed_to_interpret = true;
+        }
+
+        if (args_failed_to_interpret) {
+          if (is_keyword) {
+            self.loader.logger.KeywordArgsNotAvailable(input.pos);
+            input.data = .poisonNode;
+          }
+        } else {
+          const args = try allocator.alloc(
+            *data.Expression, sig.parameters.len);
+          var seen_poison = false;
+          for (rc.args) |arg, i| {
+            args[i] = arg.data.expression;
+            if (args[i].expected_type.is(.poison)) seen_poison = true;
+          }
+          const expr = try allocator.create(data.Expression);
+          expr.data = .{
+            .call = .{
+              .target = rc.target,
+              .exprs = args,
+            },
+          };
+          if (is_keyword) {
+            var eval = nyarna.Evaluator{.context = self.loader.context};
+            const res = try eval.evaluateKeywordCall(self, &expr.data.call);
+            return self.tryInterpret(res, report_failure);
+          } else {
+            input.data = .{.expression = expr};
+          }
+        }
+        break :blk input;
+      },
+      .expression => input,
+      .voidNode => blk: {
         const expr = try self.storage.allocator.create(data.Expression);
         expr.* = .{
           .pos = input.pos,
           .data = .void,
           .expected_type = .{.intrinsic = .void},
         };
-        return expr;
+        break :blk input;
       },
-      else => null
+      else => input
     };
   }
 
-  pub fn interpret(self: *Interpreter, input: *data.Node) !*data.Expression {
-    return (try self.tryInterpret(input, true)) orelse blk: {
-      var ret = try self.createPublic(data.Expression);
-      ret.* = data.Expression.poison(input.pos);
-      break :blk ret;
+  pub fn interpret(self: *Interpreter, input: *data.Node)
+      nyarna.Error!*data.Expression {
+    const res = try self.tryInterpret(input, true);
+    return switch (res.data) {
+      .expression => |expr| expr,
+      else => blk: {
+        const ret = try self.createPublic(data.Expression);
+        ret.* = data.Expression.poison(input.pos);
+        break :blk ret;
+      }
     };
   }
 
@@ -312,7 +368,7 @@ pub const Interpreter = struct {
   /// to resolve the base symbol will be reported as error and .poison will be
   /// returned; else no error will be reported and .failed will be returned.
   pub fn resolveChain(self: *Interpreter, chain: *data.Node, force_fail: bool)
-      std.mem.Allocator.Error!ChainResolution {
+      nyarna.Error!ChainResolution {
     switch (chain.data) {
       .access => |value| {
         const inner = try self.resolveChain(value.subject, force_fail);
@@ -366,11 +422,15 @@ pub const Interpreter = struct {
         },
       },
       else => {
-        return if (try self.tryInterpret(chain, force_fail)) |_| {
-          // TODO: resolve accessor chain in context of expression's type and
-          // return expr_chain
-          unreachable;
-        } else @as(ChainResolution, if (force_fail) .poison else .failed);
+        const res = try self.tryInterpret(chain, force_fail);
+        return switch (res.data) {
+          .expression => |_| {
+            // TODO: resolve accessor chain in context of expression's type and
+            // return expr_chain
+            unreachable;
+          },
+          else => @as(ChainResolution, if (force_fail) .poison else .failed),
+        };
       }
     }
   }
@@ -495,26 +555,27 @@ pub const Interpreter = struct {
 
   /// same as tryInterpret, but takes a target type that may be used to generate
   /// typed literal values from text literals. fills an already
-  fn interpretWithTargetType(self: *Interpreter, node: *data.Node, t: data.Type)
-      !?*data.Expression {
-    return switch (node.data) {
+  fn interpretWithTargetType(self: *Interpreter, input: *data.Node,
+                             t: data.Type) !*data.Node {
+    return switch (input.data) {
       // for text literals, do compile-time type conversions if possible
       .literal => |*l| blk: {
         const e = try self.createPublic(data.Expression);
         self.createLiteralExpr(l, t, e);
         e.expected_type = t;
-        break :blk e;
+        input.data = .{.expression = e};
+        break :blk input;
       },
       .access, .assignment, .resolved_symref, .resolved_call =>
-        try self.tryInterpret(node, false),
+        self.tryInterpret(input, false),
       .concatenation => unreachable,
       .paragraphs => unreachable,
-      .unresolved_symref, .unresolved_call => null,
-      .expression => |e| e,
+      .unresolved_symref, .unresolved_call, .expression => input,
       .voidNode => blk: {
         const e = try self.createPublic(data.Expression);
-        e.* = data.Expression.voidExpr(node.pos);
-        break :blk e;
+        e.* = data.Expression.voidExpr(input.pos);
+        input.data = .{.expression = e};
+        break :blk input;
       }
     };
   }

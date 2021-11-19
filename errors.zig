@@ -12,7 +12,7 @@ pub const GenericParserError = enum {
   NamedArgumentInAssignment, MissingBlockNameEnd, UnknownFlag,
   NonLocationFlag, NonDefinitionFlag, BlockHeaderNotAllowedForDefinition,
   MissingSymbolName, MissingSymbolType, MissingSymbolEntity, UnknownSyntax,
-  PrefixedFunctionMustBeCalled, AstNodeInNonKeyword
+  PrefixedFunctionMustBeCalled, AstNodeInNonKeyword, KeywordArgsNotAvailable,
 };
 
 pub const WrongItemError = enum {

@@ -13,6 +13,11 @@ pub const lib = @import("lib.zig");
 
 pub const default_stack_size = 1024 * 1024; // 1MB
 
+pub const Error = error {
+  OutOfMemory,
+  nyarna_stack_overflow
+};
+
 /// the Context is the entry point to the API and the owner of all non-local
 /// resources allocated during operation. Local resources are internal data of
 /// the lexer, parser and interpreter, including intermediate AST representation

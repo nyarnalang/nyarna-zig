@@ -10,10 +10,10 @@ const types = nyarna.types;
 pub const Provider = struct {
   pub const KeywordWrapper = fn(
     ctx: *Interpreter, pos: data.Position,
-    stack_frame: [*]data.StackItem) std.mem.Allocator.Error!*data.Node;
+    stack_frame: [*]data.StackItem) nyarna.Error!*data.Node;
   pub const BuiltinWrapper = fn(
     ctx: *Evaluator, pos: data.Position,
-    stack_frame: [*]data.StackItem) std.mem.Allocator.Error!*data.Value;
+    stack_frame: [*]data.StackItem) nyarna.Error!*data.Value;
 
   getKeyword: fn(name: []const u8) ?KeywordWrapper,
   getBuiltin: fn(name: []const u8) ?BuiltinWrapper,
@@ -88,8 +88,7 @@ pub const Provider = struct {
                        comptime Ret: type) type {
         return struct {
           fn wrapper(ctx: FirstArg, pos: data.Position,
-                     stack_frame: [*]data.StackItem)
-              std.mem.Allocator.Error!*Ret {
+                     stack_frame: [*]data.StackItem) nyarna.Error!*Ret {
             var unwrapped: Params(@typeInfo(decl.data.Fn.fn_type).Fn) =
               undefined;
             inline for (@typeInfo(@TypeOf(unwrapped)).Struct.fields)
@@ -153,7 +152,7 @@ pub const Intrinsics = Provider.Wrapper(struct {
               name: []const u8, t: ?data.Type, primary: *data.Value.Enum,
               varargs: *data.Value.Enum, varmap: *data.Value.Enum,
               mutable: *data.Value.Enum, header: ?*data.Value.BlockHeader,
-              default: ?*data.Value.Ast) !*data.Node {
+              default: ?*data.Value.Ast) nyarna.Error!*data.Node {
     var expr = if (default) |node| blk: {
       var val = try intpr.interpret(node.root);
       if (t) |given_type| {
