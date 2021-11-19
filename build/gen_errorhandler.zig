@@ -68,10 +68,10 @@ pub fn main() !void {
     );
   }
   inline for (@typeInfo(errors.WrongTypeError).Enum.fields) |f| {
-    _ = try eh.write("  pub fn " ++ f.name ++ "(self: *@This(), pos: data.Position, expected: data.Type, got: data.Type) void {\n" ++
+    _ = try eh.write("  pub fn " ++ f.name ++ "(self: *@This(), pos: data.Position, types: []data.Type) void {\n" ++
     \\    self.count += 1;
     \\    self.reporter.wrongTypeErrorFn(self.reporter,
-    ++ "." ++ f.name ++ ", pos, expected, got);\n" ++
+    ++ "." ++ f.name ++ ", pos, types);\n" ++
     \\  }
     \\
     );

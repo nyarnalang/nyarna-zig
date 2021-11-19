@@ -324,7 +324,11 @@ pub const Node = struct {
   pub const Assignment = struct {
     target: union(enum) {
       unresolved: *Node,
-      resolved: *Expression,
+      resolved: struct {
+        target: *Symbol.Variable,
+        path: []usize,
+        t: Type
+      },
     },
     replacement: *Node,
   };
@@ -846,7 +850,8 @@ pub const Expression = struct {
   pub const VarRetrieval = struct {
     variable: *Symbol.Variable,
   };
-
+  /// concatenation
+  pub const Concatenation = []*Expression;
   /// a literal value
   pub const Literal = struct {
     value: Value,
@@ -864,6 +869,7 @@ pub const Expression = struct {
     call: Call,
     assignment: Assignment,
     access: Access,
+    concatenation: Concatenation,
     var_retrieval: VarRetrieval,
     literal: Literal,
     poison, void,

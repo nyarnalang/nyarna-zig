@@ -159,7 +159,7 @@ pub const Intrinsics = Provider.Wrapper(struct {
         if (!intpr.types().lesserEqual(val.expected_type, given_type)
             and !val.expected_type.is(.poison)) {
           intpr.loader.logger.ExpectedExprOfTypeXGotY(
-            val.pos, given_type, val.expected_type);
+            val.pos, &[_]data.Type{given_type, val.expected_type});
           return data.Node.poison(&intpr.storage.allocator, pos);
         }
       }

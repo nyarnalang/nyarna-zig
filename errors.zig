@@ -4,8 +4,9 @@ const data = @import("data.zig");
 pub const LexerError = enum {
   UnknownConfigDirective, MissingClosingParenthesis, InvalidUtf8Encoding,
   IllegalCodePoint, IllegalOpeningParenthesis, IllegalBlocksStartInArgs,
-  IllegalCommandChar, MixedIndentation, IllegalIndentation, IllegalContentAtHeader,
-  IllegalCharacterForId, InvalidEndCommand, SwallowDepthWithoutDiamondClose,
+  IllegalCommandChar, MixedIndentation, IllegalIndentation,
+  IllegalContentAtHeader, IllegalCharacterForId, InvalidEndCommand,
+  SwallowDepthWithoutDiamondClose,
 };
 
 pub const GenericParserError = enum {
@@ -13,6 +14,7 @@ pub const GenericParserError = enum {
   NonLocationFlag, NonDefinitionFlag, BlockHeaderNotAllowedForDefinition,
   MissingSymbolName, MissingSymbolType, MissingSymbolEntity, UnknownSyntax,
   PrefixedFunctionMustBeCalled, AstNodeInNonKeyword, KeywordArgsNotAvailable,
+  InvalidLvalue,
 };
 
 pub const WrongItemError = enum {
@@ -47,7 +49,8 @@ pub const PreviousOccurenceError = enum {
       .DuplicateFlag => " has been seen previously",
       .DuplicateBlockHeader => " can only be given once per definition",
       .IncompatibleFlag =>  " is incompatible with previously declared flag",
-      .DuplicateAutoSwallow => " conflicts with another auto-swallow definition",
+      .DuplicateAutoSwallow =>
+        " conflicts with another auto-swallow definition",
     };
   }
 
@@ -70,27 +73,38 @@ pub const PreviousOccurenceError = enum {
 };
 
 pub const WrongTypeError = enum {
+   /// gives two types: first expected, then actual types.
    ExpectedExprOfTypeXGotY,
-
-  fn errorMsg(e: WrongTypeError) []const u8 {
-    return switch (e) {
-      .ExpectedExprOfTypeXGotY => "expression has incompatible type",
-    };
-  }
+   /// gives at least two types: the first type is the one that makes the set
+   /// incompatible, the others are other types in the set.
+   IncompatibleTypes,
+   /// gives one type.
+   InvalidInnerConcatType,
 };
 
 pub const Reporter = struct {
-  lexerErrorFn: fn(reporter: *Reporter, id: LexerError, pos: data.Position) void,
-  parserErrorFn: fn(reporter: *Reporter, id: GenericParserError, pos: data.Position) void,
-  wrongItemErrorFn: fn(reporter: *Reporter, id: WrongItemError, pos: data.Position,
-                       expected: []const WrongItemError.ItemDescr, got: WrongItemError.ItemDescr) void,
-  wrongIdErrorFn: fn(reporter: *Reporter, id: WrongIdError, pos: data.Position, expected: []const u8, got: []const u8, defined_at: data.Position) void,
-  previousOccurenceFn: fn(reporter: *Reporter, id: PreviousOccurenceError, repr: []const u8, pos: data.Position, previous: data.Position) void,
-  wrongTypeErrorFn: fn(reporter: *Reporter, id: WrongTypeError, pos: data.Position, expected: data.Type, got: data.Type) void,
+  lexerErrorFn:
+    fn(reporter: *Reporter, id: LexerError, pos: data.Position) void,
+  parserErrorFn:
+    fn(reporter: *Reporter, id: GenericParserError, pos: data.Position) void,
+  wrongItemErrorFn:
+    fn(reporter: *Reporter, id: WrongItemError, pos: data.Position,
+       expected: []const WrongItemError.ItemDescr,
+       got: WrongItemError.ItemDescr) void,
+  wrongIdErrorFn:
+    fn(reporter: *Reporter, id: WrongIdError, pos: data.Position,
+       expected: []const u8, got: []const u8, defined_at: data.Position) void,
+  previousOccurenceFn:
+    fn(reporter: *Reporter, id: PreviousOccurenceError, repr: []const u8,
+       pos: data.Position, previous: data.Position) void,
+  wrongTypeErrorFn:
+    fn(reporter: *Reporter, id: WrongTypeError, pos: data.Position,
+       types: []const data.Type) void,
 };
 
 fn formatItemDescr(d: WrongItemError.ItemDescr, comptime _: []const u8,
-                   options: std.fmt.FormatOptions, writer: anytype) @TypeOf(writer).Error!void {
+                   options: std.fmt.FormatOptions, writer: anytype)
+    @TypeOf(writer).Error!void {
   switch (d) {
     .token => |t| try writer.writeAll(@tagName(t)),
     .character => |c| {
@@ -103,7 +117,8 @@ fn formatItemDescr(d: WrongItemError.ItemDescr, comptime _: []const u8,
 }
 
 fn formatItemArr(i: []const WrongItemError.ItemDescr, comptime fmt: []const u8,
-                 options: std.fmt.FormatOptions, writer: anytype) @TypeOf(writer).Error!void {
+                 options: std.fmt.FormatOptions, writer: anytype)
+    @TypeOf(writer).Error!void {
   if (i.len == 1) try formatItemDescr(i[0], fmt, options, writer)
   else {
     for (i) |cur, index| {
@@ -115,9 +130,9 @@ fn formatItemArr(i: []const WrongItemError.ItemDescr, comptime fmt: []const u8,
   }
 }
 
-fn formatParameterizedType(comptime fmt: []const u8, options: std.fmt.FormatOptions,
-                           name: []const u8, inners: []const data.Type,
-                           writer: anytype) @TypeOf(writer).Error!void {
+fn formatParameterizedType(
+    comptime fmt: []const u8, options: std.fmt.FormatOptions, name: []const u8,
+    inners: []const data.Type, writer: anytype) @TypeOf(writer).Error!void {
   try writer.writeAll(name);
   try writer.writeByte('<');
   for (inners) |inner, index| {
@@ -129,21 +144,26 @@ fn formatParameterizedType(comptime fmt: []const u8, options: std.fmt.FormatOpti
   try writer.writeByte('>');
 }
 
-fn formatType(t: data.Type, comptime fmt: []const u8,
-              options: std.fmt.FormatOptions, writer: anytype) @TypeOf(writer).Error!void {
+fn formatType(
+    t: data.Type, comptime fmt: []const u8, options: std.fmt.FormatOptions,
+    writer: anytype) @TypeOf(writer).Error!void {
   switch (t) {
     .intrinsic => |it| try writer.writeAll(@tagName(it)),
     .structural => |struc| try switch (struc.*) {
       .optional => |op|
-        formatParameterizedType(fmt, options, "Optional", &[_]data.Type{op.inner}, writer),
+        formatParameterizedType(fmt, options, "Optional",
+                                &[_]data.Type{op.inner}, writer),
       .concat => |con|
-        formatParameterizedType(fmt, options, "Concat", &[_]data.Type{con.inner}, writer),
+        formatParameterizedType(fmt, options, "Concat",
+                                &[_]data.Type{con.inner}, writer),
       .paragraphs => |para|
         formatParameterizedType(fmt, options, "Paragraphs", para.inner, writer),
       .list => |list|
-        formatParameterizedType(fmt, options, "List", &[_]data.Type{list.inner}, writer),
+        formatParameterizedType(fmt, options, "List",
+                                &[_]data.Type{list.inner}, writer),
       .map => |map|
-        formatParameterizedType(fmt, options, "Optional", &[_]data.Type{map.key, map.value}, writer),
+        formatParameterizedType(fmt, options, "Optional",
+                                &[_]data.Type{map.key, map.value}, writer),
       .callable => |_| unreachable,
       .callable_type => writer.writeAll("Type"),
       .intersection => |inter| {
@@ -165,6 +185,16 @@ fn formatType(t: data.Type, comptime fmt: []const u8,
         try writer.writeAll("<anonymous>");
       }
     }
+  }
+}
+
+fn formatTypes(types: []const data.Type, comptime fmt: []const u8,
+               options: std.fmt.FormatOptions, writer: anytype)
+    @TypeOf(writer).Error!void {
+  for (types) |t, i| {
+    try if (i > 0) writer.writeAll(", '") else writer.writeByte('\'');
+    try formatType(t, fmt, options, writer);
+    try writer.writeByte('\'');
   }
 }
 
@@ -203,7 +233,8 @@ pub const CmdLineReporter = struct {
     };
   }
 
-  fn style(self: *CmdLineReporter, styles: anytype, comptime fmt: []const u8, args: anytype) void {
+  fn style(self: *CmdLineReporter, styles: anytype, comptime fmt: []const u8,
+           args: anytype) void {
     if (self.do_style) {
       inline for (styles) |s| {
         self.writer.print("\x1b[{}m", .{@enumToInt(@as(Style, s))}) catch unreachable;
@@ -213,20 +244,25 @@ pub const CmdLineReporter = struct {
     if (self.do_style) self.writer.writeAll("\x1b[m") catch unreachable;
   }
 
-  fn renderPos(self: *CmdLineReporter, styles: anytype, pos: data.Position) void {
+  fn renderPos(self: *CmdLineReporter, styles: anytype, pos: data.Position)
+      void {
     if (pos.source.argument)
-      self.style(styles, "arg \"{s}\"({}:{}): ", .{pos.source.name, pos.start.at_line, pos.start.before_column})
+      self.style(styles, "arg \"{s}\"({}:{}): ",
+        .{pos.source.name, pos.start.at_line, pos.start.before_column})
     else
-      self.style(styles, "{s}({}:{}): ", .{pos.source.name, pos.start.at_line, pos.start.before_column});
+      self.style(styles, "{s}({}:{}): ",
+        .{pos.source.name, pos.start.at_line, pos.start.before_column});
   }
 
-  fn renderError(self: *CmdLineReporter, comptime fmt: []const u8, args: anytype) void {
+  fn renderError(self: *CmdLineReporter, comptime fmt: []const u8,
+                 args: anytype) void {
     self.style(.{.bold, .fg_red}, "[error] ", .{});
     self.style(.{.bold}, fmt, args);
     self.writer.writeByte('\n') catch unreachable;
   }
 
-  fn renderInfo(self: *CmdLineReporter, comptime fmt: []const u8, args: anytype) void {
+  fn renderInfo(self: *CmdLineReporter, comptime fmt: []const u8,
+                args: anytype) void {
     self.style(.{.bold, .fg_white}, "[info] ", .{});
     self.style(.{.bold}, fmt, args);
     self.writer.writeByte('\n') catch unreachable;
@@ -238,14 +274,17 @@ pub const CmdLineReporter = struct {
     self.renderError("(lex) {s}", .{@tagName(id)});
   }
 
-  fn parserError(reporter: *Reporter, id: GenericParserError, pos: data.Position) void {
+  fn parserError(reporter: *Reporter, id: GenericParserError,
+                 pos: data.Position) void {
     const self = @fieldParentPtr(CmdLineReporter, "reporter", reporter);
     self.renderPos(.{.bold}, pos);
     self.renderError("(parse) {s}", .{@tagName(id)});
   }
 
-  fn wrongItemError(reporter: *Reporter, _: WrongItemError, pos: data.Position,
-                    expected: []const WrongItemError.ItemDescr, got: WrongItemError.ItemDescr) void {
+  fn wrongItemError(
+      reporter: *Reporter, _: WrongItemError, pos: data.Position,
+      expected: []const WrongItemError.ItemDescr, got: WrongItemError.ItemDescr)
+      void {
     const self = @fieldParentPtr(CmdLineReporter, "reporter", reporter);
     self.renderPos(.{.bold}, pos);
     const arr = std.fmt.Formatter(formatItemArr){.data = expected};
@@ -253,8 +292,9 @@ pub const CmdLineReporter = struct {
     self.renderError("wrong token: expected {}, got {}", .{arr, single});
   }
 
-  fn wrongIdError(reporter: *Reporter, id: WrongIdError, pos: data.Position,
-                  expected: []const u8, got: []const u8, defined_at: data.Position) void {
+  fn wrongIdError(
+      reporter: *Reporter, id: WrongIdError, pos: data.Position,
+      expected: []const u8, got: []const u8, defined_at: data.Position) void {
     const self = @fieldParentPtr(CmdLineReporter, "reporter", reporter);
     self.renderPos(.{.bold}, pos);
     self.renderError("{s} id: expected '{s}', got '{s}'",
@@ -263,25 +303,37 @@ pub const CmdLineReporter = struct {
     _ = self.writer.write("command started here") catch unreachable;
   }
 
-  fn previousOccurence(reporter: *Reporter, id: PreviousOccurenceError, repr: []const u8,
-                       pos: data.Position, previous: data.Position) void {
+  fn previousOccurence(
+      reporter: *Reporter, id: PreviousOccurenceError, repr: []const u8,
+      pos: data.Position, previous: data.Position) void {
     const self = @fieldParentPtr(CmdLineReporter, "reporter", reporter);
     self.renderPos(.{.bold}, pos);
     self.renderError("{s} '{s}'{s}", .{id.entityName(), repr, id.errorMsg()});
     self.renderPos(.{}, previous);
-    self.writer.print("{s} here\n", .{id.prevOccurenceKind()}) catch unreachable;
+    self.writer.print("{s} here\n", .{id.prevOccurenceKind()})
+      catch unreachable;
   }
 
-  fn wrongTypeError(reporter: *Reporter, _: WrongTypeError, pos: data.Position,
-                    expected: data.Type, got: data.Type) void {
+  fn wrongTypeError(reporter: *Reporter, id: WrongTypeError, pos: data.Position,
+                    types: []const data.Type) void {
     const self = @fieldParentPtr(CmdLineReporter, "reporter", reporter);
     self.renderPos(.{.bold}, pos);
-    // TODO: for unknown reasons, the compiler crashes when using id.errorMsg() here.
-    // this needs to be fixed in the compiler.
-    const name = "expression has incompatible type";
-    self.renderError("{s}: expected '{}', got '{}'", .{
-      name, std.fmt.Formatter(formatType){.data = expected},
-      std.fmt.Formatter(formatType){.data = got},
-    });
+    switch (id) {
+      .ExpectedExprOfTypeXGotY => self.renderError(
+        "expression has incompatible type: expected '{}', got '{}'", .{
+          std.fmt.Formatter(formatType){.data = types[0]},
+          std.fmt.Formatter(formatType){.data = types[1]},
+        }),
+      .IncompatibleTypes => self.renderError(
+        "expression type '{}' is not compatible with previous types {}", .{
+          std.fmt.Formatter(formatType){.data = types[0]},
+          std.fmt.Formatter(formatTypes){.data = types[1..]},
+        }),
+      .InvalidInnerConcatType => self.renderError(
+        "given expressions' types' intersection is '{}' " ++
+        "which is not concatenable", .{
+          std.fmt.Formatter(formatType){.data = types[0]},
+        }),
+    }
   }
 };

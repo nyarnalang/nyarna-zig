@@ -159,6 +159,7 @@ pub const Evaluator = struct {
         }
         break :blk cur;
       },
+      .concatenation => |_| unreachable,
       .var_retrieval => |*var_retr| var_retr.variable.cur_value.?.value,
       .literal => |*literal| &literal.value,
       .poison =>

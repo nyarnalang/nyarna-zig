@@ -276,6 +276,9 @@ fn AstEmitter(Handler: anytype) type {
         .access => |_| {
           unreachable;
         },
+        .concatenation => |_| {
+          unreachable;
+        },
         .literal => |l| {
           try self.processValue(&l.value);
         },

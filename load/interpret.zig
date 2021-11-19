@@ -203,8 +203,99 @@ pub const Interpreter = struct {
         }
         break :blk input;
       },
-      // TODO: assignment (needs type checking)
-      // TODO: concatenation (needs type lattice)
+      .assignment => |*ass| blk: {
+        const target = switch (ass.target) {
+          .resolved => |*val| val,
+          .unresolved => |node| innerblk: {
+            switch (try self.resolveChain(node, report_failure)) {
+              .var_chain => |*vc| {
+                ass.target = .{
+                  .resolved = .{
+                    .target = vc.target.variable,
+                    .path = vc.field_chain.items,
+                    .t = vc.t,
+                  },
+                };
+                break :innerblk &ass.target.resolved;
+              },
+              .func_ref, .type_ref, .expr_chain => {
+                self.loader.logger.InvalidLvalue(node.pos);
+                return try data.Node.poison(&self.storage.allocator, node.pos);
+              },
+              .poison =>
+                return try data.Node.poison(&self.storage.allocator, node.pos),
+              .failed =>
+                break :blk input,
+            }
+          }
+        };
+        const target_expr = (try self.associate(ass.replacement, target.t))
+          orelse break :blk input;
+        const expr = try self.createPublic(data.Expression);
+        const path = try std.mem.dupe(&self.loader.context.storage.allocator,
+          usize, target.path);
+        expr.* = .{
+          .pos = input.pos,
+          .data = .{
+            .assignment = .{
+              .target = target.target,
+              .path = path,
+              .expr = target_expr,
+            },
+          },
+          .expected_type = data.Type{.intrinsic = .void},
+        };
+        input.data = .{.expression = expr};
+        break :blk input;
+      },
+      .concatenation => |con| blk: {
+        var failed_some = false;
+        var inner_type = data.Type{.intrinsic = .every};
+        var first_incompatible: ?usize = null;
+        for (con.content) |*item, i| {
+          item.* = try self.tryInterpret(item.*, report_failure);
+          switch (item.*.data) {
+            .expression => |expr| {
+              inner_type = try self.types().sup(inner_type, expr.expected_type);
+              if (first_incompatible == null and inner_type.is(.poison))
+                first_incompatible = i;
+            },
+            else => failed_some = true,
+          }
+        }
+        if (failed_some) break :blk input;
+        const expr = try self.createPublic(data.Expression);
+        if (first_incompatible) |index| {
+          const type_arr =
+            try self.storage.allocator.alloc(data.Type, index + 1);
+          type_arr[0] = con.content[index].data.expression.expected_type;
+          var j = @as(usize, 0);
+          while (j < index) : (j += 1) {
+            type_arr[j + 1] =
+              con.content[j].data.expression.expected_type;
+          }
+          self.loader.logger.IncompatibleTypes(expr.pos, type_arr);
+          expr.* = data.Expression.poison(input.pos);
+        } else if (try self.types().concat(inner_type)) |expr_type| {
+          const exprs = try self.loader.context.storage.allocator.alloc(
+            *data.Expression, con.content.len);
+          // TODO: properly handle paragraph types
+          for (con.content) |item, i| exprs[i] = item.data.expression;
+          expr.* = .{
+            .pos = input.pos,
+            .data = .{
+              .concatenation = exprs,
+            },
+            .expected_type = expr_type,
+          };
+        } else {
+          self.loader.logger.InvalidInnerConcatType(
+            input.pos, &[_]data.Type{inner_type});
+          expr.* = data.Expression.poison(input.pos);
+        }
+        input.data = .{.expression = expr};
+        break :blk input;
+      },
       // TODO: paragraphs (needs type lattice)
       .resolved_symref => |ref| blk: {
         const expr = try self.createPublic(data.Expression);
@@ -490,52 +581,61 @@ pub const Interpreter = struct {
   }
 
   fn createLiteralExpr(self: *Interpreter, l: *data.Node.Literal, t: data.Type,
-                       e: *data.Expression) void {
+                       e: *data.Expression) nyarna.Error!void {
     e.* = switch (t) {
       .intrinsic => |it| switch (it) {
         .space => if (l.kind == .space) data.Expression.literal(l.pos(), .{
           .text = .{
             .t = t,
             .value = try std.mem.dupe(
-              &self.loader.storage.allocator, u8, l.content),
+              &self.loader.context.storage.allocator, u8, l.content),
           },
         }) else blk: {
           self.loader.logger.ExpectedExprOfTypeXGotY(
-            l.pos(), t, .{.intrinsic = .literal});
+            l.pos(), &[_]data.Type{t, .{.intrinsic = .literal}});
           break :blk data.Expression.poison(l.pos());
         },
         .literal, .raw => data.Expression.literal(l.pos(), .{
           .text = .{
             .t = t,
             .value = try std.mem.dupe(
-              &self.loader.storage.allocator, u8, l.content),
+              &self.loader.context.storage.allocator, u8, l.content),
           },
         }),
         else => data.Expression.literal(l.pos(), .{
           .text = .{
             .t = .{.intrinsic = if (l.kind == .text) .literal else .space},
             .value = try std.mem.dupe(
-              &self.loader.storage.allocator, u8, l.content),
+              &self.loader.context.storage.allocator, u8, l.content),
           },
         }),
       },
-      .structural => |struc| switch (struc) {
-        .optional => |op| { self.createLiteralExpr(t, op.inner, e); return; },
-        .concat => |con| {self.createLiteralExpr(t, con.inner, e); return; },
+      .structural => |struc| switch (struc.*) {
+        .optional => |*op| {
+          try self.createLiteralExpr(l, op.inner, e);
+          return;
+        },
+        .concat => |*con| {
+          try self.createLiteralExpr(l, con.inner, e);
+          return;
+        },
         .paragraphs => unreachable,
-        .list => |list| {self.createLiteralExpr(t, list.inner, e); return; },
+        .list => |*list| {
+          try self.createLiteralExpr(l, list.inner, e);
+          return;
+        },
         .map, .callable, .callable_type => blk: {
           self.loader.logger.ExpectedExprOfTypeXGotY(
-            l.pos(), t, .{.intrinsic = .literal});
+            l.pos(), &[_]data.Type{t, .{.intrinsic = .literal}});
           break :blk data.Expression.poison(l.pos());
         },
-        .intersection => |inter| blk: {
+        .intersection => |*inter| blk: {
           if (inter.scalar) |scalar| {
-            self.createLiteralExpr(t, scalar, e);
+            try self.createLiteralExpr(l, scalar, e);
             return;
           }
           self.loader.logger.ExpectedExprOfTypeXGotY(
-            l.pos(), t, .{.intrinsic = .literal});
+            l.pos(), &[_]data.Type{t, .{.intrinsic = .literal}});
           break :blk data.Expression.poison(l.pos());
         }
       },
@@ -545,8 +645,10 @@ pub const Interpreter = struct {
         .float => unreachable, // TODO
         .tenum => unreachable, // TODO
         .record => blk: {
-          self.loader.logger.ExpectedExprOfTypeXGotY(l.pos(), t,
-            .{.intrinsic = if (l.kind == .text) .literal else .space});
+          self.loader.logger.ExpectedExprOfTypeXGotY(l.pos(),
+            &[_]data.Type{
+              t, .{.intrinsic = if (l.kind == .text) .literal else .space},
+            });
           break :blk data.Expression.poison(l.pos());
         },
       },
@@ -561,7 +663,7 @@ pub const Interpreter = struct {
       // for text literals, do compile-time type conversions if possible
       .literal => |*l| blk: {
         const e = try self.createPublic(data.Expression);
-        self.createLiteralExpr(l, t, e);
+        try self.createLiteralExpr(l, t, e);
         e.expected_type = t;
         input.data = .{.expression = e};
         break :blk input;
@@ -574,6 +676,12 @@ pub const Interpreter = struct {
       .voidNode => blk: {
         const e = try self.createPublic(data.Expression);
         e.* = data.Expression.voidExpr(input.pos);
+        input.data = .{.expression = e};
+        break :blk input;
+      },
+      .poisonNode => blk: {
+        const e = try self.createPublic(data.Expression);
+        e.* = data.Expression.poison(input.pos);
         input.data = .{.expression = e};
         break :blk input;
       }
@@ -592,15 +700,20 @@ pub const Interpreter = struct {
   /// unresolved symbols.
   pub fn associate(self: *Interpreter, node: *data.Node, t: data.Type)
       !?*data.Expression {
-    const e = try self.interpretWithTargetType(node, t) orelse return null;
-    if (self.types.lesserEqual(e.expected_type, t)) {
-      e.expected_type = t;
-      return e;
-    }
-    // TODO: semantic conversions here
-    self.loader.logger.ExpectedExprOfTypeXGotY(node.pos, t, e.expected_type);
-    e.* = data.Expression.poison(node.pos);
-    return e;
+    return switch ((try self.interpretWithTargetType(node, t)).data) {
+      .expression => |expr| blk: {
+        if (self.types().lesserEqual(expr.expected_type, t)) {
+          expr.expected_type = t;
+          break :blk expr;
+        }
+        // TODO: semantic conversions here
+        self.loader.logger.ExpectedExprOfTypeXGotY(
+          node.pos, &[_]data.Type{t, expr.expected_type});
+        expr.* = data.Expression.poison(node.pos);
+        break :blk expr;
+      },
+      else => null
+    };
   }
 
 };
