@@ -86,8 +86,8 @@ pub const Interpreter = struct {
   }
 
   pub fn addNamespace(self: *Interpreter, character: u21) !void {
-    // TODO: error message when too many namespaces are used (?)
     const index = self.namespaces.items.len;
+    if (index > std.math.maxInt(u16)) return nyarna.Error.too_many_namespaces;
     try self.command_characters.put(
       &self.storage.allocator, character, @intCast(u15, index));
     try self.namespaces.append(&self.storage.allocator, .{});
@@ -432,6 +432,7 @@ pub const Interpreter = struct {
     func_ref: struct {
       /// must be ExtFunc or NyFunc
       target: *data.Symbol,
+      signature: *const data.Type.Signature,
       /// set if targt is a function reference in the namespace of a type,
       /// which has been accessed via an expression of that type. That is only
       /// allowed in the context of a call. The caller of resolveChain is to
@@ -492,9 +493,17 @@ pub const Interpreter = struct {
       },
       .unresolved_symref => return .failed,
       .resolved_symref => |sym| return switch(sym.data) {
-        .ext_func, .ny_func => ChainResolution{
+        .ext_func => |*ef| ChainResolution{
           .func_ref = .{
             .target = sym,
+            .signature = ef.sig(),
+            .prefix = null,
+          },
+        },
+        .ny_func => |*nf| ChainResolution{
+          .func_ref = .{
+            .target = sym,
+            .signature = nf.sig(),
             .prefix = null,
           },
         },
@@ -668,7 +677,7 @@ pub const Interpreter = struct {
         input.data = .{.expression = e};
         break :blk input;
       },
-      .access, .assignment, .resolved_symref, .resolved_call =>
+      .access, .assignment, .resolved_symref, .resolved_call, .branches =>
         self.tryInterpret(input, false),
       .concatenation => unreachable,
       .paragraphs => unreachable,

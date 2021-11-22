@@ -15,7 +15,8 @@ pub const default_stack_size = 1024 * 1024; // 1MB
 
 pub const Error = error {
   OutOfMemory,
-  nyarna_stack_overflow
+  nyarna_stack_overflow,
+  too_many_namespaces,
 };
 
 /// the Context is the entry point to the API and the owner of all non-local

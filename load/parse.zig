@@ -80,10 +80,11 @@ pub const Parser = struct {
       c.cur_cursor = .not_pushed;
     }
 
-    fn startResolvedCall(c: *Command, alloc: *std.mem.Allocator,
-                         target: *data.Expression, sig: *data.Signature) !void {
+    fn startResolvedCall(
+        c: *Command, context: *Interpreter, target: *data.Expression,
+        sig: *const data.Type.Signature) !void {
       c.info = .{
-        .resolved_call = try mapper.SignatureMapper.init(alloc, target, sig),
+        .resolved_call = try mapper.SignatureMapper.init(context, target, sig),
       };
       c.mapper = &c.info.resolved_call.mapper;
       c.cur_cursor = .not_pushed;
@@ -98,10 +99,8 @@ pub const Parser = struct {
 
     fn choseAstNodeParam(c: *Command) bool {
       return switch (c.cur_cursor) {
-        .mapped => |cursor| if (c.mapper.paramType(cursor)) |t| switch (t) {
-          .intrinsic => |i| i == .ast_node,
-          else => false,
-        } else false,
+        .mapped => |cursor|
+          if (c.mapper.paramType(cursor)) |t| t.is(.ast_node) else false,
         else => false,
       };
     }
@@ -142,7 +141,7 @@ pub const Parser = struct {
           try level.nodes.append(&ip.storage.allocator, space_node);
           level.dangling_space = null;
         }
-        const res = switch (item.data) {
+        const res = if (level.fullast) item else switch (item.data) {
           .literal, .unresolved_call, .unresolved_symref, .expression,
           .voidNode => item,
           else => try ip.tryInterpret(item, false)
@@ -728,8 +727,26 @@ pub const Parser = struct {
                     .var_chain => |_| {
                       unreachable; // TODO
                     },
-                    .func_ref => |_| {
-                      unreachable; // TODO
+                    .func_ref => |fr| {
+                      const target_expr =
+                        try self.intpr().createPublic(data.Expression);
+                      target_expr.* = data.Expression.literal(target.pos, .{
+                        .funcref = .{
+                          .func = fr.target
+                        },
+                      });
+                      try lvl.command.startResolvedCall(
+                        self.intpr(), target_expr, fr.signature);
+                      if (fr.prefix) |prefix| {
+                        const expr_node = try self.int().create(data.Node);
+                        expr_node.* = .{
+                          .pos = prefix.pos,
+                          .data = .{
+                            .expression = prefix,
+                          },
+                        };
+                        try lvl.command.pushArg(self.int(), expr_node);
+                      }
                     },
                     .expr_chain => |_| {
                       unreachable; // TODO

@@ -361,10 +361,15 @@ pub const Node = struct {
     target: *Expression,
     args: []*Node,
   };
+  pub const Branches = struct {
+    condition: *Node,
+    branches: []*Node,
+  };
 
   pub const Data = union(enum) {
     access: Access,
     assignment: Assignment,
+    branches: Branches,
     literal: Literal,
     concatenation: Concatenation,
     paragraphs: Paragraphs,
@@ -412,6 +417,15 @@ pub const Node = struct {
     return ret;
   }
 
+  pub fn genVoid(allocator: *std.mem.Allocator, pos: Position) !*Node {
+    var ret = try allocator.create(Node);
+    ret.* = .{
+      .pos = pos,
+      .data = .voidNode,
+    };
+    return ret;
+  }
+
   pub fn valueNode(allocator: *std.mem.Allocator, expr: *Expression,
                    pos: Position, data: Value.Data) !*Node {
     expr.* = Expression.literal(pos, data);
@@ -430,22 +444,30 @@ pub const Symbol = struct {
   /// externally defined function, pre-defined by Nyarna or registered via
   /// Nyarna's API.
   pub const ExtFunc = struct {
-    signature: *Type.Signature,
+    callable: *const Type.Callable,
     /// tells the interpreter under which index to look up the implementation.
     impl_index: usize,
     /// reference to the current stack frame of this function.
     /// null if no calls to this function are currently being evaluated.
-    cur_frame: ?[*]StackItem
+    cur_frame: ?[*]StackItem,
+
+    pub fn sig(self: *const ExtFunc) *const Type.Signature {
+      return self.callable.sig;
+    }
   };
 
   /// Internal function, defined in Nyarna code.
   pub const NyFunc = struct {
-    signature: *Type.Signature,
+    callable: *const Type.Callable,
     variables: VariableContainer,
     /// reference to the current stack frame of this function.
     /// null if no calls to this function are currently being evaluated.
     cur_frame: ?[*]StackItem,
     body: *Expression,
+
+    pub fn sig(self: *const NyFunc) *const Type.Signature {
+      return self.callable.sig;
+    }
   };
   /// A variable defined in Nyarna code.
   pub const Variable = struct {
@@ -512,6 +534,10 @@ pub const Type = union(enum) {
 
     pub fn isKeyword(sig: *const Signature) bool {
       return sig.returns.is(.ast_node);
+    }
+
+    pub inline fn typedef(self: *const @This()) Type {
+      return Structural.typedef(self);
     }
   };
 
@@ -592,6 +618,10 @@ pub const Type = union(enum) {
 
   pub const Callable = struct {
     sig: *Signature,
+
+    pub inline fn typedef(self: *const @This()) Type {
+      return Structural.typedef(self);
+    }
   };
 
   pub const CallableType = struct {
@@ -860,18 +890,24 @@ pub const Expression = struct {
       return Expression.parent(self);
     }
   };
+  // if or switch expression
+  pub const Branches = struct {
+    condition: *Expression,
+    branches: []*Expression,
+  };
   /// an ast subtree
   pub const Ast = struct {
     root: *Node,
   };
 
   pub const Data = union(enum) {
-    call: Call,
-    assignment: Assignment,
     access: Access,
+    assignment: Assignment,
+    branches: Branches,
+    call: Call,
     concatenation: Concatenation,
-    var_retrieval: VarRetrieval,
     literal: Literal,
+    var_retrieval: VarRetrieval,
     poison, void,
   };
 
@@ -1177,16 +1213,20 @@ pub const Value = struct {
 
   pub fn vType(self: *Value) Type {
     return switch (self.data) {
-      .text => |txt| txt.t,
-      .number => |num| num.t.typedef(),
-      .float => |fl| fl.t.typedef(),
-      .enumval => |en| en.t.typedef(),
-      .record => |rec| rec.t.typedef(),
-      .concat => |con| con.t.typedef(),
-      .list => |list| list.t.typedef(),
-      .map => |map| map.t.typedef(),
+      .text => |*txt| txt.t,
+      .number => |*num| num.t.typedef(),
+      .float => |*fl| fl.t.typedef(),
+      .enumval => |*en| en.t.typedef(),
+      .record => |*rec| rec.t.typedef(),
+      .concat => |*con| con.t.typedef(),
+      .list => |*list| list.t.typedef(),
+      .map => |*map| map.t.typedef(),
       .typeval => .{.intrinsic = .non_callable_type}, // TODO
-      .funcref => |_| unreachable,
+      .funcref => |*fr| switch (fr.func.data) {
+        .ny_func => |*nf| nf.callable.typedef(),
+        .ext_func => |*ef| ef.callable.typedef(),
+        else => unreachable,
+      },
       .location => .{.intrinsic = .location},
       .definition => .{.intrinsic = .definition},
       .ast => .{.intrinsic = .ast_node},

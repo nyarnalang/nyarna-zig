@@ -34,7 +34,8 @@ test "parse simple line" {
   };
 
   var r = errors.CmdLineReporter.init();
-  var ctx = try nyarna.Context.init(std.testing.allocator, &r.reporter);
+  var ctx = try nyarna.Context.init(
+    std.testing.allocator, &r.reporter, nyarna.default_stack_size);
   defer ctx.deinit();
   var ml = try nyarna.ModuleLoader.create(&ctx, &src, &.{});
   defer ml.destroy();
@@ -58,7 +59,8 @@ test "parse assignment" {
   };
 
   var r = errors.CmdLineReporter.init();
-  var ctx = try nyarna.Context.init(std.testing.allocator, &r.reporter);
+  var ctx = try nyarna.Context.init(
+    std.testing.allocator, &r.reporter, nyarna.default_stack_size);
   defer ctx.deinit();
   var ml = try nyarna.ModuleLoader.create(&ctx, &src, &.{});
   defer ml.destroy();
@@ -84,7 +86,8 @@ test "parse access" {
   };
 
   var r = errors.CmdLineReporter.init();
-  var ctx = try nyarna.Context.init(std.testing.allocator, &r.reporter);
+  var ctx = try nyarna.Context.init(
+    std.testing.allocator, &r.reporter, nyarna.default_stack_size);
   defer ctx.deinit();
   var ml = try nyarna.ModuleLoader.create(&ctx, &src, &.{});
   defer ml.destroy();
@@ -114,7 +117,8 @@ test "parse concat" {
   };
 
   var r = errors.CmdLineReporter.init();
-  var ctx = try nyarna.Context.init(std.testing.allocator, &r.reporter);
+  var ctx = try nyarna.Context.init(
+    std.testing.allocator, &r.reporter, nyarna.default_stack_size);
   defer ctx.deinit();
   var ml = try nyarna.ModuleLoader.create(&ctx, &src, &.{});
   defer ml.destroy();
@@ -144,7 +148,8 @@ test "parse paragraphs" {
   };
 
   var r = errors.CmdLineReporter.init();
-  var ctx = try nyarna.Context.init(std.testing.allocator, &r.reporter);
+  var ctx = try nyarna.Context.init(
+    std.testing.allocator, &r.reporter, nyarna.default_stack_size);
   defer ctx.deinit();
   var ml = try nyarna.ModuleLoader.create(&ctx, &src, &.{});
   defer ml.destroy();
@@ -173,7 +178,8 @@ test "parse unknown call" {
   };
 
   var r = errors.CmdLineReporter.init();
-  var ctx = try nyarna.Context.init(std.testing.allocator, &r.reporter);
+  var ctx = try nyarna.Context.init(
+    std.testing.allocator, &r.reporter, nyarna.default_stack_size);
   defer ctx.deinit();
   var ml = try nyarna.ModuleLoader.create(&ctx, &src, &.{});
   defer ml.destroy();
@@ -208,7 +214,8 @@ test "parse block" {
   };
 
   var r = errors.CmdLineReporter.init();
-  var ctx = try nyarna.Context.init(std.testing.allocator, &r.reporter);
+  var ctx = try nyarna.Context.init(
+    std.testing.allocator, &r.reporter, nyarna.default_stack_size);
   defer ctx.deinit();
   var ml = try nyarna.ModuleLoader.create(&ctx, &src, &.{});
   defer ml.destroy();

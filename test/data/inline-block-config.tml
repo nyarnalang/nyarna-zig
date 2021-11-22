@@ -27,20 +27,26 @@
   -UCALL
 -PARA
 +PARA
-  +UCALL
+  +RCALL
     +TARGET
-      =SYMREF [0]if
+      =FUNCREF if
     -TARGET
-    +PROTO pos
-      =LIT text "true"
-    -PROTO
-    +PROTO primary
-      =LIT text "this is # not a comment"
-    -PROTO
-    +PROTO name="else"
-      =LIT text "\\this is not a command"
-    -PROTO
-  -UCALL
+    +ARG
+      +AST
+        =LIT text "true"
+      -AST
+    -ARG
+    +ARG
+      +AST
+        =LIT text "this is # not a comment"
+      -AST
+    -ARG
+    +ARG
+      +AST
+        =LIT text "\\this is not a command"
+      -AST
+    -ARG
+  -RCALL
 -PARA
 +PARA
   +UCALL
@@ -49,17 +55,24 @@
     -TARGET
     +PROTO primary
       =LIT text "\\this is not a command "
-      +UCALL
+      +RCALL
         +TARGET
-          =SYMREF [0]if
+          =FUNCREF if
         -TARGET
-        +PROTO pos
-          =LIT text "true"
-        -PROTO
-        +PROTO pos
-          =LIT text "but this is"
-        -PROTO
-      -UCALL
+        +ARG
+          +AST
+            =LIT text "true"
+          -AST
+        -ARG
+        +ARG
+          +AST
+            =LIT text "but this is"
+          -AST
+        -ARG
+        +ARG
+          =VOID
+        -ARG
+      -RCALL
     -PROTO
   -UCALL
 -PARA

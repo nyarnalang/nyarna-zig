@@ -27,7 +27,8 @@ pub fn lexTest(f: *tml.File) !void {
     .locator_ctx = ".doc.",
   };
   var r = errors.CmdLineReporter.init();
-  var ctx = try nyarna.Context.init(std.testing.allocator, &r.reporter);
+  var ctx = try nyarna.Context.init(
+    std.testing.allocator, &r.reporter, nyarna.default_stack_size);
   defer ctx.deinit();
   var ml = try nyarna.ModuleLoader.create(&ctx, &src, &.{});
   defer ml.destroy();
@@ -205,6 +206,18 @@ fn AstEmitter(Handler: anytype) type {
         .concatenation => |c| {
           for (c.content) |item| try self.process(item);
         },
+        .branches => |b| {
+          const branches = try self.push("BRANCHES");
+          {
+            const condition = try self.push("CONDITION");
+            try self.process(b.condition);
+            try condition.pop();
+          }
+          for (b.branches) |branch| {
+            try self.process(branch);
+          }
+          try branches.pop();
+        },
         .paragraphs => |p| {
           for (p.items) |i| {
             const para = try self.push("PARA");
@@ -275,6 +288,18 @@ fn AstEmitter(Handler: anytype) type {
         },
         .access => |_| {
           unreachable;
+        },
+        .branches => |b| {
+          const branches = try self.push("BRANCHES");
+          {
+            const condition = try self.push("CONDITION");
+            try self.processExpr(b.condition);
+            try condition.pop();
+          }
+          for (b.branches) |branch| {
+            try self.processExpr(branch);
+          }
+          try branches.pop();
         },
         .concatenation => |_| {
           unreachable;
@@ -352,11 +377,13 @@ fn AstEmitter(Handler: anytype) type {
         .definition => |_| {
           unreachable;
         },
-        .ast => |_| {
-          unreachable;
+        .ast => |a| {
+          const ast = try self.push("AST");
+          try self.process(a.root);
+          try ast.pop();
         },
         .typeval => |tv| try self.processType(tv.t),
-        .funcref => |_| unreachable,
+        .funcref => |fr| try self.emitLine("=FUNCREF {s}", .{fr.func.name}),
         .poison => try self.emitLine("=POISON", .{}),
         .void => try self.emitLine("=VOID", .{}),
         .block_header => |*h| {

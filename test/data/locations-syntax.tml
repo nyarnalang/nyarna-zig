@@ -179,20 +179,26 @@
         =VOID
       -ARG
       +ARG
-        +UCALL
+        +RCALL
           +TARGET
-            =SYMREF [0]if
+            =FUNCREF if
           -TARGET
-          +PROTO pos
-            =LIT text "true"
-          -PROTO
-          +PROTO primary
-            =LIT text "warbl"
-          -PROTO
-          +PROTO name="else"
-            =LIT text "wirbl"
-          -PROTO
-        -UCALL
+          +ARG
+            +AST
+              =LIT text "true"
+            -AST
+          -ARG
+          +ARG
+            +AST
+              =LIT text "warbl"
+            -AST
+          -ARG
+          +ARG
+            +AST
+              =LIT text "wirbl"
+            -AST
+          -ARG
+        -RCALL
       -ARG
     -RCALL
     +RCALL

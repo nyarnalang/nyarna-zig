@@ -14,7 +14,8 @@ pub const GenericParserError = enum {
   NonLocationFlag, NonDefinitionFlag, BlockHeaderNotAllowedForDefinition,
   MissingSymbolName, MissingSymbolType, MissingSymbolEntity, UnknownSyntax,
   PrefixedFunctionMustBeCalled, AstNodeInNonKeyword, KeywordArgsNotAvailable,
-  InvalidLvalue,
+  InvalidLvalue, UnknownParameter, TooManyArguments, UnexpectedPrimaryBlock,
+  InvalidPositionalArgument,
 };
 
 pub const WrongItemError = enum {
@@ -41,6 +42,7 @@ pub const WrongIdError = enum {
 pub const PreviousOccurenceError = enum {
   IsNotANamespaceCharacter, AlreadyANamespaceCharacter, DuplicateFlag,
   DuplicateBlockHeader, IncompatibleFlag, DuplicateAutoSwallow,
+  DuplicateParameterArgument, MissingParameterArgument,
 
   fn errorMsg(e: PreviousOccurenceError) []const u8 {
     return switch (e) {
@@ -51,6 +53,10 @@ pub const PreviousOccurenceError = enum {
       .IncompatibleFlag =>  " is incompatible with previously declared flag",
       .DuplicateAutoSwallow =>
         " conflicts with another auto-swallow definition",
+      .DuplicateParameterArgument =>
+        " has already been given an argument",
+      .MissingParameterArgument =>
+        " has not been given an argument"
     };
   }
 
@@ -60,6 +66,7 @@ pub const PreviousOccurenceError = enum {
       .DuplicateFlag, .IncompatibleFlag => "flag",
       .DuplicateBlockHeader => "block header",
       .DuplicateAutoSwallow => "swallow def",
+      .DuplicateParameterArgument, .MissingParameterArgument => "argument"
     };
   }
 
@@ -68,6 +75,8 @@ pub const PreviousOccurenceError = enum {
       .IsNotANamespaceCharacter, .AlreadyANamespaceCharacter, .DuplicateFlag,
       .DuplicateBlockHeader, .DuplicateAutoSwallow => "given",
       .IncompatibleFlag => "other flag",
+      .DuplicateParameterArgument => "previous argument",
+      .MissingParameterArgument => "parameter definition",
     };
   }
 };

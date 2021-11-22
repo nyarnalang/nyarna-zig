@@ -11,7 +11,7 @@ pub const Evaluator = struct {
   }
 
   fn setupParameterStackFrame(
-      self: *Evaluator, sig: *data.Type.Signature,
+      self: *Evaluator, sig: *const data.Type.Signature,
       prev_frame: ?[*]data.StackItem) ![*]data.StackItem {
     if ((@ptrToInt(self.context.stack_ptr) - @ptrToInt(self.context.stack.ptr))
         / @sizeOf(data.StackItem) + sig.parameters.len >
@@ -26,7 +26,7 @@ pub const Evaluator = struct {
 
   fn resetParameterStackFrame(self: *Evaluator, target: anytype) void {
     target.cur_frame = target.cur_frame.?[0].frame_ref;
-    self.context.stack_ptr -= target.signature.parameters.len - 1;
+    self.context.stack_ptr -= target.sig().parameters.len - 1;
   }
 
   fn fillParameterStackFrame(self: *Evaluator, exprs: []*data.Expression,
@@ -85,9 +85,9 @@ pub const Evaluator = struct {
             const target_impl =
               self.registeredFnForCtx(@TypeOf(impl_ctx), ef.impl_index);
             std.debug.assert(
-              call.exprs.len == ef.signature.parameters.len);
+              call.exprs.len == ef.sig().parameters.len);
             ef.cur_frame = try self.setupParameterStackFrame(
-              ef.signature, ef.cur_frame.?);
+              ef.sig(), ef.cur_frame.?);
             defer self.resetParameterStackFrame(ef);
             try self.fillParameterStackFrame(
               call.exprs, ef.cur_frame.? + 1);
@@ -97,7 +97,7 @@ pub const Evaluator = struct {
           .ny_func => |*nf| {
             defer bindVariables(nf.variables, nf.cur_frame);
             nf.cur_frame = try self.setupParameterStackFrame(
-              nf.signature, nf.cur_frame);
+              nf.sig(), nf.cur_frame);
             defer self.resetParameterStackFrame(nf);
             try self.fillParameterStackFrame(
               call.exprs, nf.cur_frame.? + 1);
@@ -158,6 +158,14 @@ pub const Evaluator = struct {
           };
         }
         break :blk cur;
+      },
+      .branches => |*branches| blk: {
+        var condition = try self.evaluate(branches.condition);
+        if (condition.vType().is(.poison))
+          break :blk data.Value.create(
+            &self.context.storage.allocator, expr.pos, .poison);
+        break :blk self.evaluate(
+          branches.branches[condition.data.enumval.index]);
       },
       .concatenation => |_| unreachable,
       .var_retrieval => |*var_retr| var_retr.variable.cur_value.?.value,

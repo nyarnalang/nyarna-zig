@@ -5,7 +5,8 @@ pub fn build(b: *Builder) !void {
   // TODO: use these constants
   //const mode = b.standardReleaseOptions();
   //const target = b.standardTargetOptions(.{});
-  const test_filter = b.option([]const u8, "test-filter", "filters tests when testing");
+  const test_filter =
+    b.option([]const u8, "test-filter", "filters tests when testing");
 
   var ehgen_exe = b.addExecutable("ehgen", "build/gen_errorhandler.zig");
   ehgen_exe.main_pkg_path = ".";
@@ -65,6 +66,7 @@ pub fn build(b: *Builder) !void {
   parse_test_orig.addPackage(errors_pkg);
   parse_test_orig.setFilter(test_filter);
 
-  var parse_test_orig_step = b.step("parseTestOrig", "Run original parser tests");
+  var parse_test_orig_step =
+    b.step("parseTestOrig", "Run original parser tests");
   parse_test_orig_step.dependOn(&parse_test_orig.step);
 }

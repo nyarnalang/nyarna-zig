@@ -222,6 +222,25 @@ pub const Intrinsics = Provider.Wrapper(struct {
              _: *data.Value.Concat) !*data.Value {
     unreachable;
   }
+
+  fn @"if"(intpr: *Interpreter, pos: data.Position,
+           condition: *data.Value.Ast, then: *data.Value.Ast,
+           @"else": *data.Value.Ast) !*data.Node {
+    const ret = try intpr.storage.allocator.create(data.Node);
+    const nodes = try intpr.storage.allocator.alloc(*data.Node, 2);
+    nodes[1] = then.root;
+    nodes[0] = @"else".root;
+    ret.* = .{
+      .pos = pos,
+      .data = .{
+        .branches = .{
+          .condition = condition.root,
+          .branches = nodes,
+        },
+      },
+    };
+    return ret;
+  }
 });
 
 fn extFunc(context: *Context, name: []const u8, sig: *data.Type.Signature,
@@ -241,8 +260,14 @@ fn extFunc(context: *Context, name: []const u8, sig: *data.Type.Signature,
     try context.builtin_registry.append(&context.storage.allocator, impl);
     break :blk context.builtin_registry.items.len - 1;
   };
+  const callable = try context.storage.allocator.create(data.Type.Structural);
+  callable.* = .{
+    .callable = .{
+      .sig = sig
+    },
+  };
   return data.Symbol.ExtFunc{
-    .signature = sig,
+    .callable = &callable.callable,
     .impl_index = impl_index,
     .cur_frame = null,
   };
@@ -273,7 +298,7 @@ pub fn intrinsicModule(context: *Context) !*data.Module {
   var ret = try context.storage.allocator.create(data.Module);
   ret.root = try context.storage.allocator.create(data.Expression);
   ret.root.* = data.Expression.literal(data.Position.intrinsic(), .void);
-  ret.symbols = try context.storage.allocator.alloc(*data.Symbol, 1);
+  ret.symbols = try context.storage.allocator.alloc(*data.Symbol, 2);
   var index = @as(usize, 0);
 
   var ip = Intrinsics.init();
@@ -322,6 +347,7 @@ pub fn intrinsicModule(context: *Context) !*data.Module {
   // external symbols
   //-------------------
 
+  // declare
   b = try types.SigBuilder(.intrinsic).init(
     &context.storage.allocator, 3, .{.intrinsic = .void});
   var definition_concat =
@@ -335,6 +361,20 @@ pub fn intrinsicModule(context: *Context) !*data.Module {
     "private", definition_concat, null)));
   ret.symbols[index] =
     try extFuncSymbol(context, "declare", b.finish(), &ip.provider);
+  index += 1;
+
+  // if
+  b = try types.SigBuilder(.intrinsic).init(
+    &context.storage.allocator, 3, .{.intrinsic = .ast_node});
+  try b.push(try intLoc(context, data.Value.Location.simple(
+    "condition", .{.intrinsic = .ast_node}, null)));
+  try b.push(try intLoc(context, data.Value.Location.primary(
+    "then", .{.intrinsic = .ast_node}, null)));
+  try b.push(try intLoc(context, data.Value.Location.simple(
+    "else", .{.intrinsic = .ast_node}, null)));
+  ret.symbols[index]  =
+    try extFuncSymbol(context, "if", b.finish(), &ip.provider);
+  index += 1;
 
   return ret;
 }

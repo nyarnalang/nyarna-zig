@@ -1,14 +1,15 @@
 const std = @import("std");
-const data = @import("../data.zig");
+const nyarna = @import("../nyarna.zig");
+const data = nyarna.data;
 const Type = data.Type;
-const Interpreter = @import("interpret.zig").Interpreter;
+const Interpreter = nyarna.Interpreter;
 
 pub const Mapper = struct {
   const Self = @This();
 
   pub const Cursor = struct {
     param: union(enum) {
-      index: usize,
+      index: u21,
       kind: ArgKind,
     },
     config: bool,
@@ -25,11 +26,11 @@ pub const Mapper = struct {
   mapFn: fn(self: *Self, pos: data.Position, input: ArgKind,
             flag: ProtoArgFlag) ?Cursor,
   pushFn: fn(self: *Self, alloc: *std.mem.Allocator, at: Cursor,
-             content: *data.Node) std.mem.Allocator.Error!void,
+             content: *data.Node) nyarna.Error!void,
   configFn: fn(self: *Self, at: Cursor) ?*data.BlockConfig,
   paramTypeFn: fn(self: *Self, at: Cursor) ?data.Type,
   finalizeFn: fn(self: *Self, alloc: *std.mem.Allocator,
-                 pos: data.Position) std.mem.Allocator.Error!*data.Node,
+                 pos: data.Position) nyarna.Error!*data.Node,
 
   pub fn map(self: *Self, pos: data.Position, input: ArgKind,
              flag: ProtoArgFlag) ?Cursor {
@@ -50,7 +51,7 @@ pub const Mapper = struct {
   }
 
   pub fn finalize(self: *Self, alloc: *std.mem.Allocator, pos: data.Position)
-      std.mem.Allocator.Error!*data.Node {
+      nyarna.Error!*data.Node {
     return self.finalizeFn(self, alloc, pos);
   }
 };
@@ -58,14 +59,15 @@ pub const Mapper = struct {
 pub const SignatureMapper = struct {
   mapper: Mapper,
   subject: *data.Expression,
-  signature: *Type.Signature,
-  cur_pos: ?u31 = 0,
+  signature: *const Type.Signature,
+  cur_pos: ?u21 = 0,
   args: []*data.Node,
+  filled: []bool,
   context: *Interpreter,
 
   pub fn init(ctx: *Interpreter, subject: *data.Expression,
-              sig: *data.Signature) !SignatureMapper {
-    return .{
+              sig: *const data.Type.Signature) !SignatureMapper {
+    return SignatureMapper{
       .mapper = .{
         .mapFn = SignatureMapper.map,
         .configFn = SignatureMapper.config,
@@ -76,11 +78,17 @@ pub const SignatureMapper = struct {
       .subject = subject,
       .signature = sig,
       .context = ctx,
-      .args = try ctx.temp_nodes.allocator.alloc(*data.Node, sig.parameter.len),
+      .args = try ctx.storage.allocator.alloc(*data.Node, sig.parameters.len),
+      .filled = try ctx.storage.allocator.alloc(bool, sig.parameters.len),
     };
   }
 
-  fn map(mapper: *Mapper, _: data.Position,
+  /// workaround for https://github.com/ziglang/zig/issues/6059
+  inline fn varmapAt(self: *SignatureMapper, index: u21) bool {
+    return if (self.signature.varmap) |vm| vm == index else false;
+  }
+
+  fn map(mapper: *Mapper, pos: data.Position,
          input: Mapper.ArgKind, flag: Mapper.ProtoArgFlag) ?Mapper.Cursor {
     // TODO: process ProtoArgFlag (?)
     const self = @fieldParentPtr(SignatureMapper, "mapper", mapper);
@@ -88,40 +96,42 @@ pub const SignatureMapper = struct {
     switch (input) {
       .named, .direct => |name| {
         self.cur_pos = null;
-        for (self.signature.parameter) |i, p| {
-          if ((p.capture != .varmap or input == .direct) and
+        for (self.signature.parameters) |p, i| {
+          const index = @intCast(u21, i);
+          if ((!self.varmapAt(index) or input == .direct) and
               std.mem.eql(u8, name, p.name)) {
-            return Mapper.Cursor{.param = .{.index = i},
+            return Mapper.Cursor{.param = .{.index = index},
               .config = flag == .block_with_config, .direct = input == .named};
           }
         }
-        // TODO: errmsg?
+        self.context.loader.logger.UnknownParameter(pos);
         return null;
       },
       .primary => {
         self.cur_pos = null;
         if (self.signature.primary) |index| {
-          return Mapper.Cursor{.index = index,
+          return Mapper.Cursor{
+            .param = .{.index = index},
             .config = flag == .block_with_config, .direct = true};
         } else {
-          // TODO: errmsg?
+          self.context.loader.logger.UnexpectedPrimaryBlock(pos);
           return null;
         }
       },
       .position => {
         if (self.cur_pos) |index| {
-          if (index < self.signature.parameter.len) {
-            if (self.signature.parameter[index].capture != .varargs) {
+          if (index < self.signature.parameters.len) {
+            if (self.signature.parameters[index].capture != .varargs) {
               self.cur_pos = index + 1;
             }
             return Mapper.Cursor{.param = .{.index = index},
               .config = flag == .block_with_config, .direct = false};
           } else {
-            // TODO: errmsg
+            self.context.loader.logger.TooManyArguments(pos);
             return null;
           }
         } else {
-          // TODO: errmsg
+          self.context.loader.logger.InvalidPositionalArgument(pos);
           return null;
         }
       },
@@ -131,7 +141,8 @@ pub const SignatureMapper = struct {
   fn config(mapper: *Mapper, at: Mapper.Cursor) ?*data.BlockConfig {
     const self = @fieldParentPtr(SignatureMapper, "mapper", mapper);
     return switch (at.param) {
-      .index => |index| &self.signature.parameter[index].config,
+      .index => |index|
+        if (self.signature.parameters[index].config) |*bc| bc else null,
       .kind => null
     };
   }
@@ -139,43 +150,78 @@ pub const SignatureMapper = struct {
   fn paramType(mapper: *Mapper, at: Mapper.Cursor) ?data.Type {
     const self = @fieldParentPtr(SignatureMapper, "mapper", mapper);
     return switch (at.param) {
-      .index => |index| &self.signature.parameter[index].ptype,
+      .index => |index| self.signature.parameters[index].ptype,
       .kind => null
     };
   }
 
   fn push(mapper: *Mapper, _: *std.mem.Allocator, at: Mapper.Cursor,
-          content: *data.Node) !void {
+          content: *data.Node) nyarna.Error!void {
     const self = @fieldParentPtr(SignatureMapper, "mapper", mapper);
-    const param = &self.signature.parameter[at.index];
-    const target_type = if (at.direct) param.ptype else switch (param.capture) {
+    const param = &self.signature.parameters[at.param.index];
+    const target_type =
+      if (at.direct) param.ptype
+      else if (self.varmapAt(at.param.index)) unreachable
+      else switch (param.capture) {
       .varargs => unreachable,
-      .varmap => unreachable,
       else => param.ptype,
     };
-    if (switch (target_type) {
-      .intrinsic => |it| it == .ast_node,
-      else => false
-    }) {
-      // TODO: create AST expression
-      unreachable;
-    } else if (try self.context.associate(content, param.ptype)) |expr| {
-      self.context.data = .{.expression = expr};
-    }
-    switch (param.capture) {
+    const arg = if (target_type.is(.ast_node)) blk: {
+      const ast_expr =
+        try self.context.storage.allocator.create(data.Expression);
+      break :blk try data.Node.valueNode(
+        &self.context.storage.allocator, ast_expr, content.pos, .{
+          .ast = .{.root = content},
+        });
+    } else blk: {
+      if (try self.context.associate(content, param.ptype)) |expr|
+        content.data = .{.expression = expr};
+      break :blk content;
+    };
+    if (self.varmapAt(at.param.index)) unreachable
+    else switch (param.capture) {
       .varargs => unreachable,
-      .varmap => unreachable,
-      else => self.args[at.index] = content,
+      else => {}
+    }
+    if (self.filled[at.param.index])
+      self.context.loader.logger.DuplicateParameterArgument(
+        self.signature.parameters[at.param.index].name, content.pos,
+        self.args[at.param.index].pos)
+    else {
+      self.args[at.param.index] = arg;
+      self.filled[at.param.index] = true;
     }
   }
 
   fn finalize(mapper: *Mapper, alloc: *std.mem.Allocator, pos: data.Position)
-      !*data.Node {
+      nyarna.Error!*data.Node {
     const self = @fieldParentPtr(SignatureMapper, "mapper", mapper);
     const ret = try alloc.create(data.Node);
+    var missing_param = false;
+    for (self.signature.parameters) |param, i| {
+      if (!self.filled[i]) {
+        self.args[i] = switch (param.ptype) {
+          .intrinsic => |intr| switch (intr) {
+            .void, .ast_node => try data.Node.genVoid(alloc, pos),
+            else => null,
+          },
+          .structural => |strct| switch (strct.*) {
+            .optional, .concat, .paragraphs =>
+              try data.Node.genVoid(alloc, pos),
+            else => null,
+          },
+          .instantiated => null,
+        } orelse {
+          self.context.loader.logger.MissingParameterArgument(
+            param.name, pos, param.pos);
+          missing_param = true;
+          continue;
+        };
+      }
+    }
     ret.* = .{
-      .position = pos,
-      .data = .{
+      .pos = pos,
+      .data = if (missing_param) .poisonNode else .{
         .resolved_call = .{
           .target = self.subject,
           .args = self.args,
@@ -226,7 +272,7 @@ pub const CollectingMapper = struct {
   }
 
   fn push(mapper: *Mapper, alloc: *std.mem.Allocator, at: Mapper.Cursor,
-          content: *data.Node) !void {
+          content: *data.Node) nyarna.Error!void {
     const self = @fieldParentPtr(CollectingMapper, "mapper", mapper);
     try self.items.append(alloc, .{
         .kind = at.param.kind, .content = content,
@@ -235,7 +281,7 @@ pub const CollectingMapper = struct {
   }
 
   fn finalize(mapper: *Mapper, alloc: *std.mem.Allocator, pos: data.Position)
-      std.mem.Allocator.Error!*data.Node {
+      nyarna.Error!*data.Node {
     const self = @fieldParentPtr(CollectingMapper, "mapper", mapper);
     var ret = try alloc.create(data.Node);
     ret.* = .{
