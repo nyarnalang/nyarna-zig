@@ -4,8 +4,8 @@ const data = nyarna.data;
 const tml = @import("tml.zig");
 const errors = nyarna.errors;
 
-const TestError = error {
-  no_match
+const Error = error {
+  no_match,
 };
 
 pub fn lexTest(f: *tml.File) !void {
@@ -53,7 +53,7 @@ pub fn lexTest(f: *tml.File) !void {
     const expected = expected_content.next() orelse {
       std.log.err("got more tokens than expected, first unexpected token: {s}",
         .{actual});
-      return TestError.no_match;
+      return Error.no_match;
     };
     try std.testing.expectEqualStrings(expected, actual);
     if (t == .end_source) break;
@@ -63,7 +63,7 @@ pub fn lexTest(f: *tml.File) !void {
     if (unmatched.len > 0) {
       std.log.err("got fewer tokens than expected, first missing token: {s}",
         .{unmatched});
-      return TestError.no_match;
+      return Error.no_match;
     }
   }
 }
@@ -148,7 +148,8 @@ fn AstEmitter(Handler: anytype) type {
     depth: usize,
     context: *nyarna.Context,
 
-    fn emitLine(self: *Self, comptime fmt: []const u8, args: anytype) !void {
+    fn emitLine(self: *Self, comptime fmt: []const u8, args: anytype)
+        !void {
       var buffer: [1024]u8 = undefined;
       var i: usize = 0; while (i < self.depth*2) : (i += 1) buffer[i] = ' ';
       const str = try std.fmt.bufPrint(buffer[i..], fmt, args);
@@ -398,93 +399,120 @@ fn AstEmitter(Handler: anytype) type {
   };
 }
 
-pub fn parseTest(f: *tml.File) !void {
-  var input = f.items.get("input").?;
-  try input.content.appendSlice(f.alloc(), "\x04\x04\x04\x04");
-  const expected_data = f.items.get("rawast").?;
-  var checker = struct {
-    expected_iter: std.mem.TokenIterator(u8),
-    line: usize,
-    full_output: std.ArrayListUnmanaged(u8),
-    failed: bool,
-    fn handle(self: *@This(), line: []const u8) !void {
-      defer {
-        self.line += 1;
-        self.full_output.appendSlice(std.testing.allocator, line)
-          catch unreachable;
-        self.full_output.append(std.testing.allocator, '\n') catch unreachable;
-      }
-      const expected = self.expected_iter.next() orelse {
-        if (!self.failed) {
-          std.log.err(
-            "got more output than expected, first unexpected line:\n  {s}",
-            .{line});
-          self.failed = true;
-        }
-        return;
-      };
-      if (!self.failed) {
-        if (!std.mem.eql(u8, expected, line)) {
-          std.log.err(
-            \\Wrong output at line {}:
-            \\==== expected content ====
-            \\{s}
-            \\
-            \\===== actual content =====
-            \\{s}
-            \\
-            \\
-          , .{self.line, expected, line});
-          self.failed = true;
-        }
-      }
-    }
-  }{.expected_iter = std.mem.tokenize(u8, expected_data.content.items, "\n"),
-    .line = expected_data.line_offset + 1,
-    .full_output = .{}, .failed = false};
-  defer checker.full_output.deinit(std.testing.allocator);
+const Checker = struct {
+  const Tester =
+    fn(emitter: *AstEmitter(*Checker), ml: *nyarna.ModuleLoader) anyerror!void;
 
-  var src_meta = data.Source.Descriptor{
-    .name = "input",
-    .locator = ".doc.document",
-    .argument = false,
-  };
-  var src = data.Source{
-    .meta = &src_meta,
-    .content = input.content.items,
-    .offsets = .{
-      .line = input.line_offset, .column = 0,
-    },
-    .locator_ctx = ".doc.",
-  };
-  var r = errors.CmdLineReporter.init();
-  var ctx = try nyarna.Context.init(
-    std.testing.allocator, &r.reporter, nyarna.default_stack_size);
-  defer ctx.deinit();
-  var ml = try nyarna.ModuleLoader.create(&ctx, &src, &.{});
-  defer ml.destroy();
-  var res = try ml.loadAsNode(true);
-  var emitter = AstEmitter(@TypeOf(&checker)){
-    .depth = 0,
-    .handler = &checker,
-    .context = &ctx,
-  };
-  try emitter.process(res);
-  if (checker.expected_iter.next()) |line| {
-    if (!checker.failed) {
-      std.log.err("got less output than expected, line {} missing:\n{s}\n",
-        .{checker.line, line});
-      checker.failed = true;
+  expected_iter: std.mem.TokenIterator(u8),
+  line: usize,
+  full_output: std.ArrayListUnmanaged(u8),
+  failed: bool,
+  input: tml.Value,
+
+  fn init(f: *tml.File, name_in_input: []const u8) !Checker {
+    var input = f.items.get("input").?;
+    try input.content.appendSlice(f.alloc(), "\x04\x04\x04\x04");
+    const expected_data = f.items.get(name_in_input).?;
+    return Checker{
+      .expected_iter =
+        std.mem.tokenize(u8, expected_data.content.items, "\n"),
+      .line = expected_data.line_offset + 1,
+      .full_output = .{}, .failed = false,
+      .input = input,
+    };
+  }
+
+  fn deinit(self: *@This()) void {
+    self.full_output.deinit(std.testing.allocator);
+  }
+
+  fn moduleTest(self: *@This(), process: Tester) !void {
+    var src_meta = data.Source.Descriptor{
+      .name = "input",
+      .locator = ".doc.document",
+      .argument = false,
+    };
+    var src = data.Source{
+      .meta = &src_meta,
+      .content = self.input.content.items,
+      .offsets = .{
+        .line = self.input.line_offset, .column = 0,
+      },
+      .locator_ctx = ".doc.",
+    };
+    var r = errors.CmdLineReporter.init();
+    var ctx = try nyarna.Context.init(
+      std.testing.allocator, &r.reporter, nyarna.default_stack_size);
+    defer ctx.deinit();
+    var ml = try nyarna.ModuleLoader.create(&ctx, &src, &.{});
+    defer ml.destroy();
+    var emitter = AstEmitter(*Checker){
+      .depth = 0,
+      .handler = self,
+      .context = &ctx,
+    };
+    try process(&emitter, ml);
+    if (self.expected_iter.next()) |line| {
+      if (!self.failed) {
+        std.log.err("got less output than expected, line {} missing:\n{s}\n",
+          .{self.line, line});
+        self.failed = true;
+      }
+    }
+    if (self.failed) {
+      std.log.err(
+        \\==== Full output ====
+        \\{s}
+        \\
+        \\
+        , .{self.full_output.items});
+      return Error.no_match;
+    }
+    try std.testing.expectEqual(@as(usize, 0), ml.logger.count);
+  }
+
+  fn handle(self: *@This(), line: []const u8) !void {
+    defer {
+      self.line += 1;
+      self.full_output.appendSlice(std.testing.allocator, line)
+        catch unreachable;
+      self.full_output.append(std.testing.allocator, '\n') catch unreachable;
+    }
+    const expected = self.expected_iter.next() orelse {
+      if (!self.failed) {
+        std.log.err(
+          "got more output than expected, first unexpected line:\n  {s}",
+          .{line});
+        self.failed = true;
+      }
+      return;
+    };
+    if (!self.failed) {
+      if (!std.mem.eql(u8, expected, line)) {
+        std.log.err(
+          \\Wrong output at line {}:
+          \\==== expected content ====
+          \\{s}
+          \\
+          \\===== actual content =====
+          \\{s}
+          \\
+          \\
+        , .{self.line, expected, line});
+        self.failed = true;
+      }
     }
   }
-  if (checker.failed) {
-    std.log.err(
-      \\==== Full output ====
-      \\{s}
-      \\
-      \\
-      , .{checker.full_output.items});
-    return TestError.no_match;
-  }
-  try std.testing.expectEqual(@as(usize, 0), ml.logger.count);
+};
+
+fn parseTestImpl(emitter: *AstEmitter(*Checker), ml: *nyarna.ModuleLoader)
+    anyerror!void {
+  var res = try ml.loadAsNode(true);
+  try emitter.process(res);
+}
+
+pub fn parseTest(f: *tml.File) !void {
+  var checker = try Checker.init(f, "rawast");
+  defer checker.deinit();
+  try checker.moduleTest(parseTestImpl);
 }
