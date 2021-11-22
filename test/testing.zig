@@ -383,7 +383,8 @@ fn AstEmitter(Handler: anytype) type {
           try ast.pop();
         },
         .typeval => |tv| try self.processType(tv.t),
-        .funcref => |fr| try self.emitLine("=FUNCREF {s}", .{fr.func.name}),
+        .funcref => |fr| try self.emitLine("=FUNCREF {s}.{s}",
+          .{fr.func.defined_at.source.locator, fr.func.name}),
         .poison => try self.emitLine("=POISON", .{}),
         .void => try self.emitLine("=VOID", .{}),
         .block_header => |*h| {

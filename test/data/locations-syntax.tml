@@ -181,7 +181,7 @@
       +ARG
         +RCALL
           +TARGET
-            =FUNCREF if
+            =FUNCREF .std.intrinsic.if
           -TARGET
           +ARG
             +AST
