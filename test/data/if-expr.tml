@@ -1,0 +1,60 @@
+=== if-Expression
+--- input
+\if(true):
+  foo
+\end(if)
+\if(false):
+  bar
+:else:
+  baz
+\end(if)
+--- rawast
++RCALL
+  =FUNCREF .std.intrinsic.if
+  >ARG condition
+  +AST
+    =LIT text "true"
+  -AST
+  >ARG then
+  +AST
+    =LIT text "foo"
+  -AST
+  >ARG else
+  +AST
+    =VOID
+  -AST
+-RCALL
+=LIT space "\n"
++RCALL
+  =FUNCREF .std.intrinsic.if
+  >ARG condition
+  +AST
+    =LIT text "false"
+  -AST
+  >ARG then
+  +AST
+    =LIT text "bar"
+  -AST
+  >ARG else
+  +AST
+    =LIT text "baz"
+  -AST
+-RCALL
+--- expr
++BRANCHES
+  =TEXT literal "true"
+  >BRANCH 0
+  =VOID
+  >BRANCH 1
+  =TEXT literal "foo"
+-BRANCHES
+=TEXT literal "\n"
++BRANCHES
+  =TEXT literal "false"
+  >BRANCH 0
+  =TEXT literal "baz"
+  >BRANCH 1
+  =TEXT literal "bar"
+-BRANCHES
+--- document
+=RAW Raw "foo\nbaz"

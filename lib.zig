@@ -70,10 +70,14 @@ pub const Provider = struct {
               data.Value.FloatNumber => &v.data.float,
               data.Value.Enum => &v.data.enumval,
               data.Value.Record => &v.data.record,
+              data.Value.Concat => &v.data.concat,
               data.Value.List => &v.data.list,
               data.Value.Map => &v.data.map,
               data.Value.TypeVal => &v.data.typeval,
               data.Value.FuncRef => &v.data.funcref,
+              data.Value.Location => &v.data.location,
+              data.Value.Definition => &v.data.definition,
+              data.Value.Ast => &v.data.ast,
               data.Value.BlockHeader => &v.data.block_header,
               data.Value => |cval| getTypedValue(T, &cval),
               else => unreachable,
@@ -190,8 +194,7 @@ pub const Intrinsics = Provider.Wrapper(struct {
       return data.Node.poison(&intpr.storage.allocator, pos);
     };
 
-    var lit_expr = try intpr.createPublic(data.Expression);
-    return data.Node.valueNode(&intpr.storage.allocator, lit_expr, pos, .{
+    return intpr.genValueNode(pos, .{
       .location = .{
         .name = name,
         .tloc = ltype,
@@ -207,8 +210,7 @@ pub const Intrinsics = Provider.Wrapper(struct {
 
   fn definition(intpr: *Interpreter, pos: data.Position, name: []const u8,
                 root: *data.Value.Enum, node: *data.Value.Ast) !*data.Node {
-    var lit_expr = try intpr.createPublic(data.Expression);
-    return data.Node.valueNode(&intpr.storage.allocator, lit_expr, pos, .{
+    return intpr.genValueNode(pos, .{
       .definition = .{
         .name = name,
         .content = node,
@@ -244,7 +246,7 @@ pub const Intrinsics = Provider.Wrapper(struct {
 });
 
 fn extFunc(context: *Context, name: []const u8, sig: *data.Type.Signature,
-           p: *Provider) !data.Symbol.ExtFunc {
+           is_type: bool, p: *Provider) !data.Symbol.ExtFunc {
   const impl_index = if (sig.isKeyword()) blk: {
     const impl = p.getKeyword(name) orelse {
       std.debug.print("don't know keyword: {s}\n", .{name});
@@ -263,7 +265,8 @@ fn extFunc(context: *Context, name: []const u8, sig: *data.Type.Signature,
   const callable = try context.storage.allocator.create(data.Type.Structural);
   callable.* = .{
     .callable = .{
-      .sig = sig
+      .sig = sig,
+      .is_type = is_type,
     },
   };
   return data.Symbol.ExtFunc{
@@ -279,7 +282,7 @@ fn extFuncSymbol(context: *Context, name: []const u8, sig: *data.Type.Signature,
   ret.defined_at = data.Position.intrinsic();
   ret.name = name;
   ret.data = .{
-    .ext_func = try extFunc(context, name, sig, p),
+    .ext_func = try extFunc(context, name, sig, false, p),
   };
   return ret;
 }
@@ -296,8 +299,7 @@ pub inline fn intLoc(context: *Context, content: data.Value.Location)
 
 pub fn intrinsicModule(context: *Context) !*data.Module {
   var ret = try context.storage.allocator.create(data.Module);
-  ret.root = try context.storage.allocator.create(data.Expression);
-  ret.root.* = data.Expression.literal(data.Position.intrinsic(), .void);
+  ret.root = try context.genLiteral(data.Position.intrinsic(), .void);
   ret.symbols = try context.storage.allocator.alloc(*data.Symbol, 2);
   var index = @as(usize, 0);
 
@@ -329,7 +331,7 @@ pub fn intrinsicModule(context: *Context) !*data.Module {
     "default", (try context.types.optional(
       .{.intrinsic = .ast_node})).?, null)));
   context.types.type_constructors[0] =
-    try extFunc(context, "location", b.finish(), &ip.provider);
+    try extFunc(context, "location", b.finish(), true, &ip.provider);
 
   // definition
   b = try types.SigBuilder(.intrinsic).init(
@@ -341,7 +343,7 @@ pub fn intrinsicModule(context: *Context) !*data.Module {
   try b.push(try intLoc(context, data.Value.Location.simple(
     "item", .{.intrinsic = .ast_node}, null)));
   context.types.type_constructors[1] =
-    try extFunc(context, "definition", b.finish(), &ip.provider);
+    try extFunc(context, "definition", b.finish(), true, &ip.provider);
 
   //-------------------
   // external symbols

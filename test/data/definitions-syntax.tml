@@ -11,73 +11,58 @@
   -TARGET
   +PROTO primary
     +RCALL
-      +TARGET
-        =TYPE definition
-      -TARGET
-      +ARG
-        =LIT text "Money"
-      -ARG
-      +ARG
-        =ENUM Boolean "false"
-      -ARG
-      +ARG
-        +UCALL
-          +TARGET
-            =SYMREF [0]numeric
-          -TARGET
-          +PROTO name="decimals"
-            =LIT text "2"
-          -PROTO
-        -UCALL
-      -ARG
+      =TYPE definition
+      >ARG name
+      =LIT text "Money"
+      >ARG root
+      =ENUM Boolean "false"
+      >ARG item
+      +UCALL
+        +TARGET
+          =SYMREF [0]numeric
+        -TARGET
+        +PROTO name="decimals"
+          =LIT text "2"
+        -PROTO
+      -UCALL
     -RCALL
     +RCALL
-      +TARGET
-        =TYPE definition
-      -TARGET
-      +ARG
-        =LIT text "PostalNumber"
-      -ARG
-      +ARG
-        =ENUM Boolean "false"
-      -ARG
-      +ARG
-        +UCALL
-          +TARGET
-            =SYMREF [0]textual
-          -TARGET
-          +PROTO name="include"
-            =LIT text "0123456789"
-          -PROTO
-        -UCALL
-      -ARG
+      =TYPE definition
+      >ARG name
+      =LIT text "PostalNumber"
+      >ARG root
+      =ENUM Boolean "false"
+      >ARG item
+      +UCALL
+        +TARGET
+          =SYMREF [0]textual
+        -TARGET
+        +PROTO name="include"
+          =LIT text "0123456789"
+        -PROTO
+      -UCALL
     -RCALL
     +RCALL
-      +TARGET
-        =TYPE definition
-      -TARGET
-      +ARG
-        =LIT text "TrafficLight"
-      -ARG
-      +ARG
-        =ENUM Boolean "true"
-      -ARG
-      +ARG
-        +UCALL
-          +TARGET
-            =SYMREF [0]enum
-          -TARGET
-          +PROTO pos
-            =LIT text "red"
-          -PROTO
-          +PROTO pos
-            =LIT text "yellow"
-          -PROTO
-          +PROTO pos
-            =LIT text "green"
-          -PROTO
-        -UCALL
-      -ARG
+      =TYPE definition
+      >ARG name
+      =LIT text "TrafficLight"
+      >ARG root
+      =ENUM Boolean "true"
+      >ARG item
+      +UCALL
+        +TARGET
+          =SYMREF [0]enum
+        -TARGET
+        +PROTO pos
+          =LIT text "red"
+        -PROTO
+        +PROTO pos
+          =LIT text "yellow"
+        -PROTO
+        +PROTO pos
+          =LIT text "green"
+        -PROTO
+      -UCALL
     -RCALL
   -PROTO
 -UCALL

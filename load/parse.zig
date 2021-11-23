@@ -728,13 +728,12 @@ pub const Parser = struct {
                       unreachable; // TODO
                     },
                     .func_ref => |fr| {
-                      const target_expr =
-                        try self.intpr().createPublic(data.Expression);
-                      target_expr.* = data.Expression.literal(target.pos, .{
-                        .funcref = .{
-                          .func = fr.target
-                        },
-                      });
+                      const target_expr = try self.intpr().genPublicLiteral(
+                        target.pos, .{
+                          .funcref = .{
+                            .func = fr.target
+                          },
+                        });
                       try lvl.command.startResolvedCall(
                         self.intpr(), target_expr, fr.signature);
                       if (fr.prefix) |prefix| {

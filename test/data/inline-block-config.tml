@@ -28,24 +28,19 @@
 -PARA
 +PARA
   +RCALL
-    +TARGET
-      =FUNCREF .std.intrinsic.if
-    -TARGET
-    +ARG
-      +AST
-        =LIT text "true"
-      -AST
-    -ARG
-    +ARG
-      +AST
-        =LIT text "this is # not a comment"
-      -AST
-    -ARG
-    +ARG
-      +AST
-        =LIT text "\\this is not a command"
-      -AST
-    -ARG
+    =FUNCREF .std.intrinsic.if
+    >ARG condition
+    +AST
+      =LIT text "true"
+    -AST
+    >ARG then
+    +AST
+      =LIT text "this is # not a comment"
+    -AST
+    >ARG else
+    +AST
+      =LIT text "\\this is not a command"
+    -AST
   -RCALL
 -PARA
 +PARA
@@ -56,22 +51,19 @@
     +PROTO primary
       =LIT text "\\this is not a command "
       +RCALL
-        +TARGET
-          =FUNCREF .std.intrinsic.if
-        -TARGET
-        +ARG
-          +AST
-            =LIT text "true"
-          -AST
-        -ARG
-        +ARG
-          +AST
-            =LIT text "but this is"
-          -AST
-        -ARG
-        +ARG
+        =FUNCREF .std.intrinsic.if
+        >ARG condition
+        +AST
+          =LIT text "true"
+        -AST
+        >ARG then
+        +AST
+          =LIT text "but this is"
+        -AST
+        >ARG else
+        +AST
           =VOID
-        -ARG
+        -AST
       -RCALL
     -PROTO
   -UCALL

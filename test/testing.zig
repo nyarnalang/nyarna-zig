@@ -27,10 +27,10 @@ pub fn lexTest(f: *tml.File) !void {
     .locator_ctx = ".doc.",
   };
   var r = errors.CmdLineReporter.init();
-  var ctx = try nyarna.Context.init(
+  var ctx = try nyarna.Context.create(
     std.testing.allocator, &r.reporter, nyarna.default_stack_size);
-  defer ctx.deinit();
-  var ml = try nyarna.ModuleLoader.create(&ctx, &src, &.{});
+  defer ctx.destroy();
+  var ml = try nyarna.ModuleLoader.create(ctx, &src, &.{});
   defer ml.destroy();
   var lexer = try ml.initLexer();
   defer lexer.deinit();
@@ -209,12 +209,9 @@ fn AstEmitter(Handler: anytype) type {
         },
         .branches => |b| {
           const branches = try self.push("BRANCHES");
-          {
-            const condition = try self.push("CONDITION");
-            try self.process(b.condition);
-            try condition.pop();
-          }
-          for (b.branches) |branch| {
+          try self.process(b.condition);
+          for (b.branches) |branch, i| {
+            try self.emitLine(">BRANCH {}", .{i});
             try self.process(branch);
           }
           try branches.pop();
@@ -252,15 +249,22 @@ fn AstEmitter(Handler: anytype) type {
         },
         .resolved_call => |rc| {
           const rcall = try self.push("RCALL");
-          {
-            const t = try self.push("TARGET");
-            try self.processExpr(rc.target);
-            try t.pop();
+          try self.processExpr(rc.target);
+          var name: []const u8 = undefined;
+          switch (rc.target.expected_type) {
+            .intrinsic => |i| name = @tagName(i),
+            .structural => |s| name = @tagName(s.*),
+            .instantiated => |inst| name = @tagName(inst.data),
           }
-          for (rc.args) |a| {
-            const arg = try self.push("ARG");
+          std.debug.print("RCALL target: {s}\n", .{name});
+
+          const sig = switch (rc.target.expected_type.structural.*) {
+            .callable => |cl| cl.sig,
+            else => unreachable,
+          };
+          for (rc.args) |a, i| {
+            try self.emitLine(">ARG {s}", .{sig.parameters[i].name});
             try self.process(a);
-            try arg.pop();
           }
           try rcall.pop();
         },
@@ -292,19 +296,14 @@ fn AstEmitter(Handler: anytype) type {
         },
         .branches => |b| {
           const branches = try self.push("BRANCHES");
-          {
-            const condition = try self.push("CONDITION");
-            try self.processExpr(b.condition);
-            try condition.pop();
-          }
-          for (b.branches) |branch| {
+          try self.processExpr(b.condition);
+          for (b.branches) |branch, i| {
+            try self.emitLine(">BRANCH {}", .{i});
             try self.processExpr(branch);
           }
           try branches.pop();
         },
-        .concatenation => |_| {
-          unreachable;
-        },
+        .concatenation => |c| for (c) |expr| try self.processExpr(expr),
         .literal => |l| {
           try self.processValue(&l.value);
         },
@@ -441,15 +440,15 @@ const Checker = struct {
       .locator_ctx = ".doc.",
     };
     var r = errors.CmdLineReporter.init();
-    var ctx = try nyarna.Context.init(
+    var ctx = try nyarna.Context.create(
       std.testing.allocator, &r.reporter, nyarna.default_stack_size);
-    defer ctx.deinit();
-    var ml = try nyarna.ModuleLoader.create(&ctx, &src, &.{});
+    defer ctx.destroy();
+    var ml = try nyarna.ModuleLoader.create(ctx, &src, &.{});
     defer ml.destroy();
     var emitter = AstEmitter(*Checker){
       .depth = 0,
       .handler = self,
-      .context = &ctx,
+      .context = ctx,
     };
     try process(&emitter, ml);
     if (self.expected_iter.next()) |line| {
@@ -515,4 +514,16 @@ pub fn parseTest(f: *tml.File) !void {
   var checker = try Checker.init(f, "rawast");
   defer checker.deinit();
   try checker.moduleTest(parseTestImpl);
+}
+
+fn interpretTestImpl(emitter: *AstEmitter(*Checker), ml: *nyarna.ModuleLoader)
+    anyerror!void {
+  var res = try ml.load(false);
+  try emitter.processExpr(res.root);
+}
+
+pub fn interpretTest(f: *tml.File) !void {
+  var checker = try Checker.init(f, "expr");
+  defer checker.deinit();
+  try checker.moduleTest(interpretTestImpl);
 }

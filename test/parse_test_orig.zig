@@ -34,10 +34,10 @@ test "parse simple line" {
   };
 
   var r = errors.CmdLineReporter.init();
-  var ctx = try nyarna.Context.init(
+  var ctx = try nyarna.Context.create(
     std.testing.allocator, &r.reporter, nyarna.default_stack_size);
-  defer ctx.deinit();
-  var ml = try nyarna.ModuleLoader.create(&ctx, &src, &.{});
+  defer ctx.destroy();
+  var ml = try nyarna.ModuleLoader.create(ctx, &src, &.{});
   defer ml.destroy();
   var res = try ml.loadAsNode(true);
   try ensureLiteral(res, .text, "Hello, World!");
@@ -59,10 +59,10 @@ test "parse assignment" {
   };
 
   var r = errors.CmdLineReporter.init();
-  var ctx = try nyarna.Context.init(
+  var ctx = try nyarna.Context.create(
     std.testing.allocator, &r.reporter, nyarna.default_stack_size);
-  defer ctx.deinit();
-  var ml = try nyarna.ModuleLoader.create(&ctx, &src, &.{});
+  defer ctx.destroy();
+  var ml = try nyarna.ModuleLoader.create(ctx, &src, &.{});
   defer ml.destroy();
   var res = try ml.loadAsNode(true);
   try std.testing.expectEqual(data.Node.Data.assignment, res.data);
@@ -86,10 +86,10 @@ test "parse access" {
   };
 
   var r = errors.CmdLineReporter.init();
-  var ctx = try nyarna.Context.init(
+  var ctx = try nyarna.Context.create(
     std.testing.allocator, &r.reporter, nyarna.default_stack_size);
-  defer ctx.deinit();
-  var ml = try nyarna.ModuleLoader.create(&ctx, &src, &.{});
+  defer ctx.destroy();
+  var ml = try nyarna.ModuleLoader.create(ctx, &src, &.{});
   defer ml.destroy();
   var res = try ml.loadAsNode(true);
   try std.testing.expectEqual(data.Node.Data.access, res.data);
@@ -117,10 +117,10 @@ test "parse concat" {
   };
 
   var r = errors.CmdLineReporter.init();
-  var ctx = try nyarna.Context.init(
+  var ctx = try nyarna.Context.create(
     std.testing.allocator, &r.reporter, nyarna.default_stack_size);
-  defer ctx.deinit();
-  var ml = try nyarna.ModuleLoader.create(&ctx, &src, &.{});
+  defer ctx.destroy();
+  var ml = try nyarna.ModuleLoader.create(ctx, &src, &.{});
   defer ml.destroy();
   var res = try ml.loadAsNode(true);
   try std.testing.expectEqual(data.Node.Data.concatenation, res.data);
@@ -148,10 +148,10 @@ test "parse paragraphs" {
   };
 
   var r = errors.CmdLineReporter.init();
-  var ctx = try nyarna.Context.init(
+  var ctx = try nyarna.Context.create(
     std.testing.allocator, &r.reporter, nyarna.default_stack_size);
-  defer ctx.deinit();
-  var ml = try nyarna.ModuleLoader.create(&ctx, &src, &.{});
+  defer ctx.destroy();
+  var ml = try nyarna.ModuleLoader.create(ctx, &src, &.{});
   defer ml.destroy();
   var res = try ml.loadAsNode(true);
   try std.testing.expectEqual(data.Node.Data.paragraphs, res.data);
@@ -178,10 +178,10 @@ test "parse unknown call" {
   };
 
   var r = errors.CmdLineReporter.init();
-  var ctx = try nyarna.Context.init(
+  var ctx = try nyarna.Context.create(
     std.testing.allocator, &r.reporter, nyarna.default_stack_size);
-  defer ctx.deinit();
-  var ml = try nyarna.ModuleLoader.create(&ctx, &src, &.{});
+  defer ctx.destroy();
+  var ml = try nyarna.ModuleLoader.create(ctx, &src, &.{});
   defer ml.destroy();
   var res = try ml.loadAsNode(true);
   try std.testing.expectEqual(data.Node.Data.unresolved_call, res.data);
@@ -214,10 +214,10 @@ test "parse block" {
   };
 
   var r = errors.CmdLineReporter.init();
-  var ctx = try nyarna.Context.init(
+  var ctx = try nyarna.Context.create(
     std.testing.allocator, &r.reporter, nyarna.default_stack_size);
-  defer ctx.deinit();
-  var ml = try nyarna.ModuleLoader.create(&ctx, &src, &.{});
+  defer ctx.destroy();
+  var ml = try nyarna.ModuleLoader.create(ctx, &src, &.{});
   defer ml.destroy();
   var res = try ml.loadAsNode(true);
   try std.testing.expectEqual(data.Node.Data.unresolved_call, res.data);

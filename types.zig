@@ -382,9 +382,6 @@ pub const Lattice = struct {
       .callable => {
         unreachable; // TODO
       },
-      .callable_type => {
-        unreachable; // TODO
-      },
       .intersection => |*inter| blk: {
         if (other.isScalar()) {
           const scalar_type = if (inter.scalar) |inter_scalar|
@@ -480,7 +477,7 @@ pub const Lattice = struct {
     switch (t) {
       .intrinsic => |i| switch (i) {
         .void, .prototype, .schema, .extension, .ast_node => return null,
-        .space, .literal, .raw => return t,
+        .space, .literal, .raw, .poison => return t,
         else => {},
       },
       .structural => |s| switch (s.*) {
@@ -525,6 +522,42 @@ pub const Lattice = struct {
       };
     }
     return data.Type{.structural = res.value_ptr.*};
+  }
+
+  pub fn valueType(self: *Lattice, v: *data.Value) data.Type {
+    return switch (v.data) {
+      .text => |*txt| txt.t,
+      .number => |*num| num.t.typedef(),
+      .float => |*fl| fl.t.typedef(),
+      .enumval => |*en| en.t.typedef(),
+      .record => |*rec| rec.t.typedef(),
+      .concat => |*con| con.t.typedef(),
+      .list => |*list| list.t.typedef(),
+      .map => |*map| map.t.typedef(),
+      .typeval => |t| switch (t.t) {
+        .intrinsic => |i| switch (i) {
+          .location => self.type_constructors[0].callable.typedef(),
+          .definition => self.type_constructors[1].callable.typedef(),
+          else => data.Type{.intrinsic = .non_callable_type}, // TODO
+        },
+        .structural => data.Type{.intrinsic = .non_callable_type}, // TODO
+        .instantiated => |inst| switch (inst.data) {
+          .record => |rec| rec.callable.typedef(),
+          else => data.Type{.intrinsic = .non_callable_type}, // TOYO
+        },
+      },
+      .funcref => |*fr| switch (fr.func.data) {
+        .ny_func => |*nf| nf.callable.typedef(),
+        .ext_func => |*ef| ef.callable.typedef(),
+        else => unreachable,
+      },
+      .location => .{.intrinsic = .location},
+      .definition => .{.intrinsic = .definition},
+      .ast => .{.intrinsic = .ast_node},
+      .block_header => .{.intrinsic = .block_header},
+      .void => .{.intrinsic = .void},
+      .poison => .{.intrinsic = .poison},
+    };
   }
 };
 

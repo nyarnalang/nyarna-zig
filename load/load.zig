@@ -19,12 +19,14 @@ pub const ModuleLoader = struct {
   /// are encountered. If one or more errors are encountered during loading,
   /// the input is considered to be invalid.
   logger: errors.Handler,
+  public_syms: std.ArrayListUnmanaged(*data.Symbol),
 
   /// TODO: process args
   pub fn create(context: *Context, input: *const data.Source,
                 _: []*const data.Source) !*ModuleLoader {
     var ret = try context.storage.allocator.create(ModuleLoader);
     ret.context = context;
+    ret.public_syms = .{};
     ret.logger = .{
       .reporter = context.reporter,
     };
@@ -45,7 +47,13 @@ pub const ModuleLoader = struct {
   }
 
   pub fn load(self: *ModuleLoader, fullast: bool) !*data.Module {
-    return try self.interpreter.interpret(try self.loadAsNode(fullast));
+    var root = try self.interpreter.interpret(try self.loadAsNode(fullast));
+    var ret = try self.interpreter.createPublic(data.Module);
+    ret.* = .{
+      .symbols = self.public_syms.items,
+      .root = root,
+    };
+    return ret;
   }
 
   pub fn loadAsNode(self: *ModuleLoader, fullast: bool) !*data.Node {

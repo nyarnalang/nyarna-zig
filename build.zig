@@ -59,6 +59,15 @@ pub fn build(b: *Builder) !void {
   var parse_test_step = b.step("parseTest", "Run parser tests");
   parse_test_step.dependOn(&parse_test.step);
 
+  var interpret_test = b.addTest("test/interpret_test.zig");
+  interpret_test.step.dependOn(&testgen_cmd.step);
+  interpret_test.step.dependOn(&ehgen_cmd.step);
+  interpret_test.addPackage(testing_pkg);
+  interpret_test.setFilter(test_filter);
+
+  var interpret_test_step = b.step("interpretTest", "Run interpreter tests");
+  interpret_test_step.dependOn(&interpret_test.step);
+
   var parse_test_orig = b.addTest("test/parse_test_orig.zig");
   parse_test_orig.step.dependOn(&ehgen_cmd.step);
   parse_test_orig.addPackage(testing_pkg);

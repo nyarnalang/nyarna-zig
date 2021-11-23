@@ -20,7 +20,7 @@ pub const Evaluator = struct {
     }
     const ret = self.context.stack_ptr;
     self.context.stack_ptr += sig.parameters.len + 1;
-    ret.*.frame_ref = prev_frame;
+    ret.* = .{.frame_ref = prev_frame};
     return ret;
   }
 
@@ -32,7 +32,7 @@ pub const Evaluator = struct {
   fn fillParameterStackFrame(self: *Evaluator, exprs: []*data.Expression,
                              frame: [*]data.StackItem) !void {
     for (exprs) |expr, i| {
-      frame[i].value = try self.evaluate(expr);
+      frame[i] = .{.value = try self.evaluate(expr)};
     }
   }
 
@@ -80,6 +80,7 @@ pub const Evaluator = struct {
     const target = try self.evaluate(call.target);
     return switch (target.data) {
       .funcref => |fr| blk: {
+        std.debug.print("evaluateCall => {s}\n", .{fr.func.name});
         switch (fr.func.data) {
           .ext_func => |*ef| {
             const target_impl =
@@ -87,7 +88,7 @@ pub const Evaluator = struct {
             std.debug.assert(
               call.exprs.len == ef.sig().parameters.len);
             ef.cur_frame = try self.setupParameterStackFrame(
-              ef.sig(), ef.cur_frame.?);
+              ef.sig(), ef.cur_frame);
             defer self.resetParameterStackFrame(ef);
             try self.fillParameterStackFrame(
               call.exprs, ef.cur_frame.? + 1);
@@ -161,7 +162,7 @@ pub const Evaluator = struct {
       },
       .branches => |*branches| blk: {
         var condition = try self.evaluate(branches.condition);
-        if (condition.vType().is(.poison))
+        if (self.context.types.valueType(condition).is(.poison))
           break :blk data.Value.create(
             &self.context.storage.allocator, expr.pos, .poison);
         break :blk self.evaluate(

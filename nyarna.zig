@@ -60,9 +60,10 @@ pub const Context = struct {
   /// current top of the stack, where new stack allocations happen.
   stack_ptr: [*]data.StackItem,
 
-  pub fn init(allocator: *std.mem.Allocator, reporter: *errors.Reporter,
-              stack_size: usize) !Context {
-    var ret = Context{
+  pub fn create(allocator: *std.mem.Allocator, reporter: *errors.Reporter,
+               stack_size: usize) !*Context {
+    const ret = try allocator.create(Context);
+    ret.* = .{
       .reporter = reporter,
       .allocator = allocator,
       .types = undefined,
@@ -73,19 +74,46 @@ pub const Context = struct {
       .stack = undefined,
       .stack_ptr = undefined,
     };
+    errdefer allocator.destroy(ret);
     errdefer ret.storage.deinit();
     ret.stack = try allocator.alloc(data.StackItem, stack_size);
     ret.stack_ptr = ret.stack.ptr;
     errdefer allocator.free(ret.stack);
     ret.types = try types.Lattice.init(&ret.storage);
     errdefer ret.types.deinit();
-    ret.intrinsics = try lib.intrinsicModule(&ret);
+    ret.intrinsics = try lib.intrinsicModule(ret);
     return ret;
   }
 
-  pub fn deinit(context: *Context) void {
+  pub fn destroy(context: *Context) void {
     context.types.deinit();
     context.storage.deinit();
     context.allocator.free(context.stack);
+    context.allocator.destroy(context);
+  }
+
+  pub inline fn fillLiteral(
+      self: *Context, at: data.Position, e: *data.Expression,
+      content: data.Value.Data) void {
+    e.* = .{
+      .pos = at,
+      .data = .{
+        .literal = .{
+          .value = .{
+            .origin = at,
+            .data = content,
+          },
+        },
+      },
+      .expected_type = undefined,
+    };
+    e.expected_type = self.types.valueType(&e.data.literal.value);
+  }
+
+  pub inline fn genLiteral(self: *Context, at: data.Position,
+                           content: data.Value.Data) !*data.Expression {
+    const e = try self.storage.allocator.create(data.Expression);
+    self.fillLiteral(at, e, content);
+    return e;
   }
 };

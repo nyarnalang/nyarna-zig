@@ -28,7 +28,6 @@ fn genTests(dir: *std.fs.Dir, sets: []TestSet) !void {
     "simple-swallow.tml", // missing: if expression
     "parameter-block-config.tml", // missing: default block config for params
     "field-access.tml", // missing: intrinsic funcs
-    "if-stmt.tml", // missing: if expression
     "indirect-recursion.tml", // missing: declare
     "integer-fragment.tml", // missing: intrinsic funcs, module kinds
     "simple-variables.tml", // missing: variable decls
@@ -83,10 +82,17 @@ pub fn main() !void {
       .tml_item = "rawast",
       .funcname = "parseTest",
     },
+    .{
+      .file = undefined,
+      .tml_item = "expr",
+      .funcname = "interpretTest",
+    },
   };
   sets[0].file = try std.fs.cwd().createFile("lex_test.zig", .{});
   defer sets[0].file.close();
   sets[1].file = try std.fs.cwd().createFile("parse_test.zig", .{});
   defer sets[1].file.close();
+  sets[2].file = try std.fs.cwd().createFile("interpret_test.zig", .{});
+  defer sets[2].file.close();
   try genTests(&datadir, &sets);
 }

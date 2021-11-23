@@ -166,14 +166,11 @@ pub const SignatureMapper = struct {
       .varargs => unreachable,
       else => param.ptype,
     };
-    const arg = if (target_type.is(.ast_node)) blk: {
-      const ast_expr =
-        try self.context.storage.allocator.create(data.Expression);
-      break :blk try data.Node.valueNode(
-        &self.context.storage.allocator, ast_expr, content.pos, .{
-          .ast = .{.root = content},
-        });
-    } else blk: {
+    const arg = if (target_type.is(.ast_node))
+      try self.context.genValueNode(content.pos, .{
+        .ast = .{.root = content},
+      })
+    else blk: {
       if (try self.context.associate(content, param.ptype)) |expr|
         content.data = .{.expression = expr};
       break :blk content;
@@ -202,7 +199,12 @@ pub const SignatureMapper = struct {
       if (!self.filled[i]) {
         self.args[i] = switch (param.ptype) {
           .intrinsic => |intr| switch (intr) {
-            .void, .ast_node => try data.Node.genVoid(alloc, pos),
+            .void => try data.Node.genVoid(alloc, pos),
+            .ast_node => blk: {
+              break :blk try self.context.genValueNode(pos, .{
+                .ast = .{.root = try data.Node.genVoid(alloc, pos)},
+              });
+            },
             else => null,
           },
           .structural => |strct| switch (strct.*) {

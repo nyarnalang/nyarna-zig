@@ -575,8 +575,7 @@ pub const SymbolDefs = struct {
     }
     const line_pos = self.intpr.input.between(self.start, pos.end);
 
-    const lexpr = try self.intpr.createPublic(data.Expression);
-    lexpr.* = data.Expression.literal(line_pos, .{
+    const lexpr = try self.intpr.genPublicLiteral(line_pos, .{
       .typeval = .{
         .t = .{
           .intrinsic = if (self.variant == .locs) .location else .definition
@@ -653,19 +652,11 @@ pub const SymbolDefs = struct {
 
   fn boolFrom(self: *SymbolDefs, pos: ?data.Position, at: data.Position)
       !*data.Node {
-    const expr = try self.intpr.createPublic(data.Expression);
-    expr.pos = pos orelse at;
-    expr.* = data.Expression.literal(pos orelse at, .{
+    return self.intpr.genValueNode(pos orelse at, .{
       .enumval = .{
         .t = self.intpr.loader.context.types.getBoolean(),
         .index = if (pos) |_| 1 else 0,
       }
     });
-    const ret = try self.intpr.storage.allocator.create(data.Node);
-    ret.data = .{
-      .expression = expr,
-    };
-    ret.pos = expr.pos;
-    return ret;
   }
 };

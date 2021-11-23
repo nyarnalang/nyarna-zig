@@ -13,7 +13,7 @@ pub const GenericParserError = enum {
   NamedArgumentInAssignment, MissingBlockNameEnd, UnknownFlag,
   NonLocationFlag, NonDefinitionFlag, BlockHeaderNotAllowedForDefinition,
   MissingSymbolName, MissingSymbolType, MissingSymbolEntity, UnknownSyntax,
-  PrefixedFunctionMustBeCalled, AstNodeInNonKeyword, KeywordArgsNotAvailable,
+  PrefixedFunctionMustBeCalled, AstNodeInNonKeyword, KeywordArgNotAvailable,
   InvalidLvalue, UnknownParameter, TooManyArguments, UnexpectedPrimaryBlock,
   InvalidPositionalArgument,
 };
@@ -174,7 +174,6 @@ fn formatType(
         formatParameterizedType(fmt, options, "Optional",
                                 &[_]data.Type{map.key, map.value}, writer),
       .callable => |_| unreachable,
-      .callable_type => writer.writeAll("Type"),
       .intersection => |inter| {
         try writer.writeByte('{');
         if (inter.scalar) |scalar| try formatType(scalar, fmt, options, writer);
@@ -328,21 +327,26 @@ pub const CmdLineReporter = struct {
     const self = @fieldParentPtr(CmdLineReporter, "reporter", reporter);
     self.renderPos(.{.bold}, pos);
     switch (id) {
-      .ExpectedExprOfTypeXGotY => self.renderError(
-        "expression has incompatible type: expected '{}', got '{}'", .{
-          std.fmt.Formatter(formatType){.data = types[0]},
-          std.fmt.Formatter(formatType){.data = types[1]},
-        }),
-      .IncompatibleTypes => self.renderError(
-        "expression type '{}' is not compatible with previous types {}", .{
-          std.fmt.Formatter(formatType){.data = types[0]},
-          std.fmt.Formatter(formatTypes){.data = types[1..]},
-        }),
-      .InvalidInnerConcatType => self.renderError(
-        "given expressions' types' intersection is '{}' " ++
-        "which is not concatenable", .{
-          std.fmt.Formatter(formatType){.data = types[0]},
-        }),
+      .ExpectedExprOfTypeXGotY => {
+        const t1 = std.fmt.Formatter(formatType){.data = types[0]};
+        const t2 = std.fmt.Formatter(formatType){.data = types[1]};
+        self.renderError(
+          "expression has incompatible type: expected '{}', got '{}'", .{
+          t1, t2});
+      },
+      .IncompatibleTypes => {
+        const main = std.fmt.Formatter(formatType){.data = types[0]};
+        const others = std.fmt.Formatter(formatTypes){.data = types[1..]};
+        self.renderError(
+          "expression type '{}' is not compatible with previous types {}", .{
+          main, others});
+      },
+      .InvalidInnerConcatType => {
+        const t = std.fmt.Formatter(formatType){.data = types[0]};
+        self.renderError(
+          "given expressions' types' intersection is '{}' " ++
+          "which is not concatenable", .{t});
+      },
     }
   }
 };

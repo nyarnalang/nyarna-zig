@@ -425,19 +425,6 @@ pub const Node = struct {
     };
     return ret;
   }
-
-  pub fn valueNode(allocator: *std.mem.Allocator, expr: *Expression,
-                   pos: Position, data: Value.Data) !*Node {
-    expr.* = Expression.literal(pos, data);
-    var ret = try allocator.create(Node);
-    ret.* = .{
-      .pos = pos,
-      .data = .{
-        .expression = expr,
-      },
-    };
-    return ret;
-  }
 };
 
 pub const Symbol = struct {
@@ -618,14 +605,11 @@ pub const Type = union(enum) {
 
   pub const Callable = struct {
     sig: *Signature,
+    is_type: bool,
 
     pub inline fn typedef(self: *const @This()) Type {
       return Structural.typedef(self);
     }
-  };
-
-  pub const CallableType = struct {
-    sig: *Signature,
   };
 
   /// types with structural equivalence
@@ -635,10 +619,8 @@ pub const Type = union(enum) {
     paragraphs: Paragraphs,
     list: List,
     map: Map,
-    /// general type for anything callable
+    /// general type for anything callable, has flag for whether it's a type
     callable: Callable,
-    /// specific type for callable types, with callable_type < callable.
-    callable_type: CallableType,
     intersection: Intersection,
 
     fn parent(it: anytype) *Structural {
@@ -650,7 +632,6 @@ pub const Type = union(enum) {
         List => offset(Structural, "list"),
         Map => offset(Structural, "map"),
         Callable => offset(Structural, "callable"),
-        CallableType => offset(Structural, "callable_type"),
         Intersection => offset(Structural, "intersection"),
         else => unreachable
       };
@@ -746,7 +727,7 @@ pub const Type = union(enum) {
   /// parameters of a Record type. contains the signature of its constructor.
   /// its fields are derived from that signature.
   pub const Record = struct {
-    signature: Signature,
+    callable: *Callable,
 
     pub fn pos(self: *@This()) Position {
       return Instantiated.pos(self);
@@ -929,25 +910,8 @@ pub const Expression = struct {
     return @fieldParentPtr(Expression, "data", @intToPtr(*Data, addr));
   }
 
-  pub inline fn literal(at: Position, data: Value.Data) Expression {
-    var e = Expression{
-      .pos = at,
-      .data = .{
-        .literal = .{
-          .value = .{
-            .origin = at,
-            .data = data,
-          },
-        },
-      },
-      .expected_type = undefined,
-    };
-    e.expected_type = e.data.literal.value.vType();
-    return e;
-  }
-
-  pub inline fn poison(at: Position) Expression {
-    return .{
+  pub inline fn fillPoison(e: *Expression, at: Position) void {
+    e.* = .{
       .pos = at,
       .data = .{
         .literal = .{
@@ -961,8 +925,8 @@ pub const Expression = struct {
     };
   }
 
-  pub inline fn voidExpr(at: Position) Expression {
-    return .{
+  pub inline fn fillVoid(e: *Expression, at: Position) void {
+    e.* = .{
       .pos = at,
       .data = .{
         .literal = .{
@@ -1133,7 +1097,7 @@ pub const Value = struct {
     }
   };
 
-  const Data = union(enum) {
+  pub const Data = union(enum) {
     text: TextScalar,
     number: Number,
     float: FloatNumber,
@@ -1209,31 +1173,6 @@ pub const Value = struct {
       else        => content
     };
     return ret;
-  }
-
-  pub fn vType(self: *Value) Type {
-    return switch (self.data) {
-      .text => |*txt| txt.t,
-      .number => |*num| num.t.typedef(),
-      .float => |*fl| fl.t.typedef(),
-      .enumval => |*en| en.t.typedef(),
-      .record => |*rec| rec.t.typedef(),
-      .concat => |*con| con.t.typedef(),
-      .list => |*list| list.t.typedef(),
-      .map => |*map| map.t.typedef(),
-      .typeval => .{.intrinsic = .non_callable_type}, // TODO
-      .funcref => |*fr| switch (fr.func.data) {
-        .ny_func => |*nf| nf.callable.typedef(),
-        .ext_func => |*ef| ef.callable.typedef(),
-        else => unreachable,
-      },
-      .location => .{.intrinsic = .location},
-      .definition => .{.intrinsic = .definition},
-      .ast => .{.intrinsic = .ast_node},
-      .block_header => .{.intrinsic = .block_header},
-      .void => .{.intrinsic = .void},
-      .poison => .{.intrinsic = .poison},
-    };
   }
 
   fn parent(it: anytype) *Value {
