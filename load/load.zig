@@ -2,7 +2,7 @@ const std = @import("std");
 const nyarna = @import("../nyarna.zig");
 const types = nyarna.types;
 const errors = nyarna.errors;
-const data = nyarna.data;
+const model = nyarna.model;
 const lib = nyarna.lib;
 const Context = nyarna.Context;
 const parse = @import("parse.zig");
@@ -19,11 +19,11 @@ pub const ModuleLoader = struct {
   /// are encountered. If one or more errors are encountered during loading,
   /// the input is considered to be invalid.
   logger: errors.Handler,
-  public_syms: std.ArrayListUnmanaged(*data.Symbol),
+  public_syms: std.ArrayListUnmanaged(*model.Symbol),
 
   /// TODO: process args
-  pub fn create(context: *Context, input: *const data.Source,
-                _: []*const data.Source) !*ModuleLoader {
+  pub fn create(context: *Context, input: *const model.Source,
+                _: []*const model.Source) !*ModuleLoader {
     var ret = try context.storage.allocator.create(ModuleLoader);
     ret.context = context;
     ret.public_syms = .{};
@@ -46,9 +46,9 @@ pub const ModuleLoader = struct {
     self.interpreter.loader.context.storage.allocator.destroy(self);
   }
 
-  pub fn load(self: *ModuleLoader, fullast: bool) !*data.Module {
+  pub fn load(self: *ModuleLoader, fullast: bool) !*model.Module {
     var root = try self.interpreter.interpret(try self.loadAsNode(fullast));
-    var ret = try self.interpreter.createPublic(data.Module);
+    var ret = try self.interpreter.createPublic(model.Module);
     ret.* = .{
       .symbols = self.public_syms.items,
       .root = root,
@@ -56,7 +56,7 @@ pub const ModuleLoader = struct {
     return ret;
   }
 
-  pub fn loadAsNode(self: *ModuleLoader, fullast: bool) !*data.Node {
+  pub fn loadAsNode(self: *ModuleLoader, fullast: bool) !*model.Node {
     return try self.parser.parseSource(&self.interpreter, fullast);
   }
 

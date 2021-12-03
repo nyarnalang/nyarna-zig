@@ -1,28 +1,28 @@
 const std = @import("std");
 const nyarna = @import("../nyarna.zig");
-const data = nyarna.data;
+const model = nyarna.model;
 const Interpreter = nyarna.Interpreter;
 
 const unicode = @import("unicode.zig");
-const Token = data.Token;
+const Token = model.Token;
 
 const EncodedCharacter = unicode.EncodedCharacter;
 
 /// Walks a source and returns Unicode code points.
 pub const Walker = struct {
   /// The source.
-  source: *const data.Source,
+  source: *const model.Source,
   /// Next character to be read.
   cur: [*]const u8,
   /// Cursor position before recently returned code point.
-  before: data.Cursor,
+  before: model.Cursor,
   /// length of the recently returned character (1-4)
   recent_length: u3,
   /// Cursor position that has been marked for backtracking.
-  marked: data.Cursor,
+  marked: model.Cursor,
 
   /// Initializes a walker to walk the given source, starting at the beginning
-  pub fn init(s: *const data.Source) Walker {
+  pub fn init(s: *const model.Source) Walker {
     return .{
       .source = s,
       .cur = s.content.ptr,
@@ -111,7 +111,7 @@ pub const Walker = struct {
     return (w.cur - w.recent_length)[0..w.recent_length];
   }
 
-  pub fn posFrom(w: *Walker, start: data.Cursor) data.Position {
+  pub fn posFrom(w: *Walker, start: model.Cursor) model.Position {
     return .{.source = w.source.meta, .start = start, .end = w.before};
   }
 };
@@ -227,7 +227,7 @@ pub const Lexer = struct {
 
   /// the end of the recently emitted token
   /// (the start equals the end of the previously emitted token)
-  recent_end: data.Cursor,
+  recent_end: model.Cursor,
   /// the recently read id. equals the content for identifier and call_id,
   /// equals the name behind the command character for symref,
   /// equals the character behind the command character for escape.
@@ -246,7 +246,7 @@ pub const Lexer = struct {
   /// necessary since searching for empty lines will read over the indentation
   /// of the first non-empty line.
   /// we cache this so we know where the line ended.
-  line_start: data.Cursor,
+  line_start: model.Cursor,
   /// Stores which indentation characters have been seen in recent line.
   indent_char_seen: struct {
     space: bool, tab: bool,

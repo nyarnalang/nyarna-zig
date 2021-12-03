@@ -1,6 +1,6 @@
 const std = @import("std");
 const nyarna = @import("nyarna.zig");
-const data = nyarna.data;
+const model = nyarna.model;
 
 /// evaluates expressions and returns values.
 pub const Evaluator = struct {
@@ -11,10 +11,10 @@ pub const Evaluator = struct {
   }
 
   fn setupParameterStackFrame(
-      self: *Evaluator, sig: *const data.Type.Signature,
-      prev_frame: ?[*]data.StackItem) ![*]data.StackItem {
+      self: *Evaluator, sig: *const model.Type.Signature,
+      prev_frame: ?[*]model.StackItem) ![*]model.StackItem {
     if ((@ptrToInt(self.context.stack_ptr) - @ptrToInt(self.context.stack.ptr))
-        / @sizeOf(data.StackItem) + sig.parameters.len >
+        / @sizeOf(model.StackItem) + sig.parameters.len >
         self.context.stack.len) {
       return nyarna.Error.nyarna_stack_overflow;
     }
@@ -29,15 +29,15 @@ pub const Evaluator = struct {
     self.context.stack_ptr -= target.sig().parameters.len - 1;
   }
 
-  fn fillParameterStackFrame(self: *Evaluator, exprs: []*data.Expression,
-                             frame: [*]data.StackItem) !void {
+  fn fillParameterStackFrame(self: *Evaluator, exprs: []*model.Expression,
+                             frame: [*]model.StackItem) !void {
     for (exprs) |expr, i| {
       frame[i] = .{.value = try self.evaluate(expr)};
     }
   }
 
-  fn bindVariables(vars: data.VariableContainer,
-                   frame: ?[*]data.StackItem) void {
+  fn bindVariables(vars: model.VariableContainer,
+                   frame: ?[*]model.StackItem) void {
     if (frame) |base| {
       for (vars) |*v, i| {
         v.cur_value = &base[i];
@@ -51,8 +51,8 @@ pub const Evaluator = struct {
 
   fn RetTypeForCtx(comptime ImplCtx: type) type {
     return switch (ImplCtx) {
-      *Evaluator => *data.Value,
-      *nyarna.Interpreter => *data.Node,
+      *Evaluator => *model.Value,
+      *nyarna.Interpreter => *model.Node,
       else => unreachable
     };
   }
@@ -75,7 +75,7 @@ pub const Evaluator = struct {
   }
 
   fn evaluateCall(
-      self: *Evaluator, impl_ctx: anytype, call: *data.Expression.Call)
+      self: *Evaluator, impl_ctx: anytype, call: *model.Expression.Call)
       nyarna.Error!RetTypeForCtx(@TypeOf(impl_ctx)) {
     const target = try self.evaluate(call.target);
     return switch (target.data) {
@@ -117,9 +117,9 @@ pub const Evaluator = struct {
         unreachable; // not implemented yet
       },
       .poison => switch (@TypeOf(impl_ctx)) {
-        *Evaluator => data.Value.create(
+        *Evaluator => model.Value.create(
           &self.context.storage.allocator, call.expr().pos, .poison),
-        *nyarna.Interpreter => data.Node.poison(
+        *nyarna.Interpreter => model.Node.poison(
           &impl_ctx.storage.allocator,  call.expr().pos),
         else => unreachable,
       },
@@ -128,12 +128,13 @@ pub const Evaluator = struct {
   }
 
   pub fn evaluateKeywordCall(self: *Evaluator, intpr: *nyarna.Interpreter,
-                             call: *data.Expression.Call) !*data.Node {
+                             call: *model.Expression.Call) !*model.Node {
+    intpr.currently_called_ns = call.ns;
     return self.evaluateCall(intpr, call);
   }
 
-  pub fn evaluate(self: *Evaluator, expr: *data.Expression)
-      nyarna.Error!*data.Value {
+  pub fn evaluate(self: *Evaluator, expr: *model.Expression)
+      nyarna.Error!*model.Value {
     return switch (expr.data) {
       .call => |*call| self.evaluateCall(self, call),
       .assignment => |*assignment| blk: {
@@ -146,7 +147,7 @@ pub const Evaluator = struct {
           };
         }
         cur_ptr.* = try self.evaluate(assignment.expr);
-        break :blk try data.Value.create(
+        break :blk try model.Value.create(
           &self.context.storage.allocator, expr.pos, .void);
       },
       .access => |*access| blk: {
@@ -163,7 +164,7 @@ pub const Evaluator = struct {
       .branches => |*branches| blk: {
         var condition = try self.evaluate(branches.condition);
         if (self.context.types.valueType(condition).is(.poison))
-          break :blk data.Value.create(
+          break :blk model.Value.create(
             &self.context.storage.allocator, expr.pos, .poison);
         break :blk self.evaluate(
           branches.branches[condition.data.enumval.index]);
@@ -172,9 +173,9 @@ pub const Evaluator = struct {
       .var_retrieval => |*var_retr| var_retr.variable.cur_value.?.value,
       .literal => |*literal| &literal.value,
       .poison =>
-        data.Value.create(&self.context.storage.allocator, expr.pos, .poison),
+        model.Value.create(&self.context.storage.allocator, expr.pos, .poison),
       .void =>
-        data.Value.create(&self.context.storage.allocator, expr.pos, .void),
+        model.Value.create(&self.context.storage.allocator, expr.pos, .void),
     };
   }
 };

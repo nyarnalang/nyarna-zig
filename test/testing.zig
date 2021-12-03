@@ -1,6 +1,6 @@
 const std = @import("std");
 const nyarna = @import("nyarna");
-const data = nyarna.data;
+const model = nyarna.model;
 const tml = @import("tml.zig");
 const errors = nyarna.errors;
 
@@ -13,12 +13,12 @@ pub fn lexTest(f: *tml.File) !void {
   try input.content.appendSlice(f.alloc(), "\x04\x04\x04\x04");
   const expected_data = f.items.get("tokens").?;
   var expected_content = std.mem.split(u8, expected_data.content.items, "\n");
-  var src_meta = data.Source.Descriptor{
+  var src_meta = model.Source.Descriptor{
     .name = "input",
     .locator = ".doc.document",
     .argument = false,
   };
-  var src = data.Source{
+  var src = model.Source{
     .meta = &src_meta,
     .content = input.content.items,
     .offsets = .{
@@ -38,11 +38,11 @@ pub fn lexTest(f: *tml.File) !void {
   var t = try lexer.next();
   while(true) : (t = try lexer.next()) {
     const actual =
-      try if (@enumToInt(t) >= @enumToInt(data.Token.skipping_call_id))
+      try if (@enumToInt(t) >= @enumToInt(model.Token.skipping_call_id))
         std.fmt.allocPrint(
           std.testing.allocator, "{}:{}[{}] skipping_call_id({})", .{
             startpos.at_line, startpos.before_column, startpos.byte_offset,
-            @enumToInt(t) - @enumToInt(data.Token.skipping_call_id) + 1
+            @enumToInt(t) - @enumToInt(model.Token.skipping_call_id) + 1
           })
       else
         std.fmt.allocPrint(std.testing.allocator, "{}:{}[{}] {s}", .{
@@ -68,7 +68,7 @@ pub fn lexTest(f: *tml.File) !void {
   }
 }
 
-fn formatTypeName(t: data.Type, comptime _: []const u8,
+fn formatTypeName(t: model.Type, comptime _: []const u8,
                   _: std.fmt.FormatOptions, writer: anytype) !void {
   switch (t) {
     .intrinsic => |i| try writer.writeAll(@tagName(i)),
@@ -79,7 +79,7 @@ fn formatTypeName(t: data.Type, comptime _: []const u8,
 }
 
 const HeaderWithContext = struct {
-  header: *const data.Value.BlockHeader,
+  header: *const model.Value.BlockHeader,
   context: *nyarna.Context,
 };
 
@@ -171,7 +171,7 @@ fn AstEmitter(Handler: anytype) type {
       return Popper{.e = self, .name = name};
     }
 
-    pub fn process(self: *Self, n: *data.Node) anyerror!void {
+    pub fn process(self: *Self, n: *model.Node) anyerror!void {
       switch (n.data) {
         .access => |a| {
           const access = try self.push("ACCESS");
@@ -227,7 +227,7 @@ fn AstEmitter(Handler: anytype) type {
           try self.emitLine("=SYMREF [{}]{s}", .{u.ns, u.name}),
         .resolved_symref => |res|
           try self.emitLine("=SYMREF {s}.{s}",
-            .{res.defined_at.source.name, res.name}),
+            .{res.sym.defined_at.source.name, res.sym.name}),
         .unresolved_call => |uc| {
           const ucall = try self.push("UCALL");
           {
@@ -274,7 +274,7 @@ fn AstEmitter(Handler: anytype) type {
       }
     }
 
-    pub fn processExpr(self: *Self, e: *data.Expression) anyerror!void {
+    pub fn processExpr(self: *Self, e: *model.Expression) anyerror!void {
       switch (e.data) {
         .call => |call| {
           const c = try self.push("CALL");
@@ -315,7 +315,7 @@ fn AstEmitter(Handler: anytype) type {
       }
     }
 
-    fn processType(self: *Self, t: data.Type) !void {
+    fn processType(self: *Self, t: model.Type) !void {
       switch (t) {
         .intrinsic => |i| try self.emitLine("=TYPE {s}", .{@tagName(i)}),
         .structural => unreachable,
@@ -341,7 +341,7 @@ fn AstEmitter(Handler: anytype) type {
       }
     }
 
-    fn processValue(self: *Self, v: *const data.Value) !void {
+    fn processValue(self: *Self, v: *const model.Value) !void {
       switch (v.data) {
         .text => |txt| {
           const t = std.fmt.Formatter(formatTypeName){.data = txt.t};
@@ -426,12 +426,12 @@ const Checker = struct {
   }
 
   fn moduleTest(self: *@This(), process: Tester) !void {
-    var src_meta = data.Source.Descriptor{
+    var src_meta = model.Source.Descriptor{
       .name = "input",
       .locator = ".doc.document",
       .argument = false,
     };
-    var src = data.Source{
+    var src = model.Source{
       .meta = &src_meta,
       .content = self.input.content.items,
       .offsets = .{

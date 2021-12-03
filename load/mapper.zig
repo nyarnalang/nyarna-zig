@@ -1,7 +1,7 @@
 const std = @import("std");
 const nyarna = @import("../nyarna.zig");
-const data = nyarna.data;
-const Type = data.Type;
+const model = nyarna.model;
+const Type = model.Type;
 const Interpreter = nyarna.Interpreter;
 
 pub const Mapper = struct {
@@ -21,53 +21,54 @@ pub const Mapper = struct {
   pub const ProtoArgFlag = enum {
     flow, block_no_config, block_with_config
   };
-  const ArgKind = data.Node.UnresolvedCall.ArgKind;
+  const ArgKind = model.Node.UnresolvedCall.ArgKind;
 
-  mapFn: fn(self: *Self, pos: data.Position, input: ArgKind,
+  mapFn: fn(self: *Self, pos: model.Position, input: ArgKind,
             flag: ProtoArgFlag) ?Cursor,
   pushFn: fn(self: *Self, alloc: *std.mem.Allocator, at: Cursor,
-             content: *data.Node) nyarna.Error!void,
-  configFn: fn(self: *Self, at: Cursor) ?*data.BlockConfig,
-  paramTypeFn: fn(self: *Self, at: Cursor) ?data.Type,
+             content: *model.Node) nyarna.Error!void,
+  configFn: fn(self: *Self, at: Cursor) ?*model.BlockConfig,
+  paramTypeFn: fn(self: *Self, at: Cursor) ?model.Type,
   finalizeFn: fn(self: *Self, alloc: *std.mem.Allocator,
-                 pos: data.Position) nyarna.Error!*data.Node,
+                 pos: model.Position) nyarna.Error!*model.Node,
 
-  pub fn map(self: *Self, pos: data.Position, input: ArgKind,
+  pub fn map(self: *Self, pos: model.Position, input: ArgKind,
              flag: ProtoArgFlag) ?Cursor {
     return self.mapFn(self, pos, input, flag);
   }
 
-  pub fn config(self: *Self, at: Cursor) ?*data.BlockConfig {
+  pub fn config(self: *Self, at: Cursor) ?*model.BlockConfig {
     return self.configFn(self, at);
   }
 
-  pub fn paramType(self: *Self, at: Cursor) ?data.Type {
+  pub fn paramType(self: *Self, at: Cursor) ?model.Type {
     return self.paramTypeFn(self, at);
   }
 
   pub fn push(self: *Self, alloc: *std.mem.Allocator, at: Cursor,
-              content: *data.Node) !void {
+              content: *model.Node) !void {
     try self.pushFn(self, alloc, at, content);
   }
 
-  pub fn finalize(self: *Self, alloc: *std.mem.Allocator, pos: data.Position)
-      nyarna.Error!*data.Node {
+  pub fn finalize(self: *Self, alloc: *std.mem.Allocator, pos: model.Position)
+      nyarna.Error!*model.Node {
     return self.finalizeFn(self, alloc, pos);
   }
 };
 
 pub const SignatureMapper = struct {
   mapper: Mapper,
-  subject: *data.Expression,
+  subject: *model.Expression,
   signature: *const Type.Signature,
   cur_pos: ?u21 = 0,
-  args: []*data.Node,
+  args: []*model.Node,
   filled: []bool,
   context: *Interpreter,
+  ns: u15,
 
-  pub fn init(ctx: *Interpreter, subject: *data.Expression,
-              sig: *const data.Type.Signature) !SignatureMapper {
-    return SignatureMapper{
+  pub fn init(ctx: *Interpreter, subject: *model.Expression, ns: u15,
+              sig: *const model.Type.Signature) !SignatureMapper {
+    var res = SignatureMapper{
       .mapper = .{
         .mapFn = SignatureMapper.map,
         .configFn = SignatureMapper.config,
@@ -78,9 +79,12 @@ pub const SignatureMapper = struct {
       .subject = subject,
       .signature = sig,
       .context = ctx,
-      .args = try ctx.storage.allocator.alloc(*data.Node, sig.parameters.len),
+      .ns = ns,
+      .args = try ctx.storage.allocator.alloc(*model.Node, sig.parameters.len),
       .filled = try ctx.storage.allocator.alloc(bool, sig.parameters.len),
     };
+    for (res.filled) |*item| item.* = false;
+    return res;
   }
 
   /// workaround for https://github.com/ziglang/zig/issues/6059
@@ -88,7 +92,7 @@ pub const SignatureMapper = struct {
     return if (self.signature.varmap) |vm| vm == index else false;
   }
 
-  fn map(mapper: *Mapper, pos: data.Position,
+  fn map(mapper: *Mapper, pos: model.Position,
          input: Mapper.ArgKind, flag: Mapper.ProtoArgFlag) ?Mapper.Cursor {
     // TODO: process ProtoArgFlag (?)
     const self = @fieldParentPtr(SignatureMapper, "mapper", mapper);
@@ -138,7 +142,7 @@ pub const SignatureMapper = struct {
     }
   }
 
-  fn config(mapper: *Mapper, at: Mapper.Cursor) ?*data.BlockConfig {
+  fn config(mapper: *Mapper, at: Mapper.Cursor) ?*model.BlockConfig {
     const self = @fieldParentPtr(SignatureMapper, "mapper", mapper);
     return switch (at.param) {
       .index => |index|
@@ -147,7 +151,7 @@ pub const SignatureMapper = struct {
     };
   }
 
-  fn paramType(mapper: *Mapper, at: Mapper.Cursor) ?data.Type {
+  fn paramType(mapper: *Mapper, at: Mapper.Cursor) ?model.Type {
     const self = @fieldParentPtr(SignatureMapper, "mapper", mapper);
     return switch (at.param) {
       .index => |index| self.signature.parameters[index].ptype,
@@ -156,7 +160,7 @@ pub const SignatureMapper = struct {
   }
 
   fn push(mapper: *Mapper, _: *std.mem.Allocator, at: Mapper.Cursor,
-          content: *data.Node) nyarna.Error!void {
+          content: *model.Node) nyarna.Error!void {
     const self = @fieldParentPtr(SignatureMapper, "mapper", mapper);
     const param = &self.signature.parameters[at.param.index];
     const target_type =
@@ -190,26 +194,25 @@ pub const SignatureMapper = struct {
     }
   }
 
-  fn finalize(mapper: *Mapper, alloc: *std.mem.Allocator, pos: data.Position)
-      nyarna.Error!*data.Node {
+  fn finalize(mapper: *Mapper, alloc: *std.mem.Allocator, pos: model.Position)
+      nyarna.Error!*model.Node {
     const self = @fieldParentPtr(SignatureMapper, "mapper", mapper);
-    const ret = try alloc.create(data.Node);
     var missing_param = false;
     for (self.signature.parameters) |param, i| {
       if (!self.filled[i]) {
         self.args[i] = switch (param.ptype) {
           .intrinsic => |intr| switch (intr) {
-            .void => try data.Node.genVoid(alloc, pos),
+            .void => try model.Node.genVoid(alloc, pos),
             .ast_node => blk: {
               break :blk try self.context.genValueNode(pos, .{
-                .ast = .{.root = try data.Node.genVoid(alloc, pos)},
+                .ast = .{.root = try model.Node.genVoid(alloc, pos)},
               });
             },
             else => null,
           },
           .structural => |strct| switch (strct.*) {
             .optional, .concat, .paragraphs =>
-              try data.Node.genVoid(alloc, pos),
+              try model.Node.genVoid(alloc, pos),
             else => null,
           },
           .instantiated => null,
@@ -221,10 +224,12 @@ pub const SignatureMapper = struct {
         };
       }
     }
+    const ret = try alloc.create(model.Node);
     ret.* = .{
       .pos = pos,
       .data = if (missing_param) .poisonNode else .{
         .resolved_call = .{
+          .ns = self.ns,
           .target = self.subject,
           .args = self.args,
         },
@@ -236,11 +241,11 @@ pub const SignatureMapper = struct {
 
 pub const CollectingMapper = struct {
   mapper: Mapper,
-  target: *data.Node,
-  items: std.ArrayListUnmanaged(data.Node.UnresolvedCall.ProtoArg) = .{},
+  target: *model.Node,
+  items: std.ArrayListUnmanaged(model.Node.UnresolvedCall.ProtoArg) = .{},
   first_block: ?usize = null,
 
-  pub fn init(target: *data.Node) CollectingMapper {
+  pub fn init(target: *model.Node) CollectingMapper {
     return .{
       .mapper = .{
         .mapFn = CollectingMapper.map,
@@ -253,7 +258,7 @@ pub const CollectingMapper = struct {
     };
   }
 
-  fn map(mapper: *Mapper, _: data.Position,
+  fn map(mapper: *Mapper, _: model.Position,
          input: Mapper.ArgKind, flag: Mapper.ProtoArgFlag) ?Mapper.Cursor {
     const self = @fieldParentPtr(CollectingMapper, "mapper", mapper);
     if (flag != .flow and self.first_block == null) {
@@ -265,16 +270,16 @@ pub const CollectingMapper = struct {
     };
   }
 
-  fn config(_: *Mapper, _: Mapper.Cursor) ?*data.BlockConfig {
+  fn config(_: *Mapper, _: Mapper.Cursor) ?*model.BlockConfig {
     return null;
   }
 
-  fn paramType(_: *Mapper, _: Mapper.Cursor) ?data.Type {
+  fn paramType(_: *Mapper, _: Mapper.Cursor) ?model.Type {
     return null;
   }
 
   fn push(mapper: *Mapper, alloc: *std.mem.Allocator, at: Mapper.Cursor,
-          content: *data.Node) nyarna.Error!void {
+          content: *model.Node) nyarna.Error!void {
     const self = @fieldParentPtr(CollectingMapper, "mapper", mapper);
     try self.items.append(alloc, .{
         .kind = at.param.kind, .content = content,
@@ -282,10 +287,10 @@ pub const CollectingMapper = struct {
       });
   }
 
-  fn finalize(mapper: *Mapper, alloc: *std.mem.Allocator, pos: data.Position)
-      nyarna.Error!*data.Node {
+  fn finalize(mapper: *Mapper, alloc: *std.mem.Allocator, pos: model.Position)
+      nyarna.Error!*model.Node {
     const self = @fieldParentPtr(CollectingMapper, "mapper", mapper);
-    var ret = try alloc.create(data.Node);
+    var ret = try alloc.create(model.Node);
     ret.* = .{
       .pos = pos,
       .data = .{
@@ -302,10 +307,10 @@ pub const CollectingMapper = struct {
 
 pub const AssignmentMapper = struct {
   mapper: Mapper,
-  subject: *data.Node,
-  replacement: ?*data.Node,
+  subject: *model.Node,
+  replacement: ?*model.Node,
 
-  pub fn init(subject: *data.Node) AssignmentMapper {
+  pub fn init(subject: *model.Node) AssignmentMapper {
     return .{
       .mapper = .{
         .mapFn = AssignmentMapper.map,
@@ -319,7 +324,7 @@ pub const AssignmentMapper = struct {
     };
   }
 
-  pub fn map(mapper: *Mapper, _: data.Position,
+  pub fn map(mapper: *Mapper, _: model.Position,
              input: Mapper.ArgKind, flag: Mapper.ProtoArgFlag) ?Mapper.Cursor {
     const self = @fieldParentPtr(AssignmentMapper, "mapper", mapper);
     if (input == .named or input == .direct) {
@@ -336,25 +341,25 @@ pub const AssignmentMapper = struct {
   }
 
   fn push(mapper: *Mapper, _: *std.mem.Allocator, _: Mapper.Cursor,
-          content: *data.Node) !void {
+          content: *model.Node) !void {
     const self = @fieldParentPtr(AssignmentMapper, "mapper", mapper);
     self.replacement = content;
   }
 
-  fn config(_: *Mapper, _: Mapper.Cursor) ?*data.BlockConfig {
+  fn config(_: *Mapper, _: Mapper.Cursor) ?*model.BlockConfig {
     // TODO: block config on variable definition
     return null;
   }
 
-  fn paramType(_: *Mapper, _: Mapper.Cursor) ?data.Type {
+  fn paramType(_: *Mapper, _: Mapper.Cursor) ?model.Type {
     // TODO: param type of subject
     return null;
   }
 
-  fn finalize(mapper: *Mapper, alloc: *std.mem.Allocator, pos: data.Position)
-      !*data.Node {
+  fn finalize(mapper: *Mapper, alloc: *std.mem.Allocator, pos: model.Position)
+      !*model.Node {
     const self = @fieldParentPtr(AssignmentMapper, "mapper", mapper);
-    const ret = try alloc.create(data.Node);
+    const ret = try alloc.create(model.Node);
     ret.* = .{
       .pos = pos,
       .data = .{

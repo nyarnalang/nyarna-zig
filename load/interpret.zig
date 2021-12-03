@@ -1,6 +1,6 @@
 const std = @import("std");
 const nyarna = @import("../nyarna.zig");
-const data = nyarna.data;
+const model = nyarna.model;
 const errors = nyarna.errors;
 const types = nyarna.types;
 const lib = nyarna.lib;
@@ -8,7 +8,8 @@ const lib = nyarna.lib;
 const ModuleLoader = @import("load.zig").ModuleLoader;
 const parse = @import("parse.zig");
 const syntaxes = @import("syntaxes.zig");
-
+const graph = @import("graph.zig");
+const algo = @import("algo.zig");
 
 pub const Errors = error {
   referred_source_unavailable,
@@ -27,7 +28,7 @@ pub const Errors = error {
 pub const Interpreter = struct {
   /// The source that is being parsed. Must not be changed during an
   /// interpreter's operation.
-  input: *const data.Source,
+  input: *const model.Source,
   /// The loader that owns this interpreter.
   loader: *ModuleLoader,
   /// Maps each existing command character to the index of the namespace it
@@ -43,20 +44,26 @@ pub const Interpreter = struct {
   // it will still try to find its target symbol in the same namespace when
   /// delayed resolution is triggered.
   namespaces:
-    std.ArrayListUnmanaged(std.StringArrayHashMapUnmanaged(*data.Symbol)),
+    std.ArrayListUnmanaged(std.StringArrayHashMapUnmanaged(*model.Symbol)),
   /// The local storage of the interpreter where all data will be allocated that
   /// will be discarded when the interpreter finishes. This includes primarily
   /// the AST nodes which will be interpreted into expressions during
   /// interpretation. Some AST nodes may become exported (for example, as part
   /// of a function implementation) in which case they must be copied to the
   /// global storage. This happens exactly at the time an AST node is put into
-  /// an AST data.Value.
+  /// an AST model.Value.
   storage: std.heap.ArenaAllocator,
   /// Array of alternative syntaxes known to the interpreter (7.12).
   /// TODO: make this user-extensible
   syntax_registry: [2]syntaxes.SpecialSyntax,
+  /// The type that is currently assembled during inference on type definitions
+  /// inside \declare. If set, prototype invocations may create incomplete types
+  /// as long as they can push the incomplete parts here.
+  currently_built_type: ?*algo.DeclaredType = null,
+  /// The namespace on which the currently evaluated keyword has been called.
+  currently_called_ns: u15 = undefined,
 
-  pub fn init(loader: *ModuleLoader, input: *const data.Source) !Interpreter {
+  pub fn init(loader: *ModuleLoader, input: *const model.Source) !Interpreter {
     var ret = Interpreter{
       .input = input,
       .loader = loader,
@@ -96,7 +103,7 @@ pub const Interpreter = struct {
     try self.importModuleSyms(self.loader.context.intrinsics, index);
   }
 
-  pub fn importModuleSyms(self: *Interpreter, module: *const data.Module,
+  pub fn importModuleSyms(self: *Interpreter, module: *const model.Module,
                           ns_index: usize) !void {
     const ns = &self.namespaces.items[ns_index];
     for (module.symbols) |sym| {
@@ -123,14 +130,15 @@ pub const Interpreter = struct {
   ///
   /// if report_failure is set, emits errors to the handler if this or a child
   /// node cannot be interpreted.
-  pub fn tryInterpret(self: *Interpreter, input: *data.Node,
-                      report_failure: bool) nyarna.Error!*data.Node {
+  pub fn tryInterpret(self: *Interpreter, input: *model.Node,
+                      report_failure: bool,
+                      ctx: ?*graph.ResolutionContext) nyarna.Error!*model.Node {
     return switch (input.data) {
       .access => blk: {
-        switch (try self.resolveChain(input, report_failure)) {
+        switch (try self.resolveChain(input, report_failure, ctx)) {
           .var_chain => |vc| {
             const retr =
-              try self.createPublic(data.Expression);
+              try self.createPublic(model.Expression);
             retr.* = .{
               .pos = vc.target.pos,
               .data = .{
@@ -141,7 +149,7 @@ pub const Interpreter = struct {
               .expected_type = vc.target.variable.t,
             };
             const expr =
-              try self.createPublic(data.Expression);
+              try self.createPublic(model.Expression);
             expr.* = .{
               .pos = input.pos,
               .data = .{
@@ -156,7 +164,7 @@ pub const Interpreter = struct {
           },
           .func_ref => |ref| {
             const expr =
-              try self.createPublic(data.Expression);
+              try self.createPublic(model.Expression);
             if (ref.prefix != null) {
               self.loader.logger.PrefixedFunctionMustBeCalled(input.pos);
               expr.fillPoison(input.pos);
@@ -170,7 +178,7 @@ pub const Interpreter = struct {
             input.data = .{.expression = expr};
           },
           .type_ref => |ref| {
-            const expr = try self.createPublic(data.Expression);
+            const expr = try self.createPublic(model.Expression);
             self.fillLiteral(input.pos, expr, .{
               .typeval = .{
                 .t = ref.*,
@@ -179,7 +187,7 @@ pub const Interpreter = struct {
             input.data = .{.expression = expr};
           },
           .expr_chain => |ec| {
-            const expr = try self.createPublic(data.Expression);
+            const expr = try self.createPublic(model.Expression);
             expr.* = .{
               .pos = input.pos,
               .data = .{
@@ -194,7 +202,7 @@ pub const Interpreter = struct {
           },
           .failed => {},
           .poison => {
-            const expr = try self.createPublic(data.Expression);
+            const expr = try self.createPublic(model.Expression);
             expr.fillPoison(input.pos);
             input.data = .{.expression = expr};
           },
@@ -205,7 +213,7 @@ pub const Interpreter = struct {
         const target = switch (ass.target) {
           .resolved => |*val| val,
           .unresolved => |node| innerblk: {
-            switch (try self.resolveChain(node, report_failure)) {
+            switch (try self.resolveChain(node, report_failure, ctx)) {
               .var_chain => |*vc| {
                 ass.target = .{
                   .resolved = .{
@@ -218,10 +226,10 @@ pub const Interpreter = struct {
               },
               .func_ref, .type_ref, .expr_chain => {
                 self.loader.logger.InvalidLvalue(node.pos);
-                return try data.Node.poison(&self.storage.allocator, node.pos);
+                return try model.Node.poison(&self.storage.allocator, node.pos);
               },
               .poison =>
-                return try data.Node.poison(&self.storage.allocator, node.pos),
+                return try model.Node.poison(&self.storage.allocator, node.pos),
               .failed =>
                 break :blk input,
             }
@@ -229,7 +237,7 @@ pub const Interpreter = struct {
         };
         const target_expr = (try self.associate(ass.replacement, target.t))
           orelse break :blk input;
-        const expr = try self.createPublic(data.Expression);
+        const expr = try self.createPublic(model.Expression);
         const path = try std.mem.dupe(&self.loader.context.storage.allocator,
           usize, target.path);
         expr.* = .{
@@ -241,22 +249,23 @@ pub const Interpreter = struct {
               .expr = target_expr,
             },
           },
-          .expected_type = data.Type{.intrinsic = .void},
+          .expected_type = model.Type{.intrinsic = .void},
         };
         input.data = .{.expression = expr};
         break :blk input;
       },
       .branches, .concatenation => blk: {
-        const ret_type = (try self.probeType(input)) orelse break :blk input;
+        const ret_type =
+          (try self.probeType(input, ctx)) orelse break :blk input;
         break :blk self.interpretWithTargetType(input, ret_type, true);
       },
       .paragraphs => unreachable, // TODO
       .resolved_symref => |ref| blk: {
-        const expr = try self.createPublic(data.Expression);
-        switch (ref.data) {
+        const expr = try self.createPublic(model.Expression);
+        switch (ref.sym.data) {
           .ext_func, .ny_func => self.fillLiteral(input.pos, expr, .{
             .funcref = .{
-              .func = ref
+              .func = ref.sym,
             },
           }),
           .variable => |*v| {
@@ -287,7 +296,7 @@ pub const Interpreter = struct {
         const is_keyword = sig.returns.is(.ast_node);
         const allocator = if (is_keyword) &self.storage.allocator
                           else &self.loader.context.storage.allocator;
-        var args_failed_to_interpret: ?data.Position = null;
+        var args_failed_to_interpret: ?model.Position = null;
         for (rc.args) |*arg, i| {
           if (arg.*.data != .expression) {
             arg.*.data =
@@ -308,17 +317,18 @@ pub const Interpreter = struct {
           }
         } else {
           const args = try allocator.alloc(
-            *data.Expression, sig.parameters.len);
+            *model.Expression, sig.parameters.len);
           var seen_poison = false;
           for (rc.args) |arg, i| {
             args[i] = arg.data.expression;
             if (args[i].expected_type.is(.poison)) seen_poison = true;
           }
-          const expr = try allocator.create(data.Expression);
+          const expr = try allocator.create(model.Expression);
           expr.* = .{
             .pos = input.pos,
             .data = .{
               .call = .{
+                .ns = rc.ns,
                 .target = rc.target,
                 .exprs = args,
               },
@@ -328,7 +338,7 @@ pub const Interpreter = struct {
           if (is_keyword) {
             var eval = nyarna.Evaluator{.context = self.loader.context};
             const res = try eval.evaluateKeywordCall(self, &expr.data.call);
-            return self.tryInterpret(res, report_failure);
+            return self.tryInterpret(res, report_failure, ctx);
           } else {
             input.data = .{.expression = expr};
           }
@@ -337,7 +347,7 @@ pub const Interpreter = struct {
       },
       .expression => input,
       .voidNode => blk: {
-        const expr = try self.storage.allocator.create(data.Expression);
+        const expr = try self.storage.allocator.create(model.Expression);
         expr.* = .{
           .pos = input.pos,
           .data = .void,
@@ -349,34 +359,35 @@ pub const Interpreter = struct {
     };
   }
 
-  pub fn interpret(self: *Interpreter, input: *data.Node)
-      nyarna.Error!*data.Expression {
-    const res = try self.tryInterpret(input, true);
+  pub fn interpret(self: *Interpreter, input: *model.Node)
+      nyarna.Error!*model.Expression {
+    const res = try self.tryInterpret(input, true, null);
     return switch (res.data) {
       .expression => |expr| expr,
       else => blk: {
-        const ret = try self.createPublic(data.Expression);
+        const ret = try self.createPublic(model.Expression);
         ret.fillPoison(input.pos);
         break :blk ret;
       }
     };
   }
 
-  pub fn resolveSymbol(self: *Interpreter, pos: data.Position, ns: u15,
-                       name: []const u8) !*data.Node {
-    var ret = try self.storage.allocator.create(data.Node);
-    ret.pos = pos;
-
+  pub fn resolveSymbol(self: *Interpreter, pos: model.Position, ns: u15,
+                       name: []const u8) !*model.Node {
     var syms = &self.namespaces.items[ns];
-    ret.data = .{
-      .resolved_symref = syms.get(name) orelse {
-        ret.data = .{
-          .unresolved_symref = .{
-            .ns = ns, .name = name
-          }
-        };
-        return ret;
-      }
+    var ret = try self.storage.allocator.create(model.Node);
+    ret.* = .{
+      .pos = pos,
+      .data = if (syms.get(name)) |sym| .{
+        .resolved_symref = .{
+          .ns = ns,
+          .sym = sym,
+        },
+      } else .{
+        .unresolved_symref = .{
+          .ns = ns, .name = name
+        }
+      },
     };
     return ret;
   }
@@ -387,33 +398,34 @@ pub const Interpreter = struct {
     var_chain: struct {
       /// the target variable that is to be indexed.
       target: struct {
-        variable: *data.Symbol.Variable,
-        pos: data.Position,
+        variable: *model.Symbol.Variable,
+        pos: model.Position,
       },
-      /// chain into the fields of a variable. Each item is the index of a nested
-      /// field.
+      /// chain into the fields of a variable. Each item is the index of a
+      /// nested field.
       field_chain: std.ArrayListUnmanaged(usize) = .{},
-      t: data.Type,
+      t: model.Type,
     },
     /// last chain item was resolved to a function.
     func_ref: struct {
+      ns: u15,
       /// must be ExtFunc or NyFunc
-      target: *data.Symbol,
-      signature: *const data.Type.Signature,
+      target: *model.Symbol,
+      signature: *const model.Type.Signature,
       /// set if targt is a function reference in the namespace of a type,
       /// which has been accessed via an expression of that type. That is only
       /// allowed in the context of a call. The caller of resolveChain is to
       /// enforce this.
-      prefix: ?*data.Expression = null,
+      prefix: ?*model.Expression = null,
     },
     /// last chain item was resolved to a type. Type is a pointer into a
-    /// data.Symbol.
-    type_ref: *data.Type,
+    /// model.Symbol.
+    type_ref: *model.Type,
     /// chain starts at an expression and descends into the returned value.
     expr_chain: struct {
-      expr: *data.Expression,
+      expr: *model.Expression,
       field_chain: std.ArrayListUnmanaged(usize) = .{},
-      t: data.Type,
+      t: model.Type,
     },
     /// the resolution failed because an identifier in the chain could not be
     /// resolved – this is not necessarily an error since the chain may be
@@ -423,14 +435,15 @@ pub const Interpreter = struct {
     poison,
   };
 
-  /// resolves an accessor chain of *data.Node. iff force_fail is true, failure
+  /// resolves an accessor chain of *model.Node. iff force_fail is true, failure
   /// to resolve the base symbol will be reported as error and .poison will be
   /// returned; else no error will be reported and .failed will be returned.
-  pub fn resolveChain(self: *Interpreter, chain: *data.Node, force_fail: bool)
-      nyarna.Error!ChainResolution {
+  pub fn resolveChain(
+      self: *Interpreter, chain: *model.Node, force_fail: bool,
+      ctx: ?*graph.ResolutionContext)nyarna.Error!ChainResolution {
     switch (chain.data) {
       .access => |value| {
-        const inner = try self.resolveChain(value.subject, force_fail);
+        const inner = try self.resolveChain(value.subject, force_fail, ctx);
         switch (inner) {
           .var_chain => |_| {
             // TODO: find field in value's type, update value's type and the
@@ -459,17 +472,19 @@ pub const Interpreter = struct {
         }
       },
       .unresolved_symref => return .failed,
-      .resolved_symref => |sym| return switch(sym.data) {
+      .resolved_symref => |rs| return switch(rs.sym.data) {
         .ext_func => |*ef| ChainResolution{
           .func_ref = .{
-            .target = sym,
+            .ns = rs.ns,
+            .target = rs.sym,
             .signature = ef.sig(),
             .prefix = null,
           },
         },
         .ny_func => |*nf| ChainResolution{
           .func_ref = .{
-            .target = sym,
+            .ns = rs.ns,
+            .target = rs.sym,
             .signature = nf.sig(),
             .prefix = null,
           },
@@ -489,7 +504,7 @@ pub const Interpreter = struct {
         },
       },
       else => {
-        const res = try self.tryInterpret(chain, force_fail);
+        const res = try self.tryInterpret(chain, force_fail, ctx);
         return switch (res.data) {
           .expression => |_| {
             // TODO: resolve accessor chain in context of expression's type and
@@ -506,13 +521,14 @@ pub const Interpreter = struct {
   ///
   /// Substructures will be interpreted as necessary (see doc on probeType).
   /// If some substructure cannot be interpreted, null is returned.
-  fn probeNodeList(self: *Interpreter, nodes: []*data.Node) !?data.Type {
-    var sup = data.Type{.intrinsic = .every};
+  fn probeNodeList(self: *Interpreter, nodes: []*model.Node,
+                   ctx: ?*graph.ResolutionContext) !?model.Type {
+    var sup = model.Type{.intrinsic = .every};
     var already_poison = false;
     var seen_unfinished = false;
     var first_incompatible: ?usize = null;
     for (nodes) |node, i| {
-      const t = (try self.probeType(node)) orelse {
+      const t = (try self.probeType(node, ctx)) orelse {
         seen_unfinished = true;
         continue;
       };
@@ -527,15 +543,15 @@ pub const Interpreter = struct {
     }
     return if (first_incompatible) |index| blk: {
       const type_arr =
-        try self.storage.allocator.alloc(data.Type, index + 1);
-      type_arr[0] = (try self.probeType(nodes[index])).?;
+        try self.storage.allocator.alloc(model.Type, index + 1);
+      type_arr[0] = (try self.probeType(nodes[index], ctx)).?;
       var j = @as(usize, 0);
       while (j < index) : (j += 1) {
-        type_arr[j + 1] = (try self.probeType(nodes[j])).?;
+        type_arr[j + 1] = (try self.probeType(nodes[j], ctx)).?;
       }
       self.loader.logger.IncompatibleTypes(nodes[index].pos, type_arr);
-      break :blk data.Type{.intrinsic = .poison};
-    } else if (already_poison) data.Type{.intrinsic = .poison}
+      break :blk model.Type{.intrinsic = .poison};
+    } else if (already_poison) model.Type{.intrinsic = .poison}
     else if (seen_unfinished) null else sup;
   }
 
@@ -549,40 +565,42 @@ pub const Interpreter = struct {
   ///
   /// Semantic errors that are discovered during probing will be logged and lead
   /// to poison being returned.
-  fn probeType(self: *Interpreter, node: *data.Node) nyarna.Error!?data.Type {
+  pub fn probeType(self: *Interpreter, node: *model.Node,
+                   ctx: ?*graph.ResolutionContext) nyarna.Error!?model.Type {
     switch (node.data) {
-      .literal => |l| return data.Type{.intrinsic =
+      .literal => |l| return model.Type{.intrinsic =
         if (l.kind == .space) .space else .literal},
       .access, .assignment => {
-        const interpreted = try self.tryInterpret(node, false);
+        const interpreted = try self.tryInterpret(node, false, ctx);
         return switch (interpreted.data) {
           .expression => |expr| expr.expected_type,
           else => null
         };
       },
-      .branches => |br| return try self.probeNodeList(br.branches),
+      .branches => |br| return try self.probeNodeList(br.branches, ctx),
       .concatenation => |con| {
-        const inner = (try self.probeNodeList(con.content)) orelse return null;
+        const inner =
+          (try self.probeNodeList(con.content, ctx)) orelse return null;
         return (try self.types().concat(inner)) orelse {
           self.loader.logger.InvalidInnerConcatType(
-            node.pos, &[_]data.Type{inner});
-          return data.Type{.intrinsic = .poison};
+            node.pos, &[_]model.Type{inner});
+          return model.Type{.intrinsic = .poison};
         };
       },
       .paragraphs => unreachable, // TODO
       .unresolved_symref => return null,
-      .resolved_symref => |ref| switch (ref.data) {
+      .resolved_symref => |ref| switch (ref.sym.data) {
         .ext_func => |ef| return ef.callable.typedef(),
         .ny_func => |nf| return nf.callable.typedef(),
         .variable => |v| return v.t,
         .ny_type => |t| switch (t) {
           .intrinsic => |it| return switch (it) {
             .location, .definition => unreachable, // TODO
-            else => data.Type{.intrinsic = .non_callable_type},
+            else => model.Type{.intrinsic = .non_callable_type},
           },
           .structural => |st| return switch (st.*) {
             .concat, .paragraphs, .list, .map => unreachable, // TODO
-            else => data.Type{.intrinsic = .non_callable_type},
+            else => model.Type{.intrinsic = .non_callable_type},
           },
           .instantiated => |it| return switch (it.data) {
             .textual, .numeric, .float, .tenum => unreachable, // TODO
@@ -594,26 +612,26 @@ pub const Interpreter = struct {
       .resolved_call => |rc|
         return rc.target.expected_type.structural.callable.sig.returns,
       .expression => |e| return e.expected_type,
-      .poisonNode => return data.Type{.intrinsic = .poison},
-      .voidNode => return data.Type{.intrinsic = .void},
+      .poisonNode => return model.Type{.intrinsic = .poison},
+      .voidNode => return model.Type{.intrinsic = .void},
     }
   }
 
   pub inline fn fillLiteral(
-      self: *Interpreter, at: data.Position, e: *data.Expression,
-      content: data.Value.Data) void {
+      self: *Interpreter, at: model.Position, e: *model.Expression,
+      content: model.Value.Data) void {
     self.loader.context.fillLiteral(at, e, content);
   }
 
-  pub inline fn genPublicLiteral(self: *Interpreter, at: data.Position,
-                                 content: data.Value.Data) !*data.Expression {
+  pub inline fn genPublicLiteral(self: *Interpreter, at: model.Position,
+                                 content: model.Value.Data) !*model.Expression {
     return self.loader.context.genLiteral(at, content);
   }
 
-  pub inline fn genValueNode(self: *Interpreter, pos: data.Position,
-                             content: data.Value.Data) !*data.Node {
+  pub inline fn genValueNode(self: *Interpreter, pos: model.Position,
+                             content: model.Value.Data) !*model.Node {
     const expr = try self.genPublicLiteral(pos, content);
-    var ret = try self.storage.allocator.create(data.Node);
+    var ret = try self.storage.allocator.create(model.Node);
     ret.* = .{
       .pos = pos,
       .data = .{
@@ -623,8 +641,8 @@ pub const Interpreter = struct {
     return ret;
   }
 
-  fn createTextLiteral(self: *Interpreter, l: *data.Node.Literal, t: data.Type,
-                       e: *data.Expression) nyarna.Error!void {
+  fn createTextLiteral(self: *Interpreter, l: *model.Node.Literal,
+                       t: model.Type, e: *model.Expression) nyarna.Error!void {
     switch (t) {
       .intrinsic => |it| switch (it) {
         .space => if (l.kind == .space)
@@ -636,7 +654,7 @@ pub const Interpreter = struct {
             },
           }) else {
             self.loader.logger.ExpectedExprOfTypeXGotY(
-              l.pos(), &[_]data.Type{t, .{.intrinsic = .literal}});
+              l.pos(), &[_]model.Type{t, .{.intrinsic = .literal}});
             e.fillPoison(l.pos());
           },
         .literal, .raw =>
@@ -663,7 +681,7 @@ pub const Interpreter = struct {
         .list => |*list| try self.createTextLiteral(l, list.inner, e), // TODO
         .map, .callable => {
           self.loader.logger.ExpectedExprOfTypeXGotY(
-            l.pos(), &[_]data.Type{t, .{.intrinsic = .literal}});
+            l.pos(), &[_]model.Type{t, .{.intrinsic = .literal}});
           e.fillPoison(l.pos());
         },
         .intersection => |*inter|
@@ -671,7 +689,7 @@ pub const Interpreter = struct {
             try self.createTextLiteral(l, scalar, e);
           } else {
             self.loader.logger.ExpectedExprOfTypeXGotY(
-              l.pos(), &[_]data.Type{t, .{.intrinsic = .literal}});
+              l.pos(), &[_]model.Type{t, .{.intrinsic = .literal}});
             e.fillPoison(l.pos());
           }
       },
@@ -682,7 +700,7 @@ pub const Interpreter = struct {
         .tenum => unreachable, // TODO
         .record => {
           self.loader.logger.ExpectedExprOfTypeXGotY(l.pos(),
-            &[_]data.Type{
+            &[_]model.Type{
               t, .{.intrinsic = if (l.kind == .text) .literal else .space},
             });
           e.fillPoison(l.pos());
@@ -698,26 +716,26 @@ pub const Interpreter = struct {
   /// calculate the actual type of inner structures and check them for
   /// compatibility with t.
   fn interpretWithTargetType(
-      self: *Interpreter, input: *data.Node, t: data.Type, probed: bool)
-      nyarna.Error!*data.Node {
+      self: *Interpreter, input: *model.Node, t: model.Type, probed: bool)
+      nyarna.Error!*model.Node {
     return switch (input.data) {
       // for text literals, do compile-time type conversions if possible
       .literal => |*l| blk: {
-        const e = try self.createPublic(data.Expression);
+        const e = try self.createPublic(model.Expression);
         try self.createTextLiteral(l, t, e);
         e.expected_type = t;
         input.data = .{.expression = e};
         break :blk input;
       },
       .access, .assignment, .resolved_symref, .resolved_call =>
-        self.tryInterpret(input, false),
+        self.tryInterpret(input, false, null),
       .branches => |br| blk: {
         if (!probed) {
           const actual_type =
-            (try self.probeType(input)) orelse break :blk input;
+            (try self.probeType(input, null)) orelse break :blk input;
           if (!self.types().lesserEqual(actual_type, t)) {
             self.loader.logger.ExpectedExprOfTypeXGotY(
-              input.pos, &[_]data.Type{t, actual_type});
+              input.pos, &[_]model.Type{t, actual_type});
             input.data = .poisonNode;
             break :blk input;
           }
@@ -725,7 +743,7 @@ pub const Interpreter = struct {
         const condition = cblk: {
           // TODO: use intrinsic Boolean type here
           const res = try self.interpretWithTargetType(
-            br.condition, data.Type{.intrinsic = .literal}, false);
+            br.condition, model.Type{.intrinsic = .literal}, false);
           switch (res.data) {
             .expression => |expr| break :cblk expr,
             else => break :blk input,
@@ -739,10 +757,10 @@ pub const Interpreter = struct {
         }
         if (failed_some) break :blk input;
         const exprs = try self.loader.context.storage.allocator.alloc(
-          *data.Expression, br.branches.len);
+          *model.Expression, br.branches.len);
         for (br.branches) |item, i|
           exprs[i] = item.data.expression;
-        const expr = try self.createPublic(data.Expression);
+        const expr = try self.createPublic(model.Expression);
         expr.* = .{
           .pos = input.pos,
           .data = .{
@@ -759,10 +777,10 @@ pub const Interpreter = struct {
       .concatenation => |con| blk: {
         if (!probed) {
           const actual_type =
-            (try self.probeType(input)) orelse break :blk input;
+            (try self.probeType(input, null)) orelse break :blk input;
           if (!self.types().lesserEqual(actual_type, t)) {
             self.loader.logger.ExpectedExprOfTypeXGotY(
-              input.pos, &[_]data.Type{t, actual_type});
+              input.pos, &[_]model.Type{t, actual_type});
             input.data = .poisonNode;
             break :blk input;
           }
@@ -774,11 +792,11 @@ pub const Interpreter = struct {
         }
         if (failed_some) break :blk input;
         const exprs = try self.loader.context.storage.allocator.alloc(
-          *data.Expression, con.content.len);
+          *model.Expression, con.content.len);
         // TODO: properly handle paragraph types
         for (con.content) |item, i|
           exprs[i] = item.data.expression;
-        const expr = try self.createPublic(data.Expression);
+        const expr = try self.createPublic(model.Expression);
         expr.* = .{
           .pos = input.pos,
           .data = .{
@@ -792,13 +810,13 @@ pub const Interpreter = struct {
       .paragraphs => unreachable,
       .unresolved_symref, .unresolved_call, .expression => input,
       .voidNode => blk: {
-        const e = try self.createPublic(data.Expression);
+        const e = try self.createPublic(model.Expression);
         e.fillVoid(input.pos);
         input.data = .{.expression = e};
         break :blk input;
       },
       .poisonNode => blk: {
-        const e = try self.createPublic(data.Expression);
+        const e = try self.createPublic(model.Expression);
         e.fillPoison(input.pos);
         input.data = .{.expression = e};
         break :blk input;
@@ -816,8 +834,8 @@ pub const Interpreter = struct {
   ///    conversion.
   /// null is returned if the association cannot be made currently because of
   /// unresolved symbols.
-  pub fn associate(self: *Interpreter, node: *data.Node, t: data.Type)
-      !?*data.Expression {
+  pub fn associate(self: *Interpreter, node: *model.Node, t: model.Type)
+      !?*model.Expression {
     return switch ((try self.interpretWithTargetType(node, t, false)).data) {
       .expression => |expr| blk: {
         if (self.types().lesserEqual(expr.expected_type, t)) {
@@ -826,7 +844,7 @@ pub const Interpreter = struct {
         }
         // TODO: semantic conversions here
         self.loader.logger.ExpectedExprOfTypeXGotY(
-          node.pos, &[_]data.Type{t, expr.expected_type});
+          node.pos, &[_]model.Type{t, expr.expected_type});
         expr.fillPoison(node.pos);
         break :blk expr;
       },

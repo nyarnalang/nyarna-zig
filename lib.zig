@@ -3,17 +3,18 @@ const nyarna = @import("nyarna.zig");
 const Interpreter = nyarna.Interpreter;
 const Context = nyarna.Context;
 const Evaluator = nyarna.Evaluator;
-const data = nyarna.data;
+const model = nyarna.model;
 const types = nyarna.types;
+const algo = @import("load/algo.zig");
 
 /// A provider implements all external functions for a certain Nyarna module.
 pub const Provider = struct {
   pub const KeywordWrapper = fn(
-    ctx: *Interpreter, pos: data.Position,
-    stack_frame: [*]data.StackItem) nyarna.Error!*data.Node;
+    ctx: *Interpreter, pos: model.Position,
+    stack_frame: [*]model.StackItem) nyarna.Error!*model.Node;
   pub const BuiltinWrapper = fn(
-    ctx: *Evaluator, pos: data.Position,
-    stack_frame: [*]data.StackItem) nyarna.Error!*data.Value;
+    ctx: *Evaluator, pos: model.Position,
+    stack_frame: [*]model.StackItem) nyarna.Error!*model.Value;
 
   getKeyword: fn(name: []const u8) ?KeywordWrapper,
   getBuiltin: fn(name: []const u8) ?BuiltinWrapper,
@@ -58,28 +59,28 @@ pub const Provider = struct {
 
       provider: Provider,
 
-      fn getTypedValue(comptime T: type, v: *data.Value) T {
+      fn getTypedValue(comptime T: type, v: *model.Value) T {
         return switch (T) {
-          data.Type => v.data.typeval.t,
+          model.Type => v.data.typeval.t,
           else => switch (@typeInfo(T)) {
             .Optional => |opt| if (v.data == .void) null
                                else getTypedValue(opt.child, v),
             .Pointer => |ptr| switch (ptr.child) {
-              data.Value.TextScalar => &v.data.text,
-              data.Value.Number => &v.data.number,
-              data.Value.FloatNumber => &v.data.float,
-              data.Value.Enum => &v.data.enumval,
-              data.Value.Record => &v.data.record,
-              data.Value.Concat => &v.data.concat,
-              data.Value.List => &v.data.list,
-              data.Value.Map => &v.data.map,
-              data.Value.TypeVal => &v.data.typeval,
-              data.Value.FuncRef => &v.data.funcref,
-              data.Value.Location => &v.data.location,
-              data.Value.Definition => &v.data.definition,
-              data.Value.Ast => &v.data.ast,
-              data.Value.BlockHeader => &v.data.block_header,
-              data.Value => |cval| getTypedValue(T, &cval),
+              model.Value.TextScalar => &v.data.text,
+              model.Value.Number => &v.data.number,
+              model.Value.FloatNumber => &v.data.float,
+              model.Value.Enum => &v.data.enumval,
+              model.Value.Record => &v.data.record,
+              model.Value.Concat => &v.data.concat,
+              model.Value.List => &v.data.list,
+              model.Value.Map => &v.data.map,
+              model.Value.TypeVal => &v.data.typeval,
+              model.Value.FuncRef => &v.data.funcref,
+              model.Value.Location => &v.data.location,
+              model.Value.Definition => &v.data.definition,
+              model.Value.Ast => &v.data.ast,
+              model.Value.BlockHeader => &v.data.block_header,
+              model.Value => |cval| getTypedValue(T, &cval),
               else => unreachable,
             },
             else => unreachable,
@@ -91,8 +92,8 @@ pub const Provider = struct {
                        comptime decl: std.builtin.TypeInfo.Declaration,
                        comptime Ret: type) type {
         return struct {
-          fn wrapper(ctx: FirstArg, pos: data.Position,
-                     stack_frame: [*]data.StackItem) nyarna.Error!*Ret {
+          fn wrapper(ctx: FirstArg, pos: model.Position,
+                     stack_frame: [*]model.StackItem) nyarna.Error!*Ret {
             var unwrapped: Params(@typeInfo(decl.data.Fn.fn_type).Fn) =
               undefined;
             inline for (@typeInfo(@TypeOf(unwrapped)).Struct.fields)
@@ -123,7 +124,7 @@ pub const Provider = struct {
                   FirstArg) continue;
               if (std.hash_map.eqlString(name, decl.name)) {
                 return SingleWrapper(FirstArg, decl,
-                  if (keyword) data.Node else data.Value).wrapper;
+                  if (keyword) model.Node else model.Value).wrapper;
               }
             }
             return null;
@@ -152,19 +153,19 @@ pub const Provider = struct {
 };
 
 pub const Intrinsics = Provider.Wrapper(struct {
-  fn location(intpr: *Interpreter, pos: data.Position,
-              name: []const u8, t: ?data.Type, primary: *data.Value.Enum,
-              varargs: *data.Value.Enum, varmap: *data.Value.Enum,
-              mutable: *data.Value.Enum, header: ?*data.Value.BlockHeader,
-              default: ?*data.Value.Ast) nyarna.Error!*data.Node {
+  fn location(intpr: *Interpreter, pos: model.Position,
+              name: []const u8, t: ?model.Type, primary: *model.Value.Enum,
+              varargs: *model.Value.Enum, varmap: *model.Value.Enum,
+              mutable: *model.Value.Enum, header: ?*model.Value.BlockHeader,
+              default: ?*model.Value.Ast) nyarna.Error!*model.Node {
     var expr = if (default) |node| blk: {
       var val = try intpr.interpret(node.root);
       if (t) |given_type| {
         if (!intpr.types().lesserEqual(val.expected_type, given_type)
             and !val.expected_type.is(.poison)) {
           intpr.loader.logger.ExpectedExprOfTypeXGotY(
-            val.pos, &[_]data.Type{given_type, val.expected_type});
-          return data.Node.poison(&intpr.storage.allocator, pos);
+            val.pos, &[_]model.Type{given_type, val.expected_type});
+          return model.Node.poison(&intpr.storage.allocator, pos);
         }
       }
       break :blk val;
@@ -182,16 +183,16 @@ pub const Intrinsics = Provider.Wrapper(struct {
       if (varargs.index == 1) {
         intpr.loader.logger.IncompatibleFlag("varmap",
           varmap.value().origin, varargs.value().origin);
-        return data.Node.poison(&intpr.storage.allocator, pos);
+        return model.Node.poison(&intpr.storage.allocator, pos);
       } else if (mutable.index == 1) {
         intpr.loader.logger.IncompatibleFlag("varmap",
           varmap.value().origin, mutable.value().origin);
-        return data.Node.poison(&intpr.storage.allocator, pos);
+        return model.Node.poison(&intpr.storage.allocator, pos);
       }
     } else if (varargs.index == 1) if (mutable.index == 1) {
       intpr.loader.logger.IncompatibleFlag("mutable",
         mutable.value().origin, varargs.value().origin);
-      return data.Node.poison(&intpr.storage.allocator, pos);
+      return model.Node.poison(&intpr.storage.allocator, pos);
     };
 
     return intpr.genValueNode(pos, .{
@@ -208,8 +209,8 @@ pub const Intrinsics = Provider.Wrapper(struct {
     });
   }
 
-  fn definition(intpr: *Interpreter, pos: data.Position, name: []const u8,
-                root: *data.Value.Enum, node: *data.Value.Ast) !*data.Node {
+  fn definition(intpr: *Interpreter, pos: model.Position, name: []const u8,
+                root: *model.Value.Enum, node: *model.Value.Ast) !*model.Node {
     return intpr.genValueNode(pos, .{
       .definition = .{
         .name = name,
@@ -219,19 +220,27 @@ pub const Intrinsics = Provider.Wrapper(struct {
     });
   }
 
-  fn declare(_: *Evaluator, _: data.Position,
-             _: ?data.Type, _: *data.Value.Concat,
-             _: *data.Value.Concat) !*data.Value {
-    unreachable;
+  fn declare(intpr: *Interpreter, pos: model.Position,
+             _: ?model.Type, public: *model.Value.Concat,
+             private: *model.Value.Concat) nyarna.Error!*model.Node {
+    var defs = try intpr.storage.allocator.alloc(*model.Value.Definition,
+      public.items.items.len + private.items.items.len);
+    for (public.items.items) |item, i| defs[i] = &item.data.definition;
+    for (private.items.items) |item, i|
+      defs[public.items.items.len + i] = &item.data.definition;
+    var res = try algo.DeclareResolution.create(intpr, defs);
+    try res.execute();
+    return model.Node.genVoid(&intpr.storage.allocator, pos);
   }
 
-  fn @"if"(intpr: *Interpreter, pos: data.Position,
-           condition: *data.Value.Ast, then: *data.Value.Ast,
-           @"else": *data.Value.Ast) !*data.Node {
-    const ret = try intpr.storage.allocator.create(data.Node);
-    const nodes = try intpr.storage.allocator.alloc(*data.Node, 2);
+  fn @"if"(intpr: *Interpreter, pos: model.Position,
+           condition: *model.Value.Ast, then: *model.Value.Ast,
+           @"else": *model.Value.Ast) !*model.Node {
+    const nodes = try intpr.storage.allocator.alloc(*model.Node, 2);
     nodes[1] = then.root;
     nodes[0] = @"else".root;
+
+    const ret = try intpr.storage.allocator.create(model.Node);
     ret.* = .{
       .pos = pos,
       .data = .{
@@ -245,8 +254,8 @@ pub const Intrinsics = Provider.Wrapper(struct {
   }
 });
 
-fn extFunc(context: *Context, name: []const u8, sig: *data.Type.Signature,
-           is_type: bool, p: *Provider) !data.Symbol.ExtFunc {
+fn extFunc(context: *Context, name: []const u8, sig: *model.Type.Signature,
+           is_type: bool, p: *Provider) !model.Symbol.ExtFunc {
   const impl_index = if (sig.isKeyword()) blk: {
     const impl = p.getKeyword(name) orelse {
       std.debug.print("don't know keyword: {s}\n", .{name});
@@ -262,24 +271,24 @@ fn extFunc(context: *Context, name: []const u8, sig: *data.Type.Signature,
     try context.builtin_registry.append(&context.storage.allocator, impl);
     break :blk context.builtin_registry.items.len - 1;
   };
-  const callable = try context.storage.allocator.create(data.Type.Structural);
+  const callable = try context.storage.allocator.create(model.Type.Structural);
   callable.* = .{
     .callable = .{
       .sig = sig,
       .is_type = is_type,
     },
   };
-  return data.Symbol.ExtFunc{
+  return model.Symbol.ExtFunc{
     .callable = &callable.callable,
     .impl_index = impl_index,
     .cur_frame = null,
   };
 }
 
-fn extFuncSymbol(context: *Context, name: []const u8, sig: *data.Type.Signature,
-                 p: *Provider) !*data.Symbol {
-  const ret = try context.storage.allocator.create(data.Symbol);
-  ret.defined_at = data.Position.intrinsic();
+fn extFuncSymbol(context: *Context, name: []const u8,
+                 sig: *model.Type.Signature, p: *Provider) !*model.Symbol {
+  const ret = try context.storage.allocator.create(model.Symbol);
+  ret.defined_at = model.Position.intrinsic();
   ret.name = name;
   ret.data = .{
     .ext_func = try extFunc(context, name, sig, false, p),
@@ -287,20 +296,20 @@ fn extFuncSymbol(context: *Context, name: []const u8, sig: *data.Type.Signature,
   return ret;
 }
 
-pub inline fn intLoc(context: *Context, content: data.Value.Location)
-    !*data.Value.Location {
-  const value = try context.storage.allocator.create(data.Value);
-  value.origin = data.Position.intrinsic();
+pub inline fn intLoc(context: *Context, content: model.Value.Location)
+    !*model.Value.Location {
+  const value = try context.storage.allocator.create(model.Value);
+  value.origin = model.Position.intrinsic();
   value.data = .{
     .location = content
   };
   return &value.data.location;
 }
 
-pub fn intrinsicModule(context: *Context) !*data.Module {
-  var ret = try context.storage.allocator.create(data.Module);
-  ret.root = try context.genLiteral(data.Position.intrinsic(), .void);
-  ret.symbols = try context.storage.allocator.alloc(*data.Symbol, 2);
+pub fn intrinsicModule(context: *Context) !*model.Module {
+  var ret = try context.storage.allocator.create(model.Module);
+  ret.root = try context.genLiteral(model.Position.intrinsic(), .void);
+  ret.symbols = try context.storage.allocator.alloc(*model.Symbol, 2);
   var index = @as(usize, 0);
 
   var ip = Intrinsics.init();
@@ -312,22 +321,22 @@ pub fn intrinsicModule(context: *Context) !*data.Module {
   // location
   var b = try types.SigBuilder(.intrinsic).init(
     &context.storage.allocator, 8, .{.intrinsic = .ast_node});
-  try b.push(try intLoc(context, data.Value.Location.simple(
+  try b.push(try intLoc(context, model.Value.Location.simple(
     "name", .{.intrinsic = .literal}, null))); // TODO: identifier
-  try b.push(try intLoc(context, data.Value.Location.simple(
+  try b.push(try intLoc(context, model.Value.Location.simple(
     "type", .{.intrinsic = .non_callable_type}, null)));
-  try b.push(try intLoc(context, data.Value.Location.simple(
+  try b.push(try intLoc(context, model.Value.Location.simple(
     "primary", .{.instantiated = &context.types.boolean}, null)));
-  try b.push(try intLoc(context, data.Value.Location.simple(
+  try b.push(try intLoc(context, model.Value.Location.simple(
     "varargs", .{.instantiated = &context.types.boolean}, null)));
-  try b.push(try intLoc(context, data.Value.Location.simple(
+  try b.push(try intLoc(context, model.Value.Location.simple(
     "varmap", .{.instantiated = &context.types.boolean}, null)));
-  try b.push(try intLoc(context, data.Value.Location.simple(
+  try b.push(try intLoc(context, model.Value.Location.simple(
     "mutable", .{.instantiated = &context.types.boolean}, null)));
-  try b.push(try intLoc(context, data.Value.Location.simple(
+  try b.push(try intLoc(context, model.Value.Location.simple(
     "header", (try context.types.optional(
       .{.intrinsic = .block_header})).?, null)));
-  try b.push(try intLoc(context, data.Value.Location.primary(
+  try b.push(try intLoc(context, model.Value.Location.primary(
     "default", (try context.types.optional(
       .{.intrinsic = .ast_node})).?, null)));
   context.types.type_constructors[0] =
@@ -336,11 +345,11 @@ pub fn intrinsicModule(context: *Context) !*data.Module {
   // definition
   b = try types.SigBuilder(.intrinsic).init(
     &context.storage.allocator, 3, .{.intrinsic = .ast_node});
-  try b.push(try intLoc(context, data.Value.Location.simple(
+  try b.push(try intLoc(context, model.Value.Location.simple(
     "name", .{.intrinsic = .literal}, null))); // TODO: identifier
-  try b.push(try intLoc(context, data.Value.Location.simple(
+  try b.push(try intLoc(context, model.Value.Location.simple(
     "root", .{.instantiated = &context.types.boolean}, null)));
-  try b.push(try intLoc(context, data.Value.Location.simple(
+  try b.push(try intLoc(context, model.Value.Location.simple(
     "item", .{.intrinsic = .ast_node}, null)));
   context.types.type_constructors[1] =
     try extFunc(context, "definition", b.finish(), true, &ip.provider);
@@ -351,15 +360,15 @@ pub fn intrinsicModule(context: *Context) !*data.Module {
 
   // declare
   b = try types.SigBuilder(.intrinsic).init(
-    &context.storage.allocator, 3, .{.intrinsic = .void});
+    &context.storage.allocator, 3, .{.intrinsic = .ast_node});
   var definition_concat =
     (try context.types.concat(.{.intrinsic = .definition})).?;
-  try b.push(try intLoc(context, data.Value.Location.simple(
-    "type", (try context.types.optional(
+  try b.push(try intLoc(context, model.Value.Location.simple(
+    "namespace", (try context.types.optional(
       .{.intrinsic = .non_callable_type})).?, null)));
-  try b.push(try intLoc(context, data.Value.Location.primary(
+  try b.push(try intLoc(context, model.Value.Location.primary(
     "public", definition_concat, null)));
-  try b.push(try intLoc(context, data.Value.Location.simple(
+  try b.push(try intLoc(context, model.Value.Location.simple(
     "private", definition_concat, null)));
   ret.symbols[index] =
     try extFuncSymbol(context, "declare", b.finish(), &ip.provider);
@@ -368,11 +377,11 @@ pub fn intrinsicModule(context: *Context) !*data.Module {
   // if
   b = try types.SigBuilder(.intrinsic).init(
     &context.storage.allocator, 3, .{.intrinsic = .ast_node});
-  try b.push(try intLoc(context, data.Value.Location.simple(
+  try b.push(try intLoc(context, model.Value.Location.simple(
     "condition", .{.intrinsic = .ast_node}, null)));
-  try b.push(try intLoc(context, data.Value.Location.primary(
+  try b.push(try intLoc(context, model.Value.Location.primary(
     "then", .{.intrinsic = .ast_node}, null)));
-  try b.push(try intLoc(context, data.Value.Location.simple(
+  try b.push(try intLoc(context, model.Value.Location.simple(
     "else", .{.intrinsic = .ast_node}, null)));
   ret.symbols[index]  =
     try extFuncSymbol(context, "if", b.finish(), &ip.provider);

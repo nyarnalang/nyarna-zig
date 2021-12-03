@@ -7,7 +7,7 @@ pub fn main() !void {
   _ = try eh.write(
     \\const std = @import("std");
     \\
-    \\const data = @import("data.zig");
+    \\const data = @import("model.zig");
     \\const errors = @import("errors.zig");
     \\pub usingnamespace errors;
     \\

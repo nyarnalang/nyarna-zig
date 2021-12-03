@@ -1,7 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const nyarna = @import("../nyarna.zig");
-const data = nyarna.data;
+const model = nyarna.model;
 const errors = nyarna.errors;
 const Interpreter = nyarna.Interpreter;
 
@@ -20,11 +20,11 @@ pub const Parser = struct {
   /// Contains information about the current command's structure and processes
   /// arguments to that command.
   const Command = struct {
-    start: data.Cursor,
+    start: model.Cursor,
     info: union(enum) {
       /// This state means that the command has just been created and awaits
       /// classification via the next lexer token.
-      unknown: *data.Node,
+      unknown: *model.Node,
       resolved_call: mapper.SignatureMapper,
       unresolved_call: mapper.CollectingMapper,
       assignment: mapper.AssignmentMapper,
@@ -41,8 +41,8 @@ pub const Parser = struct {
     /// when a parent scope ends.
     swallow_depth: ?u21 = null,
 
-    fn pushName(c: *Command, pos: data.Position, name: []const u8, direct: bool,
-        flag: mapper.Mapper.ProtoArgFlag) void {
+    fn pushName(c: *Command, pos: model.Position, name: []const u8,
+                direct: bool, flag: mapper.Mapper.ProtoArgFlag) void {
       c.cur_cursor = if (c.mapper.map(pos,
           if (direct) .{.direct = name} else .{.named = name}, flag)
       ) |mapped| .{
@@ -50,7 +50,7 @@ pub const Parser = struct {
       } else .failed;
     }
 
-    fn pushArg(c: *Command, alloc: *std.mem.Allocator, arg: *data.Node) !void {
+    fn pushArg(c: *Command, alloc: *std.mem.Allocator, arg: *model.Node) !void {
       defer c.cur_cursor = .not_pushed;
       const cursor = switch (c.cur_cursor) {
         .mapped => |val| val,
@@ -60,14 +60,14 @@ pub const Parser = struct {
       try c.mapper.push(alloc, cursor, arg);
     }
 
-    fn pushPrimary(c: *Command, pos: data.Position, config: bool) void {
+    fn pushPrimary(c: *Command, pos: model.Position, config: bool) void {
       c.cur_cursor = if (c.mapper.map(pos, .primary,
           if (config) .block_with_config else .block_no_config)) |cursor| .{
             .mapped = cursor,
           } else .failed;
     }
 
-    fn shift(c: *Command, context: *Interpreter, end: data.Cursor) !void {
+    fn shift(c: *Command, context: *Interpreter, end: model.Cursor) !void {
       const newNode = try c.mapper.finalize(
         &context.storage.allocator, context.input.between(c.start, end));
       c.info = .{.unknown = newNode};
@@ -81,10 +81,11 @@ pub const Parser = struct {
     }
 
     fn startResolvedCall(
-        c: *Command, context: *Interpreter, target: *data.Expression,
-        sig: *const data.Type.Signature) !void {
+        c: *Command, context: *Interpreter, target: *model.Expression,
+        ns: u15, sig: *const model.Type.Signature) !void {
       c.info = .{
-        .resolved_call = try mapper.SignatureMapper.init(context, target, sig),
+        .resolved_call =
+          try mapper.SignatureMapper.init(context, target, ns, sig),
       };
       c.mapper = &c.info.resolved_call.mapper;
       c.cur_cursor = .not_pushed;
@@ -111,10 +112,10 @@ pub const Parser = struct {
   /// The content level takes care of generating concatenations and paragraphs.
   const ContentLevel = struct {
     /// used for generating void nodes.
-    start: data.Cursor,
+    start: model.Cursor,
     /// Changes to command characters that occurred upon entering this level.
     /// For implicit block configs, this links to the block config definition.
-    changes: ?[]data.BlockConfig.Map,
+    changes: ?[]model.BlockConfig.Map,
     /// the currently open command on this content level. info === unknown if no
     /// command is open or only the subject has been read.
     /// every ContentLevel but the innermost one must have an open command.
@@ -122,14 +123,14 @@ pub const Parser = struct {
     /// whether this level has fullast semantics.
     fullast: bool,
 
-    nodes: std.ArrayListUnmanaged(*data.Node),
-    paragraphs: std.ArrayListUnmanaged(data.Node.Paragraphs.Item),
+    nodes: std.ArrayListUnmanaged(*model.Node),
+    paragraphs: std.ArrayListUnmanaged(model.Node.Paragraphs.Item),
 
-    block_config: ?*const data.BlockConfig,
+    block_config: ?*const model.BlockConfig,
     syntax_proc: ?*syntaxes.SpecialSyntax.Processor = null,
-    dangling_space: ?*data.Node = null,
+    dangling_space: ?*model.Node = null,
 
-    fn append(level: *ContentLevel, ip: *Interpreter, item: *data.Node)
+    fn append(level: *ContentLevel, ip: *Interpreter, item: *model.Node)
         !void {
       if (level.syntax_proc) |proc| {
         const res = try proc.push(proc, item.pos, .{.node = item});
@@ -144,17 +145,17 @@ pub const Parser = struct {
         const res = if (level.fullast) item else switch (item.data) {
           .literal, .unresolved_call, .unresolved_symref, .expression,
           .voidNode => item,
-          else => try ip.tryInterpret(item, false)
+          else => try ip.tryInterpret(item, false, null)
         };
         try level.nodes.append(&ip.storage.allocator, res);
       }
     }
 
     fn finalizeParagraph(level: *ContentLevel, ip: *Interpreter)
-        !*data.Node {
+        !*model.Node {
       switch(level.nodes.items.len) {
         0 => {
-          var ret = try ip.storage.allocator.create(data.Node);
+          var ret = try ip.storage.allocator.create(model.Node);
           ret.* = .{
             .pos = ip.input.at(level.start),
             .data = .voidNode,
@@ -163,7 +164,7 @@ pub const Parser = struct {
         },
         1 => return level.nodes.items[0],
         else => {
-          var ret = try ip.storage.allocator.create(data.Node);
+          var ret = try ip.storage.allocator.create(model.Node);
           ret.* = .{
             .pos = level.nodes.items[0].pos.span(last(level.nodes.items).*.pos),
             .data = .{
@@ -177,14 +178,14 @@ pub const Parser = struct {
       }
     }
 
-    fn implicitBlockConfig(level: *ContentLevel) ?*data.BlockConfig {
+    fn implicitBlockConfig(level: *ContentLevel) ?*model.BlockConfig {
       return switch (level.command.cur_cursor) {
         .mapped => |c| level.command.mapper.config(c),
         else => null,
       };
     }
 
-    fn finalize(level: *ContentLevel, p: *Parser) !*data.Node {
+    fn finalize(level: *ContentLevel, p: *Parser) !*model.Node {
       if (level.block_config) |c| {
         try p.revertBlockConfig(c);
       }
@@ -202,7 +203,7 @@ pub const Parser = struct {
           });
         }
 
-        var target = try alloc.create(data.Node);
+        var target = try alloc.create(model.Node);
         target.* = .{
           .pos = level.paragraphs.items[0].content.pos.span(
             last(level.paragraphs.items).content.pos),
@@ -275,9 +276,9 @@ pub const Parser = struct {
   /// level being the current source's root.
   levels: std.ArrayListUnmanaged(ContentLevel),
   /// currently parsed block config. Filled in the .config state.
-  config: ?*data.BlockConfig,
+  config: ?*model.BlockConfig,
   /// buffer for inline block config.
-  config_buffer: data.BlockConfig,
+  config_buffer: model.BlockConfig,
   /// stack of currently active namespace mapping statuses.
   /// namespace mappings create a new namespace, disable a namespace, or map a
   /// namespace from one character to another.
@@ -287,8 +288,8 @@ pub const Parser = struct {
 
   lexer: lex.Lexer,
   state: State,
-  cur: data.Token,
-  cur_start: data.Cursor,
+  cur: model.Token,
+  cur_start: model.Cursor,
 
   inline fn int(self: *@This()) *std.mem.Allocator {
     return &self.intpr().storage.allocator;
@@ -315,15 +316,15 @@ pub const Parser = struct {
     };
   }
 
-  pub fn parseFile(self: *Parser, path: []const u8, locator: data.Locator,
-      context: *Interpreter) !*data.Node {
+  pub fn parseFile(self: *Parser, path: []const u8, locator: model.Locator,
+      context: *Interpreter) !*model.Node {
     const file = try std.fs.cwd().openFile(path, .{});
     defer file.close();
     const file_contents = try std.fs.cwd().readFileAlloc(
       self.int(), path, (try file.stat()).size + 4);
     std.mem.copy(
       u8, file_contents[(file_contents.len - 4)..], "\x04\x04\x04\x04");
-    return self.parseSource(&data.Source{
+    return self.parseSource(&model.Source{
         .content = file_contents,
         .offsets = .{.line = 0, .column = 0},
         .name = path,
@@ -352,7 +353,7 @@ pub const Parser = struct {
   /// Instead, they are handed to the loader's errors.Handler. To check whether
   /// errors have occurred, check for increase of the handler's error_count.
   pub fn parseSource(self: *Parser, context: *Interpreter, fullast: bool)
-      !*data.Node {
+      !*model.Node {
     self.lexer = try lex.Lexer.init(context);
     self.advance();
     return self.doParse(fullast);
@@ -360,11 +361,11 @@ pub const Parser = struct {
 
   /// continue parsing. Precondition: Either parseSource() or resumeParse()
   /// have returned with .referred_source_unavailable previously on the given
-  /// parser, and have never returned a *data.Node.
+  /// parser, and have never returned a *model.Node.
   ///
   /// Apart from the precondition, this function has the same semantics as
   /// parseSource(), including that it may return .referred_source_unavailable.
-  pub fn resumeParse(self: *Parser) !*data.Node {
+  pub fn resumeParse(self: *Parser) !*model.Node {
     // when resuming, the fullast value is irrelevant since it is only inspected
     // when encountering the first non-space token in the file – which will
     // always be before parsing is interrupted.
@@ -407,9 +408,9 @@ pub const Parser = struct {
       })(self.logger(), self.lexer.walker.posFrom(self.cur_start));
     }
     if (builtin.mode == .Debug) {
-      if (@enumToInt(self.cur) >= @enumToInt(data.Token.skipping_call_id)) {
+      if (@enumToInt(self.cur) >= @enumToInt(model.Token.skipping_call_id)) {
         std.debug.print("  << skipping_call_id({})\n", .{
-            @enumToInt(self.cur) - @enumToInt(data.Token.skipping_call_id) + 1,
+            @enumToInt(self.cur) - @enumToInt(model.Token.skipping_call_id) + 1,
           });
       } else {
         std.debug.print("  << {s}\n", .{@tagName(self.cur)});
@@ -439,7 +440,7 @@ pub const Parser = struct {
       .wrong_call_id => unreachable,
       .skipping_call_id => unreachable,
       else => |t| {
-        if (@enumToInt(t) > @enumToInt(data.Token.skipping_call_id))
+        if (@enumToInt(t) > @enumToInt(model.Token.skipping_call_id))
           unreachable;
         self.cur = t;
         if (builtin.mode == .Debug) {
@@ -456,10 +457,10 @@ pub const Parser = struct {
     var parent = &self.levels.items[self.levels.items.len - 2];
     const lvl_node = try lvl.finalize(self);
     if (builtin.mode == .Debug) {
-      if (@enumToInt(self.cur) >= @enumToInt(data.Token.skipping_call_id)) {
+      if (@enumToInt(self.cur) >= @enumToInt(model.Token.skipping_call_id)) {
         std.debug.print("skipping_call_id({}): pushing {s} into command {s}\n",
           .{
-            @enumToInt(self.cur) - @enumToInt(data.Token.skipping_call_id) + 1,
+            @enumToInt(self.cur) - @enumToInt(model.Token.skipping_call_id) + 1,
             @tagName(lvl_node.data), @tagName(parent.command.info),
           });
       } else {
@@ -477,7 +478,7 @@ pub const Parser = struct {
     return last(self.levels.items);
   }
 
-  fn doParse(self: *Parser, implicit_fullast: bool) !*data.Node {
+  fn doParse(self: *Parser, implicit_fullast: bool) !*model.Node {
     while (true) {
       std.debug.print("parse step. state={s}, level stack =\n",
         .{@tagName(self.state)});
@@ -566,7 +567,7 @@ pub const Parser = struct {
                 },
                 else => {
                   std.debug.assert(@enumToInt(self.cur) >=
-                    @enumToInt(data.Token.skipping_call_id));
+                    @enumToInt(model.Token.skipping_call_id));
                   const cmd_start =
                     self.levels.items[self.levels.items.len - 2].command.start;
                   self.logger().SkippingCallId(
@@ -574,7 +575,7 @@ pub const Parser = struct {
                     self.lexer.recent_expected_id, self.lexer.recent_id,
                     self.intpr().input.at(cmd_start));
                   var i = @as(u32, 0);
-                  while (i < data.Token.numSkippedEnds(self.cur)): (i = i + 1) {
+                  while (i < model.Token.numSkippedEnds(self.cur)): (i += 1) {
                     try self.leaveLevel();
                   }
                 },
@@ -602,7 +603,7 @@ pub const Parser = struct {
           var content: std.ArrayListUnmanaged(u8) = .{};
           var non_space_len: usize = 0;
           var non_space_line_len: usize = 0;
-          var non_space_end: data.Cursor = undefined;
+          var non_space_end: model.Cursor = undefined;
           const textual_start = self.cur_start;
           while (true) {
             switch (self.cur) {
@@ -645,7 +646,8 @@ pub const Parser = struct {
             .block_end_open, .block_name_sep, .comma, .name_sep, .list_end,
             .end_source => blk: {
               content.shrinkAndFree(self.int(), non_space_len);
-              break :blk self.intpr().input.between(textual_start, non_space_end);
+              break :blk self.intpr().input.between(
+                textual_start, non_space_end);
             },
             else => self.lexer.walker.posFrom(textual_start),
           };
@@ -662,7 +664,7 @@ pub const Parser = struct {
                 if (self.cur != .space) break;
               }
             } else {
-              var node = try self.int().create(data.Node);
+              var node = try self.int().create(model.Node);
               node.* = .{
                 .pos = pos,
                 .data = .{
@@ -690,7 +692,7 @@ pub const Parser = struct {
             .access => {
               self.advance();
               if (self.cur != .identifier) unreachable; // TODO: recover
-              var node = try self.int().create(data.Node);
+              var node = try self.int().create(model.Node);
               node.* = .{
                 .pos =
                   self.lexer.walker.posFrom(lvl.command.info.unknown.pos.start),
@@ -722,7 +724,8 @@ pub const Parser = struct {
               const target = lvl.command.info.unknown;
               switch (target.data) {
                 .resolved_symref, .unresolved_symref, .access => {
-                  const res = try self.intpr().resolveChain(target, false);
+                  const res =
+                    try self.intpr().resolveChain(target, false, null);
                   switch (res) {
                     .var_chain => |_| {
                       unreachable; // TODO
@@ -735,9 +738,9 @@ pub const Parser = struct {
                           },
                         });
                       try lvl.command.startResolvedCall(
-                        self.intpr(), target_expr, fr.signature);
+                        self.intpr(), target_expr, fr.ns, fr.signature);
                       if (fr.prefix) |prefix| {
-                        const expr_node = try self.int().create(data.Node);
+                        const expr_node = try self.int().create(model.Node);
                         expr_node.* = .{
                           .pos = prefix.pos,
                           .data = .{
@@ -920,7 +923,7 @@ pub const Parser = struct {
             .read_block_header => {
               const start = self.cur_start;
               self.lexer.readBlockHeader();
-              const expr = try self.intpr().createPublic(data.Expression);
+              const expr = try self.intpr().createPublic(model.Expression);
               expr.data = .{
                 .literal = .{
                   .value = .{
@@ -933,7 +936,7 @@ pub const Parser = struct {
 
               self.advance();
               const check_swallow = if (self.cur == .diamond_open) blk: {
-                bh.config = @as(data.BlockConfig, undefined);
+                bh.config = @as(model.BlockConfig, undefined);
                 try self.readBlockConfig(
                   &bh.config.?, &self.intpr().loader.context.storage.allocator);
                 if (self.cur == .blocks_sep) {
@@ -957,10 +960,10 @@ pub const Parser = struct {
 
   const ConfigItemKind = enum {csym, syntax, map, off, fullast, empty, unknown};
 
-  fn readBlockConfig(self: *Parser, into: *data.BlockConfig,
+  fn readBlockConfig(self: *Parser, into: *model.BlockConfig,
                      alloc: *std.mem.Allocator) !void {
     std.debug.assert(self.cur == .diamond_open);
-    var mapList: std.ArrayListUnmanaged(data.BlockConfig.Map) = .{};
+    var mapList: std.ArrayListUnmanaged(model.BlockConfig.Map) = .{};
     into.* = .{
       .syntax = null,
       .off_colon = null,
@@ -1023,13 +1026,13 @@ pub const Parser = struct {
                   self.lexer.walker.contentFrom(self.cur_start.byte_offset))) {
                 std.hash.Adler32.hash("locations") => {
                   into.syntax = .{
-                    .pos = data.Position.intrinsic(),
+                    .pos = model.Position.intrinsic(),
                     .index = 0,
                   };
                 },
                 std.hash.Adler32.hash("definitions") => {
                   into.syntax = .{
-                    .pos = data.Position.intrinsic(),
+                    .pos = model.Position.intrinsic(),
                     .index = 1,
                   };
                 },
@@ -1174,7 +1177,8 @@ pub const Parser = struct {
             try self.pushLevel(if (parent.command.choseAstNodeParam()) false
                                else parent.fullast);
             if (parent.implicitBlockConfig()) |c| {
-              try self.applyBlockConfig(self.intpr().input.at(self.cur_start), c);
+              try self.applyBlockConfig(
+                self.intpr().input.at(self.cur_start), c);
             }
           }
           ind.* = .yes;
@@ -1275,8 +1279,8 @@ pub const Parser = struct {
     };
   }
 
-  fn applyBlockConfig(self: *Parser, pos: data.Position,
-                      config: *const data.BlockConfig) !void {
+  fn applyBlockConfig(self: *Parser, pos: model.Position,
+                      config: *const model.BlockConfig) !void {
     var sf = std.heap.stackFallback(128, self.int());
     var alloc = sf.get();
     const lvl = self.curLevel();
@@ -1380,7 +1384,7 @@ pub const Parser = struct {
     lvl.block_config = config;
   }
 
-  fn revertBlockConfig(self: *Parser, config: *const data.BlockConfig) !void {
+  fn revertBlockConfig(self: *Parser, config: *const model.BlockConfig) !void {
     // config.syntax does not need to be reversed, this happens automatically by
     // leaving the level.
 
@@ -1420,7 +1424,8 @@ pub const Parser = struct {
               const ns_index = ns_indexes[i];
               // only remove command character if it has not already been reset
               // to another namespace.
-              if (self.intpr().command_characters.get(mapping.to).? == ns_index) {
+              if (self.intpr().command_characters.get(mapping.to).?
+                  == ns_index) {
                 _ = self.intpr().command_characters.remove(mapping.to);
               }
               // this cannot fail because command_characters will always be

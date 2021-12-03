@@ -6,7 +6,7 @@ pub const Interpreter = @import("load/interpret.zig").Interpreter;
 pub const ModuleLoader = @import("load/load.zig").ModuleLoader;
 pub const Evaluator = @import("runtime.zig").Evaluator;
 
-pub const data = @import("data.zig");
+pub const model = @import("model.zig");
 pub const types = @import("types.zig");
 pub const errors = @import("errors");
 pub const lib = @import("lib.zig");
@@ -49,16 +49,16 @@ pub const Context = struct {
   /// This module contains the definitions of intrinsic symbols.
   /// it is initialized with the loader and used in all files the loader
   /// processes.
-  intrinsics: *const data.Module,
+  intrinsics: *const model.Module,
   /// list of known keyword implementations. They bear no name since they are
   /// referenced via their index.
   keyword_registry: std.ArrayListUnmanaged(lib.Provider.KeywordWrapper),
   /// list of known builtin implementations, analoguous to keyword_registry.
   builtin_registry: std.ArrayListUnmanaged(lib.Provider.BuiltinWrapper),
   /// stack for evaluation. Size can be set during initialization.
-  stack: []data.StackItem,
+  stack: []model.StackItem,
   /// current top of the stack, where new stack allocations happen.
-  stack_ptr: [*]data.StackItem,
+  stack_ptr: [*]model.StackItem,
 
   pub fn create(allocator: *std.mem.Allocator, reporter: *errors.Reporter,
                stack_size: usize) !*Context {
@@ -76,7 +76,7 @@ pub const Context = struct {
     };
     errdefer allocator.destroy(ret);
     errdefer ret.storage.deinit();
-    ret.stack = try allocator.alloc(data.StackItem, stack_size);
+    ret.stack = try allocator.alloc(model.StackItem, stack_size);
     ret.stack_ptr = ret.stack.ptr;
     errdefer allocator.free(ret.stack);
     ret.types = try types.Lattice.init(&ret.storage);
@@ -93,8 +93,8 @@ pub const Context = struct {
   }
 
   pub inline fn fillLiteral(
-      self: *Context, at: data.Position, e: *data.Expression,
-      content: data.Value.Data) void {
+      self: *Context, at: model.Position, e: *model.Expression,
+      content: model.Value.Data) void {
     e.* = .{
       .pos = at,
       .data = .{
@@ -110,9 +110,9 @@ pub const Context = struct {
     e.expected_type = self.types.valueType(&e.data.literal.value);
   }
 
-  pub inline fn genLiteral(self: *Context, at: data.Position,
-                           content: data.Value.Data) !*data.Expression {
-    const e = try self.storage.allocator.create(data.Expression);
+  pub inline fn genLiteral(self: *Context, at: model.Position,
+                           content: model.Value.Data) !*model.Expression {
+    const e = try self.storage.allocator.create(model.Expression);
     self.fillLiteral(at, e, content);
     return e;
   }

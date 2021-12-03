@@ -317,6 +317,10 @@ pub const Node = struct {
     ns: u15,
     name: []const u8,
   };
+  pub const ResolvedSymRef = struct {
+    ns: u15,
+    sym: *Symbol,
+  };
   pub const Access = struct {
     subject: *Node,
     id: []const u8,
@@ -358,6 +362,7 @@ pub const Node = struct {
     first_block_arg: usize,
   };
   pub const ResolvedCall = struct {
+    ns: u15,
     target: *Expression,
     args: []*Node,
   };
@@ -374,7 +379,7 @@ pub const Node = struct {
     concatenation: Concatenation,
     paragraphs: Paragraphs,
     unresolved_symref: UnresolvedSymRef,
-    resolved_symref: *Symbol,
+    resolved_symref: ResolvedSymRef,
     unresolved_call: UnresolvedCall,
     resolved_call: ResolvedCall,
     expression: *Expression,
@@ -394,7 +399,7 @@ pub const Node = struct {
       Concatenation => offset(Data, "concatenation"),
       Paragraphs => offset(Data, "paragraphs"),
       UnresolvedSymRef => offset(Data, "unresolved_symref"),
-      *Symbol => offset(Data, "resolved_symref"),
+      ResolvedSymRef => offset(Data, "resolved_symref"),
       UnresolvedCall => offset(Data, "unresolved_call"),
       ResolvedCall => offset(Data, "resolved_call"),
       *Expression => offset(Data, "expression"),
@@ -835,6 +840,8 @@ pub const Type = union(enum) {
 pub const Expression = struct {
   /// a call to a function or type constructor.
   pub const Call = struct {
+    /// only set for calls to keywords, for which it may be relevant.
+    ns: u15,
     target: *Expression,
     exprs: []*Expression,
 

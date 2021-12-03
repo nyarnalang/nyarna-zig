@@ -1,6 +1,6 @@
 const std = @import("std");
 const nyarna = @import("../nyarna.zig");
-const data = nyarna.data;
+const model = nyarna.model;
 const Interpreter = nyarna.Interpreter;
 const errors = nyarna.errors;
 
@@ -10,18 +10,18 @@ pub const SpecialSyntax = struct {
     space: []const u8,
     escaped: []const u8,
     special_char: u21,
-    node: *data.Node,
+    node: *model.Node,
     newlines: usize, // 1 for newlines, >1 for parseps.
-    block_header: *data.Value.BlockHeader,
+    block_header: *model.Value.BlockHeader,
   };
 
   pub const Processor = struct {
     pub const Action = enum {none, read_block_header};
 
-    push: fn(self: *@This(), pos: data.Position, item: Item)
+    push: fn(self: *@This(), pos: model.Position, item: Item)
       std.mem.Allocator.Error!Action,
-    finish: fn(self: *@This(), pos: data.Position)
-      std.mem.Allocator.Error!*data.Node,
+    finish: fn(self: *@This(), pos: model.Position)
+      std.mem.Allocator.Error!*model.Node,
   };
 
   init: fn init(intpr: *Interpreter) std.mem.Allocator.Error!*Processor,
@@ -39,19 +39,19 @@ pub const SymbolDefs = struct {
   intpr: *Interpreter,
   proc: Processor,
   state: State,
-  produced: std.ArrayListUnmanaged(*data.Node),
+  produced: std.ArrayListUnmanaged(*model.Node),
   variant: Variant,
   // ----- current line ------
-  start: data.Cursor,
-  names: std.ArrayListUnmanaged(*data.Node),
-  primary: ?data.Position,
-  varargs: ?data.Position,
-  varmap: ?data.Position,
-  mutable: ?data.Position,
-  root: ?data.Position,
-  header: ?*data.Value.BlockHeader,
-  ltype: ?*data.Node,
-  expr: ?*data.Node,
+  start: model.Cursor,
+  names: std.ArrayListUnmanaged(*model.Node),
+  primary: ?model.Position,
+  varargs: ?model.Position,
+  varmap: ?model.Position,
+  mutable: ?model.Position,
+  root: ?model.Position,
+  header: ?*model.Value.BlockHeader,
+  ltype: ?*model.Node,
+  expr: ?*model.Node,
   // -------------------------
 
   const after_name_items_arr = [_]errors.WrongItemError.ItemDescr{
@@ -123,7 +123,7 @@ pub const SymbolDefs = struct {
     l.names.clearRetainingCapacity();
   }
 
-  fn push(p: *Processor, pos: data.Position,
+  fn push(p: *Processor, pos: model.Position,
           item: SpecialSyntax.Item) std.mem.Allocator.Error!Processor.Action {
     const self = @fieldParentPtr(SymbolDefs, "proc", p);
     self.state = while (true) {
@@ -139,13 +139,15 @@ pub const SymbolDefs = struct {
           .space => return .none,
           .literal => |name| {
             const name_node =
-              try self.intpr.storage.allocator.create(data.Node);
-            name_node.pos = pos;
-            name_node.data = .{
-              .literal = .{
-                .kind = .text,
-                .content = name,
-              }
+              try self.intpr.storage.allocator.create(model.Node);
+            name_node.* = .{
+              .pos = pos,
+              .data = .{
+                .literal = .{
+                  .kind = .text,
+                  .content = name,
+                },
+              },
             };
             try self.names.append(&self.intpr.storage.allocator, name_node);
             break .after_name;
@@ -547,20 +549,22 @@ pub const SymbolDefs = struct {
     return .none;
   }
 
-  fn finish(p: *Processor, pos: data.Position)
-      std.mem.Allocator.Error!*data.Node {
+  fn finish(p: *Processor, pos: model.Position)
+      std.mem.Allocator.Error!*model.Node {
     const self = @fieldParentPtr(SymbolDefs, "proc", p);
-    const ret = try self.intpr.storage.allocator.create(data.Node);
-    ret.pos = pos;
-    ret.data = .{
-      .concatenation = .{
-        .content = self.produced.items,
-      }
+    const ret = try self.intpr.storage.allocator.create(model.Node);
+    ret.* = .{
+      .pos = pos,
+      .data = .{
+        .concatenation = .{
+          .content = self.produced.items,
+        },
+      },
     };
     return ret;
   }
 
-  fn finishLine(self: *SymbolDefs, pos: data.Position) !void {
+  fn finishLine(self: *SymbolDefs, pos: model.Position) !void {
     defer self.reset();
     if (self.names.items.len == 0) {
       self.logger().MissingSymbolName(pos);
@@ -584,15 +588,17 @@ pub const SymbolDefs = struct {
     });
 
     for (self.names.items) |name| {
-      const args = try self.intpr.storage.allocator.alloc(*data.Node,
+      const args = try self.intpr.storage.allocator.alloc(*model.Node,
           switch (self.variant) {.locs => @as(usize, 8), .defs => 3});
       args[0] = name;
       var additionals = switch (self.variant) {
         .locs => ptr: {
           args[1] = self.ltype orelse blk: {
-            const vn = try self.intpr.storage.allocator.create(data.Node);
-            vn.pos = pos;
-            vn.data = .voidNode;
+            const vn = try self.intpr.storage.allocator.create(model.Node);
+            vn.* = .{
+              .pos = pos,
+              .data = .voidNode,
+            };
             break :blk vn;
           };
           break :ptr args.ptr + 2;
@@ -605,17 +611,17 @@ pub const SymbolDefs = struct {
           additionals[1] = try self.boolFrom(self.varargs, pos);
           additionals[2] = try self.boolFrom(self.varmap, pos);
           additionals[3] = try self.boolFrom(self.mutable, pos);
-          const bhn = try self.intpr.storage.allocator.create(data.Node);
-          if (self.header) |bh| {
-            bhn.pos = bh.value().origin;
-            bhn.data = .{
+          const bhn = try self.intpr.storage.allocator.create(model.Node);
+          bhn.* = if (self.header) |bh| .{
+            .pos = bh.value().origin,
+            .data = .{
               .expression = @fieldParentPtr(
-                data.Expression.Literal, "value", bh.value()).expr(),
-            };
-          } else {
-            bhn.pos = pos;
-            bhn.data = .voidNode;
-          }
+                model.Expression.Literal, "value", bh.value()).expr(),
+            },
+          } else .{
+            .pos = pos,
+            .data = .voidNode,
+          };
           additionals[4] = bhn;
           if (self.root) |rpos| self.logger().NonLocationFlag(rpos);
           additionals += 5;
@@ -632,26 +638,31 @@ pub const SymbolDefs = struct {
         }
       }
       additionals.* = self.expr orelse blk: {
-        const vn = try self.intpr.storage.allocator.create(data.Node);
-        vn.pos = pos;
-        vn.data = .voidNode;
+        const vn = try self.intpr.storage.allocator.create(model.Node);
+        vn.* = .{
+          .pos = pos,
+          .data = .voidNode,
+        };
         break :blk vn;
       };
 
-      const constructor = try self.intpr.storage.allocator.create(data.Node);
-      constructor.pos = line_pos;
-      constructor.data = .{
-        .resolved_call = .{
-          .target = lexpr,
-          .args = args,
-        }
+      const constructor = try self.intpr.storage.allocator.create(model.Node);
+      constructor.* = .{
+        .pos = line_pos,
+        .data = .{
+          .resolved_call = .{
+            .ns = 0, // location constructor resides in the primary namespace.
+            .target = lexpr,
+            .args = args,
+          },
+        },
       };
       try self.produced.append(&self.intpr.storage.allocator, constructor);
     }
   }
 
-  fn boolFrom(self: *SymbolDefs, pos: ?data.Position, at: data.Position)
-      !*data.Node {
+  fn boolFrom(self: *SymbolDefs, pos: ?model.Position, at: model.Position)
+      !*model.Node {
     return self.intpr.genValueNode(pos orelse at, .{
       .enumval = .{
         .t = self.intpr.loader.context.types.getBoolean(),
