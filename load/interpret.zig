@@ -254,12 +254,11 @@ pub const Interpreter = struct {
         input.data = .{.expression = expr};
         break :blk input;
       },
-      .branches, .concatenation => blk: {
+      .branches, .concatenation, .paragraphs => blk: {
         const ret_type =
           (try self.probeType(input, ctx)) orelse break :blk input;
         break :blk self.interpretWithTargetType(input, ret_type, true);
       },
-      .paragraphs => unreachable, // TODO
       .resolved_symref => |ref| blk: {
         const expr = try self.createPublic(model.Expression);
         switch (ref.sym.data) {
@@ -555,6 +554,25 @@ pub const Interpreter = struct {
     else if (seen_unfinished) null else sup;
   }
 
+  /// Calculate the supremum of all scalar types in the given node's types.
+  /// considered are direct scalar types, as well as scalar types in
+  /// concatenations, optionals and paragraphs.
+  ///
+  /// returns null only in the event of unfinished nodes.
+  fn probeNodesForScalarType(self: *Interpreter, nodes: []*model.Node,
+                             ctx: ?*graph.ResolutionContext) !?model.Type {
+    var sup = model.Type{.intrinsic = .every};
+    var seen_unfinished = false;
+    for (nodes) |node| {
+      const t = (try self.probeType(node, ctx)) orelse {
+        seen_unfinished = true;
+        break;
+      };
+      sup = try self.types().sup(sup, self.containedScalar(t) or continue);
+    }
+    return if (seen_unfinished) null else sup;
+  }
+
   /// Returns the given node's type, if it can be calculated. If the node or its
   /// substructures cannot be interpreted, null is returned.
   ///
@@ -587,7 +605,18 @@ pub const Interpreter = struct {
           return model.Type{.intrinsic = .poison};
         };
       },
-      .paragraphs => unreachable, // TODO
+      .paragraphs => |*para| {
+        var builder =
+          nyarna.types.ParagraphTypeBuilder.init(self.types(), false);
+        var seen_unfinished = false;
+        for (para.items) |*item|
+          try builder.push((try self.probeType(item.content, ctx)) orelse {
+            seen_unfinished = true;
+            continue;
+          });
+        return if (seen_unfinished) null else
+          (try builder.finish()).resulting_type;
+      },
       .unresolved_symref => return null,
       .resolved_symref => |ref| switch (ref.sym.data) {
         .ext_func => |ef| return ef.callable.typedef(),

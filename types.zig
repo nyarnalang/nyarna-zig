@@ -46,7 +46,7 @@ pub const Lattice = struct {
       fn descend(self: *Iter, t: model.Type) !void {
         var next = &self.cur.children;
         while (next.*) |next_node| : (next = &next_node.next) {
-          if (!total_order_less(next_node.key, t)) break;
+          if (!total_order_less(undefined, next_node.key, t)) break;
         }
         // inlining this causes a compiler bug :)
         const hit =
@@ -93,6 +93,9 @@ pub const Lattice = struct {
   /// child list since the child list can only contain types that come after the
   /// type you descend on in the artificial total order.
   intersections: TreeNode,
+  /// This is a search tree that holds all known paragraphs types.
+  /// It works akin to the intersections tree.
+  paragraphs_types: TreeNode,
   /// constructors for all types that have constructors.
   /// these are to be queried via fn constructor().
   type_constructors: []model.Symbol.ExtFunc,
@@ -106,6 +109,12 @@ pub const Lattice = struct {
       .concats = .{},
       .lists = .{},
       .intersections = .{
+        .key = undefined,
+        .value = null,
+        .next = null,
+        .children = null,
+      },
+      .paragraphs_types = .{
         .key = undefined,
         .value = null,
         .next = null,
@@ -148,7 +157,9 @@ pub const Lattice = struct {
   /// constraint is satisfied by ordering all intrinsic types (which do not have
   /// allocated information) before all other types, and ordering the other
   /// types according to the pointers to their allocated memory.
-  fn total_order_less(a: model.Type, b: model.Type) bool {
+  ///
+  /// The first argument exists so that this fn can be used for std.sort.sort.
+  fn total_order_less(_: void, a: model.Type, b: model.Type) bool {
     const a_int = switch (a) {
       .intrinsic => |ia| {
         return switch (b) {
@@ -239,6 +250,9 @@ pub const Lattice = struct {
     return model.Type{.intrinsic = .raw};
   }
 
+  /// input is to be a tuple of []model.Type.
+  /// precondition is that each type in input is either a scalar or a record
+  /// type.
   fn calcIntersection(self: *Self, input: anytype) !model.Type {
     var iter = TreeNode.Iter{.cur = &self.intersections, .lattice = self};
     var tcount = @as(usize, 0);
@@ -253,7 +267,7 @@ pub const Lattice = struct {
         if (indexes[index] < vals.len) {
           const next_in_list = vals[indexes[index]];
           if (cur_type) |previous| {
-            if (total_order_less(next_in_list, previous))
+            if (total_order_less(undefined, next_in_list, previous))
               cur_type = next_in_list;
           } else cur_type = next_in_list;
         }
@@ -289,7 +303,7 @@ pub const Lattice = struct {
           if (indexes[index] < vals.len) {
             const next_in_list = vals[indexes[index]];
             if (cur_type) |previous| {
-              if (total_order_less(next_in_list, previous))
+              if (total_order_less(undefined, next_in_list, previous))
                 cur_type = next_in_list;
             } else cur_type = next_in_list;
           }
@@ -307,6 +321,23 @@ pub const Lattice = struct {
           }
         } else break;
       }
+      iter.cur.value = new;
+      break :blk new;
+    }};
+  }
+
+  fn calcParagraphs(self: *Self, inner: []model.Type) !model.Type {
+    std.sort.sort(model.Type, inner, {}, total_order_less);
+    var iter = TreeNode.Iter{.cur = &self.paragraphs_types, .lattice = self};
+    for (inner) |t| try iter.descend(t);
+    return model.Type{.structural = iter.cur.value orelse blk: {
+      var new = try self.alloc.create(model.Type.Structural);
+      new.* = .{
+        .paragraphs = .{
+          .inner = inner,
+          .auto = null,
+        },
+      };
       iter.cur.value = new;
       break :blk new;
     }};
@@ -565,6 +596,34 @@ pub const Lattice = struct {
   }
 };
 
+/// searches direct scalar types as well as scalar types in concatenation,
+/// optional and paragraphs types.
+pub fn containedScalar(t: model.Type) ?model.Type {
+  return switch (t) {
+    .intrinsic => |intr| switch (intr) {
+      .space, .literal, .raw => t,
+      else => null,
+    },
+    .structural => |strct| switch (strct.*) {
+      .optional => |*opt| containedScalar(opt.inner),
+      .concat => |*con| containedScalar(con.inner),
+      .paragraphs => |*para| blk: {
+        for (para.inner) |inner_type| {
+          // the first scalar type found will be the correct one due to the
+          // semantics of paragraphs.
+          if (containedScalar(inner_type)) |ret| break :blk ret;
+        }
+        break :blk null;
+      },
+      else => null,
+    },
+    .instantiated => |inst| switch (inst.data) {
+      .textual, .numeric, .float, .tenum => t,
+      else => null
+    }
+  };
+}
+
 const SigBuilderEnv = enum{
   intrinsic, userdef,
 
@@ -701,3 +760,57 @@ pub fn SigBuilder(comptime kind: SigBuilderEnv) type {
     }
   };
 }
+
+pub const ParagraphTypeBuilder = struct {
+  pub const Result = struct {
+    scalar_type_sup: model.Type,
+    resulting_type: model.Type,
+  };
+
+  types: *Lattice,
+  list: std.ArrayListUnmanaged(model.Type),
+  cur_scalar: model.Type,
+  non_voids: u21,
+
+  pub fn init(types: *Lattice, force_paragraphs: bool) ParagraphTypeBuilder {
+    return .{
+      .types = types,
+      .list = .{},
+      .cur_scalar = .{.intrinsic = .every},
+      .non_voids = if (force_paragraphs) 2 else 0,
+    };
+  }
+
+  pub fn push(self: *ParagraphTypeBuilder, t: model.Type) !void {
+    if (t.is(.void)) return;
+    self.non_voids += 1;
+    for (self.list.items) |existing|
+      if (self.types.lesserEqual(t, existing)) return;
+    if (containedScalar(t)) |scalar_type|
+      self.cur_scalar = try self.types.sup(self.cur_scalar, scalar_type);
+    try self.list.append(self.types.alloc, t);
+  }
+
+  pub fn finish(self: *ParagraphTypeBuilder) !Result {
+    return switch (self.non_voids) {
+      0 => Result{
+        .scalar_type_sup = self.cur_scalar,
+        .resulting_type = .{.intrinsic = .void},
+      },
+      1 => Result{
+        .scalar_type_sup = self.cur_scalar,
+        .resulting_type = self.list.items[0],
+      },
+      else => blk: {
+        for (self.list.items) |*inner_type| {
+          if (containedScalar(inner_type.*) != null)
+            inner_type.* = try self.types.sup(self.cur_scalar, inner_type.*);
+        }
+        break :blk Result{
+          .scalar_type_sup = self.cur_scalar,
+          .resulting_type = try self.types.calcParagraphs(self.list.items),
+        };
+      },
+    };
+  }
+};

@@ -15,7 +15,7 @@
 \end(declare)
 
 \foo(\Data(x, y))
---- ast
+--- expr
 +CALL
   +TARGET
     =SYMREF .doc.foo
