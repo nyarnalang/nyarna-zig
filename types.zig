@@ -485,12 +485,13 @@ pub const Lattice = struct {
   pub fn optional(self: *Self, t: model.Type) !?model.Type {
     switch (t) {
       .intrinsic => |i| switch (i) {
-        .void, .prototype, .schema, .extension => return null,
-        .every => return model.Type{.intrinsic = .void},
+        .void, .every => return model.Type{.intrinsic = .void},
+        .prototype, .schema, .extension => return null,
         else => {},
       },
       .structural => |s| switch (s.*) {
-        .optional, .concat, .paragraphs => return null,
+        .optional, .concat => return t,
+        .paragraphs => return null, // TODO
         else => {},
       },
       .instantiated => {},
