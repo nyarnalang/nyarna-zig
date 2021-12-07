@@ -119,6 +119,42 @@ pub const Interpreter = struct {
     _ = self.namespaces.pop();
   }
 
+  fn reportImmediateResolveFailures(
+      self: *Interpreter, node: *model.Node) void {
+    switch (node.data) {
+      .resolved_call, .literal, .resolved_symref, .expression, .poisonNode,
+      .voidNode => {},
+      .access => |*acc| self.reportImmediateResolveFailures(acc.subject),
+      .assignment => |*ass| {
+        switch (ass.target) {
+          .unresolved => |unres| self.reportImmediateResolveFailures(unres),
+          .resolved => {},
+        }
+        self.reportImmediateResolveFailures(ass.replacement);
+      },
+      .unresolved_call => |*uc| {
+        self.reportImmediateResolveFailures(uc.target);
+        for (uc.proto_args) |*arg|
+          self.reportImmediateResolveFailures(arg.content);
+      },
+
+      .branches => |*br| {
+        self.reportImmediateResolveFailures(br.condition);
+        for (br.branches) |branch| self.reportImmediateResolveFailures(branch);
+      },
+      .concatenation => |*con| {
+        for (con.content) |item| self.reportImmediateResolveFailures(item);
+      },
+      .paragraphs => |*para| {
+        for (para.items) |*item|
+          self.reportImmediateResolveFailures(item.content);
+      },
+      .unresolved_symref => {
+        self.loader.logger.CannotResolveImmediately(node.pos);
+      }
+    }
+  }
+
   /// Tries to interpret the given node. Consumes the `input` node.
   /// The node returned will be
   ///
@@ -295,23 +331,26 @@ pub const Interpreter = struct {
         const is_keyword = sig.returns.is(.ast_node);
         const allocator = if (is_keyword) &self.storage.allocator
                           else &self.loader.context.storage.allocator;
-        var args_failed_to_interpret: ?model.Position = null;
+        var failed_to_interpret = std.ArrayListUnmanaged(*model.Node){};
+        var args_failed_to_interpret = false;
         for (rc.args) |*arg, i| {
           if (arg.*.data != .expression) {
             arg.*.data =
               if (try self.associate(arg.*, sig.parameters[i].ptype)) |e| .{
                 .expression = e,
               } else {
-                if (args_failed_to_interpret == null)
-                  args_failed_to_interpret = arg.*.pos;
+                args_failed_to_interpret = true;
+                if (is_keyword) try
+                  failed_to_interpret.append(&self.storage.allocator, arg.*);
                 continue;
               };
           }
         }
 
-        if (args_failed_to_interpret) |pos| {
+        if (args_failed_to_interpret) {
           if (is_keyword) {
-            self.loader.logger.KeywordArgNotAvailable(pos);
+            for (failed_to_interpret.items) |arg|
+              self.reportImmediateResolveFailures(arg);
             input.data = .poisonNode;
           }
         } else {

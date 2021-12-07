@@ -13,7 +13,7 @@ pub const GenericParserError = enum {
   NamedArgumentInAssignment, MissingBlockNameEnd, UnknownFlag,
   NonLocationFlag, NonDefinitionFlag, BlockHeaderNotAllowedForDefinition,
   MissingSymbolName, MissingSymbolType, MissingSymbolEntity, UnknownSyntax,
-  PrefixedFunctionMustBeCalled, AstNodeInNonKeyword, KeywordArgNotAvailable,
+  PrefixedFunctionMustBeCalled, AstNodeInNonKeyword, CannotResolveImmediately,
   InvalidLvalue, UnknownParameter, TooManyArguments, UnexpectedPrimaryBlock,
   InvalidPositionalArgument,
 };
