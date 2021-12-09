@@ -191,8 +191,9 @@ pub const Parser = struct {
       }
       const alloc = p.int();
       if (level.syntax_proc) |proc| {
-        return proc.finish(
-          proc, p.intpr().input.between(level.start, p.cur_start));
+        return try p.intpr().tryInterpret(try proc.finish(
+          proc, p.intpr().input.between(level.start, p.cur_start)),
+          false, null);
       } else if (level.paragraphs.items.len == 0) {
         return level.finalizeParagraph(p.intpr());
       } else {

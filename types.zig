@@ -119,7 +119,7 @@ pub const Lattice = struct {
   },
   /// constructors for all types that have constructors.
   /// these are to be queried via fn constructor().
-  type_constructors: []model.Symbol.ExtFunc,
+  type_constructors: []*model.Symbol.ExtFunc,
   /// predefined types. TODO: move these to system.ny
   boolean: model.Type.Instantiated,
 
@@ -134,7 +134,7 @@ pub const Lattice = struct {
         .paragraphs = .{},
         .callable = .{},
       },
-      .type_constructors = try alloc.allocator.alloc(model.Symbol.ExtFunc, 3),
+      .type_constructors = try alloc.allocator.alloc(*model.Symbol.ExtFunc, 3),
       .boolean = .{
         .at = model.Position.intrinsic(), .name = null,
         .data = .{.tenum = undefined}
@@ -164,7 +164,7 @@ pub const Lattice = struct {
       },
       else => unreachable,
     };
-    return &self.type_constructors[index];
+    return self.type_constructors[index];
   }
 
   /// this function implements the artificial total order. The total order's

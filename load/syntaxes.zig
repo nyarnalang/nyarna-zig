@@ -19,9 +19,9 @@ pub const SpecialSyntax = struct {
     pub const Action = enum {none, read_block_header};
 
     push: fn(self: *@This(), pos: model.Position, item: Item)
-      std.mem.Allocator.Error!Action,
+      nyarna.Error!Action,
     finish: fn(self: *@This(), pos: model.Position)
-      std.mem.Allocator.Error!*model.Node,
+      nyarna.Error!*model.Node,
   };
 
   init: fn init(intpr: *Interpreter) std.mem.Allocator.Error!*Processor,
@@ -124,7 +124,7 @@ pub const SymbolDefs = struct {
   }
 
   fn push(p: *Processor, pos: model.Position,
-          item: SpecialSyntax.Item) std.mem.Allocator.Error!Processor.Action {
+          item: SpecialSyntax.Item) nyarna.Error!Processor.Action {
     const self = @fieldParentPtr(SymbolDefs, "proc", p);
     self.state = while (true) {
       switch (self.state) {
@@ -564,7 +564,7 @@ pub const SymbolDefs = struct {
     return ret;
   }
 
-  fn finishLine(self: *SymbolDefs, pos: model.Position) !void {
+  fn finishLine(self: *SymbolDefs, pos: model.Position) nyarna.Error!void {
     defer self.reset();
     if (self.names.items.len == 0) {
       self.logger().MissingSymbolName(pos);
@@ -587,7 +587,7 @@ pub const SymbolDefs = struct {
       },
     });
 
-    for (self.names.items) |name| {
+    names_loop: for (self.names.items) |name| {
       const args = try self.intpr.storage.allocator.alloc(*model.Node,
           switch (self.variant) {.locs => @as(usize, 8), .defs => 3});
       args[0] = name;
@@ -657,7 +657,10 @@ pub const SymbolDefs = struct {
           },
         },
       };
-      try self.produced.append(&self.intpr.storage.allocator, constructor);
+      const interpreted =
+        try self.intpr.tryInterpret(constructor, false, null);
+      try self.produced.append(&self.intpr.storage.allocator, interpreted);
+      if (interpreted.data == .poisonNode) break :names_loop;
     }
   }
 

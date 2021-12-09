@@ -153,11 +153,11 @@ pub const Provider = struct {
 };
 
 pub const Intrinsics = Provider.Wrapper(struct {
-  fn location(intpr: *Interpreter, pos: model.Position,
-              name: []const u8, t: ?model.Type, primary: *model.Value.Enum,
-              varargs: *model.Value.Enum, varmap: *model.Value.Enum,
-              mutable: *model.Value.Enum, header: ?*model.Value.BlockHeader,
-              default: ?*model.Value.Ast) nyarna.Error!*model.Node {
+  fn @"Location"(intpr: *Interpreter, pos: model.Position,
+                 name: []const u8, t: ?model.Type, primary: *model.Value.Enum,
+                 varargs: *model.Value.Enum, varmap: *model.Value.Enum,
+                 mutable: *model.Value.Enum, header: ?*model.Value.BlockHeader,
+                 default: ?*model.Value.Ast) nyarna.Error!*model.Node {
     var expr = if (default) |node| blk: {
       var val = try intpr.interpret(node.root);
       if (val.expected_type.is(.poison))
@@ -211,8 +211,9 @@ pub const Intrinsics = Provider.Wrapper(struct {
     });
   }
 
-  fn definition(intpr: *Interpreter, pos: model.Position, name: []const u8,
-                root: *model.Value.Enum, node: *model.Value.Ast) !*model.Node {
+  fn @"Definition"(
+      intpr: *Interpreter, pos: model.Position, name: []const u8,
+      root: *model.Value.Enum, node: *model.Value.Ast) !*model.Node {
     return intpr.genValueNode(pos, .{
       .definition = .{
         .name = name,
@@ -235,7 +236,7 @@ pub const Intrinsics = Provider.Wrapper(struct {
     return model.Node.genVoid(&intpr.storage.allocator, pos);
   }
 
-  fn record(intpr: *Interpreter, pos: model.Position,
+  fn @"Record"(intpr: *Interpreter, pos: model.Position,
             fields: []*model.Value.Location) nyarna.Error!*model.Node {
     var res = try intpr.createPublic(model.Type.Instantiated);
     res.* = .{
@@ -377,10 +378,25 @@ pub inline fn intLoc(context: *Context, content: model.Value.Location)
   return &value.data.location;
 }
 
+fn typeConstructor(
+    context: *Context, name: []const u8, bres: types.SigBuilderResult,
+    p: *Provider, symbols: []*model.Symbol, s_index: *usize)
+    !*model.Symbol.ExtFunc {
+  const ret = try context.storage.allocator.create(model.Symbol);
+  ret.defined_at = model.Position.intrinsic();
+  ret.name = name;
+  ret.data = .{
+    .ext_func = try extFunc(context, name, bres, true, p),
+  };
+  symbols[s_index.*] = ret;
+  s_index.* += 1;
+  return &ret.data.ext_func;
+}
+
 pub fn intrinsicModule(context: *Context) !*model.Module {
   var ret = try context.storage.allocator.create(model.Module);
   ret.root = try context.genLiteral(model.Position.intrinsic(), .void);
-  ret.symbols = try context.storage.allocator.alloc(*model.Symbol, 2);
+  ret.symbols = try context.storage.allocator.alloc(*model.Symbol, 5);
   var index = @as(usize, 0);
 
   var ip = Intrinsics.init();
@@ -458,8 +474,9 @@ pub fn intrinsicModule(context: *Context) !*model.Module {
   try b.push(try intLoc(context, model.Value.Location.init(
     "default", (try context.types.optional(
       .{.intrinsic = .ast_node})).?).with_primary(model.Position.intrinsic())));
-  context.types.type_constructors[0] =
-    try extFunc(context, "location", b.finish(), true, &ip.provider);
+  context.types.type_constructors[0] = try
+      typeConstructor(context, "Location", b.finish(), &ip.provider,
+                      ret.symbols, &index);
 
   // definition
   b = try types.SigBuilder(.intrinsic).init(
@@ -470,8 +487,9 @@ pub fn intrinsicModule(context: *Context) !*model.Module {
     "root", .{.instantiated = &context.types.boolean})));
   try b.push(try intLoc(context, model.Value.Location.init(
     "item", .{.intrinsic = .ast_node})));
-  context.types.type_constructors[1] =
-    try extFunc(context, "definition", b.finish(), true, &ip.provider);
+  context.types.type_constructors[1] = try
+    typeConstructor(context, "Definition", b.finish(), &ip.provider,
+                    ret.symbols, &index);
 
   // record
   b = try types.SigBuilder(.intrinsic).init(
@@ -479,9 +497,10 @@ pub fn intrinsicModule(context: *Context) !*model.Module {
   // TODO: allow record to extend other record (?)
   try b.push(try intLoc(context, model.Value.Location.init(
     "fields", (try context.types.concat(model.Type{.intrinsic = .location})).?
-    ).with_header(location_block)));
-  context.types.type_constructors[2] =
-    try extFunc(context, "record", b.finish(), true, &ip.provider);
+    ).with_header(location_block).with_primary(model.Position.intrinsic())));
+  context.types.type_constructors[2] = try
+    typeConstructor(context, "Record", b.finish(), &ip.provider,
+                    ret.symbols, &index);
 
   //-------------------
   // external symbols

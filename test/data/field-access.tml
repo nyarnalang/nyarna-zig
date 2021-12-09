@@ -1,9 +1,9 @@
 === Field access
 --- input
 \declare:
-  Data = \record:
+  Data = \Record:
     a, b : \Raw;
-  \end(record)
+  \end(Record)
 \end(declare)
 
 \declare:
