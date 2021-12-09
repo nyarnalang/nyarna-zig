@@ -30,41 +30,48 @@ pub const Lattice = struct {
   const Self = @This();
   /// This node is used to efficiently store and search for intersection types;
   /// see doc on the intersections field.
-  const TreeNode = struct {
-    key: model.Type,
-    value: ?*model.Type.Structural,
-    next: ?*TreeNode,
-    children: ?*TreeNode,
+  fn TreeNode(comptime Flag: type) type {
+    return struct {
+      key: model.Type = undefined,
+      value: ?*model.Type.Structural = null,
+      next: ?*TreeNode(Flag) = null,
+      children: ?*TreeNode(Flag) = null,
+      flag: Flag = undefined,
 
-    /// This type is used to navigate the intersections field. Given a node,
-    /// it will descend into its children and search the node matching the
-    /// given type, or create and insert a node for it if none exists.
-    const Iter = struct {
-      cur: *TreeNode,
-      lattice: *Lattice,
+      /// This type is used to navigate the intersections field. Given a node,
+      /// it will descend into its children and search the node matching the
+      /// given type, or create and insert a node for it if none exists.
+      const Iter = struct {
+        cur: *TreeNode(Flag),
+        lattice: *Lattice,
 
-      fn descend(self: *Iter, t: model.Type) !void {
-        var next = &self.cur.children;
-        while (next.*) |next_node| : (next = &next_node.next) {
-          if (!total_order_less(undefined, next_node.key, t)) break;
-        }
-        // inlining this causes a compiler bug :)
-        const hit =
-          if (next.*) |succ| if (t.eql(succ.key)) succ else null else null;
-        self.cur = hit orelse blk: {
-          var new = try self.lattice.alloc.create(TreeNode);
-          new.* = .{
-            .key = t,
-            .value = null,
-            .next = next.*,
-            .children = null,
+        fn descend(self: *Iter, t: model.Type, flag: Flag) !void {
+          var next = &self.cur.children;
+          // TODO: can be made faster with linear search but not sure whether that
+          // is necessary.
+          while (next.*) |next_node| : (next = &next_node.next) {
+            if (next_node.flag == flag)
+              if (!total_order_less(undefined, next_node.key, t)) break;
+          }
+          // inlining this causes a compiler bug :)
+          const hit =
+            if (next.*) |succ| if (t.eql(succ.key)) succ else null else null;
+          self.cur = hit orelse blk: {
+            var new = try self.lattice.alloc.create(TreeNode(Flag));
+            new.* = .{
+              .key = t,
+              .value = null,
+              .next = next.*,
+              .children = null,
+              .flag = flag,
+            };
+            next.* = new;
+            break :blk new;
           };
-          next.* = new;
-          break :blk new;
-        };
-      }
+        }
+      };
     };
-  };
+  }
 
   /// allocator used for data of structural types
   alloc: *std.mem.Allocator,
@@ -74,28 +81,42 @@ pub const Lattice = struct {
       model.Type.HashContext, std.hash_map.default_max_load_percentage),
   lists: std.HashMapUnmanaged(model.Type, *model.Type.Structural,
       model.Type.HashContext, std.hash_map.default_max_load_percentage),
-  /// This is a search tree that holds all known intersection types.
+
+  /// These are prefix trees that hold all known types of a specific prototype.
+  /// Prefixes are lists of types.
   ///
-  /// A TreeNode and its `next` pointer form a list whose types adhere to the
-  /// artifical total order on types. Each tree node may have a list of
-  /// children. The field `intersections` is the root node that only contains
-  /// children and has an undefined key.
+  /// Each TreeNode holds the successors for a prefix continuation in `children`
+  /// and the value of that prefix continuation, if any, in `value`.
   ///
-  /// An intersection type is stored as value in a TreeNode `x`, so that the set
-  /// of keys of those TreeNodes where you descend into children to reach `x`
-  /// equals the set of types inside the intersection type. The order of the
-  /// keys follows the artificial total order on types.
+  /// For intersections and paragraphs, the prefixes are the list of contained
+  /// types, ordered by the artifical total type order. For callable types, the
+  /// prefixes are the list of parameter types in parameter order, succeeded by
+  /// the return type.
   ///
-  /// I expect the worst-case time of discovering the intersection type for a
-  /// list of n types to be (n log(m)) where m is the number of existing types
-  /// allowed in an intersection, but I didn't calculate it. Note that the
-  /// farther along the current list you descent, the fewer types can be in the
-  /// child list since the child list can only contain types that come after the
-  /// type you descend on in the artificial total order.
-  intersections: TreeNode,
-  /// This is a search tree that holds all known paragraphs types.
-  /// It works akin to the intersections tree.
-  paragraphs_types: TreeNode,
+  /// At each level of the search tree, the singly-linked list of TreeNode
+  /// values and their `next` pointers represent known continuations, and hold
+  /// the value of that continuation, if any. The next level is given by the
+  /// `children` pointer.
+  ///
+  /// TreeNodes for Callable types have an additional boolean flag which is true
+  /// iff the parameter is mutable. On the return type, this flag is true iff
+  /// the Callable is a type.
+  ///
+  /// The worst-case time of discovering an intersection or paragraphs type for
+  /// a given list of n types is expected to be O(n log(m)) where m is the
+  /// number of existing types allowed in an intersection, since the possible
+  /// length of the children list shortens with each descend due to the total
+  /// order of types, and it shortens more the longer you advanced in the
+  /// previous list.
+  ///
+  /// For Callable types, the order of types is significant and types can occur
+  /// multiple times, therefore the worst-case discovery time is O(nm). It is
+  /// assumed that this is fine.
+  prefix_trees: struct {
+    intersection: TreeNode(void),
+    paragraphs: TreeNode(void),
+    callable: TreeNode(bool),
+  },
   /// constructors for all types that have constructors.
   /// these are to be queried via fn constructor().
   type_constructors: []model.Symbol.ExtFunc,
@@ -108,19 +129,12 @@ pub const Lattice = struct {
       .optionals = .{},
       .concats = .{},
       .lists = .{},
-      .intersections = .{
-        .key = undefined,
-        .value = null,
-        .next = null,
-        .children = null,
+      .prefix_trees = .{
+        .intersection = .{},
+        .paragraphs = .{},
+        .callable = .{},
       },
-      .paragraphs_types = .{
-        .key = undefined,
-        .value = null,
-        .next = null,
-        .children = null,
-      },
-      .type_constructors = try alloc.allocator.alloc(model.Symbol.ExtFunc, 2),
+      .type_constructors = try alloc.allocator.alloc(model.Symbol.ExtFunc, 3),
       .boolean = .{
         .at = model.Position.intrinsic(), .name = null,
         .data = .{.tenum = undefined}
@@ -254,7 +268,9 @@ pub const Lattice = struct {
   /// precondition is that each type in input is either a scalar or a record
   /// type.
   fn calcIntersection(self: *Self, input: anytype) !model.Type {
-    var iter = TreeNode.Iter{.cur = &self.intersections, .lattice = self};
+    var iter = TreeNode(void).Iter{
+      .cur = &self.prefix_trees.intersection, .lattice = self,
+    };
     var tcount = @as(usize, 0);
     var indexes: [input.len]usize = undefined;
     for (indexes) |*ptr| ptr.* = 0;
@@ -277,7 +293,7 @@ pub const Lattice = struct {
           const vals = @field(input, field.name);
           if (vals[indexes[index]].eql(next_type)) indexes[index] += 1;
         }
-        try iter.descend(next_type);
+        try iter.descend(next_type, {});
         if (next_type.isScalar()) {
           std.debug.assert(scalar == null);
           scalar = next_type;
@@ -328,8 +344,10 @@ pub const Lattice = struct {
 
   fn calcParagraphs(self: *Self, inner: []model.Type) !model.Type {
     std.sort.sort(model.Type, inner, {}, total_order_less);
-    var iter = TreeNode.Iter{.cur = &self.paragraphs_types, .lattice = self};
-    for (inner) |t| try iter.descend(t);
+    var iter = TreeNode(void).Iter{
+      .cur = &self.prefix_trees.paragraphs, .lattice = self,
+    };
+    for (inner) |t| try iter.descend(t, {});
     return model.Type{.structural = iter.cur.value orelse blk: {
       var new = try self.alloc.create(model.Type.Structural);
       new.* = .{
@@ -631,14 +649,14 @@ const SigBuilderEnv = enum{
   fn contextType(comptime e: SigBuilderEnv) type {
     return switch (e) {
       .intrinsic => *std.mem.Allocator,
-      .userdef => *interpret.Context
+      .userdef => *interpret.Interpreter
     };
   }
 
   fn create(comptime e: SigBuilderEnv, ctx: anytype, comptime T: type) !*T {
     return switch (e) {
       .intrinsic => ctx.create(T),
-      .userdef => ctx.source_content.allocator.create(T)
+      .userdef => ctx.storage.allocator.create(T)
     };
   }
 
@@ -646,7 +664,7 @@ const SigBuilderEnv = enum{
            num: usize) ![]T {
     return switch (e) {
       .intrinsic => ctx.alloc(T, num),
-      .userdef => ctx.source_content.allocator.alloc(T, num),
+      .userdef => ctx.storage.allocator.alloc(T, num),
     };
   }
 
@@ -654,16 +672,26 @@ const SigBuilderEnv = enum{
               comptime error_name: []const u8, args: anytype) void {
     switch (e) {
       .intrinsic => unreachable,
-      .userdef => @call(.{}, @field(ctx.eh, error_name), args),
+      .userdef => @call(.{}, @field(ctx.loader.logger, error_name), args),
     }
   }
 };
 
+pub const SigBuilderResult = struct {
+  /// the built signature
+  sig: *model.Type.Signature,
+  /// if build_repr has been set in init(), the representative signature
+  /// for the type lattice. else null.
+  repr: ?*model.Type.Signature,
+};
+
 pub fn SigBuilder(comptime kind: SigBuilderEnv) type {
   return struct {
+    const Result = SigBuilderResult;
+
     val: *model.Type.Signature,
+    repr: ?*model.Type.Signature,
     ctx: kind.contextType(),
-    needs_different_repr: bool,
     next_param: u21,
     seen_error: bool,
 
@@ -671,12 +699,16 @@ pub fn SigBuilder(comptime kind: SigBuilderEnv) type {
 
     /// if returns type is yet to be determined, give .{.intrinsic = .every}.
     /// the returns type is given early to know whether this is a keyword.
+    ///
+    /// if build_repr is true, a second signature will be built to be the
+    /// signature of the repr Callable in the type lattice.
     pub fn init(context: kind.contextType(), num_params: usize,
-                returns: model.Type) !Self {
+                returns: model.Type, build_repr: bool) !Self {
       var ret = Self{
         .val = try kind.create(context, model.Type.Signature),
+        .repr = if (build_repr) try kind.create(context, model.Type.Signature)
+                else null,
         .ctx = context,
-        .needs_different_repr = false,
         .next_param = 0,
         .seen_error = false,
       };
@@ -687,8 +719,17 @@ pub fn SigBuilder(comptime kind: SigBuilderEnv) type {
         .varmap = null,
         .auto_swallow = null,
         .returns = returns,
-        .repr = undefined
       };
+      if (ret.repr) |sig| {
+        sig.* = .{
+          .parameters = try kind.alloc(context, model.Type.Signature.Parameter,
+                                       num_params),
+          .primary = null,
+          .varmap = null,
+          .auto_swallow = null,
+          .returns = returns,
+        };
+      }
       return ret;
     }
 
@@ -715,7 +756,6 @@ pub fn SigBuilder(comptime kind: SigBuilderEnv) type {
           self.seen_error = true;
         } else {
           self.val.primary = self.next_param;
-          self.needs_different_repr = true;
         }
       }
       if (loc.block_header) |bh| {
@@ -737,30 +777,68 @@ pub fn SigBuilder(comptime kind: SigBuilderEnv) type {
               .depth = depth,
               .param_index = self.next_param
             };
-            self.needs_different_repr = true;
           }
         }
       }
-
-      if (param.capture != .default or param.config != null or
-          param.default != null)
-        self.needs_different_repr = true;
+      if (self.repr) |sig| {
+        sig.parameters[self.next_param] = .{
+          .pos = loc.value().origin,
+          .name = loc.name,
+          .ptype = loc.tloc,
+          .capture = .default,
+          .default = null,
+          .config = null,
+        };
+      }
       self.next_param += 1;
     }
 
-    pub fn finish(self: *Self)
-      if (kind == .intrinsic) *model.Type.Signature else ?*model.Type.Signature
-    {
+    pub fn finish(self: *Self) if (kind == .intrinsic) Result else ?Result {
       std.debug.assert(self.next_param == self.val.parameters.len);
       if (self.seen_error) if (kind == .intrinsic) unreachable else return null;
-      if (self.needs_different_repr) {
-        // TODO: create different representation.
-        // needed for comparison of callable types.
-      }
-      return self.val;
+      return Result{
+        .sig = self.val,
+        .repr = if (self.repr) |rval| rval else undefined,
+      };
     }
   };
 }
+
+pub const CallableReprFinder = struct {
+  pub const Result = struct {
+    found: *?*model.Type.Structural,
+    needs_different_repr: bool,
+  };
+  const Self = @This();
+
+  iter: Lattice.TreeNode(bool).Iter,
+  needs_different_repr: bool,
+
+  pub fn init(lattice: *Lattice) CallableReprFinder {
+    return .{
+      .iter = .{
+        .cur = &lattice.prefix_trees.callable,
+        .lattice = lattice,
+      },
+      .needs_different_repr = false,
+    };
+  }
+
+  pub fn push(self: *Self, loc: *model.Value.Location) !void {
+    try self.iter.descend(loc.tloc, loc.mutable != null);
+    if (loc.default != null or loc.primary != null or loc.varargs != null or
+        loc.varmap != null or loc.block_header != null)
+      self.needs_different_repr = true;
+  }
+
+  pub fn finish(self: *Self, returns: model.Type, is_type: bool) !Result {
+    try self.iter.descend(returns, is_type);
+    return Result{
+      .found = &self.iter.cur.value,
+      .needs_different_repr = self.needs_different_repr,
+    };
+  }
+};
 
 pub const ParagraphTypeBuilder = struct {
   pub const Result = struct {

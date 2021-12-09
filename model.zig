@@ -515,14 +515,6 @@ pub const Type = union(enum) {
       depth: usize,
     },
     returns: Type,
-    /// representative of this signature in the type lattice.
-    /// the representative has no primary, varmap, or auto_swallow value, and
-    /// its parameters have empty names, always default-capture, and have
-    /// neither config nor default.
-    ///
-    /// unset for keywords which cannot be used as Callable values and therefore
-    /// never interact with the type lattice.
-    repr: *Signature,
 
     pub fn isKeyword(sig: *const Signature) bool {
       return sig.returns.is(.ast_node);
@@ -609,8 +601,18 @@ pub const Type = union(enum) {
   };
 
   pub const Callable = struct {
+    /// allocated separately for the sole reason of making the Structural union
+    /// smaller.
     sig: *Signature,
     is_type: bool,
+    /// representative of this type in the type lattice.
+    /// the representative has no primary, varmap, or auto_swallow value, and
+    /// its parameters have empty names, always default-capture, and have
+    /// neither config nor default.
+    ///
+    /// undefined for keywords which cannot be used as Callable values and
+    /// therefore never interact with the type lattice.
+    repr: *Callable,
 
     pub inline fn typedef(self: *const @This()) Type {
       return Structural.typedef(self);
@@ -1058,20 +1060,27 @@ pub const Value = struct {
       return Value.parent(self);
     }
 
-    pub fn simple(name: []const u8, t: Type, default: ?*Expression) Location {
+    pub inline fn init(name: []const u8, t: Type) Location {
       return .{
-        .name = name, .tloc = t, .default = default,
+        .name = name, .tloc = t, .default = null,
         .primary = null, .varargs = null, .varmap = null, .mutable = null,
-        .block_header = null
+        .block_header = null,
       };
     }
 
-    pub fn primary(name: []const u8, t: Type, default: ?*Expression) Location {
-      return .{
-        .name = name, .tloc = t, .default = default,
-        .primary = Position.intrinsic(), .varargs = null, .varmap = null,
-        .mutable = null, .block_header = null
-      };
+    pub inline fn with_default(self: *Location, v: *Expression) Location {
+      self.default = v;
+      return self.*;
+    }
+
+    pub inline fn with_header(self: *Location, v: *BlockHeader) Location {
+      self.block_header = v;
+      return self.*;
+    }
+
+    pub inline fn with_primary(self: *Location, v: Position) Location {
+      self.primary = v;
+      return self.*;
     }
   };
 

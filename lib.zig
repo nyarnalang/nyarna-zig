@@ -160,6 +160,8 @@ pub const Intrinsics = Provider.Wrapper(struct {
               default: ?*model.Value.Ast) nyarna.Error!*model.Node {
     var expr = if (default) |node| blk: {
       var val = try intpr.interpret(node.root);
+      if (val.expected_type.is(.poison))
+        return model.Node.poison(&intpr.storage.allocator, pos);
       if (t) |given_type| {
         if (!intpr.types().lesserEqual(val.expected_type, given_type)
             and !val.expected_type.is(.poison)) {
@@ -233,6 +235,61 @@ pub const Intrinsics = Provider.Wrapper(struct {
     return model.Node.genVoid(&intpr.storage.allocator, pos);
   }
 
+  fn record(intpr: *Interpreter, pos: model.Position,
+            fields: []*model.Value.Location) nyarna.Error!*model.Node {
+    var res = try intpr.createPublic(model.Type.Instantiated);
+    res.* = .{
+      .at = pos,
+      .name = null,
+      .data = .{
+        .record = undefined,
+      },
+    };
+    const res_type = model.Type{.instantiated = res};
+
+    var finder = types.CallableReprFinder.init(intpr.types());
+    for (fields) |field| try finder.push(field);
+    const finder_result = try finder.finish(res_type, true);
+    std.debug.assert(finder_result.found.* == null);
+
+    var b = try types.SigBuilder(.userdef).init(
+      intpr, fields.len, res_type, finder_result.needs_different_repr);
+    for (fields) |field| try b.push(field);
+    const builder_res = b.finish() orelse
+      return model.Node.poison(&intpr.storage.allocator, pos);
+
+    const structural = try intpr.createPublic(model.Type.Structural);
+    structural.* = .{
+      .callable = .{
+        .sig = builder_res.sig,
+        .is_type = true,
+        .repr = undefined,
+      },
+    };
+    structural.callable.repr = if (builder_res.repr) |repr_sig| blk: {
+      const repr = try intpr.createPublic(model.Type.Structural);
+      repr.* = .{
+        .callable = .{
+          .sig = repr_sig,
+          .is_type = true,
+          .repr = undefined,
+        },
+      };
+      repr.callable.repr = &repr.callable;
+      break :blk &repr.callable;
+    } else &structural.callable;
+
+
+    res.data.record = .{
+      .callable = & structural.callable,
+    };
+    return try intpr.genValueNode(pos, .{
+      .typeval = .{
+        .t = res_type
+      },
+    });
+  }
+
   fn @"if"(intpr: *Interpreter, pos: model.Position,
            condition: *model.Value.Ast, then: *model.Value.Ast,
            @"else": *model.Value.Ast) !*model.Node {
@@ -254,9 +311,9 @@ pub const Intrinsics = Provider.Wrapper(struct {
   }
 });
 
-fn extFunc(context: *Context, name: []const u8, sig: *model.Type.Signature,
+fn extFunc(context: *Context, name: []const u8, bres: types.SigBuilderResult,
            is_type: bool, p: *Provider) !model.Symbol.ExtFunc {
-  const impl_index = if (sig.isKeyword()) blk: {
+  const impl_index = if (bres.sig.isKeyword()) blk: {
     const impl = p.getKeyword(name) orelse {
       std.debug.print("don't know keyword: {s}\n", .{name});
       unreachable;
@@ -274,10 +331,24 @@ fn extFunc(context: *Context, name: []const u8, sig: *model.Type.Signature,
   const callable = try context.storage.allocator.create(model.Type.Structural);
   callable.* = .{
     .callable = .{
-      .sig = sig,
+      .sig = bres.sig,
       .is_type = is_type,
+      .repr = undefined,
     },
   };
+  callable.callable.repr = if (bres.repr) |repr_sig| blk: {
+    const repr = try context.storage.allocator.create(model.Type.Structural);
+    repr.* = .{
+      .callable = .{
+        .sig = repr_sig,
+        .is_type = is_type,
+        .repr = undefined,
+      },
+    };
+    repr.callable.repr = &repr.callable;
+    break :blk &repr.callable;
+  } else &callable.callable;
+
   return model.Symbol.ExtFunc{
     .callable = &callable.callable,
     .impl_index = impl_index,
@@ -286,12 +357,12 @@ fn extFunc(context: *Context, name: []const u8, sig: *model.Type.Signature,
 }
 
 fn extFuncSymbol(context: *Context, name: []const u8,
-                 sig: *model.Type.Signature, p: *Provider) !*model.Symbol {
+                 bres: types.SigBuilderResult, p: *Provider) !*model.Symbol {
   const ret = try context.storage.allocator.create(model.Symbol);
   ret.defined_at = model.Position.intrinsic();
   ret.name = name;
   ret.data = .{
-    .ext_func = try extFunc(context, name, sig, false, p),
+    .ext_func = try extFunc(context, name, bres, false, p),
   };
   return ret;
 }
@@ -314,45 +385,103 @@ pub fn intrinsicModule(context: *Context) !*model.Module {
 
   var ip = Intrinsics.init();
 
+  const location_block = blk: {
+    const value_header_location = try context.storage.allocator.create(
+      model.Value);
+    value_header_location.* = .{
+      .data = .{
+        .block_header = .{
+          .config = .{
+            .syntax = .{
+              .pos = model.Position.intrinsic(),
+              .index = 0,
+            },
+            .map = &.{},
+            .off_colon = null,
+            .off_comment = null,
+            .full_ast = null,
+          },
+          .swallow_depth = null,
+        },
+      },
+      .origin = model.Position.intrinsic(),
+    };
+    break :blk &value_header_location.data.block_header;
+  };
+
+  const definition_block = blk: {
+    const value_header_definition = try context.storage.allocator.create(
+      model.Value);
+    value_header_definition.* = .{
+      .data = .{
+        .block_header = .{
+          .config = .{
+            .syntax = .{
+              .pos = model.Position.intrinsic(),
+              .index = 1,
+            },
+            .map = &.{},
+            .off_colon = null,
+            .off_comment = null,
+            .full_ast = null,
+          },
+          .swallow_depth = null,
+        },
+      },
+      .origin = model.Position.intrinsic(),
+    };
+    break :blk &value_header_definition.data.block_header;
+  };
+
   //-------------------
   // type constructors
   //-------------------
 
   // location
   var b = try types.SigBuilder(.intrinsic).init(
-    &context.storage.allocator, 8, .{.intrinsic = .ast_node});
-  try b.push(try intLoc(context, model.Value.Location.simple(
-    "name", .{.intrinsic = .literal}, null))); // TODO: identifier
-  try b.push(try intLoc(context, model.Value.Location.simple(
-    "type", .{.intrinsic = .non_callable_type}, null)));
-  try b.push(try intLoc(context, model.Value.Location.simple(
-    "primary", .{.instantiated = &context.types.boolean}, null)));
-  try b.push(try intLoc(context, model.Value.Location.simple(
-    "varargs", .{.instantiated = &context.types.boolean}, null)));
-  try b.push(try intLoc(context, model.Value.Location.simple(
-    "varmap", .{.instantiated = &context.types.boolean}, null)));
-  try b.push(try intLoc(context, model.Value.Location.simple(
-    "mutable", .{.instantiated = &context.types.boolean}, null)));
-  try b.push(try intLoc(context, model.Value.Location.simple(
+    &context.storage.allocator, 8, .{.intrinsic = .ast_node}, false);
+  try b.push(try intLoc(context, model.Value.Location.init(
+    "name", .{.intrinsic = .literal}))); // TODO: identifier
+  try b.push(try intLoc(context, model.Value.Location.init(
+    "type", .{.intrinsic = .non_callable_type})));
+  try b.push(try intLoc(context, model.Value.Location.init(
+    "primary", .{.instantiated = &context.types.boolean})));
+  try b.push(try intLoc(context, model.Value.Location.init(
+    "varargs", .{.instantiated = &context.types.boolean})));
+  try b.push(try intLoc(context, model.Value.Location.init(
+    "varmap", .{.instantiated = &context.types.boolean})));
+  try b.push(try intLoc(context, model.Value.Location.init(
+    "mutable", .{.instantiated = &context.types.boolean})));
+  try b.push(try intLoc(context, model.Value.Location.init(
     "header", (try context.types.optional(
-      .{.intrinsic = .block_header})).?, null)));
-  try b.push(try intLoc(context, model.Value.Location.primary(
+      .{.intrinsic = .block_header})).?)));
+  try b.push(try intLoc(context, model.Value.Location.init(
     "default", (try context.types.optional(
-      .{.intrinsic = .ast_node})).?, null)));
+      .{.intrinsic = .ast_node})).?).with_primary(model.Position.intrinsic())));
   context.types.type_constructors[0] =
     try extFunc(context, "location", b.finish(), true, &ip.provider);
 
   // definition
   b = try types.SigBuilder(.intrinsic).init(
-    &context.storage.allocator, 3, .{.intrinsic = .ast_node});
-  try b.push(try intLoc(context, model.Value.Location.simple(
-    "name", .{.intrinsic = .literal}, null))); // TODO: identifier
-  try b.push(try intLoc(context, model.Value.Location.simple(
-    "root", .{.instantiated = &context.types.boolean}, null)));
-  try b.push(try intLoc(context, model.Value.Location.simple(
-    "item", .{.intrinsic = .ast_node}, null)));
+    &context.storage.allocator, 3, .{.intrinsic = .ast_node}, false);
+  try b.push(try intLoc(context, model.Value.Location.init(
+    "name", .{.intrinsic = .literal}))); // TODO: identifier
+  try b.push(try intLoc(context, model.Value.Location.init(
+    "root", .{.instantiated = &context.types.boolean})));
+  try b.push(try intLoc(context, model.Value.Location.init(
+    "item", .{.intrinsic = .ast_node})));
   context.types.type_constructors[1] =
     try extFunc(context, "definition", b.finish(), true, &ip.provider);
+
+  // record
+  b = try types.SigBuilder(.intrinsic).init(
+    &context.storage.allocator, 1, .{.intrinsic = .ast_node}, false);
+  // TODO: allow record to extend other record (?)
+  try b.push(try intLoc(context, model.Value.Location.init(
+    "fields", (try context.types.concat(model.Type{.intrinsic = .location})).?
+    ).with_header(location_block)));
+  context.types.type_constructors[2] =
+    try extFunc(context, "record", b.finish(), true, &ip.provider);
 
   //-------------------
   // external symbols
@@ -360,29 +489,31 @@ pub fn intrinsicModule(context: *Context) !*model.Module {
 
   // declare
   b = try types.SigBuilder(.intrinsic).init(
-    &context.storage.allocator, 3, .{.intrinsic = .ast_node});
+    &context.storage.allocator, 3, .{.intrinsic = .ast_node}, false);
   var definition_concat =
     (try context.types.concat(.{.intrinsic = .definition})).?;
-  try b.push(try intLoc(context, model.Value.Location.simple(
+  try b.push(try intLoc(context, model.Value.Location.init(
     "namespace", (try context.types.optional(
-      .{.intrinsic = .non_callable_type})).?, null)));
-  try b.push(try intLoc(context, model.Value.Location.primary(
-    "public", definition_concat, null)));
-  try b.push(try intLoc(context, model.Value.Location.simple(
-    "private", definition_concat, null)));
+      .{.intrinsic = .non_callable_type})).?)));
+  try b.push(try intLoc(context, model.Value.Location.init(
+    "public", definition_concat).with_primary(
+      model.Position.intrinsic()).with_header(definition_block)));
+  try b.push(try intLoc(context, model.Value.Location.init(
+    "private", definition_concat).with_header(definition_block)));
   ret.symbols[index] =
     try extFuncSymbol(context, "declare", b.finish(), &ip.provider);
   index += 1;
 
   // if
   b = try types.SigBuilder(.intrinsic).init(
-    &context.storage.allocator, 3, .{.intrinsic = .ast_node});
-  try b.push(try intLoc(context, model.Value.Location.simple(
-    "condition", .{.intrinsic = .ast_node}, null)));
-  try b.push(try intLoc(context, model.Value.Location.primary(
-    "then", .{.intrinsic = .ast_node}, null)));
-  try b.push(try intLoc(context, model.Value.Location.simple(
-    "else", .{.intrinsic = .ast_node}, null)));
+    &context.storage.allocator, 3, .{.intrinsic = .ast_node}, false);
+  try b.push(try intLoc(context, model.Value.Location.init(
+    "condition", .{.intrinsic = .ast_node})));
+  try b.push(try intLoc(context, model.Value.Location.init(
+    "then", .{.intrinsic = .ast_node}).with_primary(
+      model.Position.intrinsic())));
+  try b.push(try intLoc(context, model.Value.Location.init(
+    "else", .{.intrinsic = .ast_node})));
   ret.symbols[index]  =
     try extFuncSymbol(context, "if", b.finish(), &ip.provider);
   index += 1;

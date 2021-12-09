@@ -636,13 +636,19 @@ pub const Interpreter = struct {
       },
       .branches => |br| return try self.probeNodeList(br.branches, ctx),
       .concatenation => |con| {
-        const inner =
+        var inner =
           (try self.probeNodeList(con.content, ctx)) orelse return null;
-        return (try self.types().concat(inner)) orelse {
-          self.loader.logger.InvalidInnerConcatType(
-            node.pos, &[_]model.Type{inner});
-          return model.Type{.intrinsic = .poison};
-        };
+        if (!inner.is(.poison))
+          inner = (try self.types().concat(inner)) orelse {
+            self.loader.logger.InvalidInnerConcatType(
+              node.pos, &[_]model.Type{inner});
+            node.data = .poisonNode;
+            return model.Type{.intrinsic = .poison};
+          };
+        if (inner.is(.poison)) {
+          node.data = .poisonNode;
+        }
+        return inner;
       },
       .paragraphs => |*para| {
         var builder =
@@ -799,11 +805,15 @@ pub const Interpreter = struct {
         self.tryInterpret(input, false, null),
       .branches => |br| blk: {
         if (!probed) {
-          const actual_type =
+          var actual_type =
             (try self.probeType(input, null)) orelse break :blk input;
-          if (!self.types().lesserEqual(actual_type, t)) {
+          if (!actual_type.is(.poison) and
+              !self.types().lesserEqual(actual_type, t)) {
+            actual_type = .{.intrinsic = .poison};
             self.loader.logger.ExpectedExprOfTypeXGotY(
               input.pos, &[_]model.Type{t, actual_type});
+          }
+          if (actual_type.is(.poison)) {
             input.data = .poisonNode;
             break :blk input;
           }
@@ -844,11 +854,15 @@ pub const Interpreter = struct {
       },
       .concatenation => |con| blk: {
         if (!probed) {
-          const actual_type =
+          var actual_type =
             (try self.probeType(input, null)) orelse break :blk input;
-          if (!self.types().lesserEqual(actual_type, t)) {
+          if (!actual_type.is(.poison) and
+              !self.types().lesserEqual(actual_type, t)) {
+            actual_type = .{.intrinsic = .poison};
             self.loader.logger.ExpectedExprOfTypeXGotY(
               input.pos, &[_]model.Type{t, actual_type});
+          }
+          if (actual_type.is(.poison)) {
             input.data = .poisonNode;
             break :blk input;
           }
@@ -906,6 +920,7 @@ pub const Interpreter = struct {
       !?*model.Expression {
     return switch ((try self.interpretWithTargetType(node, t, false)).data) {
       .expression => |expr| blk: {
+        if (expr.expected_type.is(.poison)) break :blk expr;
         if (self.types().lesserEqual(expr.expected_type, t)) {
           expr.expected_type = t;
           break :blk expr;
