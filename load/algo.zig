@@ -90,7 +90,7 @@ const TypeResolution = struct {
                 item.data = .{
                   .expression = try self.intpr.genPublicLiteral(
                     item.pos, .{
-                      .typeval = .{.t = dt.value},
+                      .@"type" = .{.t = dt.value},
                     }),
                 };
                 return graph.ResolutionContext.Result{.unfinished_type};
@@ -136,13 +136,14 @@ pub const DeclareResolution = struct {
   intpr: *nyarna.Interpreter,
 
   pub fn create(intpr: *nyarna.Interpreter,
-                defs: []*model.Value.Definition) !*DeclareResolution {
+                defs: []*model.Value.Definition,
+                ns: u15) !*DeclareResolution {
     var res = try intpr.storage.allocator.create(DeclareResolution);
     res.defs = defs;
     res.processor = try Processor.init(&intpr.storage.allocator, res);
     res.dep_discovery_ctx = .{
       .resolveInSiblingDefinitions = discoverDependencies,
-      .ns = intpr.currently_called_ns,
+      .ns = ns,
     };
     res.intpr = intpr;
     return res;

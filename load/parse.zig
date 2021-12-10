@@ -479,6 +479,65 @@ pub const Parser = struct {
     return last(self.levels.items);
   }
 
+  const CallContext = union(enum) {
+    known: struct {
+      target: *model.Expression,
+      ns: u15,
+      signature: *const model.Type.Signature,
+      first_arg: ?*model.Node,
+    },
+    unknown, poison,
+  };
+
+  fn chainResToContext(self: *Parser, pos: model.Position,
+                       res: Interpreter.ChainResolution) !CallContext {
+    switch (res) {
+      .var_chain => |_| {
+        unreachable; // TODO
+      },
+      .func_ref => |fr| {
+        const target_expr = try self.intpr().genPublicLiteral(
+          pos, .{.funcref = .{.func = fr.target}});
+        return CallContext{
+          .known = .{
+            .target = target_expr,
+            .ns = fr.ns,
+            .signature = fr.signature,
+            .first_arg = if (fr.prefix) |prefix| blk: {
+              const expr_node = try self.int().create(model.Node);
+              expr_node.* = .{
+                .pos = prefix.pos,
+                .data = .{.expression = prefix},
+              };
+              break :blk expr_node;
+            } else null,
+          },
+        };
+      },
+      .expr_chain => |_| {
+        unreachable; // TODO
+      },
+      .type_ref => |_| {
+        unreachable; // TODO
+      },
+      .proto_ref => |pref| {
+        const target_expr = try self.intpr().genPublicLiteral(
+          pos, .{.prototype = .{.pt = pref.*}});
+        return CallContext{
+          .known = .{
+            .target = target_expr,
+            .ns = undefined,
+            .signature = self.intpr().types().prototypeConstructor(
+              pref.*).callable.sig,
+            .first_arg = null,
+          },
+        };
+      },
+      .failed => return .unknown,
+      .poison => return .poison,
+    }
+  }
+
   fn doParse(self: *Parser, implicit_fullast: bool) !*model.Node {
     while (true) {
       std.debug.print("parse step. state={s}, level stack =\n",
@@ -723,47 +782,27 @@ pub const Parser = struct {
             },
             .list_start, .blocks_sep => {
               const target = lvl.command.info.unknown;
-              switch (target.data) {
-                .resolved_symref, .unresolved_symref, .access => {
-                  const res =
-                    try self.intpr().resolveChain(target, false, null);
-                  switch (res) {
-                    .var_chain => |_| {
-                      unreachable; // TODO
-                    },
-                    .func_ref => |fr| {
-                      const target_expr = try self.intpr().genPublicLiteral(
-                        target.pos, .{
-                          .funcref = .{
-                            .func = fr.target
-                          },
-                        });
-                      try lvl.command.startResolvedCall(
-                        self.intpr(), target_expr, fr.ns, fr.signature);
-                      if (fr.prefix) |prefix| {
-                        const expr_node = try self.int().create(model.Node);
-                        expr_node.* = .{
-                          .pos = prefix.pos,
-                          .data = .{
-                            .expression = prefix,
-                          },
-                        };
-                        try lvl.command.pushArg(self.int(), expr_node);
-                      }
-                    },
-                    .expr_chain => |_| {
-                      unreachable; // TODO
-                    },
-                    .type_ref => |_| {
-                      unreachable; // TODO
-                    },
-                    .failed => {
-                      try lvl.command.startUnresolvedCall(self.int());
-                    },
-                    .poison => unreachable //TODO
+              const ctx = switch (target.data) {
+                .resolved_symref, .unresolved_symref, .access =>
+                  try self.chainResToContext(target.pos,
+                    try self.intpr().resolveChain(target, false, null)),
+                else => unreachable, // TODO
+              };
+              switch (ctx) {
+                .known => |call_context| {
+                  try lvl.command.startResolvedCall(self.intpr(),
+                    call_context.target, call_context.ns,
+                    call_context.signature);
+                  if (call_context.first_arg) |prefix| {
+                    try lvl.command.pushArg(self.int(), prefix);
                   }
                 },
-                else => unreachable // TODO
+                .unknown =>
+                  try lvl.command.startUnresolvedCall(self.int()),
+                .poison => {
+                  target.data = .poisonNode;
+                  try lvl.command.startUnresolvedCall(self.int());
+                }
               }
               self.state = if (self.cur == .list_start) .possible_start
                            else .after_blocks_start;

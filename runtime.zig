@@ -11,29 +11,35 @@ pub const Evaluator = struct {
   }
 
   fn setupParameterStackFrame(
-      self: *Evaluator, sig: *const model.Type.Signature,
+      self: *Evaluator, sig: *const model.Type.Signature, ns_dependent: bool,
       prev_frame: ?[*]model.StackItem) ![*]model.StackItem {
+    const num_params =
+      sig.parameters.len + if (ns_dependent) @as(usize, 1) else 0;
     if ((@ptrToInt(self.context.stack_ptr) - @ptrToInt(self.context.stack.ptr))
-        / @sizeOf(model.StackItem) + sig.parameters.len >
-        self.context.stack.len) {
+        / @sizeOf(model.StackItem) + num_params > self.context.stack.len) {
       return nyarna.Error.nyarna_stack_overflow;
     }
     const ret = self.context.stack_ptr;
-    self.context.stack_ptr += sig.parameters.len + 1;
+    self.context.stack_ptr += num_params + 1;
     ret.* = .{.frame_ref = prev_frame};
     return ret;
   }
 
-  fn resetParameterStackFrame(self: *Evaluator, target: anytype) void {
-    target.cur_frame = target.cur_frame.?[0].frame_ref;
-    self.context.stack_ptr -= target.sig().parameters.len - 1;
+  fn resetParameterStackFrame(self: *Evaluator, frame_ptr: *?[*]model.StackItem,
+                              sig: *const model.Type.Signature) void {
+    frame_ptr.* = frame_ptr.*.?[0].frame_ref;
+    self.context.stack_ptr -= sig.parameters.len - 1;
   }
 
   fn fillParameterStackFrame(self: *Evaluator, exprs: []*model.Expression,
-                             frame: [*]model.StackItem) !void {
+                             frame: [*]model.StackItem) !bool {
+    var seen_poison = false;
     for (exprs) |expr, i| {
-      frame[i] = .{.value = try self.evaluate(expr)};
+      const val = try self.evaluate(expr);
+      frame[i] = .{.value = val};
+      if (val.data == .poison) seen_poison = true;
     }
+    return !seen_poison;
   }
 
   fn bindVariables(vars: model.VariableContainer,
@@ -74,12 +80,51 @@ pub const Evaluator = struct {
     };
   }
 
+  fn poison(impl_ctx: anytype, pos: model.Position)
+      nyarna.Error!RetTypeForCtx(@TypeOf(impl_ctx)) {
+    switch (@TypeOf(impl_ctx)) {
+      *Evaluator => {
+        const ret = try impl_ctx.context.storage.allocator.create(model.Value);
+        ret.* = .{
+          .data = .poison,
+          .origin = pos,
+        };
+        return ret;
+      },
+      *nyarna.Interpreter => {
+        const ret = try impl_ctx.storage.allocator.create(model.Node);
+        ret.* = .{
+          .pos = pos,
+          .data = .poisonNode,
+        };
+        return ret;
+      },
+      else => unreachable,
+    }
+  }
+
+  fn callConstructor(self: *Evaluator, impl_ctx: anytype,
+      call: *model.Expression.Call, constr: *const nyarna.types.Constructor)
+      nyarna.Error!RetTypeForCtx(@TypeOf(impl_ctx)) {
+    const target_impl =
+      self.registeredFnForCtx(@TypeOf(impl_ctx), constr.impl_index);
+    std.debug.assert(
+      call.exprs.len == constr.callable.sig.parameters.len);
+    var frame: ?[*]model.StackItem = try self.setupParameterStackFrame(
+      constr.callable.sig, false, null);
+    defer self.resetParameterStackFrame(&frame, constr.callable.sig);
+    return if (try self.fillParameterStackFrame(
+        call.exprs, frame.? + 1))
+      target_impl(impl_ctx, call.expr().pos, frame.? + 1)
+    else poison(impl_ctx, call.expr().pos);
+  }
+
   fn evaluateCall(
       self: *Evaluator, impl_ctx: anytype, call: *model.Expression.Call)
       nyarna.Error!RetTypeForCtx(@TypeOf(impl_ctx)) {
     const target = try self.evaluate(call.target);
-    return switch (target.data) {
-      .funcref => |fr| blk: {
+    switch (target.data) {
+      .funcref => |fr| {
         std.debug.print("evaluateCall => {s}\n", .{fr.func.name});
         switch (fr.func.data) {
           .ext_func => |*ef| {
@@ -88,35 +133,60 @@ pub const Evaluator = struct {
             std.debug.assert(
               call.exprs.len == ef.sig().parameters.len);
             ef.cur_frame = try self.setupParameterStackFrame(
-              ef.sig(), ef.cur_frame);
-            defer self.resetParameterStackFrame(ef);
-            try self.fillParameterStackFrame(
-              call.exprs, ef.cur_frame.? + 1);
-            break :blk target_impl(
-              impl_ctx, call.expr().pos, ef.cur_frame.? + 1);
+              ef.sig(), ef.ns_dependent, ef.cur_frame);
+            var frame_ptr = ef.cur_frame.? + 1;
+            var ns_val: model.Value = undefined;
+            if (ef.ns_dependent) {
+              ns_val = .{
+                .data = .{
+                  .number = .{
+                    .t = undefined, // not accessed, since the wrapper assumes
+                                    // that the value adheres to the target
+                                    // type's constraints
+                    .value = call.ns,
+                  },
+                },
+                .origin = undefined,
+              };
+              frame_ptr.* = .{
+                .value = &ns_val,
+              };
+              frame_ptr += 1;
+            }
+            defer self.resetParameterStackFrame(&ef.cur_frame, ef.sig());
+            return if (try self.fillParameterStackFrame(
+                call.exprs, frame_ptr))
+              target_impl(impl_ctx, call.expr().pos, ef.cur_frame.? + 1)
+            else poison(impl_ctx, call.expr().pos);
           },
           .ny_func => |*nf| {
             defer bindVariables(nf.variables, nf.cur_frame);
             nf.cur_frame = try self.setupParameterStackFrame(
-              nf.sig(), nf.cur_frame);
-            defer self.resetParameterStackFrame(nf);
-            try self.fillParameterStackFrame(
-              call.exprs, nf.cur_frame.? + 1);
-            bindVariables(nf.variables, nf.cur_frame);
-            const val = try self.evaluate(nf.body);
-            break :blk switch (@TypeOf(impl_ctx)) {
-              *Evaluator => val,
-              *nyarna.Interpreter => val.data.ast.root,
-              else => unreachable,
-            };
+              nf.sig(), false, nf.cur_frame);
+            defer self.resetParameterStackFrame(&nf.cur_frame, nf.sig());
+            if (try self.fillParameterStackFrame(
+                call.exprs, nf.cur_frame.? + 1)) {
+              bindVariables(nf.variables, nf.cur_frame);
+              const val = try self.evaluate(nf.body);
+              return switch (@TypeOf(impl_ctx)) {
+                *Evaluator => val,
+                *nyarna.Interpreter => val.data.ast.root,
+                else => unreachable,
+              };
+            } else return poison(impl_ctx, call.expr().pos);
           },
           else => unreachable,
         }
       },
-      .typeval => |_| {
-        unreachable; // not implemented yet
+      .@"type" => |tv| {
+        const constr = self.context.types.typeConstructor(tv.t);
+        return self.callConstructor(impl_ctx, call, constr);
       },
-      .poison => switch (@TypeOf(impl_ctx)) {
+      .prototype => |pv| {
+        const constr = self.context.types.prototypeConstructor(pv.pt);
+        return self.callConstructor(impl_ctx, call, constr);
+      },
+      .poison => return switch (@TypeOf(impl_ctx)) {
         *Evaluator => model.Value.create(
           &self.context.storage.allocator, call.expr().pos, .poison),
         *nyarna.Interpreter => model.Node.poison(
@@ -124,12 +194,11 @@ pub const Evaluator = struct {
         else => unreachable,
       },
       else => unreachable
-    };
+    }
   }
 
   pub fn evaluateKeywordCall(self: *Evaluator, intpr: *nyarna.Interpreter,
                              call: *model.Expression.Call) !*model.Node {
-    intpr.currently_called_ns = call.ns;
     return self.evaluateCall(intpr, call);
   }
 
@@ -142,7 +211,7 @@ pub const Evaluator = struct {
         for (assignment.path) |index| {
           cur_ptr = switch (cur_ptr.*.data) {
             .record => |*record| &record.fields[index],
-            .list   => |*list|   &list.items.items[index],
+            .list   => |*list|   &list.content.items[index],
             else => unreachable,
           };
         }
@@ -155,7 +224,7 @@ pub const Evaluator = struct {
         for (access.path) |index| {
           cur = switch (cur.data) {
             .record => |*record| record.fields[index],
-            .list   => |*list|   list.items.items[index],
+            .list   => |*list|   list.content.items[index],
             else    => unreachable,
           };
         }

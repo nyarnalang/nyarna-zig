@@ -2,6 +2,15 @@ const std = @import("std");
 const model = @import("model.zig");
 const interpret = @import("load/interpret.zig");
 
+/// a type or prototype constructor.
+pub const Constructor = struct {
+  /// contains the signature of the constructor when called.
+  /// has is_type set to true if it's a type, false if it's a prototype.
+  callable: *model.Type.Callable,
+  /// index of the constructor's implementation.
+  impl_index: usize,
+};
+
 /// This is Nyarna's type lattice. It calculates type intersections, checks type
 /// compatibility, and owns all data of structural types.
 ///
@@ -119,7 +128,18 @@ pub const Lattice = struct {
   },
   /// constructors for all types that have constructors.
   /// these are to be queried via fn constructor().
-  type_constructors: []*model.Symbol.ExtFunc,
+  constructors: struct {
+    location: Constructor,
+    definition: Constructor,
+    literal_raw: Constructor,
+    space: Constructor,
+    /// Prototype implementations that generate type instances.
+    prototypes: struct {
+      record: Constructor,
+      concat: Constructor,
+      list: Constructor,
+    },
+  },
   /// predefined types. TODO: move these to system.ny
   boolean: model.Type.Instantiated,
 
@@ -134,7 +154,7 @@ pub const Lattice = struct {
         .paragraphs = .{},
         .callable = .{},
       },
-      .type_constructors = try alloc.allocator.alloc(*model.Symbol.ExtFunc, 3),
+      .constructors = undefined, // set later by loading the intrinsic lib
       .boolean = .{
         .at = model.Position.intrinsic(), .name = null,
         .data = .{.tenum = undefined}
@@ -144,7 +164,7 @@ pub const Lattice = struct {
     const boolsym = try ret.alloc.create(model.Symbol);
     boolsym.defined_at = model.Position.intrinsic();
     boolsym.name = "Boolean";
-    boolsym.data = .{.ny_type = .{.instantiated = &ret.boolean}};
+    boolsym.data = .{.@"type" = .{.instantiated = &ret.boolean}};
     ret.boolean.name = boolsym;
 
     return ret;
@@ -156,15 +176,27 @@ pub const Lattice = struct {
   }
 
   /// may only be called on types that do have constructors
-  pub fn constructor(self: *Self, t: model.Type) *model.Symbol.ExtFunc {
-    const index = switch (t) {
+  pub fn typeConstructor(self: *const Self, t: model.Type) *const Constructor {
+    return switch (t) {
       .intrinsic => |it| switch (it) {
-        .location => 0,
-        else => unreachable,
+        .location      => &self.constructors.location,
+        .definition    => &self.constructors.definition,
+        .raw, .literal => &self.constructors.literal_raw,
+        .space         => &self.constructors.space,
+        else           => unreachable,
       },
       else => unreachable,
     };
-    return self.type_constructors[index];
+  }
+
+  pub fn prototypeConstructor(self: *const Self, pt: model.Prototype)
+      *const Constructor {
+    return switch (pt) {
+      .record => &self.constructors.prototypes.record,
+      .concat => &self.constructors.prototypes.concat,
+      .list   => &self.constructors.prototypes.list,
+      else    => unreachable,
+    };
   }
 
   /// this function implements the artificial total order. The total order's
@@ -578,7 +610,7 @@ pub const Lattice = struct {
     return model.Type{.structural = res.value_ptr.*};
   }
 
-  pub fn valueType(self: *Lattice, v: *model.Value) model.Type {
+  pub fn valueType(self: *const Lattice, v: *model.Value) model.Type {
     return switch (v.data) {
       .text => |*txt| txt.t,
       .number => |*num| num.t.typedef(),
@@ -588,18 +620,19 @@ pub const Lattice = struct {
       .concat => |*con| con.t.typedef(),
       .list => |*list| list.t.typedef(),
       .map => |*map| map.t.typedef(),
-      .typeval => |t| switch (t.t) {
+      .@"type" => |tv| switch (tv.t) {
         .intrinsic => |i| switch (i) {
-          .location => self.type_constructors[0].callable.typedef(),
-          .definition => self.type_constructors[1].callable.typedef(),
-          else => model.Type{.intrinsic = .non_callable_type}, // TODO
+          .location, .definition, .literal, .space, .raw =>
+            self.typeConstructor(tv.t).callable.typedef(),
+          else => model.Type{.intrinsic = .non_callable_type},
         },
         .structural => model.Type{.intrinsic = .non_callable_type}, // TODO
         .instantiated => |inst| switch (inst.data) {
           .record => |rec| rec.callable.typedef(),
-          else => model.Type{.intrinsic = .non_callable_type}, // TOYO
+          else => model.Type{.intrinsic = .non_callable_type}, // TODO
         },
       },
+      .prototype => |pv| self.prototypeConstructor(pv.pt).callable.typedef(),
       .funcref => |*fr| switch (fr.func.data) {
         .ny_func => |*nf| nf.callable.typedef(),
         .ext_func => |*ef| ef.callable.typedef(),
@@ -683,6 +716,34 @@ pub const SigBuilderResult = struct {
   /// if build_repr has been set in init(), the representative signature
   /// for the type lattice. else null.
   repr: ?*model.Type.Signature,
+
+  pub fn createCallable(
+      self: *const @This(), allocator: *std.mem.Allocator,
+      kind: model.Type.Callable.Kind) !*model.Type.Callable {
+    const strct = try allocator.create(model.Type.Structural);
+    errdefer allocator.destroy(strct);
+    strct.* = .{
+      .callable = .{
+        .sig = self.sig,
+        .kind = kind,
+        .repr = undefined,
+      },
+    };
+    strct.callable.repr = if (self.repr) |repr_sig| blk: {
+      const repr = try allocator.create(model.Type.Structural);
+      errdefer allocator.destroy(repr);
+      repr.* = .{
+        .callable = .{
+          .sig = repr_sig,
+          .kind = kind,
+          .repr = undefined,
+        },
+      };
+      repr.callable.repr = &repr.callable;
+      break :blk &repr.callable;
+    } else &strct.callable;
+    return &strct.callable;
+  }
 };
 
 pub fn SigBuilder(comptime kind: SigBuilderEnv) type {

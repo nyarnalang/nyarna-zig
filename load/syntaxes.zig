@@ -580,7 +580,7 @@ pub const SymbolDefs = struct {
     const line_pos = self.intpr.input.between(self.start, pos.end);
 
     const lexpr = try self.intpr.genPublicLiteral(line_pos, .{
-      .typeval = .{
+      .@"type" = .{
         .t = .{
           .intrinsic = if (self.variant == .locs) .location else .definition
         },

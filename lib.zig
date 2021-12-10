@@ -60,8 +60,10 @@ pub const Provider = struct {
       provider: Provider,
 
       fn getTypedValue(comptime T: type, v: *model.Value) T {
+        std.debug.print("getTypedValue({s}, {s})\n",
+          .{@typeName(T), @tagName(v.data)});
         return switch (T) {
-          model.Type => v.data.typeval.t,
+          model.Type => v.data.@"type".t,
           else => switch (@typeInfo(T)) {
             .Optional => |opt| if (v.data == .void) null
                                else getTypedValue(opt.child, v),
@@ -74,15 +76,18 @@ pub const Provider = struct {
               model.Value.Concat => &v.data.concat,
               model.Value.List => &v.data.list,
               model.Value.Map => &v.data.map,
-              model.Value.TypeVal => &v.data.typeval,
+              model.Value.TypeVal => &v.data.@"type",
               model.Value.FuncRef => &v.data.funcref,
               model.Value.Location => &v.data.location,
               model.Value.Definition => &v.data.definition,
               model.Value.Ast => &v.data.ast,
               model.Value.BlockHeader => &v.data.block_header,
-              model.Value => |cval| getTypedValue(T, &cval),
-              else => unreachable,
+              model.Value => v,
+              else => std.debug.panic(
+                "invalid native parameter type: {s}",
+                .{@typeName(T)}),
             },
+            .Int => @intCast(T, v.data.number.value),
             else => unreachable,
           },
         };
@@ -223,21 +228,21 @@ pub const Intrinsics = Provider.Wrapper(struct {
     });
   }
 
-  fn declare(intpr: *Interpreter, pos: model.Position,
+  fn declare(intpr: *Interpreter, pos: model.Position, ns: u15,
              _: ?model.Type, public: *model.Value.Concat,
              private: *model.Value.Concat) nyarna.Error!*model.Node {
     var defs = try intpr.storage.allocator.alloc(*model.Value.Definition,
-      public.items.items.len + private.items.items.len);
-    for (public.items.items) |item, i| defs[i] = &item.data.definition;
-    for (private.items.items) |item, i|
-      defs[public.items.items.len + i] = &item.data.definition;
-    var res = try algo.DeclareResolution.create(intpr, defs);
+      public.content.items.len + private.content.items.len);
+    for (public.content.items) |item, i| defs[i] = &item.data.definition;
+    for (private.content.items) |item, i|
+      defs[public.content.items.len + i] = &item.data.definition;
+    var res = try algo.DeclareResolution.create(intpr, defs, ns);
     try res.execute();
     return model.Node.genVoid(&intpr.storage.allocator, pos);
   }
 
   fn @"Record"(intpr: *Interpreter, pos: model.Position,
-            fields: []*model.Value.Location) nyarna.Error!*model.Node {
+            fields: *model.Value.Concat) nyarna.Error!*model.Node {
     var res = try intpr.createPublic(model.Type.Instantiated);
     res.* = .{
       .at = pos,
@@ -249,13 +254,13 @@ pub const Intrinsics = Provider.Wrapper(struct {
     const res_type = model.Type{.instantiated = res};
 
     var finder = types.CallableReprFinder.init(intpr.types());
-    for (fields) |field| try finder.push(field);
+    for (fields.content.items) |field| try finder.push(&field.data.location);
     const finder_result = try finder.finish(res_type, true);
     std.debug.assert(finder_result.found.* == null);
 
-    var b = try types.SigBuilder(.userdef).init(
-      intpr, fields.len, res_type, finder_result.needs_different_repr);
-    for (fields) |field| try b.push(field);
+    var b = try types.SigBuilder(.userdef).init(intpr, fields.content.items.len,
+      res_type, finder_result.needs_different_repr);
+    for (fields.content.items) |field| try b.push(&field.data.location);
     const builder_res = b.finish() orelse
       return model.Node.poison(&intpr.storage.allocator, pos);
 
@@ -263,7 +268,7 @@ pub const Intrinsics = Provider.Wrapper(struct {
     structural.* = .{
       .callable = .{
         .sig = builder_res.sig,
-        .is_type = true,
+        .kind = .@"type",
         .repr = undefined,
       },
     };
@@ -272,7 +277,7 @@ pub const Intrinsics = Provider.Wrapper(struct {
       repr.* = .{
         .callable = .{
           .sig = repr_sig,
-          .is_type = true,
+          .kind = .@"type",
           .repr = undefined,
         },
       };
@@ -285,7 +290,7 @@ pub const Intrinsics = Provider.Wrapper(struct {
       .callable = & structural.callable,
     };
     return try intpr.genValueNode(pos, .{
-      .typeval = .{
+      .@"type" = .{
         .t = res_type
       },
     });
@@ -312,9 +317,9 @@ pub const Intrinsics = Provider.Wrapper(struct {
   }
 });
 
-fn extFunc(context: *Context, name: []const u8, bres: types.SigBuilderResult,
-           is_type: bool, p: *Provider) !model.Symbol.ExtFunc {
-  const impl_index = if (bres.sig.isKeyword()) blk: {
+fn registerExtImpl(context: *Context, p: *const Provider, name: []const u8,
+                   bres: types.SigBuilderResult) !usize {
+  return if (bres.sig.isKeyword()) blk: {
     const impl = p.getKeyword(name) orelse {
       std.debug.print("don't know keyword: {s}\n", .{name});
       unreachable;
@@ -329,41 +334,25 @@ fn extFunc(context: *Context, name: []const u8, bres: types.SigBuilderResult,
     try context.builtin_registry.append(&context.storage.allocator, impl);
     break :blk context.builtin_registry.items.len - 1;
   };
-  const callable = try context.storage.allocator.create(model.Type.Structural);
-  callable.* = .{
-    .callable = .{
-      .sig = bres.sig,
-      .is_type = is_type,
-      .repr = undefined,
-    },
-  };
-  callable.callable.repr = if (bres.repr) |repr_sig| blk: {
-    const repr = try context.storage.allocator.create(model.Type.Structural);
-    repr.* = .{
-      .callable = .{
-        .sig = repr_sig,
-        .is_type = is_type,
-        .repr = undefined,
-      },
-    };
-    repr.callable.repr = &repr.callable;
-    break :blk &repr.callable;
-  } else &callable.callable;
+}
 
+fn extFunc(context: *Context, name: []const u8, bres: types.SigBuilderResult,
+           ns_dependent: bool, p: *const Provider) !model.Symbol.ExtFunc {
   return model.Symbol.ExtFunc{
-    .callable = &callable.callable,
-    .impl_index = impl_index,
+    .callable = try bres.createCallable(&context.storage.allocator, .function),
+    .ns_dependent = ns_dependent,
+    .impl_index = try registerExtImpl(context, p, name, bres),
     .cur_frame = null,
   };
 }
 
-fn extFuncSymbol(context: *Context, name: []const u8,
+fn extFuncSymbol(context: *Context, name: []const u8, ns_dependent: bool,
                  bres: types.SigBuilderResult, p: *Provider) !*model.Symbol {
   const ret = try context.storage.allocator.create(model.Symbol);
   ret.defined_at = model.Position.intrinsic();
   ret.name = name;
   ret.data = .{
-    .ext_func = try extFunc(context, name, bres, false, p),
+    .ext_func = try extFunc(context, name, bres, ns_dependent, p),
   };
   return ret;
 }
@@ -372,32 +361,53 @@ pub inline fn intLoc(context: *Context, content: model.Value.Location)
     !*model.Value.Location {
   const value = try context.storage.allocator.create(model.Value);
   value.origin = model.Position.intrinsic();
-  value.data = .{
-    .location = content
-  };
+  value.data = .{.location = content};
   return &value.data.location;
 }
 
-fn typeConstructor(
-    context: *Context, name: []const u8, bres: types.SigBuilderResult,
-    p: *Provider, symbols: []*model.Symbol, s_index: *usize)
-    !*model.Symbol.ExtFunc {
+fn typeSymbol(context: *Context, name: []const u8, t: model.Type)
+    !*model.Symbol {
   const ret = try context.storage.allocator.create(model.Symbol);
-  ret.defined_at = model.Position.intrinsic();
-  ret.name = name;
-  ret.data = .{
-    .ext_func = try extFunc(context, name, bres, true, p),
+  ret.* = model.Symbol{
+    .defined_at = model.Position.intrinsic(),
+    .name = name,
+    .data = .{.@"type" = t},
   };
-  symbols[s_index.*] = ret;
-  s_index.* += 1;
-  return &ret.data.ext_func;
+  return ret;
+}
+
+fn prototypeSymbol(context: *Context, name: []const u8, pt: model.Prototype)
+    !*model.Symbol {
+  const ret = try context.storage.allocator.create(model.Symbol);
+  ret.* = model.Symbol{
+    .defined_at = model.Position.intrinsic(),
+    .name = name,
+    .data = .{.prototype = pt},
+  };
+  return ret;
+}
+
+fn typeConstructor(context: *Context, p: *Provider, name: []const u8,
+                   bres: types.SigBuilderResult) !types.Constructor {
+  return types.Constructor{
+    .callable = try bres.createCallable(&context.storage.allocator, .@"type"),
+    .impl_index = try registerExtImpl(context, p, name, bres),
+  };
+}
+
+fn prototypeConstructor(context: *Context, p: *Provider, name: []const u8,
+                        bres: types.SigBuilderResult) !types.Constructor {
+  return types.Constructor{
+    .callable = try bres.createCallable(&context.storage.allocator, .prototype),
+    .impl_index = try registerExtImpl(context, p, name, bres),
+  };
 }
 
 pub fn intrinsicModule(context: *Context) !*model.Module {
   var ret = try context.storage.allocator.create(model.Module);
   ret.root = try context.genLiteral(model.Position.intrinsic(), .void);
   ret.symbols = try context.storage.allocator.alloc(*model.Symbol, 5);
-  var index = @as(usize, 0);
+  var index: usize = 0;
 
   var ip = Intrinsics.init();
 
@@ -449,9 +459,9 @@ pub fn intrinsicModule(context: *Context) !*model.Module {
     break :blk &value_header_definition.data.block_header;
   };
 
-  //-------------------
-  // type constructors
-  //-------------------
+  //-------------
+  // type symbols
+  //-------------
 
   // location
   var b = try types.SigBuilder(.intrinsic).init(
@@ -474,9 +484,11 @@ pub fn intrinsicModule(context: *Context) !*model.Module {
   try b.push(try intLoc(context, model.Value.Location.init(
     "default", (try context.types.optional(
       .{.intrinsic = .ast_node})).?).with_primary(model.Position.intrinsic())));
-  context.types.type_constructors[0] = try
-      typeConstructor(context, "Location", b.finish(), &ip.provider,
-                      ret.symbols, &index);
+  context.types.constructors.location = try
+    typeConstructor(context, &ip.provider, "Location", b.finish());
+  ret.symbols[index] = try
+    typeSymbol(context, "Location", model.Type{.intrinsic = .location});
+  index += 1;
 
   // definition
   b = try types.SigBuilder(.intrinsic).init(
@@ -487,9 +499,11 @@ pub fn intrinsicModule(context: *Context) !*model.Module {
     "root", .{.instantiated = &context.types.boolean})));
   try b.push(try intLoc(context, model.Value.Location.init(
     "item", .{.intrinsic = .ast_node})));
-  context.types.type_constructors[1] = try
-    typeConstructor(context, "Definition", b.finish(), &ip.provider,
-                    ret.symbols, &index);
+  context.types.constructors.definition = try
+    typeConstructor(context, &ip.provider, "Definition", b.finish());
+  ret.symbols[index] = try
+    typeSymbol(context, "Definition", model.Type{.intrinsic = .definition});
+  index += 1;
 
   // record
   b = try types.SigBuilder(.intrinsic).init(
@@ -498,9 +512,11 @@ pub fn intrinsicModule(context: *Context) !*model.Module {
   try b.push(try intLoc(context, model.Value.Location.init(
     "fields", (try context.types.concat(model.Type{.intrinsic = .location})).?
     ).with_header(location_block).with_primary(model.Position.intrinsic())));
-  context.types.type_constructors[2] = try
-    typeConstructor(context, "Record", b.finish(), &ip.provider,
-                    ret.symbols, &index);
+  context.types.constructors.prototypes.record = try
+    prototypeConstructor(context, &ip.provider, "Record", b.finish());
+  ret.symbols[index] = try
+    prototypeSymbol(context, "Record", .record);
+  index += 1;
 
   //-------------------
   // external symbols
@@ -520,7 +536,7 @@ pub fn intrinsicModule(context: *Context) !*model.Module {
   try b.push(try intLoc(context, model.Value.Location.init(
     "private", definition_concat).with_header(definition_block)));
   ret.symbols[index] =
-    try extFuncSymbol(context, "declare", b.finish(), &ip.provider);
+    try extFuncSymbol(context, "declare", true, b.finish(), &ip.provider);
   index += 1;
 
   // if
@@ -534,7 +550,7 @@ pub fn intrinsicModule(context: *Context) !*model.Module {
   try b.push(try intLoc(context, model.Value.Location.init(
     "else", .{.intrinsic = .ast_node})));
   ret.symbols[index]  =
-    try extFuncSymbol(context, "if", b.finish(), &ip.provider);
+    try extFuncSymbol(context, "if", false, b.finish(), &ip.provider);
   index += 1;
 
   return ret;

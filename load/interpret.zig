@@ -60,8 +60,6 @@ pub const Interpreter = struct {
   /// inside \declare. If set, prototype invocations may create incomplete types
   /// as long as they can push the incomplete parts here.
   currently_built_type: ?*algo.DeclaredType = null,
-  /// The namespace on which the currently evaluated keyword has been called.
-  currently_called_ns: u15 = undefined,
 
   pub fn init(loader: *ModuleLoader, input: *const model.Source) !Interpreter {
     var ret = Interpreter{
@@ -216,8 +214,17 @@ pub const Interpreter = struct {
           .type_ref => |ref| {
             const expr = try self.createPublic(model.Expression);
             self.fillLiteral(input.pos, expr, .{
-              .typeval = .{
+              .@"type" = .{
                 .t = ref.*,
+              },
+            });
+            input.data = .{.expression = expr};
+          },
+          .proto_ref => |ref| {
+            const expr = try self.createPublic(model.Expression);
+            self.fillLiteral(input.pos, expr, .{
+              .prototype = .{
+                .pt = ref.*,
               },
             });
             input.data = .{.expression = expr};
@@ -260,7 +267,7 @@ pub const Interpreter = struct {
                 };
                 break :innerblk &ass.target.resolved;
               },
-              .func_ref, .type_ref, .expr_chain => {
+              .func_ref, .type_ref, .proto_ref, .expr_chain => {
                 self.loader.logger.InvalidLvalue(node.pos);
                 return try model.Node.poison(&self.storage.allocator, node.pos);
               },
@@ -314,9 +321,14 @@ pub const Interpreter = struct {
               .expected_type = v.t,
             };
           },
-          .ny_type => |*t| self.fillLiteral(input.pos, expr, .{
-            .typeval = .{
+          .@"type" => |*t| self.fillLiteral(input.pos, expr, .{
+            .@"type" = .{
               .t = t.*
+            },
+          }),
+          .prototype => |pt| self.fillLiteral(input.pos, expr, .{
+            .prototype = .{
+              .pt = pt,
             },
           }),
         }
@@ -324,9 +336,16 @@ pub const Interpreter = struct {
         break :blk input;
       },
       .resolved_call => |*rc| blk: {
-        const sig = switch (rc.target.expected_type.structural.*) {
-          .callable => |*c| c.sig,
-          else => unreachable
+        const sig = switch (rc.target.expected_type) {
+          .intrinsic  => |intr| std.debug.panic(
+            "call target has unexpected type {s}", .{@tagName(intr)}),
+          .structural => |strct| switch (strct.*) {
+            .callable => |*c| c.sig,
+            else => std.debug.panic(
+              "call target has unexpected type: {s}", .{@tagName(strct.*)}),
+          },
+          .instantiated => |inst| std.debug.panic(
+            "call target has unexpected type: {s}", .{@tagName(inst.data)}),
         };
         const is_keyword = sig.returns.is(.ast_node);
         const allocator = if (is_keyword) &self.storage.allocator
@@ -456,9 +475,12 @@ pub const Interpreter = struct {
       /// enforce this.
       prefix: ?*model.Expression = null,
     },
-    /// last chain item was resolved to a type. Type is a pointer into a
+    /// last chain item was resolved to a type. Value is a pointer into a
     /// model.Symbol.
     type_ref: *model.Type,
+    /// last chain item was resolved to a prototype. Value is a pointer into a
+    /// model.Symbol.
+    proto_ref: *model.Prototype,
     /// chain starts at an expression and descends into the returned value.
     expr_chain: struct {
       expr: *model.Expression,
@@ -501,6 +523,10 @@ pub const Interpreter = struct {
             // TODO: search in the namespace of the type for the given name.
             unreachable;
           },
+          .proto_ref => |_| {
+            // TODO: decide whether prototypes have a namespace
+            unreachable;
+          },
           .expr_chain => |_| {
             // TODO: same as var_chain basically
             unreachable;
@@ -527,8 +553,11 @@ pub const Interpreter = struct {
             .prefix = null,
           },
         },
-        .ny_type => |*t| ChainResolution{
+        .@"type" => |*t| ChainResolution{
           .type_ref = t,
+        },
+        .prototype => |*pv| ChainResolution{
+          .proto_ref = pv,
         },
         .variable => |*v| ChainResolution{
           .var_chain = .{
@@ -667,7 +696,7 @@ pub const Interpreter = struct {
         .ext_func => |ef| return ef.callable.typedef(),
         .ny_func => |nf| return nf.callable.typedef(),
         .variable => |v| return v.t,
-        .ny_type => |t| switch (t) {
+        .@"type" => |t| switch (t) {
           .intrinsic => |it| return switch (it) {
             .location, .definition => unreachable, // TODO
             else => model.Type{.intrinsic = .non_callable_type},
@@ -681,6 +710,15 @@ pub const Interpreter = struct {
             .record => |rt| rt.typedef(),
           },
         },
+        .prototype => |pt| return @as(?model.Type, switch (pt) {
+          .record =>
+            self.types().constructors.prototypes.record.callable.typedef(),
+          .concat =>
+            self.types().constructors.prototypes.concat.callable.typedef(),
+          .list =>
+            self.types().constructors.prototypes.list.callable.typedef(),
+          else => model.Type{.intrinsic = .prototype},
+        }),
       },
       .unresolved_call => return null,
       .resolved_call => |rc|

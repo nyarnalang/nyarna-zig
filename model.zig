@@ -439,6 +439,10 @@ pub const Symbol = struct {
     callable: *const Type.Callable,
     /// tells the interpreter under which index to look up the implementation.
     impl_index: usize,
+    /// whether the implementation of this extFunc depends on the namespace by
+    /// which the it is called. This is used for for intrinsic keywords such as
+    /// \declare and \import.
+    ns_dependent: bool,
     /// reference to the current stack frame of this function.
     /// null if no calls to this function are currently being evaluated.
     cur_frame: ?[*]StackItem,
@@ -477,7 +481,8 @@ pub const Symbol = struct {
     ext_func: ExtFunc,
     ny_func: NyFunc,
     variable: Variable,
-    ny_type: Type,
+    @"type": Type,
+    prototype: Prototype,
   };
 
   defined_at: Position,
@@ -601,10 +606,16 @@ pub const Type = union(enum) {
   };
 
   pub const Callable = struct {
+    pub const Kind = enum {function, @"type", prototype};
     /// allocated separately for the sole reason of making the Structural union
     /// smaller.
     sig: *Signature,
-    is_type: bool,
+    /// This determines the position of this type in the type hierarchy.
+    /// For a Callable c,
+    ///    c < Type iff c.kind == type
+    ///    c < Prototype iff c.kind == prototype
+    /// no relation to Type resp. Prototype otherwise.
+    kind: Kind,
     /// representative of this type in the type lattice.
     /// the representative has no primary, varmap, or auto_swallow value, and
     /// its parameters have empty names, always default-capture, and have
@@ -839,6 +850,11 @@ pub const Type = union(enum) {
   }
 };
 
+pub const Prototype = enum {
+  numeric, float, @"enum", optional, concat, list, paragraphs, record,
+  intersection,
+};
+
 pub const Expression = struct {
   /// a call to a function or type constructor.
   pub const Call = struct {
@@ -1004,7 +1020,7 @@ pub const Value = struct {
   /// a Concat value
   pub const Concat = struct {
     t: *const Type.Concat,
-    items: std.ArrayList(*Value),
+    content: std.ArrayList(*Value),
 
     pub fn value(self: *@This()) *Value {
       return Value.parent(self);
@@ -1013,7 +1029,7 @@ pub const Value = struct {
   /// a List value
   pub const List = struct {
     t: *const Type.List,
-    items: std.ArrayList(*Value),
+    content: std.ArrayList(*Value),
 
     pub fn value(self: *@This()) *Value {
       return Value.parent(self);
@@ -1031,6 +1047,14 @@ pub const Value = struct {
 
   pub const TypeVal = struct {
     t: Type,
+
+    pub fn value(self: *@This()) *Value {
+      return Value.parent(self);
+    }
+  };
+
+  pub const PrototypeVal = struct {
+    pt: Prototype,
 
     pub fn value(self: *@This()) *Value {
       return Value.parent(self);
@@ -1122,7 +1146,8 @@ pub const Value = struct {
     concat: Concat,
     list: List,
     map: Map,
-    typeval: TypeVal,
+    @"type": TypeVal,
+    prototype: PrototypeVal,
     funcref: FuncRef,
     location: Location,
     definition: Definition,
@@ -1173,20 +1198,21 @@ pub const Value = struct {
     var ret = try allocator.create(Value);
     ret.origin = pos;
     ret.data = switch (@TypeOf(content)) {
-      TextScalar  => .{.text         = content},
-      Number      => .{.number       = content},
-      FloatNumber => .{.float        = content},
-      Enum        => .{.enumval      = content},
-      Record      => .{.record       = content},
-      Concat      => .{.concat       = content},
-      List        => .{.list         = content},
-      Map         => .{.map          = content},
-      TypeVal     => .{.typeval      = content},
-      FuncRef     => .{.funcref      = content},
-      Definition  => .{.definition   = content},
-      Ast         => .{.ast          = content},
-      BlockHeader => .{.block_header = content},
-      else        => content
+      TextScalar   => .{.text         = content},
+      Number       => .{.number       = content},
+      FloatNumber  => .{.float        = content},
+      Enum         => .{.enumval      = content},
+      Record       => .{.record       = content},
+      Concat       => .{.concat       = content},
+      List         => .{.list         = content},
+      Map          => .{.map          = content},
+      TypeVal      => .{.@"type"      = content},
+      PrototypeVal => .{.prototype    = content},
+      FuncRef      => .{.funcref      = content},
+      Definition   => .{.definition   = content},
+      Ast          => .{.ast          = content},
+      BlockHeader  => .{.block_header = content},
+      else         => content
     };
     return ret;
   }
@@ -1194,20 +1220,21 @@ pub const Value = struct {
   fn parent(it: anytype) *Value {
     const t = @typeInfo(@TypeOf(it)).Pointer.child;
     const addr = @ptrToInt(it) - switch(t) {
-      TextScalar =>  offset(Data, "text"),
-      Number => offset(Data, "number"),
-      FloatNumber => offset(Data, "float"),
-      Enum => offset(Data, "enumval"),
-      Record => offset(Data, "record"),
-      Concat => offset(Data, "concat"),
-      List => offset(Data, "list"),
-      Map => offset(Data, "map"),
-      TypeVal => offset(Data, "typeval"),
-      FuncRef => offset(Data, "funcref"),
-      Location => offset(Data, "location"),
-      Definition => offset(Data, "definition"),
-      Ast => offset(Data, "ast"),
-      BlockHeader => offset(Data, "block_header"),
+      TextScalar   => offset(Data, "text"),
+      Number       => offset(Data, "number"),
+      FloatNumber  => offset(Data, "float"),
+      Enum         => offset(Data, "enumval"),
+      Record       => offset(Data, "record"),
+      Concat       => offset(Data, "concat"),
+      List         => offset(Data, "list"),
+      Map          => offset(Data, "map"),
+      TypeVal      => offset(Data, "type"),
+      PrototypeVal => offset(Data, "prototype"),
+      FuncRef      => offset(Data, "funcref"),
+      Location     => offset(Data, "location"),
+      Definition   => offset(Data, "definition"),
+      Ast          => offset(Data, "ast"),
+      BlockHeader  => offset(Data, "block_header"),
       else => unreachable
     };
     return @fieldParentPtr(Value, "data", @intToPtr(*Data, addr));
