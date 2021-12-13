@@ -587,7 +587,7 @@ pub const SymbolDefs = struct {
       },
     });
 
-    names_loop: for (self.names.items) |name| {
+    for (self.names.items) |name| {
       const args = try self.intpr.storage.allocator.alloc(*model.Node,
           switch (self.variant) {.locs => @as(usize, 8), .defs => 3});
       args[0] = name;
@@ -657,10 +657,7 @@ pub const SymbolDefs = struct {
           },
         },
       };
-      const interpreted =
-        try self.intpr.tryInterpret(constructor, false, null);
-      try self.produced.append(&self.intpr.storage.allocator, interpreted);
-      if (interpreted.data == .poisonNode) break :names_loop;
+      try self.produced.append(&self.intpr.storage.allocator, constructor);
     }
   }
 

@@ -145,7 +145,14 @@ pub const Parser = struct {
         const res = if (level.fullast) item else switch (item.data) {
           .literal, .unresolved_call, .unresolved_symref, .expression,
           .voidNode => item,
-          else => try ip.tryInterpret(item, false, null)
+          else => if (try ip.tryInterpret(item, false, null)) |expr| blk: {
+            const expr_node = try ip.storage.allocator.create(model.Node);
+            expr_node.* = .{
+              .data = .{.expression = expr},
+              .pos = item.pos,
+            };
+            break :blk expr_node;
+          } else item,
         };
         try level.nodes.append(&ip.storage.allocator, res);
       }
@@ -191,9 +198,8 @@ pub const Parser = struct {
       }
       const alloc = p.int();
       if (level.syntax_proc) |proc| {
-        return try p.intpr().tryInterpret(try proc.finish(
-          proc, p.intpr().input.between(level.start, p.cur_start)),
-          false, null);
+        return try proc.finish(
+          proc, p.intpr().input.between(level.start, p.cur_start));
       } else if (level.paragraphs.items.len == 0) {
         return level.finalizeParagraph(p.intpr());
       } else {
