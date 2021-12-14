@@ -143,7 +143,7 @@ pub const Evaluator = struct {
                     .t = undefined, // not accessed, since the wrapper assumes
                                     // that the value adheres to the target
                                     // type's constraints
-                    .value = call.ns,
+                    .content = call.ns,
                   },
                 },
                 .origin = undefined,
@@ -204,9 +204,9 @@ pub const Evaluator = struct {
 
   pub fn evaluate(self: *Evaluator, expr: *model.Expression)
       nyarna.Error!*model.Value {
-    return switch (expr.data) {
-      .call => |*call| self.evaluateCall(self, call),
-      .assignment => |*assignment| blk: {
+    switch (expr.data) {
+      .call => |*call| return self.evaluateCall(self, call),
+      .assignment => |*assignment| {
         var cur_ptr = &assignment.target.cur_value.?.*.value;
         for (assignment.path) |index| {
           cur_ptr = switch (cur_ptr.*.data) {
@@ -216,10 +216,10 @@ pub const Evaluator = struct {
           };
         }
         cur_ptr.* = try self.evaluate(assignment.expr);
-        break :blk try model.Value.create(
+        return try model.Value.create(
           &self.context.storage.allocator, expr.pos, .void);
       },
-      .access => |*access| blk: {
+      .access => |*access| {
         var cur = try self.evaluate(access.subject);
         for (access.path) |index| {
           cur = switch (cur.data) {
@@ -228,23 +228,158 @@ pub const Evaluator = struct {
             else    => unreachable,
           };
         }
-        break :blk cur;
+        return cur;
       },
-      .branches => |*branches| blk: {
+      .branches => |*branches| {
         var condition = try self.evaluate(branches.condition);
         if (self.context.types.valueType(condition).is(.poison))
-          break :blk model.Value.create(
+          return model.Value.create(
             &self.context.storage.allocator, expr.pos, .poison);
-        break :blk self.evaluate(
+        return self.evaluate(
           branches.branches[condition.data.enumval.index]);
       },
-      .concatenation => |_| unreachable,
-      .var_retrieval => |*var_retr| var_retr.variable.cur_value.?.value,
-      .literal => |*literal| &literal.value,
-      .poison =>
+      .concatenation => |concat| {
+        var builder = ConcatBuilder.init(
+          self.context, expr.pos, expr.expected_type);
+        var i: usize = 0;
+        while (i < concat.len) : (i += 1) {
+          var cur = try self.evaluate(concat[i]);
+          if (cur.data == .text and i + 1 < concat.len) {
+            i += 1;
+            var next = try self.evaluate(concat[i]);
+            if (next.data != .text) {
+              try builder.push(cur);
+              cur = next;
+            } else {
+              var content_builder = std.ArrayListUnmanaged(u8){};
+              try content_builder.appendSlice(
+                &self.context.storage.allocator, cur.data.text.content);
+              try content_builder.appendSlice(
+                &self.context.storage.allocator, next.data.text.content);
+              i += 1;
+              var last_pos = next.origin;
+              while (i < concat.len) : (i += 1) {
+                next = try self.evaluate(concat[i]);
+                if (next.data != .text) break;
+                try content_builder.appendSlice(
+                  &self.context.storage.allocator, next.data.text.content);
+                last_pos = next.origin;
+              }
+              const scalar_val = try self.context.storage.allocator.create(
+                model.Value);
+              scalar_val.* = .{
+                .origin = cur.origin.span(last_pos),
+                .data = .{
+                  .text = .{
+                    .t = builder.scalar_type,
+                    .content = content_builder.items,
+                  },
+                },
+              };
+              try builder.push(scalar_val);
+              if (i == concat.len) break;
+              cur = next;
+            }
+          }
+          try builder.push(cur);
+        }
+        return try builder.finish();
+      },
+      .var_retrieval => |*var_retr| return var_retr.variable.cur_value.?.value,
+      .literal => |*literal| return &literal.value,
+      .poison => return
         model.Value.create(&self.context.storage.allocator, expr.pos, .poison),
-      .void =>
+      .void => return
         model.Value.create(&self.context.storage.allocator, expr.pos, .void),
+    }
+  }
+};
+
+const ConcatBuilder = struct {
+  cur: ?*model.Value,
+  concat_val: ?*model.Value.Concat,
+  context: *nyarna.Context,
+  pos: model.Position,
+  inner_type: model.Type,
+  expected_type: model.Type,
+  scalar_type: model.Type,
+
+  fn init(context: *nyarna.Context, pos: model.Position,
+          expected_type: model.Type) ConcatBuilder {
+    return .{
+      .cur = null,
+      .concat_val = null,
+      .context = context,
+      .pos = pos,
+      .inner_type = model.Type{.intrinsic = .every},
+      .expected_type = expected_type,
+      .scalar_type =
+        nyarna.types.containedScalar(expected_type) orelse undefined,
     };
+  }
+
+  fn emptyConcat(self: *ConcatBuilder) !*model.Value.Concat {
+    const v = try self.context.storage.allocator.create(model.Value);
+    v.* = .{
+      .origin = self.pos,
+      .data = .{
+        .concat = .{
+          .t = &self.expected_type.structural.concat,
+          .content = std.ArrayList(*model.Value).init(
+            &self.context.storage.allocator),
+        },
+      },
+    };
+    const cval = &v.data.concat;
+    return cval;
+  }
+
+  fn concatWith(self: *ConcatBuilder, first_val: *model.Value)
+      !*model.Value.Concat {
+    const cval = try self.emptyConcat();
+    try cval.content.append(first_val);
+    return cval;
+  }
+
+  fn push(self: *ConcatBuilder, item: *model.Value) !void {
+    if (self.cur) |first_val| {
+      self.concat_val = try self.concatWith(first_val);
+      self.cur = null;
+    }
+    self.inner_type = try self.context.types.sup(
+      self.inner_type, self.context.types.valueType(item));
+
+    if (self.concat_val) |cval| try cval.content.append(item)
+    else self.cur = item;
+  }
+
+  fn finish(self: *ConcatBuilder) !*model.Value {
+    if (self.concat_val) |cval| {
+      return cval.value();
+    } else if (self.cur) |single| {
+      return if (self.expected_type.isStructural(.concat))
+        (try self.concatWith(single)).value() else single;
+    } else {
+      return if (self.expected_type.isStructural(.concat))
+        (try self.emptyConcat()).value()
+      else if (self.expected_type.is(.void)) try
+        model.Value.create(&self.context.storage.allocator, self.pos, .void)
+      else blk: {
+        std.debug.assert(
+          nyarna.types.containedScalar(self.expected_type) != null);
+        const scalar_val =
+          try self.context.storage.allocator.create(model.Value);
+        scalar_val.* = .{
+          .origin = self.pos,
+          .data = .{
+            .text = .{
+              .t = self.scalar_type,
+              .content = "",
+            },
+          },
+        };
+        break :blk scalar_val;
+      };
+    }
   }
 };

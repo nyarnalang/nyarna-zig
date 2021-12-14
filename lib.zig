@@ -60,8 +60,6 @@ pub const Provider = struct {
       provider: Provider,
 
       fn getTypedValue(comptime T: type, v: *model.Value) T {
-        std.debug.print("getTypedValue({s}, {s})\n",
-          .{@typeName(T), @tagName(v.data)});
         return switch (T) {
           model.Type => v.data.@"type".t,
           else => switch (@typeInfo(T)) {
@@ -83,11 +81,15 @@ pub const Provider = struct {
               model.Value.Ast => &v.data.ast,
               model.Value.BlockHeader => &v.data.block_header,
               model.Value => v,
+              u8 =>
+                if (ptr.is_const and ptr.size == .Slice)
+                  v.data.text.content
+                else std.debug.panic(
+                  "invalid native parameter type: {s}", .{@typeName(T)}),
               else => std.debug.panic(
-                "invalid native parameter type: {s}",
-                .{@typeName(T)}),
+                "invalid native parameter type: {s}", .{@typeName(T)}),
             },
-            .Int => @intCast(T, v.data.number.value),
+            .Int => @intCast(T, v.data.number.content),
             else => unreachable,
           },
         };
@@ -296,6 +298,11 @@ pub const Intrinsics = Provider.Wrapper(struct {
     });
   }
 
+  fn @"Raw"(_: *Evaluator, _: model.Position,
+            input: *model.Value.TextScalar) !*model.Value {
+    return input.value();
+  }
+
   fn @"if"(intpr: *Interpreter, pos: model.Position,
            condition: *model.Value.Ast, then: *model.Value.Ast,
            @"else": *model.Value.Ast) !*model.Node {
@@ -320,17 +327,13 @@ pub const Intrinsics = Provider.Wrapper(struct {
 fn registerExtImpl(context: *Context, p: *const Provider, name: []const u8,
                    bres: types.SigBuilderResult) !usize {
   return if (bres.sig.isKeyword()) blk: {
-    const impl = p.getKeyword(name) orelse {
-      std.debug.print("don't know keyword: {s}\n", .{name});
-      unreachable;
-    };
+    const impl = p.getKeyword(name) orelse
+      std.debug.panic("don't know keyword: {s}\n", .{name});
     try context.keyword_registry.append(&context.storage.allocator, impl);
     break :blk context.keyword_registry.items.len - 1;
   } else blk: {
-    const impl = p.getBuiltin(name) orelse {
-      std.debug.print("don't know keyword: {s}\n", .{name});
-      unreachable;
-    };
+    const impl = p.getBuiltin(name) orelse
+      std.debug.panic("don't know keyword: {s}\n", .{name});
     try context.builtin_registry.append(&context.storage.allocator, impl);
     break :blk context.builtin_registry.items.len - 1;
   };
@@ -406,7 +409,7 @@ fn prototypeConstructor(context: *Context, p: *Provider, name: []const u8,
 pub fn intrinsicModule(context: *Context) !*model.Module {
   var ret = try context.storage.allocator.create(model.Module);
   ret.root = try context.genLiteral(model.Position.intrinsic(), .void);
-  ret.symbols = try context.storage.allocator.alloc(*model.Symbol, 5);
+  ret.symbols = try context.storage.allocator.alloc(*model.Symbol, 6);
   var index: usize = 0;
 
   var ip = Intrinsics.init();
@@ -469,7 +472,7 @@ pub fn intrinsicModule(context: *Context) !*model.Module {
   try b.push(try intLoc(context, model.Value.Location.init(
     "name", .{.intrinsic = .literal}))); // TODO: identifier
   try b.push(try intLoc(context, model.Value.Location.init(
-    "type", .{.intrinsic = .non_callable_type})));
+    "type", .{.intrinsic = .@"type"})));
   try b.push(try intLoc(context, model.Value.Location.init(
     "primary", .{.instantiated = &context.types.boolean})));
   try b.push(try intLoc(context, model.Value.Location.init(
@@ -518,6 +521,18 @@ pub fn intrinsicModule(context: *Context) !*model.Module {
     prototypeSymbol(context, "Record", .record);
   index += 1;
 
+  // Raw
+  b = try types.SigBuilder(.intrinsic).init(
+    &context.storage.allocator, 1, .{.intrinsic = .raw}, true);
+  try b.push(try intLoc(context, model.Value.Location.init(
+    "input", model.Type{.intrinsic = .raw}).with_primary(
+      model.Position.intrinsic())));
+  context.types.constructors.raw = try
+    typeConstructor(context, &ip.provider, "Raw", b.finish());
+  ret.symbols[index] =
+    try typeSymbol(context, "Raw", model.Type{.intrinsic = .raw});
+  index += 1;
+
   //-------------------
   // external symbols
   //-------------------
@@ -529,7 +544,7 @@ pub fn intrinsicModule(context: *Context) !*model.Module {
     (try context.types.concat(.{.intrinsic = .definition})).?;
   try b.push(try intLoc(context, model.Value.Location.init(
     "namespace", (try context.types.optional(
-      .{.intrinsic = .non_callable_type})).?)));
+      .{.intrinsic = .@"type"})).?)));
   try b.push(try intLoc(context, model.Value.Location.init(
     "public", definition_concat).with_primary(
       model.Position.intrinsic()).with_header(definition_block)));

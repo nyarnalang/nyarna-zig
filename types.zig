@@ -131,8 +131,7 @@ pub const Lattice = struct {
   constructors: struct {
     location: Constructor,
     definition: Constructor,
-    literal_raw: Constructor,
-    space: Constructor,
+    raw: Constructor,
     /// Prototype implementations that generate type instances.
     prototypes: struct {
       record: Constructor,
@@ -179,11 +178,10 @@ pub const Lattice = struct {
   pub fn typeConstructor(self: *const Self, t: model.Type) *const Constructor {
     return switch (t) {
       .intrinsic => |it| switch (it) {
-        .location      => &self.constructors.location,
-        .definition    => &self.constructors.definition,
-        .raw, .literal => &self.constructors.literal_raw,
-        .space         => &self.constructors.space,
-        else           => unreachable,
+        .location   => &self.constructors.location,
+        .definition => &self.constructors.definition,
+        .raw,       => &self.constructors.raw,
+        else        => unreachable,
       },
       else => unreachable,
     };
@@ -405,6 +403,11 @@ pub const Lattice = struct {
             model.Type{.intrinsic = .poison},
         },
         .space, .literal, .raw => {},
+        .@"type" => return switch (struc.*) {
+          .callable => |*clb| if (clb.kind == .@"type") other
+                              else model.Type{.intrinsic = .poison},
+          else => model.Type{.intrinsic = .poison},
+        },
         else => return model.Type{.intrinsic = .poison},
       },
       // we're handling some special cases here, but most are handled by the
@@ -624,12 +627,12 @@ pub const Lattice = struct {
         .intrinsic => |i| switch (i) {
           .location, .definition, .literal, .space, .raw =>
             self.typeConstructor(tv.t).callable.typedef(),
-          else => model.Type{.intrinsic = .non_callable_type},
+          else => model.Type{.intrinsic = .@"type"},
         },
-        .structural => model.Type{.intrinsic = .non_callable_type}, // TODO
+        .structural => model.Type{.intrinsic = .@"type"}, // TODO
         .instantiated => |inst| switch (inst.data) {
           .record => |rec| rec.callable.typedef(),
-          else => model.Type{.intrinsic = .non_callable_type}, // TODO
+          else => model.Type{.intrinsic = .@"type"}, // TODO
         },
       },
       .prototype => |pv| self.prototypeConstructor(pv.pt).callable.typedef(),

@@ -798,7 +798,7 @@ pub const Type = union(enum) {
   /// unique types predefined by Nyarna
   intrinsic: enum {
     void, prototype, schema, extension, ast_node, block_header,
-    non_callable_type, space, literal, raw,
+    @"type", space, literal, raw,
     location, definition, backend,
     poison, every
   },
@@ -835,6 +835,13 @@ pub const Type = union(enum) {
 
   pub inline fn is(t: Type, comptime expected: anytype) bool {
     return switch (t) {.intrinsic => |it| it == expected, else => false};
+  }
+
+  pub inline fn isStructural(t: Type, comptime expected: anytype) bool {
+    return switch (t) {
+      .structural => |strct| strct.* == expected,
+      else => false,
+    };
   }
 
   pub inline fn eql(a: Type, b: Type) bool {
@@ -970,7 +977,7 @@ pub const Value = struct {
   /// a Space, Literal, Raw or Textual value
   pub const TextScalar = struct {
     t: Type,
-    value: []const u8,
+    content: []const u8,
 
     pub fn value(self: *@This()) *Value {
       return Value.parent(self);
@@ -979,7 +986,7 @@ pub const Value = struct {
   /// a Numeric value
   pub const Number = struct {
     t: *const Type.Numeric,
-    value: i64,
+    content: i64,
 
     pub fn value(self: *@This()) *Value {
       return Value.parent(self);
@@ -988,7 +995,7 @@ pub const Value = struct {
   /// a Float value
   pub const FloatNumber = struct {
     t: *const Type.Float,
-    value: union {
+    content: union {
       half: f16,
       single: f32,
       double: f64,
@@ -1159,14 +1166,14 @@ pub const Value = struct {
   const HashContext = struct {
     pub fn hash(_: HashContext, v: *Value) u64 {
       return switch (v.data) {
-        .text => |ts| std.hash_map.hashString(ts.value),
-        .number => |num| @bitCast(u64, num.value),
+        .text => |ts| std.hash_map.hashString(ts.content),
+        .number => |num| @bitCast(u64, num.content),
         .float => |fl| switch (fl.t.precision) {
-          .half => @intCast(u64, @bitCast(u16, fl.value.half)),
-          .single => @intCast(u64, @bitCast(u32, fl.value.single)),
-          .double => @bitCast(u64, fl.value.double),
+          .half => @intCast(u64, @bitCast(u16, fl.content.half)),
+          .single => @intCast(u64, @bitCast(u32, fl.content.single)),
+          .double => @bitCast(u64, fl.content.double),
           .quadruple, .octuple =>
-            @truncate(u64, @bitCast(u128, fl.value.quadruple)),
+            @truncate(u64, @bitCast(u128, fl.content.quadruple)),
         },
         .enumval => |ev| @intCast(u64, ev.index),
         else => unreachable,
@@ -1175,14 +1182,14 @@ pub const Value = struct {
 
     pub fn eql(_: HashContext, a: *Value, b: *Value) bool {
       return switch (a.data) {
-        .text => |ts| std.hash_map.eqlString(ts.value, b.data.text.value),
-        .number => |num| num.value == b.data.number.value,
+        .text => |ts| std.hash_map.eqlString(ts.content, b.data.text.content),
+        .number => |num| num.content == b.data.number.content,
         .float => |fl| switch (fl.t.precision) {
-          .half => fl.value.half == b.data.float.value.half,
-          .single => fl.value.single == b.data.float.value.single,
-          .double => fl.value.double == b.data.float.value.double,
+          .half => fl.content.half == b.data.float.content.half,
+          .single => fl.content.single == b.data.float.content.single,
+          .double => fl.content.double == b.data.float.content.double,
           .quadruple, .octuple =>
-            fl.value.quadruple == b.data.float.value.quadruple,
+            fl.content.quadruple == b.data.float.content.quadruple,
         },
         .enumval => |ev| ev.index == b.data.enumval.index,
         else => unreachable,

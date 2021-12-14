@@ -430,7 +430,7 @@ pub const Interpreter = struct {
           .text = .{
             .t = model.Type{
               .intrinsic = if (lit.kind == .space) .space else .literal},
-            .value = try std.mem.dupe(
+            .content = try std.mem.dupe(
               &self.loader.context.storage.allocator, u8, lit.content),
           },
         });
@@ -715,11 +715,11 @@ pub const Interpreter = struct {
           .@"type" => |t| switch (t) {
             .intrinsic => |it| return switch (it) {
               .location, .definition => unreachable, // TODO
-              else => model.Type{.intrinsic = .non_callable_type},
+              else => model.Type{.intrinsic = .@"type"},
             },
             .structural => |st| return switch (st.*) {
               .concat, .paragraphs, .list, .map => unreachable, // TODO
-              else => model.Type{.intrinsic = .non_callable_type},
+              else => model.Type{.intrinsic = .@"type"},
             },
             .instantiated => |it| return switch (it.data) {
               .textual, .numeric, .float, .tenum => unreachable, // TODO
@@ -792,7 +792,7 @@ pub const Interpreter = struct {
           self.fillLiteral(l.pos(), e, .{
             .text = .{
               .t = t,
-              .value = try std.mem.dupe(
+              .content = try std.mem.dupe(
                 &self.loader.context.storage.allocator, u8, l.content),
             },
           }) else {
@@ -804,7 +804,7 @@ pub const Interpreter = struct {
           self.fillLiteral(l.pos(), e, .{
             .text = .{
               .t = t,
-              .value = try std.mem.dupe(
+              .content = try std.mem.dupe(
                 &self.loader.context.storage.allocator, u8, l.content),
             },
           }),
@@ -812,7 +812,7 @@ pub const Interpreter = struct {
           self.fillLiteral(l.pos(), e, .{
           .text = .{
             .t = .{.intrinsic = if (l.kind == .text) .literal else .space},
-            .value = try std.mem.dupe(
+            .content = try std.mem.dupe(
               &self.loader.context.storage.allocator, u8, l.content),
           },
         }),

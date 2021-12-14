@@ -173,7 +173,20 @@ fn formatType(
       .map => |map|
         formatParameterizedType(fmt, options, "Optional",
                                 &[_]model.Type{map.key, map.value}, writer),
-      .callable => |_| unreachable,
+      .callable => |clb| {
+        try writer.writeAll(switch (clb.kind) {
+          .function => @as([]const u8, "[function] "),
+          .@"type" => "[type] ",
+          .prototype => "[prototype] ",
+        });
+        try writer.writeByte('(');
+        for (clb.sig.parameters) |param, i| {
+          if (i > 0) try writer.writeAll(", ");
+          try formatType(param.ptype, fmt, options, writer);
+        }
+        try writer.writeAll(") -> ");
+        try formatType(clb.sig.returns, fmt, options, writer);
+      },
       .intersection => |inter| {
         try writer.writeByte('{');
         if (inter.scalar) |scalar| try formatType(scalar, fmt, options, writer);

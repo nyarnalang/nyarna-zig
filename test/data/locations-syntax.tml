@@ -21,7 +21,7 @@
       >ARG name
       =LIT text "spam"
       >ARG type
-      =SYMREF [0]Raw
+      =SYMREF <intrinsic>.Raw
       >ARG primary
       =ENUM Boolean "false"
       >ARG varargs

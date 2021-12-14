@@ -43,7 +43,7 @@ test "void <-> optional" {
   const void_type = Type{.intrinsic = .void};
 
   const optional_nctype =
-    (try ctx.types.optional(Type{.intrinsic = .non_callable_type})).?;
+    (try ctx.types.optional(Type{.intrinsic = .@"type"})).?;
   try ctx.testIsLesser(void_type, optional_nctype);
   try ctx.testIsGreater(optional_nctype, void_type);
 }

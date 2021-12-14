@@ -346,7 +346,7 @@ fn AstEmitter(Handler: anytype) type {
         .text => |txt| {
           const t = std.fmt.Formatter(formatTypeName){.data = txt.t};
           try self.emitLine("=TEXT {} \"{}\"",
-            .{t, std.zig.fmtEscapes(txt.value)});
+            .{t, std.zig.fmtEscapes(txt.content)});
         },
         .number => |_| {
           unreachable;
