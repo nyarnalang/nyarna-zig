@@ -52,14 +52,16 @@
       >ARG header
       =VOID
       >ARG default
-      +UCALL
-        +TARGET
-          =SYMREF [0]Integer
-        -TARGET
-        +PROTO pos
-          =LIT text "42"
-        -PROTO
-      -UCALL
+      +AST
+        +UCALL
+          +TARGET
+            =SYMREF [0]Integer
+          -TARGET
+          +PROTO pos
+            =LIT text "42"
+          -PROTO
+        -UCALL
+      -AST
     -RCALL
     +RCALL
       =TYPE location
@@ -78,14 +80,16 @@
       >ARG header
       =VOID
       >ARG default
-      +UCALL
-        +TARGET
-          =SYMREF [0]Integer
-        -TARGET
-        +PROTO pos
-          =LIT text "42"
-        -PROTO
-      -UCALL
+      +AST
+        +UCALL
+          +TARGET
+            =SYMREF [0]Integer
+          -TARGET
+          +PROTO pos
+            =LIT text "42"
+          -PROTO
+        -UCALL
+      -AST
     -RCALL
     +RCALL
       =TYPE location
@@ -130,21 +134,23 @@
       >ARG header
       =VOID
       >ARG default
-      +RCALL
-        =FUNCREF .std.intrinsic.if
-        >ARG condition
-        +AST
-          =LIT text "true"
-        -AST
-        >ARG then
-        +AST
-          =LIT text "warbl"
-        -AST
-        >ARG else
-        +AST
-          =LIT text "wirbl"
-        -AST
-      -RCALL
+      +AST
+        +RCALL
+          =FUNCREF .std.intrinsic.if
+          >ARG condition
+          +AST
+            =LIT text "true"
+          -AST
+          >ARG then
+          +AST
+            =LIT text "warbl"
+          -AST
+          >ARG else
+          +AST
+            =LIT text "wirbl"
+          -AST
+        -RCALL
+      -AST
     -RCALL
     +RCALL
       =TYPE location

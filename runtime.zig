@@ -202,7 +202,8 @@ pub const Evaluator = struct {
     return self.evaluateCall(intpr, call);
   }
 
-  pub fn evaluate(self: *Evaluator, expr: *model.Expression)
+  /// actual evaluation of expressions.
+  fn doEvaluate(self: *Evaluator, expr: *model.Expression)
       nyarna.Error!*model.Value {
     switch (expr.data) {
       .call => |*call| return self.evaluateCall(self, call),
@@ -292,6 +293,83 @@ pub const Evaluator = struct {
       .void => return
         model.Value.create(&self.context.storage.allocator, expr.pos, .void),
     }
+  }
+
+  inline fn toString(self: *Evaluator, input: anytype) ![]u8 {
+    return std.fmt.allocPrint(&self.context.storage.allocator, "{}", .{input});
+  }
+
+  fn coerce(self: *Evaluator, value: *model.Value, expected_type: model.Type)
+      std.mem.Allocator.Error!*model.Value {
+    const value_type = self.context.types.valueType(value);
+    if (value_type.eql(expected_type)) return value;
+    switch (expected_type) {
+      .intrinsic => |intr| switch (intr) {
+        .poison => return value,
+        // for .literal, this can only be a coercion from .space.
+        // for .raw, this could be a coercion from any scalar type.
+        .literal, .raw => {
+          const content = switch (value.data) {
+            .text => |*text_val| text_val.content,
+            .number => |*num_val| try self.toString(num_val.content),
+            .float => |*float_val| try switch (float_val.t.precision) {
+              .half => self.toString(float_val.content.half),
+              .single => self.toString(float_val.content.single),
+              .double => self.toString(float_val.content.double),
+              .quadruple, .octuple =>
+                self.toString(float_val.content.quadruple),
+            },
+            .enumval => |ev| ev.t.values.entries.items(.key)[ev.index],
+            // type checking ensures this never happens
+            else => unreachable,
+          };
+          return model.Value.create(
+            &self.context.storage.allocator, value.origin,
+            model.Value.TextScalar{.t = expected_type, .content = content});
+        },
+        // other coercions can never happen.
+        else => unreachable,
+      },
+      // TODO: implement enums being coerced to Identifier.
+      .instantiated => unreachable,
+      .structural => |strct| switch (strct.*) {
+        // these are virtual types and thus can never be the expected type.
+        .optional, .intersection => unreachable,
+        .concat => |*concat| {
+          const inner_value = try self.coerce(value, concat.inner);
+          var list = std.ArrayList(*model.Value).init(
+            &self.context.storage.allocator);
+          try list.append(inner_value);
+          return model.Value.create(
+            &self.context.storage.allocator, value.origin,
+              model.Value.Concat{.t = concat, .content = list});
+        },
+        .paragraphs => |*para| {
+          const para_value = for (para.inner) |cur| {
+            if (self.context.types.lesserEqual(value_type, cur))
+              break try self.coerce(value, cur);
+          } else unreachable;
+          var list = std.ArrayList(*model.Value).init(
+            &self.context.storage.allocator);
+          try list.append(para_value);
+          return model.Value.create(
+            &self.context.storage.allocator, value.origin,
+              model.Value.Para{.t = para, .content = list});
+        },
+        .list, .map => unreachable, // TODO: implement coercion of inner values.
+        .callable => unreachable, // TODO: implement callable wrapper.
+      }
+    }
+  }
+
+  /// evaluate the expression, and coerce the resulting value according to the
+  /// expression's expected type [8.3].
+  pub fn evaluate(self: *Evaluator, expr: *model.Expression)
+      nyarna.Error!*model.Value {
+    const res = try self.doEvaluate(expr);
+    const expected_type = self.context.types.expectedType(
+      self.context.types.valueType(res), expr.expected_type);
+    return try self.coerce(res, expected_type);
   }
 };
 

@@ -593,14 +593,8 @@ pub const SymbolDefs = struct {
       args[0] = name;
       var additionals = switch (self.variant) {
         .locs => ptr: {
-          args[1] = self.ltype orelse blk: {
-            const vn = try self.intpr.storage.allocator.create(model.Node);
-            vn.* = .{
-              .pos = pos,
-              .data = .voidNode,
-            };
-            break :blk vn;
-          };
+          args[1] = self.ltype orelse
+            try model.Node.genVoid(&self.intpr.storage.allocator, pos);
           break :ptr args.ptr + 2;
         },
         .defs => args.ptr + 1,
@@ -637,14 +631,11 @@ pub const SymbolDefs = struct {
           additionals += 1;
         }
       }
-      additionals.* = self.expr orelse blk: {
-        const vn = try self.intpr.storage.allocator.create(model.Node);
-        vn.* = .{
-          .pos = pos,
-          .data = .voidNode,
-        };
-        break :blk vn;
-      };
+
+      additionals.* = try if (self.expr) |content|
+        self.intpr.genValueNode(pos, .{.ast = .{.root = content}})
+      else
+        model.Node.genVoid(&self.intpr.storage.allocator, pos);
 
       const constructor = try self.intpr.storage.allocator.create(model.Node);
       constructor.* = .{

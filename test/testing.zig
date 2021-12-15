@@ -163,10 +163,9 @@ fn AstEmitter(Handler: anytype) type {
     }
 
     fn pushWithKey(self: *Self, comptime name: []const u8,
-                   comptime key: []const u8, value: ?[]const u8) !Popper {
-      if (name.len == 0) try self.emitLine("+{s} " ++ value.?) else
-      if (value) |v| try self.emitLine("+{s} " ++ key ++ "=\"{s}\"", .{name, v})
-      else try self.emitLine("+{s} " ++ key, .{name});
+                   key: []const u8, value: ?[]const u8) !Popper {
+      if (value) |v| try self.emitLine("+{s} {s}=\"{s}\"", .{name, key, v})
+      else try self.emitLine("+{s} {s}", .{name, key});
       self.depth += 1;
       return Popper{.e = self, .name = name};
     }
@@ -341,7 +340,7 @@ fn AstEmitter(Handler: anytype) type {
       }
     }
 
-    fn processValue(self: *Self, v: *const model.Value) !void {
+    fn processValue(self: *Self, v: *const model.Value) anyerror!void {
       switch (v.data) {
         .text => |txt| {
           const t = std.fmt.Formatter(formatTypeName){.data = txt.t};
@@ -365,17 +364,39 @@ fn AstEmitter(Handler: anytype) type {
         .concat => |_| {
           unreachable;
         },
+        .para => |_| {
+          unreachable;
+        },
         .list => |_| {
           unreachable;
         },
         .map => |_| {
           unreachable;
         },
-        .location => |_| {
-          unreachable;
+        .location => |loc| {
+          const wrap = try self.pushWithKey("LOC", loc.name, null);
+          try self.processType(loc.tloc);
+          inline for ([_][]const u8{"primary", "varargs", "varmap", "mutable"})
+              |flag|
+            if (@field(loc, flag) != null)
+              try self.emitLine("=FLAG {s}", .{flag});
+          if (loc.default) |defexpr| {
+            const default = try self.push("DEFAULT");
+            try self.processExpr(defexpr);
+            try default.pop();
+          }
+          if (loc.block_header) |hval| {
+            const header = try self.push("HEADER");
+            try self.processValue(hval.value());
+            try header.pop();
+          }
+          try wrap.pop();
         },
-        .definition => |_| {
-          unreachable;
+        .definition => |def| {
+          const wrap = try self.pushWithKey("DEF", def.name,
+            if (def.root != null) @as([]const u8, "{root}") else null);
+          try self.process(def.content.root);
+          try wrap.pop();
         },
         .ast => |a| {
           const ast = try self.push("AST");

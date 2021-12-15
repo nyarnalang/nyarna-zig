@@ -979,7 +979,7 @@ pub const Value = struct {
     t: Type,
     content: []const u8,
 
-    pub fn value(self: *@This()) *Value {
+    pub inline fn value(self: *@This()) *Value {
       return Value.parent(self);
     }
   };
@@ -988,7 +988,7 @@ pub const Value = struct {
     t: *const Type.Numeric,
     content: i64,
 
-    pub fn value(self: *@This()) *Value {
+    pub inline fn value(self: *@This()) *Value {
       return Value.parent(self);
     }
   };
@@ -1002,7 +1002,7 @@ pub const Value = struct {
       quadruple: f128,
     },
 
-    pub fn value(self: *@This()) *Value {
+    pub inline fn value(self: *@This()) *Value {
       return Value.parent(self);
     }
   };
@@ -1011,7 +1011,7 @@ pub const Value = struct {
     t: *const Type.Enum,
     index: usize,
 
-    pub fn value(self: *@This()) *Value {
+    pub inline fn value(self: *@This()) *Value {
       return Value.parent(self);
     }
   };
@@ -1020,7 +1020,7 @@ pub const Value = struct {
     t: *const Type.Record,
     fields: []*Value,
 
-    pub fn value(self: *@This()) *Value {
+    pub inline fn value(self: *@This()) *Value {
       return Value.parent(self);
     }
   };
@@ -1029,7 +1029,16 @@ pub const Value = struct {
     t: *const Type.Concat,
     content: std.ArrayList(*Value),
 
-    pub fn value(self: *@This()) *Value {
+    pub inline fn value(self: *@This()) *Value {
+      return Value.parent(self);
+    }
+  };
+  /// a Paragraphs value
+  pub const Para = struct {
+    t: *const Type.Paragraphs,
+    content: std.ArrayList(*Value),
+
+    pub inline fn value(self: *@This()) *Value {
       return Value.parent(self);
     }
   };
@@ -1038,7 +1047,7 @@ pub const Value = struct {
     t: *const Type.List,
     content: std.ArrayList(*Value),
 
-    pub fn value(self: *@This()) *Value {
+    pub inline fn value(self: *@This()) *Value {
       return Value.parent(self);
     }
   };
@@ -1047,7 +1056,7 @@ pub const Value = struct {
     t: *const Type.Map,
     items: std.HashMap(*Value, *Value, Value.HashContext, 50),
 
-    pub fn value(self: *@This()) *Value {
+    pub inline fn value(self: *@This()) *Value {
       return Value.parent(self);
     }
   };
@@ -1055,7 +1064,7 @@ pub const Value = struct {
   pub const TypeVal = struct {
     t: Type,
 
-    pub fn value(self: *@This()) *Value {
+    pub inline fn value(self: *@This()) *Value {
       return Value.parent(self);
     }
   };
@@ -1063,7 +1072,7 @@ pub const Value = struct {
   pub const PrototypeVal = struct {
     pt: Prototype,
 
-    pub fn value(self: *@This()) *Value {
+    pub inline fn value(self: *@This()) *Value {
       return Value.parent(self);
     }
   };
@@ -1072,7 +1081,7 @@ pub const Value = struct {
     /// ExtFunc or NyFunc
     func: *Symbol,
 
-    pub fn value(self: *@This()) *Value {
+    pub inline fn value(self: *@This()) *Value {
       return Value.parent(self);
     }
   };
@@ -1087,7 +1096,7 @@ pub const Value = struct {
     mutable: ?Position,
     block_header: ?*BlockHeader,
 
-    pub fn value(self: *@This()) *Value {
+    pub inline fn value(self: *@This()) *Value {
       return Value.parent(self);
     }
 
@@ -1120,7 +1129,7 @@ pub const Value = struct {
     content: *Ast,
     root: ?Position,
 
-    pub fn value(self: *@This()) *Value {
+    pub inline fn value(self: *@This()) *Value {
       return Value.parent(self);
     }
   };
@@ -1128,7 +1137,7 @@ pub const Value = struct {
   pub const Ast = struct {
     root: *Node,
 
-    pub fn value(self: *@This()) *Value {
+    pub inline fn value(self: *@This()) *Value {
       return Value.parent(self);
     }
   };
@@ -1139,7 +1148,7 @@ pub const Value = struct {
     config: ?BlockConfig,
     swallow_depth: ?u21,
 
-    pub fn value(self: *@This()) *Value {
+    pub inline fn value(self: *@This()) *Value {
       return Value.parent(self);
     }
   };
@@ -1151,6 +1160,7 @@ pub const Value = struct {
     enumval: Enum,
     record: Record,
     concat: Concat,
+    para: Para,
     list: List,
     map: Map,
     @"type": TypeVal,
@@ -1211,6 +1221,7 @@ pub const Value = struct {
       Enum         => .{.enumval      = content},
       Record       => .{.record       = content},
       Concat       => .{.concat       = content},
+      Para         => .{.para         = content},
       List         => .{.list         = content},
       Map          => .{.map          = content},
       TypeVal      => .{.@"type"      = content},
@@ -1233,6 +1244,7 @@ pub const Value = struct {
       Enum         => offset(Data, "enumval"),
       Record       => offset(Data, "record"),
       Concat       => offset(Data, "concat"),
+      Para         => offset(Data, "para"),
       List         => offset(Data, "list"),
       Map          => offset(Data, "map"),
       TypeVal      => offset(Data, "type"),

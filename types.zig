@@ -621,6 +621,7 @@ pub const Lattice = struct {
       .enumval => |*en| en.t.typedef(),
       .record => |*rec| rec.t.typedef(),
       .concat => |*con| con.t.typedef(),
+      .para => |*para| para.t.typedef(),
       .list => |*list| list.t.typedef(),
       .map => |*map| map.t.typedef(),
       .@"type" => |tv| switch (tv.t) {
@@ -647,6 +648,44 @@ pub const Lattice = struct {
       .block_header => .{.intrinsic = .block_header},
       .void => .{.intrinsic = .void},
       .poison => .{.intrinsic = .poison},
+    };
+  }
+
+  /// given the actual type of a value and the target type of an expression,
+  /// calculate the expected type in E_(target) to which the value is to be
+  /// coerced [8.3].
+  pub fn expectedType(self: *Lattice, actual: model.Type, target: model.Type)
+      model.Type {
+    if (actual.eql(target)) return target;
+    return switch (target) {
+      .intrinsic => |intr| switch (intr) {
+        // only subtypes are Callables with .kind == .@"type", and type checking
+        // guarantees we get one of these.
+        .@"type" => actual,
+        // can never be used for a target type.
+        .every => unreachable,
+        // if a poison value is expected, it will never be used for anything,
+        // and therefore we don't need to modify the value.
+        .poison => actual,
+        // all other types are non-virtual.
+        else => target,
+      },
+      // no instantiated types are virtual.
+      .instantiated => target,
+      .structural => |strct| switch (strct.*) {
+        .optional => |*opt| if (actual.is(.void) or actual.is(.every)) actual
+                            else self.expectedType(actual, opt.inner),
+        .concat, .paragraphs, .list, .map => target,
+        .callable => unreachable, // TODO
+        .intersection => |*inter| blk: {
+          if (inter.scalar) |scalar_type|
+            if (self.lesserEqual(actual, scalar_type)) break :blk scalar_type;
+          for (inter.types) |cur|
+            if (self.lesserEqual(actual, cur)) break :blk cur;
+          // type checking ensures we'll never end up here.
+          unreachable;
+        },
+      },
     };
   }
 };
