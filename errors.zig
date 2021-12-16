@@ -15,7 +15,7 @@ pub const GenericParserError = enum {
   MissingSymbolName, MissingSymbolType, MissingSymbolEntity, UnknownSyntax,
   PrefixedFunctionMustBeCalled, AstNodeInNonKeyword, CannotResolveImmediately,
   InvalidLvalue, UnknownParameter, TooManyArguments, UnexpectedPrimaryBlock,
-  InvalidPositionalArgument,
+  InvalidPositionalArgument, UnknownSymbol,
 };
 
 pub const WrongItemError = enum {
@@ -153,7 +153,7 @@ fn formatParameterizedType(
   try writer.writeByte('>');
 }
 
-fn formatType(
+pub fn formatType(
     t: model.Type, comptime fmt: []const u8, options: std.fmt.FormatOptions,
     writer: anytype) @TypeOf(writer).Error!void {
   switch (t) {
@@ -209,8 +209,8 @@ fn formatType(
   }
 }
 
-fn formatTypes(types: []const model.Type, comptime fmt: []const u8,
-               options: std.fmt.FormatOptions, writer: anytype)
+pub fn formatTypes(types: []const model.Type, comptime fmt: []const u8,
+                   options: std.fmt.FormatOptions, writer: anytype)
     @TypeOf(writer).Error!void {
   for (types) |t, i| {
     try if (i > 0) writer.writeAll(", '") else writer.writeByte('\'');

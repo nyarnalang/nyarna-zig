@@ -328,7 +328,14 @@ pub const Evaluator = struct {
             model.Value.TextScalar{.t = expected_type, .content = content});
         },
         // other coercions can never happen.
-        else => unreachable,
+        else => {
+          const v =
+            std.fmt.Formatter(nyarna.errors.formatType){.data = value_type};
+          const e =
+            std.fmt.Formatter(nyarna.errors.formatType){.data = expected_type};
+          std.debug.panic("coercion from {} to {} requested, which is illegal",
+            .{v, e});
+        }
       },
       // TODO: implement enums being coerced to Identifier.
       .instantiated => unreachable,
@@ -336,22 +343,26 @@ pub const Evaluator = struct {
         // these are virtual types and thus can never be the expected type.
         .optional, .intersection => unreachable,
         .concat => |*concat| {
-          const inner_value = try self.coerce(value, concat.inner);
           var list = std.ArrayList(*model.Value).init(
             &self.context.storage.allocator);
-          try list.append(inner_value);
+          if (!value_type.is(.void)) {
+            const inner_value = try self.coerce(value, concat.inner);
+            try list.append(inner_value);
+          }
           return model.Value.create(
             &self.context.storage.allocator, value.origin,
               model.Value.Concat{.t = concat, .content = list});
         },
         .paragraphs => |*para| {
-          const para_value = for (para.inner) |cur| {
-            if (self.context.types.lesserEqual(value_type, cur))
-              break try self.coerce(value, cur);
-          } else unreachable;
           var list = std.ArrayList(*model.Value).init(
             &self.context.storage.allocator);
-          try list.append(para_value);
+          if (!value_type.is(.void)) {
+            const para_value = for (para.inner) |cur| {
+              if (self.context.types.lesserEqual(value_type, cur))
+                break try self.coerce(value, cur);
+            } else unreachable;
+            try list.append(para_value);
+          }
           return model.Value.create(
             &self.context.storage.allocator, value.origin,
               model.Value.Para{.t = para, .content = list});

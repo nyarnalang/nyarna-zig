@@ -117,39 +117,41 @@ pub const Interpreter = struct {
     _ = self.namespaces.pop();
   }
 
-  fn reportImmediateResolveFailures(
-      self: *Interpreter, node: *model.Node) void {
+  fn reportResolveFailures(
+      self: *Interpreter, node: *model.Node, immediate: bool) void {
     switch (node.data) {
       .resolved_call, .literal, .resolved_symref, .expression, .poisonNode,
       .voidNode => {},
-      .access => |*acc| self.reportImmediateResolveFailures(acc.subject),
+      .access => |*acc| self.reportResolveFailures(acc.subject, immediate),
       .assignment => |*ass| {
         switch (ass.target) {
-          .unresolved => |unres| self.reportImmediateResolveFailures(unres),
+          .unresolved => |unres| self.reportResolveFailures(unres, immediate),
           .resolved => {},
         }
-        self.reportImmediateResolveFailures(ass.replacement);
+        self.reportResolveFailures(ass.replacement, immediate);
       },
       .unresolved_call => |*uc| {
-        self.reportImmediateResolveFailures(uc.target);
+        self.reportResolveFailures(uc.target, immediate);
         for (uc.proto_args) |*arg|
-          self.reportImmediateResolveFailures(arg.content);
+          self.reportResolveFailures(arg.content, immediate);
       },
 
       .branches => |*br| {
-        self.reportImmediateResolveFailures(br.condition);
-        for (br.branches) |branch| self.reportImmediateResolveFailures(branch);
+        self.reportResolveFailures(br.condition, immediate);
+        for (br.branches) |branch|
+          self.reportResolveFailures(branch, immediate);
       },
       .concatenation => |*con| {
-        for (con.content) |item| self.reportImmediateResolveFailures(item);
+        for (con.content) |item| self.reportResolveFailures(item, immediate);
       },
       .paragraphs => |*para| {
         for (para.items) |*item|
-          self.reportImmediateResolveFailures(item.content);
+          self.reportResolveFailures(item.content, immediate);
       },
-      .unresolved_symref => {
-        self.loader.logger.CannotResolveImmediately(node.pos);
-      },
+      .unresolved_symref => if (immediate)
+        self.loader.logger.CannotResolveImmediately(node.pos)
+      else
+        self.loader.logger.UnknownSymbol(node.pos),
     }
   }
 
@@ -282,7 +284,11 @@ pub const Interpreter = struct {
           }
         };
         const target_expr = (try self.associate(ass.replacement, target.t))
-          orelse return null;
+            orelse {
+          if (report_failure)
+            self.reportResolveFailures(ass.replacement, false);
+          return null;
+        };
         const expr = try self.createPublic(model.Expression);
         const path = try std.mem.dupe(&self.loader.context.storage.allocator,
           usize, target.path);
@@ -300,8 +306,10 @@ pub const Interpreter = struct {
         return expr;
       },
       .branches, .concatenation, .paragraphs => {
-        const ret_type =
-          (try self.probeType(input, ctx)) orelse return null;
+        const ret_type = (try self.probeType(input, ctx)) orelse {
+          if (report_failure) self.reportResolveFailures(input, false);
+          return null;
+        };
         return self.interpretWithTargetType(input, ret_type, true);
       },
       .resolved_symref => |ref| {
@@ -375,11 +383,17 @@ pub const Interpreter = struct {
         if (args_failed_to_interpret) {
           if (is_keyword) {
             for (failed_to_interpret.items) |arg|
-              self.reportImmediateResolveFailures(arg);
+              self.reportResolveFailures(arg, true);
             const expr = try self.createPublic(model.Expression);
             expr.fillPoison(input.pos);
             return expr;
-          } else return null;
+          } else {
+            if (report_failure) {
+              for (failed_to_interpret.items) |arg|
+                self.reportResolveFailures(arg, false);
+            }
+            return null;
+          }
         }
 
         const args = try allocator.alloc(
@@ -435,7 +449,10 @@ pub const Interpreter = struct {
           },
         });
       },
-      .unresolved_symref, .unresolved_call => return null,
+      .unresolved_symref, .unresolved_call => {
+        if (report_failure) self.reportResolveFailures(input, false);
+        return null;
+      },
     }
   }
 
@@ -532,7 +549,8 @@ pub const Interpreter = struct {
           },
           .func_ref => |ref| {
             if (ref.prefix != null) {
-              // TODO: report error based on the name of target_expr
+              self.loader.logger.PrefixedFunctionMustBeCalled(
+                value.subject.pos);
               return .poison;
             }
             // TODO: transform function reference to variable ref, then search
@@ -555,7 +573,6 @@ pub const Interpreter = struct {
           .poison => return .poison,
         }
       },
-      .unresolved_symref => return .failed,
       .resolved_symref => |rs| return switch(rs.sym.data) {
         .ext_func => |*ef| ChainResolution{
           .func_ref = .{
