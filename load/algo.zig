@@ -123,8 +123,8 @@ fn callTarget(def: *model.Value.Definition) ?*model.Symbol.ExtFunc {
   return null;
 }
 
-fn isPrototype(_: *model.Symbol.ExtFunc) bool {
-  return true; // TODO
+fn isPrototype(ef: *model.Symbol.ExtFunc) bool {
+  return ef.callable.kind == .prototype;
 }
 
 pub const DeclareResolution = struct {
@@ -149,10 +149,63 @@ pub const DeclareResolution = struct {
     return res;
   }
 
+  fn pregenType(_: *DeclareResolution,
+                _: *model.Node.ResolvedCall) ?model.Type {
+    unreachable; // TODO
+  }
+
+  fn genTypeArgs(_: *DeclareResolution,
+                 _: *model.Node.ResolvedCall,
+                 _: []*model.Value.Definition) void {
+    unreachable; // TODO
+  }
+
   pub fn execute(self: *DeclareResolution) !void {
     try self.processor.firstStep();
     try self.processor.secondStep(&self.intpr.storage.allocator);
-    // TODO: finalize
+    // third step: process components in reverse topological order.
+
+    for (self.processor.components) |first_index, cmpt_index| {
+      const num_nodes = if (cmpt_index == self.processor.components.len - 1)
+        self.defs.len - first_index
+      else
+        self.processor.components[cmpt_index + 1] - first_index;
+      const defs = self.defs[first_index..first_index+num_nodes];
+
+      // first, allocate all types and create their symbols. This allows
+      // referring to them even when not all information (record field types,
+      // inner types, default expressions) has been resolved.
+      for (defs) |def| {
+        switch (def.content.root.data) {
+          .resolved_call => |*rcall| {
+            const t = self.pregenType(rcall) orelse continue;
+            const sym = try self.intpr.createPublic(model.Symbol);
+            sym.* = .{
+              .defined_at = def.name.value().origin,
+              .name = def.name.content,
+              .data = .{
+                .@"type" = t,
+              },
+            };
+            // TODO: add sym to node
+          },
+          else => {}
+        }
+      }
+
+      // now, resolve all references in the prototype calls' arguments.
+      // only nodes defining default values may be unresolvable, and only if
+      // the type for the location for which the default value cannot be
+      // resolved is explicitly given.
+      for (defs) |def| {
+        switch (def.content.root.data) {
+          .resolved_call => |*rcall| {
+            self.genTypeArgs(rcall, defs);
+          },
+          else => {},
+        }
+      }
+    }
   }
 
   //----------------
@@ -187,7 +240,7 @@ pub const DeclareResolution = struct {
     const self = @fieldParentPtr(DeclareResolution, "dep_discovery_ctx", ctx);
     switch (item.data) {
       .unresolved_symref => |*ur| {
-        for (self.defs) |def, i| if (std.mem.eql(u8, def.name, ur.name))
+        for (self.defs) |def, i| if (std.mem.eql(u8, def.name.content, ur.name))
           return graph.ResolutionContext.Result{.known = @intCast(u21, i)};
         return graph.ResolutionContext.Result.failed;
       },

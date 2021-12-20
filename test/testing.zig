@@ -393,7 +393,7 @@ fn AstEmitter(Handler: anytype) type {
           try wrap.pop();
         },
         .definition => |def| {
-          const wrap = try self.pushWithKey("DEF", def.name,
+          const wrap = try self.pushWithKey("DEF", def.name.content,
             if (def.root != null) @as([]const u8, "{root}") else null);
           try self.process(def.content.root);
           try wrap.pop();

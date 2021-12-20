@@ -1125,7 +1125,7 @@ pub const Value = struct {
   };
 
   pub const Definition = struct {
-    name: []const u8,
+    name: *Value.TextScalar,
     content: *Ast,
     root: ?Position,
 

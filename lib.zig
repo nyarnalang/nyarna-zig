@@ -219,7 +219,7 @@ pub const Intrinsics = Provider.Wrapper(struct {
   }
 
   fn @"Definition"(
-      intpr: *Interpreter, pos: model.Position, name: []const u8,
+      intpr: *Interpreter, pos: model.Position, name: *model.Value.TextScalar,
       root: *model.Value.Enum, node: *model.Value.Ast) !*model.Node {
     return intpr.genValueNode(pos, .{
       .definition = .{

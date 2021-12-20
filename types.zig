@@ -90,6 +90,20 @@ pub const Lattice = struct {
       model.Type.HashContext, std.hash_map.default_max_load_percentage),
   lists: std.HashMapUnmanaged(model.Type, *model.Type.Structural,
       model.Type.HashContext, std.hash_map.default_max_load_percentage),
+  /// this is the list type that contains itself. This is a special case and the
+  /// only pure structural self-referential type structure (i.e. the only
+  /// recursive type that is composed of nothing but structural types).
+  /// other structurally equivalent types (concat, paragraphs, intersection,
+  /// optional) are always flat in respect to their prototypes (concats cannot
+  /// contain other concats etc) and can never contain lists, so there are no
+  /// other such types.
+  ///
+  /// given two types A = List(B) and B = List(A), both would be structural
+  /// equivalent to C = List(C) since every possible value of type A or B would
+  /// have a structure allowed by type C. therefore, any List types that are
+  /// transitively referring to themselves without other prototype kinds in
+  /// between are equivalent to the type defined in this variable.
+  self_ref_list: *model.Type.Structural,
 
   /// These are prefix trees that hold all known types of a specific prototype.
   /// Prefixes are lists of types.
@@ -148,6 +162,7 @@ pub const Lattice = struct {
       .optionals = .{},
       .concats = .{},
       .lists = .{},
+      .self_ref_list = try alloc.allocator.create(model.Type.Structural),
       .prefix_trees = .{
         .intersection = .{},
         .paragraphs = .{},
@@ -165,7 +180,13 @@ pub const Lattice = struct {
     boolsym.name = "Boolean";
     boolsym.data = .{.@"type" = .{.instantiated = &ret.boolean}};
     ret.boolean.name = boolsym;
-
+    ret.self_ref_list.* = .{
+      .list = .{
+        .inner = .{
+          .structural = ret.self_ref_list,
+        },
+      },
+    };
     return ret;
   }
 

@@ -42,7 +42,7 @@ pub const WrongIdError = enum {
 pub const PreviousOccurenceError = enum {
   IsNotANamespaceCharacter, AlreadyANamespaceCharacter, DuplicateFlag,
   DuplicateBlockHeader, IncompatibleFlag, DuplicateAutoSwallow,
-  DuplicateParameterArgument, MissingParameterArgument,
+  DuplicateParameterArgument, MissingParameterArgument, DuplicateSymbolName,
 
   fn errorMsg(e: PreviousOccurenceError) []const u8 {
     return switch (e) {
@@ -56,7 +56,8 @@ pub const PreviousOccurenceError = enum {
       .DuplicateParameterArgument =>
         " has already been given an argument",
       .MissingParameterArgument =>
-        " has not been given an argument"
+        " has not been given an argument",
+      .DuplicateSymbolName => " hides existing symbol",
     };
   }
 
@@ -66,7 +67,8 @@ pub const PreviousOccurenceError = enum {
       .DuplicateFlag, .IncompatibleFlag => "flag",
       .DuplicateBlockHeader => "block header",
       .DuplicateAutoSwallow => "swallow def",
-      .DuplicateParameterArgument, .MissingParameterArgument => "argument"
+      .DuplicateParameterArgument, .MissingParameterArgument => "argument",
+      .DuplicateSymbolName => "symbol",
     };
   }
 
@@ -77,6 +79,7 @@ pub const PreviousOccurenceError = enum {
       .IncompatibleFlag => "other flag",
       .DuplicateParameterArgument => "previous argument",
       .MissingParameterArgument => "parameter definition",
+      .DuplicateSymbolName => "symbol definition",
     };
   }
 };
