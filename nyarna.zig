@@ -36,7 +36,7 @@ pub const Context = struct {
   /// The error reporter for this loader, supplied externally.
   reporter: *errors.Reporter,
   /// The backing allocator for heap allocations used by this loader.
-  allocator: *std.mem.Allocator,
+  backing_allocator: std.mem.Allocator,
   /// The type lattice contains all types ever instantiated by operations of
   /// this context. during the loading
   /// process and provides the type lattice operations (e.g. type intersection
@@ -60,25 +60,25 @@ pub const Context = struct {
   /// current top of the stack, where new stack allocations happen.
   stack_ptr: [*]model.StackItem,
 
-  pub fn create(allocator: *std.mem.Allocator, reporter: *errors.Reporter,
-               stack_size: usize) !*Context {
-    const ret = try allocator.create(Context);
+  pub fn create(backing_allocator: std.mem.Allocator,
+                reporter: *errors.Reporter, stack_size: usize) !*Context {
+    const ret = try backing_allocator.create(Context);
     ret.* = .{
       .reporter = reporter,
-      .allocator = allocator,
+      .backing_allocator = backing_allocator,
       .types = undefined,
-      .storage = std.heap.ArenaAllocator.init(allocator),
+      .storage = std.heap.ArenaAllocator.init(backing_allocator),
       .intrinsics = undefined,
       .keyword_registry = .{},
       .builtin_registry = .{},
       .stack = undefined,
       .stack_ptr = undefined,
     };
-    errdefer allocator.destroy(ret);
+    errdefer backing_allocator.destroy(ret);
     errdefer ret.storage.deinit();
-    ret.stack = try allocator.alloc(model.StackItem, stack_size);
+    ret.stack = try backing_allocator.alloc(model.StackItem, stack_size);
     ret.stack_ptr = ret.stack.ptr;
-    errdefer allocator.free(ret.stack);
+    errdefer backing_allocator.free(ret.stack);
     ret.types = try types.Lattice.init(&ret.storage);
     errdefer ret.types.deinit();
     ret.intrinsics = try lib.intrinsicModule(ret);
@@ -88,8 +88,8 @@ pub const Context = struct {
   pub fn destroy(context: *Context) void {
     context.types.deinit();
     context.storage.deinit();
-    context.allocator.free(context.stack);
-    context.allocator.destroy(context);
+    context.backing_allocator.free(context.stack);
+    context.backing_allocator.destroy(context);
   }
 
   pub inline fn fillLiteral(
@@ -110,9 +110,15 @@ pub const Context = struct {
     e.expected_type = self.types.valueType(&e.data.literal.value);
   }
 
+  /// allocator for context-owned memory. Will go out of scope when the context
+  /// vanishes.
+  pub inline fn allocator(self: *Context) std.mem.Allocator {
+    return self.storage.allocator();
+  }
+
   pub inline fn genLiteral(self: *Context, at: model.Position,
                            content: model.Value.Data) !*model.Expression {
-    const e = try self.storage.allocator.create(model.Expression);
+    const e = try self.allocator().create(model.Expression);
     self.fillLiteral(at, e, content);
     return e;
   }

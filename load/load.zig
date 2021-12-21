@@ -24,13 +24,13 @@ pub const ModuleLoader = struct {
   /// TODO: process args
   pub fn create(context: *Context, input: *const model.Source,
                 _: []*const model.Source) !*ModuleLoader {
-    var ret = try context.storage.allocator.create(ModuleLoader);
+    var ret = try context.allocator().create(ModuleLoader);
     ret.context = context;
     ret.public_syms = .{};
     ret.logger = .{
       .reporter = context.reporter,
     };
-    errdefer context.storage.allocator.destroy(ret);
+    errdefer context.allocator().destroy(ret);
     ret.interpreter = try nyarna.Interpreter.create(ret, input);
     ret.parser = parse.Parser.init();
     return ret;
@@ -43,7 +43,7 @@ pub const ModuleLoader = struct {
   pub fn destroy(self: *ModuleLoader) void {
     const context = self.interpreter.loader.context;
     self.deinit();
-    context.storage.allocator.destroy(self);
+    context.allocator().destroy(self);
   }
 
   pub fn load(self: *ModuleLoader, fullast: bool) !*model.Module {

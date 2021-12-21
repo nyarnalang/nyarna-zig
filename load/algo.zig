@@ -138,9 +138,9 @@ pub const DeclareResolution = struct {
   pub fn create(intpr: *nyarna.Interpreter,
                 defs: []*model.Node.Definition,
                 ns: u15) !*DeclareResolution {
-    var res = try intpr.storage.allocator.create(DeclareResolution);
+    var res = try intpr.allocator().create(DeclareResolution);
     res.defs = defs;
-    res.processor = try Processor.init(&intpr.storage.allocator, res);
+    res.processor = try Processor.init(intpr.allocator(), res);
     res.dep_discovery_ctx = .{
       .resolveInSiblingDefinitions = discoverDependencies,
       .ns = ns,
@@ -162,7 +162,7 @@ pub const DeclareResolution = struct {
 
   pub fn execute(self: *DeclareResolution) !void {
     try self.processor.firstStep();
-    try self.processor.secondStep(&self.intpr.storage.allocator);
+    try self.processor.secondStep(self.intpr.allocator());
     // third step: process components in reverse topological order.
 
     for (self.processor.components) |first_index, cmpt_index| {

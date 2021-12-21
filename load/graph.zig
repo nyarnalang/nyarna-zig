@@ -105,7 +105,7 @@ pub fn GraphProcessor(comptime Graph: type) type {
     /// the graph that is being processed.
     graph: Graph,
 
-    pub fn init(allocator: *std.mem.Allocator, graph: Graph) !Self {
+    pub fn init(allocator: std.mem.Allocator, graph: Graph) !Self {
       var ret = Self{
         .graph = graph,
         .node_data = try allocator.alloc(NodeRef, graph.length()),
@@ -131,7 +131,7 @@ pub fn GraphProcessor(comptime Graph: type) type {
       first_unsorted: usize,
       components: std.ArrayList(usize),
 
-      fn init(allocator: *std.mem.Allocator, proc: *Self) !Tarjan {
+      fn init(allocator: std.mem.Allocator, proc: *Self) !Tarjan {
         return Tarjan{
           .proc = proc,
           .index = 0,
@@ -193,7 +193,7 @@ pub fn GraphProcessor(comptime Graph: type) type {
     // this will also sort the graph's node list so that all nodes of one
     // component occur after each other and the components are sorted by
     // reverse topological order.
-    pub fn secondStep(self: *Self, allocator: *std.mem.Allocator) !void {
+    pub fn secondStep(self: *Self, allocator: std.mem.Allocator) !void {
       var tarjan = try Tarjan.init(allocator, self);
       for (self.node_data) |*v| {
         if (v.assigned_index == null) {

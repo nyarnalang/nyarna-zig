@@ -838,10 +838,10 @@ pub const Type = union(enum) {
       return Instantiated.typedef(self);
     }
 
-    pub fn predefBoolean(alloc: *std.mem.Allocator) !Enum {
+    pub fn predefBoolean(allocator: std.mem.Allocator) !Enum {
       var ret = Enum{.values = .{}};
-      try ret.values.put(alloc, "false", 0);
-      try ret.values.put(alloc, "true", 0);
+      try ret.values.put(allocator, "false", 0);
+      try ret.values.put(allocator, "true", 0);
       return ret;
     }
   };
@@ -1315,7 +1315,7 @@ pub const Value = struct {
   origin: Position,
   data: Data,
 
-  pub inline fn create(allocator: *std.mem.Allocator, pos: Position,
+  pub inline fn create(allocator: std.mem.Allocator, pos: Position,
                        content: anytype) !*Value {
     var ret = try allocator.create(Value);
     ret.origin = pos;
@@ -1377,9 +1377,9 @@ pub const Module = struct {
 pub const NodeGenerator = struct {
   const Self = @This();
 
-  allocator: *std.mem.Allocator,
+  allocator: std.mem.Allocator,
 
-  pub fn init(allocator: *std.mem.Allocator) NodeGenerator {
+  pub fn init(allocator: std.mem.Allocator) NodeGenerator {
     return .{
       .allocator = allocator,
     };

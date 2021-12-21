@@ -84,7 +84,8 @@ pub const Evaluator = struct {
       nyarna.Error!RetTypeForCtx(@TypeOf(impl_ctx)) {
     switch (@TypeOf(impl_ctx)) {
       *Evaluator => {
-        const ret = try impl_ctx.context.storage.allocator.create(model.Value);
+        const ret =
+          try impl_ctx.context.allocator().create(model.Value);
         ret.* = .{
           .data = .poison,
           .origin = pos,
@@ -181,7 +182,7 @@ pub const Evaluator = struct {
       },
       .poison => return switch (@TypeOf(impl_ctx)) {
         *Evaluator => model.Value.create(
-          &self.context.storage.allocator, call.expr().pos, .poison),
+          self.context.allocator(), call.expr().pos, .poison),
         *nyarna.Interpreter => impl_ctx.node_gen.poison(call.expr().pos),
         else => unreachable,
       },
@@ -210,7 +211,7 @@ pub const Evaluator = struct {
         }
         cur_ptr.* = try self.evaluate(assignment.expr);
         return try model.Value.create(
-          &self.context.storage.allocator, expr.pos, .void);
+          self.context.allocator(), expr.pos, .void);
       },
       .access => |*access| {
         var cur = try self.evaluate(access.subject);
@@ -227,7 +228,7 @@ pub const Evaluator = struct {
         var condition = try self.evaluate(branches.condition);
         if (self.context.types.valueType(condition).is(.poison))
           return model.Value.create(
-            &self.context.storage.allocator, expr.pos, .poison);
+            self.context.allocator(), expr.pos, .poison);
         return self.evaluate(
           branches.branches[condition.data.enumval.index]);
       },
@@ -246,20 +247,20 @@ pub const Evaluator = struct {
             } else {
               var content_builder = std.ArrayListUnmanaged(u8){};
               try content_builder.appendSlice(
-                &self.context.storage.allocator, cur.data.text.content);
+                self.context.allocator(), cur.data.text.content);
               try content_builder.appendSlice(
-                &self.context.storage.allocator, next.data.text.content);
+                self.context.allocator(), next.data.text.content);
               i += 1;
               var last_pos = next.origin;
               while (i < concat.len) : (i += 1) {
                 next = try self.evaluate(concat[i]);
                 if (next.data != .text) break;
                 try content_builder.appendSlice(
-                  &self.context.storage.allocator, next.data.text.content);
+                  self.context.allocator(), next.data.text.content);
                 last_pos = next.origin;
               }
-              const scalar_val = try self.context.storage.allocator.create(
-                model.Value);
+              const scalar_val =
+                try self.context.allocator().create(model.Value);
               scalar_val.* = .{
                 .origin = cur.origin.span(last_pos),
                 .data = .{
@@ -281,14 +282,14 @@ pub const Evaluator = struct {
       .var_retrieval => |*var_retr| return var_retr.variable.cur_value.?.value,
       .literal => |*literal| return &literal.value,
       .poison => return
-        model.Value.create(&self.context.storage.allocator, expr.pos, .poison),
+        model.Value.create(self.context.allocator(), expr.pos, .poison),
       .void => return
-        model.Value.create(&self.context.storage.allocator, expr.pos, .void),
+        model.Value.create(self.context.allocator(), expr.pos, .void),
     }
   }
 
   inline fn toString(self: *Evaluator, input: anytype) ![]u8 {
-    return std.fmt.allocPrint(&self.context.storage.allocator, "{}", .{input});
+    return std.fmt.allocPrint(self.context.allocator(), "{}", .{input});
   }
 
   fn coerce(self: *Evaluator, value: *model.Value, expected_type: model.Type)
@@ -316,7 +317,7 @@ pub const Evaluator = struct {
             else => unreachable,
           };
           return model.Value.create(
-            &self.context.storage.allocator, value.origin,
+            self.context.allocator(), value.origin,
             model.Value.TextScalar{.t = expected_type, .content = content});
         },
         // other coercions can never happen.
@@ -336,18 +337,18 @@ pub const Evaluator = struct {
         .optional, .intersection => unreachable,
         .concat => |*concat| {
           var list = std.ArrayList(*model.Value).init(
-            &self.context.storage.allocator);
+            self.context.allocator());
           if (!value_type.is(.void)) {
             const inner_value = try self.coerce(value, concat.inner);
             try list.append(inner_value);
           }
           return model.Value.create(
-            &self.context.storage.allocator, value.origin,
+            self.context.allocator(), value.origin,
               model.Value.Concat{.t = concat, .content = list});
         },
         .paragraphs => |*para| {
           var list = std.ArrayList(*model.Value).init(
-            &self.context.storage.allocator);
+            self.context.allocator());
           if (!value_type.is(.void)) {
             const para_value = for (para.inner) |cur| {
               if (self.context.types.lesserEqual(value_type, cur))
@@ -356,7 +357,7 @@ pub const Evaluator = struct {
             try list.append(para_value);
           }
           return model.Value.create(
-            &self.context.storage.allocator, value.origin,
+            self.context.allocator(), value.origin,
               model.Value.Para{.t = para, .content = list});
         },
         .list, .map => unreachable, // TODO: implement coercion of inner values.
@@ -400,14 +401,13 @@ const ConcatBuilder = struct {
   }
 
   fn emptyConcat(self: *ConcatBuilder) !*model.Value.Concat {
-    const v = try self.context.storage.allocator.create(model.Value);
+    const v = try self.context.allocator().create(model.Value);
     v.* = .{
       .origin = self.pos,
       .data = .{
         .concat = .{
           .t = &self.expected_type.structural.concat,
-          .content = std.ArrayList(*model.Value).init(
-            &self.context.storage.allocator),
+          .content = std.ArrayList(*model.Value).init(self.context.allocator()),
         },
       },
     };
@@ -444,12 +444,11 @@ const ConcatBuilder = struct {
       return if (self.expected_type.isStructural(.concat))
         (try self.emptyConcat()).value()
       else if (self.expected_type.is(.void)) try
-        model.Value.create(&self.context.storage.allocator, self.pos, .void)
+        model.Value.create(self.context.allocator(), self.pos, .void)
       else blk: {
         std.debug.assert(
           nyarna.types.containedScalar(self.expected_type) != null);
-        const scalar_val =
-          try self.context.storage.allocator.create(model.Value);
+        const scalar_val = try self.context.allocator().create(model.Value);
         scalar_val.* = .{
           .origin = self.pos,
           .data = .{

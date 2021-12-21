@@ -77,8 +77,8 @@ pub const SignatureMapper = struct {
       .intpr = intpr,
       .ns = ns,
       .args =
-        try intpr.storage.allocator.alloc(*model.Node, sig.parameters.len),
-      .filled = try intpr.storage.allocator.alloc(bool, sig.parameters.len),
+        try intpr.allocator().alloc(*model.Node, sig.parameters.len),
+      .filled = try intpr.allocator().alloc(bool, sig.parameters.len),
     };
     for (res.filled) |*item| item.* = false;
     return res;
@@ -274,7 +274,7 @@ pub const CollectingMapper = struct {
   fn push(mapper: *Mapper, at: Mapper.Cursor,
           content: *model.Node) nyarna.Error!void {
     const self = @fieldParentPtr(CollectingMapper, "mapper", mapper);
-    try self.items.append(&self.intpr.storage.allocator, .{
+    try self.items.append(self.intpr.allocator(), .{
         .kind = at.param.kind, .content = content,
         .had_explicit_block_config = at.config
       });

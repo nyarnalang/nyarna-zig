@@ -65,8 +65,8 @@ pub const Interpreter = struct {
 
   pub fn create(loader: *ModuleLoader,
                 input: *const model.Source) !*Interpreter {
-    var arena = std.heap.ArenaAllocator.init(loader.context.allocator);
-    var ret = try arena.allocator.create(Interpreter);
+    var arena = std.heap.ArenaAllocator.init(loader.context.backing_allocator);
+    var ret = try arena.allocator().create(Interpreter);
     ret.* = .{
       .input = input,
       .loader = loader,
@@ -77,7 +77,7 @@ pub const Interpreter = struct {
                            syntaxes.SymbolDefs.definitions()},
       .node_gen = undefined,
     };
-    ret.node_gen = model.NodeGenerator.init(&ret.storage.allocator);
+    ret.node_gen = model.NodeGenerator.init(ret.allocator());
     errdefer ret.deinit();
     try ret.addNamespace('\\');
     return ret;
@@ -85,24 +85,35 @@ pub const Interpreter = struct {
 
   /// discards the internal storage for AST nodes.
   pub fn deinit(self: *Interpreter) void {
-    self.storage.deinit();
+    // self.storage is inside the deallocated memory so we must copy it, else
+    // we would need to run into use-after-free.
+    var storage = self.storage;
+    storage.deinit();
   }
 
   /// create an object in the public (Loader-wide) storage.
   pub inline fn createPublic(self: *Interpreter, comptime T: type) !*T {
-    return self.loader.context.storage.allocator.create(T);
+    return self.loader.context.allocator().create(T);
   }
 
   pub inline fn types(self: *Interpreter) *nyarna.types.Lattice {
     return &self.loader.context.types;
   }
 
+  /// returns the allocator for interpreter-local storage, i.e. values that
+  /// are to go out of scope when the interpreter has finished parsing a source.
+  ///
+  /// use Interpreter.node_gen for generating nodes that use this allocator.
+  pub inline fn allocator(self: *Interpreter) std.mem.Allocator {
+    return self.storage.allocator();
+  }
+
   pub fn addNamespace(self: *Interpreter, character: u21) !void {
     const index = self.namespaces.items.len;
     if (index > std.math.maxInt(u16)) return nyarna.Error.too_many_namespaces;
     try self.command_characters.put(
-      &self.storage.allocator, character, @intCast(u15, index));
-    try self.namespaces.append(&self.storage.allocator, .{});
+      self.allocator(), character, @intCast(u15, index));
+    try self.namespaces.append(self.allocator(), .{});
     //const ns = &self.namespaces.items[index]; TODO: do we need this?
     // intrinsic symbols of every namespace.
     try self.importModuleSyms(self.loader.context.intrinsics, index);
@@ -114,7 +125,7 @@ pub const Interpreter = struct {
     for (module.symbols) |sym| {
       const name = sym.name;
       std.debug.print("adding symbol {s}\n", .{name});
-      try ns.put(&self.storage.allocator, name, sym);
+      try ns.put(self.allocator(), name, sym);
     }
   }
 
@@ -318,8 +329,7 @@ pub const Interpreter = struct {
       return null;
     };
     const expr = try self.createPublic(model.Expression);
-    const path = try std.mem.dupe(&self.loader.context.storage.allocator,
-      usize, target.path);
+    const path = try self.loader.context.allocator().dupe(usize, target.path);
     expr.* = .{
       .pos = ass.node().pos,
       .data = .{
@@ -393,8 +403,8 @@ pub const Interpreter = struct {
         "call target has unexpected type: {s}", .{@tagName(inst.data)}),
     };
     const is_keyword = sig.returns.is(.ast_node);
-    const allocator = if (is_keyword) &self.storage.allocator
-                      else &self.loader.context.storage.allocator;
+    const cur_allocator = if (is_keyword) self.allocator()
+                          else self.loader.context.allocator();
     var failed_to_interpret = std.ArrayListUnmanaged(*model.Node){};
     var args_failed_to_interpret = false;
     // in-place modification of args requires that the arg nodes have been
@@ -410,7 +420,7 @@ pub const Interpreter = struct {
           } else {
             args_failed_to_interpret = true;
             if (is_keyword) try
-              failed_to_interpret.append(&self.storage.allocator, arg.*);
+              failed_to_interpret.append(self.allocator(), arg.*);
             continue;
           };
       }
@@ -432,14 +442,14 @@ pub const Interpreter = struct {
       }
     }
 
-    const args = try allocator.alloc(
+    const args = try cur_allocator.alloc(
       *model.Expression, sig.parameters.len);
     var seen_poison = false;
     for (rc.args) |arg, i| {
       args[i] = arg.data.expression;
       if (args[i].expected_type.is(.poison)) seen_poison = true;
     }
-    const expr = try allocator.create(model.Expression);
+    const expr = try cur_allocator.create(model.Expression);
     expr.* = .{
       .pos = rc.node().pos,
       .data = .{
@@ -526,7 +536,7 @@ pub const Interpreter = struct {
     }
 
     if (poison) {
-      const pe = try self.storage.allocator.create(model.Expression);
+      const pe = try self.allocator().create(model.Expression);
       pe.fillPoison(loc.node().pos);
       return pe;
     }
@@ -539,8 +549,8 @@ pub const Interpreter = struct {
       .data = .{
         .text = .{
           .t = model.Type{.intrinsic = .literal},
-          .content = try std.mem.dupe(&self.loader.context.storage.allocator,
-            u8, loc.name.content),
+          .content =
+            try self.loader.context.allocator().dupe(u8, loc.name.content),
         },
       },
     };
@@ -569,7 +579,7 @@ pub const Interpreter = struct {
         !expr.expected_type.isStructural(.callable)) {
       self.loader.logger.InvalidDefinitionValue(
         expr.pos, &.{expr.expected_type});
-      const pe = try self.storage.allocator.create(model.Expression);
+      const pe = try self.allocator().create(model.Expression);
       pe.fillPoison(def.node().pos);
       return pe;
     }
@@ -580,8 +590,8 @@ pub const Interpreter = struct {
       .data = .{
         .text = .{
           .t = model.Type{.intrinsic = .literal},
-          .content = try std.mem.dupe(
-            &self.loader.context.storage.allocator, u8, def.name.content),
+          .content =
+            try self.loader.context.allocator().dupe(u8, def.name.content),
         },
       },
     };
@@ -620,12 +630,12 @@ pub const Interpreter = struct {
       .typegen => unreachable, // TODO
       .expression => |expr| expr,
       .void => blk: {
-        const expr = try self.storage.allocator.create(model.Expression);
+        const expr = try self.allocator().create(model.Expression);
         expr.fillVoid(input.pos);
         break :blk expr;
       },
       .poison => blk: {
-        const expr = try self.storage.allocator.create(model.Expression);
+        const expr = try self.allocator().create(model.Expression);
         expr.fillPoison(input.pos);
         break :blk expr;
       },
@@ -633,8 +643,7 @@ pub const Interpreter = struct {
         .text = .{
           .t = model.Type{
             .intrinsic = if (lit.kind == .space) .space else .literal},
-          .content = try std.mem.dupe(
-            &self.loader.context.storage.allocator, u8, lit.content),
+          .content = try self.loader.context.allocator().dupe(u8, lit.content),
         },
       }),
       .unresolved_symref, .unresolved_call => blk: {
@@ -657,7 +666,7 @@ pub const Interpreter = struct {
   pub fn resolveSymbol(self: *Interpreter, pos: model.Position, ns: u15,
                        name: []const u8) !*model.Node {
     var syms = &self.namespaces.items[ns];
-    var ret = try self.storage.allocator.create(model.Node);
+    var ret = try self.allocator().create(model.Node);
     ret.* = .{
       .pos = pos,
       .data = if (syms.get(name)) |sym| .{
@@ -830,7 +839,7 @@ pub const Interpreter = struct {
     }
     return if (first_incompatible) |index| blk: {
       const type_arr =
-        try self.storage.allocator.alloc(model.Type, index + 1);
+        try self.allocator().alloc(model.Type, index + 1);
       type_arr[0] = (try self.probeType(nodes[index], ctx)).?;
       var j = @as(usize, 0);
       while (j < index) : (j += 1) {
@@ -982,7 +991,7 @@ pub const Interpreter = struct {
   pub inline fn genValueNode(self: *Interpreter, pos: model.Position,
                              content: model.Value.Data) !*model.Node {
     const expr = try self.genPublicLiteral(pos, content);
-    var ret = try self.storage.allocator.create(model.Node);
+    var ret = try self.allocator().create(model.Node);
     ret.* = .{
       .pos = pos,
       .data = .{
@@ -1000,8 +1009,8 @@ pub const Interpreter = struct {
           self.fillLiteral(l.node().pos, e, .{
             .text = .{
               .t = t,
-              .content = try std.mem.dupe(
-                &self.loader.context.storage.allocator, u8, l.content),
+              .content =
+                try self.loader.context.allocator().dupe(u8, l.content),
             },
           }) else {
             self.loader.logger.ExpectedExprOfTypeXGotY(
@@ -1012,16 +1021,16 @@ pub const Interpreter = struct {
           self.fillLiteral(l.node().pos, e, .{
             .text = .{
               .t = t,
-              .content = try std.mem.dupe(
-                &self.loader.context.storage.allocator, u8, l.content),
+              .content =
+                try self.loader.context.allocator().dupe(u8, l.content),
             },
           }),
         else =>
           self.fillLiteral(l.node().pos, e, .{
           .text = .{
             .t = .{.intrinsic = if (l.kind == .text) .literal else .space},
-            .content = try std.mem.dupe(
-              &self.loader.context.storage.allocator, u8, l.content),
+            .content =
+              try self.loader.context.allocator().dupe(u8, l.content),
           },
         }),
       },
@@ -1109,7 +1118,7 @@ pub const Interpreter = struct {
           if (node.*.data != .expression) {
             if (try self.interpretWithTargetType(node.*, t, probed, ctx))
                 |expr| {
-              const expr_node = try self.storage.allocator.create(model.Node);
+              const expr_node = try self.allocator().create(model.Node);
               expr_node.* = .{
                 .data = .{.expression = expr},
                 .pos = node.*.pos,
@@ -1119,7 +1128,7 @@ pub const Interpreter = struct {
           }
         }
         if (failed_some) return null;
-        const exprs = try self.loader.context.storage.allocator.alloc(
+        const exprs = try self.loader.context.allocator().alloc(
           *model.Expression, br.branches.len);
         for (br.branches) |item, i|
           exprs[i] = item.data.expression;
@@ -1157,7 +1166,7 @@ pub const Interpreter = struct {
           if (node.*.data != .expression) {
             if (try self.interpretWithTargetType(node.*, t, probed, ctx))
                 |expr| {
-              const expr_node = try self.storage.allocator.create(model.Node);
+              const expr_node = try self.allocator().create(model.Node);
               expr_node.* = .{
                 .data = .{.expression = expr},
                 .pos = node.*.pos,
@@ -1167,7 +1176,7 @@ pub const Interpreter = struct {
           }
         }
         if (failed_some) return null;
-        const exprs = try self.loader.context.storage.allocator.alloc(
+        const exprs = try self.loader.context.allocator().alloc(
           *model.Expression, con.items.len);
         // TODO: properly handle paragraph types
         for (con.items) |item, i|

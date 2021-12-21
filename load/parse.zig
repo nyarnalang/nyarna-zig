@@ -140,7 +140,7 @@ pub const Parser = struct {
         if (level.dangling_space) |space_node| {
           std.debug.print("appending dangling space (kind={s})\n",
             .{@tagName(space_node.data.literal.kind)});
-          try level.nodes.append(&ip.storage.allocator, space_node);
+          try level.nodes.append(ip.allocator(), space_node);
           level.dangling_space = null;
         }
         const res = if (level.fullast) item else switch (item.data) {
@@ -149,7 +149,7 @@ pub const Parser = struct {
           else => if (try ip.tryInterpret(item, false, null)) |expr|
             try ip.node_gen.expression(expr) else item,
         };
-        try level.nodes.append(&ip.storage.allocator, res);
+        try level.nodes.append(ip.allocator(), res);
       }
     }
 
@@ -174,7 +174,7 @@ pub const Parser = struct {
       if (level.block_config) |c| {
         try p.revertBlockConfig(c);
       }
-      const alloc = p.int();
+      const alloc = p.allocator();
       if (level.syntax_proc) |proc| {
         return try proc.finish(
           proc, p.intpr().input.between(level.start, p.cur_start));
@@ -197,7 +197,7 @@ pub const Parser = struct {
     fn pushParagraph(level: *ContentLevel, ip: *Interpreter, lf_after: usize)
         !void {
       if (level.nodes.items.len > 0) {
-        try level.paragraphs.append(&ip.storage.allocator, .{
+        try level.paragraphs.append(ip.allocator(), .{
           .content = try level.finalizeParagraph(ip),
           .lf_after = lf_after
         });
@@ -268,8 +268,8 @@ pub const Parser = struct {
   cur: model.Token,
   cur_start: model.Cursor,
 
-  inline fn int(self: *@This()) *std.mem.Allocator {
-    return &self.intpr().storage.allocator;
+  inline fn allocator(self: *@This()) std.mem.Allocator {
+    return self.intpr().allocator();
   }
 
   inline fn intpr(self: *@This()) *Interpreter {
@@ -298,7 +298,7 @@ pub const Parser = struct {
     const file = try std.fs.cwd().openFile(path, .{});
     defer file.close();
     const file_contents = try std.fs.cwd().readFileAlloc(
-      self.int(), path, (try file.stat()).size + 4);
+      self.allocator(), path, (try file.stat()).size + 4);
     std.mem.copy(
       u8, file_contents[(file_contents.len - 4)..], "\x04\x04\x04\x04");
     return self.parseSource(&model.Source{
@@ -311,7 +311,7 @@ pub const Parser = struct {
   }
 
   fn pushLevel(self: *Parser, fullast: bool) !void {
-    try self.levels.append(self.int(), ContentLevel{
+    try self.levels.append(self.allocator(), ContentLevel{
       .start = self.lexer.recent_end,
       .changes = null,
       .command = undefined,
@@ -638,10 +638,10 @@ pub const Parser = struct {
           while (true) {
             switch (self.cur) {
               .space =>
-                try content.appendSlice(self.int(),
+                try content.appendSlice(self.allocator(),
                     self.lexer.walker.contentFrom(self.cur_start.byte_offset)),
               .literal => {
-                try content.appendSlice(self.int(),
+                try content.appendSlice(self.allocator(),
                     self.lexer.walker.contentFrom(self.cur_start.byte_offset));
                 non_space_len = content.items.len;
                 non_space_line_len = non_space_len;
@@ -650,11 +650,11 @@ pub const Parser = struct {
               .ws_break => {
                 // dump whitespace before newline
                 content.shrinkRetainingCapacity(non_space_line_len);
-                try content.append(self.int(), '\n');
+                try content.append(self.allocator(), '\n');
                 non_space_line_len = content.items.len;
               },
               .escape => {
-                try content.appendSlice(self.int(), self.lexer.recent_id);
+                try content.appendSlice(self.allocator(), self.lexer.recent_id);
                 non_space_len = content.items.len;
                 non_space_line_len = non_space_len;
                 non_space_end = self.lexer.recent_end;
@@ -675,7 +675,7 @@ pub const Parser = struct {
           const pos = switch(self.cur) {
             .block_end_open, .block_name_sep, .comma, .name_sep, .list_end,
             .end_source => blk: {
-              content.shrinkAndFree(self.int(), non_space_len);
+              content.shrinkAndFree(self.allocator(), non_space_len);
               break :blk self.intpr().input.between(
                 textual_start, non_space_end);
             },
@@ -935,8 +935,8 @@ pub const Parser = struct {
               self.advance();
               const check_swallow = if (self.cur == .diamond_open) blk: {
                 bh.config = @as(model.BlockConfig, undefined);
-                try self.readBlockConfig(
-                  &bh.config.?, &self.intpr().loader.context.storage.allocator);
+                try self.readBlockConfig(&bh.config.?,
+                  self.intpr().loader.context.allocator());
                 if (self.cur == .blocks_sep) {
                   self.advance();
                   break :blk true;
@@ -959,9 +959,9 @@ pub const Parser = struct {
   const ConfigItemKind = enum {csym, syntax, map, off, fullast, empty, unknown};
 
   fn readBlockConfig(self: *Parser, into: *model.BlockConfig,
-                     alloc: *std.mem.Allocator) !void {
+                     map_allocator: std.mem.Allocator) !void {
     std.debug.assert(self.cur == .diamond_open);
-    var mapList: std.ArrayListUnmanaged(model.BlockConfig.Map) = .{};
+    var map_list = std.ArrayList(model.BlockConfig.Map).init(map_allocator);
     into.* = .{
       .syntax = null,
       .off_colon = null,
@@ -1007,7 +1007,7 @@ pub const Parser = struct {
         switch (kind) {
           .csym => {
             if (self.cur == .ns_sym) {
-              try mapList.append(alloc, .{
+              try map_list.append(.{
                 .pos = self.lexer.walker.posFrom(start),
                 .from = 0, .to = self.lexer.code_point});
             } else {
@@ -1053,7 +1053,7 @@ pub const Parser = struct {
                 if (self.cur != .space) break self.cur != .ns_sym;
               } else true;
               if (!recover) {
-                try mapList.append(alloc, .{
+                try map_list.append(.{
                   .pos = self.lexer.walker.posFrom(start),
                   .from = from, .to = self.lexer.code_point,
                 });
@@ -1073,7 +1073,7 @@ pub const Parser = struct {
               .block_name_sep =>
                 into.off_colon = self.lexer.walker.posFrom(self.cur_start),
               .ns_sym =>
-                try mapList.append(alloc, .{
+                try map_list.append(.{
                     .pos = self.lexer.walker.posFrom(start),
                     .from = self.lexer.code_point, .to = 0,
                   }),
@@ -1122,7 +1122,7 @@ pub const Parser = struct {
         &[_]errors.WrongItemError.ItemDescr{.{.token = .diamond_close}},
         .{.token = self.cur});
     }
-    into.map = mapList.items;
+    into.map = map_list.items;
   }
 
   /// out-value used for processBlockHeader after the initial ':'.
@@ -1150,7 +1150,7 @@ pub const Parser = struct {
   fn processBlockHeader(self: *Parser, pb_exists: ?*PrimaryBlockExists) !bool {
     const parent = self.curLevel();
     const check_swallow = if (self.cur == .diamond_open) blk: {
-      try self.readBlockConfig(&self.config_buffer, self.int());
+      try self.readBlockConfig(&self.config_buffer, self.allocator());
       std.debug.print("block header has map length of {}\n",
         .{self.config_buffer.map.len});
       const pos = self.intpr().input.at(self.cur_start);
@@ -1232,7 +1232,7 @@ pub const Parser = struct {
             self.levels.items[target_level].command = parent.command;
             // finally, shift the new level on top of the target_level
             self.levels.items[target_level + 1] = last(self.levels.items).*;
-            try self.levels.resize(self.int(), target_level + 1);
+            try self.levels.resize(self.allocator(), target_level + 1);
           }
         }
 
@@ -1279,7 +1279,7 @@ pub const Parser = struct {
 
   fn applyBlockConfig(self: *Parser, pos: model.Position,
                       config: *const model.BlockConfig) !void {
-    var sf = std.heap.stackFallback(128, self.int());
+    var sf = std.heap.stackFallback(128, self.allocator());
     var alloc = sf.get();
     const lvl = self.curLevel();
 
@@ -1293,7 +1293,7 @@ pub const Parser = struct {
       var resolved_indexes = try alloc.alloc(u16, config.map.len);
       defer alloc.free(resolved_indexes);
       try self.ns_mapping_stack.ensureUnusedCapacity(
-        self.int(), config.map.len);
+        self.allocator(), config.map.len);
       // resolve all given `from` characters.
       for (config.map) |mapping, i| {
         resolved_indexes[i] =
@@ -1313,14 +1313,14 @@ pub const Parser = struct {
           if (from_index != ns_mapping_failed) {
             _ = self.intpr().command_characters.remove(mapping.from);
           }
-          try self.ns_mapping_stack.append(self.int(), from_index);
+          try self.ns_mapping_stack.append(self.allocator(), from_index);
         }
       }
       // execute all namespace remappings
       for (config.map) |mapping, i| {
         const from_index = resolved_indexes[i];
         if (mapping.to != 0 and from_index != ns_mapping_no_from) {
-          try self.ns_mapping_stack.append(self.int(), blk: {
+          try self.ns_mapping_stack.append(self.allocator(), blk: {
             if (from_index != ns_mapping_failed) {
               if (self.intpr().command_characters.get(mapping.to)) |_| {
                 // check if an upcoming remapping will remove this character
@@ -1339,7 +1339,7 @@ pub const Parser = struct {
                 }
               }
               try self.intpr().command_characters.put(
-                self.int(), mapping.to, @intCast(u15, from_index));
+                self.allocator(), mapping.to, @intCast(u15, from_index));
               // only remove old command character if it has not previously been
               // remapped.
               if (self.intpr().command_characters.get(mapping.from))
@@ -1361,10 +1361,10 @@ pub const Parser = struct {
             // this is not an error, but we still record it as 'failed' so
             // that we know when reversing this block config, nothing needs to
             // be done.
-            try self.ns_mapping_stack.append(self.int(), ns_mapping_failed);
+            try self.ns_mapping_stack.append(self.allocator(), ns_mapping_failed);
           } else {
             try self.intpr().addNamespace(mapping.to);
-            try self.ns_mapping_stack.append(self.int(), ns_mapping_succeeded);
+            try self.ns_mapping_stack.append(self.allocator(), ns_mapping_succeeded);
           }
         }
       }
@@ -1387,7 +1387,7 @@ pub const Parser = struct {
     // leaving the level.
 
     if (config.map.len > 0) {
-      var sf = std.heap.stackFallback(128, self.int());
+      var sf = std.heap.stackFallback(128, self.allocator());
       var alloc = sf.get();
 
       // reverse establishment of new namespaces
@@ -1429,14 +1429,14 @@ pub const Parser = struct {
               // this cannot fail because command_characters will always be
               // large enough to add another item without requiring allocation.
               self.intpr().command_characters.put(
-                self.int(), mapping.from, ns_index) catch unreachable;
+                self.allocator(), mapping.from, ns_index) catch unreachable;
             }
           } else {
             const ns_index = self.ns_mapping_stack.pop();
             if (ns_index != ns_mapping_failed) {
               // like above
               self.intpr().command_characters.put(
-                self.int(), mapping.from, @intCast(u15, ns_index))
+                self.allocator(), mapping.from, @intCast(u15, ns_index))
                 catch unreachable;
             }
           }

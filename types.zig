@@ -66,7 +66,7 @@ pub const Lattice = struct {
           const hit =
             if (next.*) |succ| if (t.eql(succ.key)) succ else null else null;
           self.cur = hit orelse blk: {
-            var new = try self.lattice.alloc.create(TreeNode(Flag));
+            var new = try self.lattice.allocator.create(TreeNode(Flag));
             new.* = .{
               .key = t,
               .value = null,
@@ -83,7 +83,7 @@ pub const Lattice = struct {
   }
 
   /// allocator used for data of structural types
-  alloc: *std.mem.Allocator,
+  allocator: std.mem.Allocator,
   optionals: std.HashMapUnmanaged(model.Type, *model.Type.Structural,
       model.Type.HashContext, std.hash_map.default_max_load_percentage),
   concats: std.HashMapUnmanaged(model.Type, *model.Type.Structural,
@@ -158,11 +158,11 @@ pub const Lattice = struct {
 
   pub fn init(alloc: *std.heap.ArenaAllocator) !Lattice {
     var ret = Lattice{
-      .alloc = &alloc.allocator,
+      .allocator = alloc.allocator(),
       .optionals = .{},
       .concats = .{},
       .lists = .{},
-      .self_ref_list = try alloc.allocator.create(model.Type.Structural),
+      .self_ref_list = try alloc.allocator().create(model.Type.Structural),
       .prefix_trees = .{
         .intersection = .{},
         .paragraphs = .{},
@@ -174,8 +174,8 @@ pub const Lattice = struct {
         .data = .{.tenum = undefined}
       },
     };
-    ret.boolean.data.tenum = try model.Type.Enum.predefBoolean(ret.alloc);
-    const boolsym = try ret.alloc.create(model.Symbol);
+    ret.boolean.data.tenum = try model.Type.Enum.predefBoolean(ret.allocator);
+    const boolsym = try ret.allocator.create(model.Symbol);
     boolsym.defined_at = model.Position.intrinsic();
     boolsym.name = "Boolean";
     boolsym.data = .{.@"type" = .{.instantiated = &ret.boolean}};
@@ -352,14 +352,14 @@ pub const Lattice = struct {
       } else break;
     }
     return model.Type{.structural = iter.cur.value orelse blk: {
-      var new = try self.alloc.create(model.Type.Structural);
+      var new = try self.allocator.create(model.Type.Structural);
       new.* = .{
         .intersection = undefined
       };
       const new_in = &new.intersection;
       new_in.* = .{
         .scalar = scalar,
-        .types = try self.alloc.alloc(model.Type, tcount),
+        .types = try self.allocator.alloc(model.Type, tcount),
       };
       var target_index = @as(usize, 0);
       for (indexes) |*ptr| ptr.* = 0;
@@ -400,7 +400,7 @@ pub const Lattice = struct {
     };
     for (inner) |t| try iter.descend(t, {});
     return model.Type{.structural = iter.cur.value orelse blk: {
-      var new = try self.alloc.create(model.Type.Structural);
+      var new = try self.allocator.create(model.Type.Structural);
       new.* = .{
         .paragraphs = .{
           .inner = inner,
@@ -570,9 +570,9 @@ pub const Lattice = struct {
       },
       .instantiated => {},
     }
-    const res = try self.optionals.getOrPut(self.alloc, t);
+    const res = try self.optionals.getOrPut(self.allocator, t);
     if (!res.found_existing) {
-      res.value_ptr.* = try self.alloc.create(model.Type.Structural);
+      res.value_ptr.* = try self.allocator.create(model.Type.Structural);
       res.value_ptr.*.* = .{
         .optional = .{
           .inner = t
@@ -602,9 +602,9 @@ pub const Lattice = struct {
         else => return null,
       },
     }
-    const res = try self.concats.getOrPut(self.alloc, t);
+    const res = try self.concats.getOrPut(self.allocator, t);
     if (!res.found_existing) {
-      res.value_ptr.* = try self.alloc.create(model.Type.Structural);
+      res.value_ptr.* = try self.allocator.create(model.Type.Structural);
       res.value_ptr.*.* = .{
         .concat = .{
           .inner = t
@@ -622,9 +622,9 @@ pub const Lattice = struct {
       },
       else => {},
     }
-    const res = try self.lists.getOrPut(self.alloc, t);
+    const res = try self.lists.getOrPut(self.allocator, t);
     if (!res.found_existing) {
-      res.value_ptr.* = try self.alloc.create(model.Type.Structural);
+      res.value_ptr.* = try self.allocator.create(model.Type.Structural);
       res.value_ptr.*.* = .{
         .list = .{
           .inner = t
@@ -744,7 +744,7 @@ const SigBuilderEnv = enum{
 
   fn contextType(comptime e: SigBuilderEnv) type {
     return switch (e) {
-      .intrinsic => *std.mem.Allocator,
+      .intrinsic => std.mem.Allocator,
       .userdef => *interpret.Interpreter
     };
   }
@@ -752,7 +752,7 @@ const SigBuilderEnv = enum{
   fn create(comptime e: SigBuilderEnv, ctx: anytype, comptime T: type) !*T {
     return switch (e) {
       .intrinsic => ctx.create(T),
-      .userdef => ctx.storage.allocator.create(T)
+      .userdef => ctx.allocator().create(T)
     };
   }
 
@@ -760,7 +760,7 @@ const SigBuilderEnv = enum{
            num: usize) ![]T {
     return switch (e) {
       .intrinsic => ctx.alloc(T, num),
-      .userdef => ctx.storage.allocator.alloc(T, num),
+      .userdef => ctx.allocator().alloc(T, num),
     };
   }
 
@@ -781,7 +781,7 @@ pub const SigBuilderResult = struct {
   repr: ?*model.Type.Signature,
 
   pub fn createCallable(
-      self: *const @This(), allocator: *std.mem.Allocator,
+      self: *const @This(), allocator: std.mem.Allocator,
       kind: model.Type.Callable.Kind) !*model.Type.Callable {
     const strct = try allocator.create(model.Type.Structural);
     errdefer allocator.destroy(strct);
@@ -991,7 +991,7 @@ pub const ParagraphTypeBuilder = struct {
       if (self.types.lesserEqual(t, existing)) return;
     if (containedScalar(t)) |scalar_type|
       self.cur_scalar = try self.types.sup(self.cur_scalar, scalar_type);
-    try self.list.append(self.types.alloc, t);
+    try self.list.append(self.types.allocator, t);
   }
 
   pub fn finish(self: *ParagraphTypeBuilder) !Result {

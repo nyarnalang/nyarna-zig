@@ -37,8 +37,8 @@ pub const File = struct {
     return ParseError.parsing_failed;
   }
 
-  pub fn alloc(f: *File) *std.mem.Allocator {
-    return &f.arena.allocator;
+  pub fn alloc(f: *File) std.mem.Allocator {
+    return f.arena.allocator();
   }
 
   pub fn loadPath(path: []const u8) !File {

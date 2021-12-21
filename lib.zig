@@ -248,7 +248,7 @@ pub const Intrinsics = Provider.Wrapper(struct {
       else => unreachable, // TODO: error msg
     };
 
-    var defs = try intpr.storage.allocator.alloc(*model.Node.Definition,
+    var defs = try intpr.allocator().alloc(*model.Node.Definition,
       def_count);
     def_count = 0;
     for ([_]*model.Node{public, private}) |node| switch (node.data) {
@@ -331,11 +331,11 @@ pub const Intrinsics = Provider.Wrapper(struct {
   fn @"if"(intpr: *Interpreter, pos: model.Position,
            condition: *model.Value.Ast, then: *model.Value.Ast,
            @"else": *model.Value.Ast) !*model.Node {
-    const nodes = try intpr.storage.allocator.alloc(*model.Node, 2);
+    const nodes = try intpr.allocator().alloc(*model.Node, 2);
     nodes[1] = then.root;
     nodes[0] = @"else".root;
 
-    const ret = try intpr.storage.allocator.create(model.Node);
+    const ret = try intpr.allocator().create(model.Node);
     ret.* = .{
       .pos = pos,
       .data = .{
@@ -354,12 +354,12 @@ fn registerExtImpl(context: *Context, p: *const Provider, name: []const u8,
   return if (bres.sig.isKeyword()) blk: {
     const impl = p.getKeyword(name) orelse
       std.debug.panic("don't know keyword: {s}\n", .{name});
-    try context.keyword_registry.append(&context.storage.allocator, impl);
+    try context.keyword_registry.append(context.allocator(), impl);
     break :blk context.keyword_registry.items.len - 1;
   } else blk: {
     const impl = p.getBuiltin(name) orelse
       std.debug.panic("don't know keyword: {s}\n", .{name});
-    try context.builtin_registry.append(&context.storage.allocator, impl);
+    try context.builtin_registry.append(context.allocator(), impl);
     break :blk context.builtin_registry.items.len - 1;
   };
 }
@@ -367,7 +367,7 @@ fn registerExtImpl(context: *Context, p: *const Provider, name: []const u8,
 fn extFunc(context: *Context, name: []const u8, bres: types.SigBuilderResult,
            ns_dependent: bool, p: *const Provider) !model.Symbol.ExtFunc {
   return model.Symbol.ExtFunc{
-    .callable = try bres.createCallable(&context.storage.allocator, .function),
+    .callable = try bres.createCallable(context.allocator(), .function),
     .ns_dependent = ns_dependent,
     .impl_index = try registerExtImpl(context, p, name, bres),
     .cur_frame = null,
@@ -376,7 +376,7 @@ fn extFunc(context: *Context, name: []const u8, bres: types.SigBuilderResult,
 
 fn extFuncSymbol(context: *Context, name: []const u8, ns_dependent: bool,
                  bres: types.SigBuilderResult, p: *Provider) !*model.Symbol {
-  const ret = try context.storage.allocator.create(model.Symbol);
+  const ret = try context.allocator().create(model.Symbol);
   ret.defined_at = model.Position.intrinsic();
   ret.name = name;
   ret.data = .{
@@ -387,7 +387,7 @@ fn extFuncSymbol(context: *Context, name: []const u8, ns_dependent: bool,
 
 pub inline fn intLoc(context: *Context, name: []const u8, t: model.Type)
     !*model.Value.Location {
-  const name_val = try context.storage.allocator.create(model.Value);
+  const name_val = try context.allocator().create(model.Value);
   name_val.* = .{
     .origin = model.Position.intrinsic(),
     .data = .{
@@ -398,7 +398,7 @@ pub inline fn intLoc(context: *Context, name: []const u8, t: model.Type)
     },
   };
 
-  const value = try context.storage.allocator.create(model.Value);
+  const value = try context.allocator().create(model.Value);
   value.origin = model.Position.intrinsic();
   value.data = .{.location = model.Value.Location.init(&name_val.data.text, t)};
   return &value.data.location;
@@ -406,7 +406,7 @@ pub inline fn intLoc(context: *Context, name: []const u8, t: model.Type)
 
 fn typeSymbol(context: *Context, name: []const u8, t: model.Type)
     !*model.Symbol {
-  const ret = try context.storage.allocator.create(model.Symbol);
+  const ret = try context.allocator().create(model.Symbol);
   ret.* = model.Symbol{
     .defined_at = model.Position.intrinsic(),
     .name = name,
@@ -417,7 +417,7 @@ fn typeSymbol(context: *Context, name: []const u8, t: model.Type)
 
 fn prototypeSymbol(context: *Context, name: []const u8, pt: model.Prototype)
     !*model.Symbol {
-  const ret = try context.storage.allocator.create(model.Symbol);
+  const ret = try context.allocator().create(model.Symbol);
   ret.* = model.Symbol{
     .defined_at = model.Position.intrinsic(),
     .name = name,
@@ -429,7 +429,7 @@ fn prototypeSymbol(context: *Context, name: []const u8, pt: model.Prototype)
 fn typeConstructor(context: *Context, p: *Provider, name: []const u8,
                    bres: types.SigBuilderResult) !types.Constructor {
   return types.Constructor{
-    .callable = try bres.createCallable(&context.storage.allocator, .@"type"),
+    .callable = try bres.createCallable(context.allocator(), .@"type"),
     .impl_index = try registerExtImpl(context, p, name, bres),
   };
 }
@@ -437,22 +437,21 @@ fn typeConstructor(context: *Context, p: *Provider, name: []const u8,
 fn prototypeConstructor(context: *Context, p: *Provider, name: []const u8,
                         bres: types.SigBuilderResult) !types.Constructor {
   return types.Constructor{
-    .callable = try bres.createCallable(&context.storage.allocator, .prototype),
+    .callable = try bres.createCallable(context.allocator(), .prototype),
     .impl_index = try registerExtImpl(context, p, name, bres),
   };
 }
 
 pub fn intrinsicModule(context: *Context) !*model.Module {
-  var ret = try context.storage.allocator.create(model.Module);
+  var ret = try context.allocator().create(model.Module);
   ret.root = try context.genLiteral(model.Position.intrinsic(), .void);
-  ret.symbols = try context.storage.allocator.alloc(*model.Symbol, 6);
+  ret.symbols = try context.allocator().alloc(*model.Symbol, 6);
   var index: usize = 0;
 
   var ip = Intrinsics.init();
 
   const location_block = blk: {
-    const value_header_location = try context.storage.allocator.create(
-      model.Value);
+    const value_header_location = try context.allocator().create(model.Value);
     value_header_location.* = .{
       .data = .{
         .block_header = .{
@@ -475,8 +474,7 @@ pub fn intrinsicModule(context: *Context) !*model.Module {
   };
 
   const definition_block = blk: {
-    const value_header_definition = try context.storage.allocator.create(
-      model.Value);
+    const value_header_definition = try context.allocator().create(model.Value);
     value_header_definition.* = .{
       .data = .{
         .block_header = .{
@@ -504,7 +502,7 @@ pub fn intrinsicModule(context: *Context) !*model.Module {
 
   // location
   var b = try types.SigBuilder(.intrinsic).init(
-    &context.storage.allocator, 8, .{.intrinsic = .ast_node}, false);
+    context.allocator(), 8, .{.intrinsic = .ast_node}, false);
   try b.push(try intLoc(context, "name", .{.intrinsic = .literal})); // TODO: identifier
   try b.push(try intLoc(context, "type", .{.intrinsic = .@"type"}));
   try b.push(try intLoc(
@@ -527,7 +525,7 @@ pub fn intrinsicModule(context: *Context) !*model.Module {
 
   // definition
   b = try types.SigBuilder(.intrinsic).init(
-    &context.storage.allocator, 3, .{.intrinsic = .ast_node}, false);
+    context.allocator(), 3, .{.intrinsic = .ast_node}, false);
   try b.push(try intLoc(context, "name", .{.intrinsic = .literal})); // TODO: identifier
   try b.push(try intLoc(
     context, "root", .{.instantiated = &context.types.boolean}));
@@ -540,7 +538,7 @@ pub fn intrinsicModule(context: *Context) !*model.Module {
 
   // record
   b = try types.SigBuilder(.intrinsic).init(
-    &context.storage.allocator, 1, .{.intrinsic = .ast_node}, false);
+    context.allocator(), 1, .{.intrinsic = .ast_node}, false);
   // TODO: allow record to extend other record (?)
   try b.push((try intLoc(context, "fields", (try context.types.concat(
     model.Type{.intrinsic = .location})).?)).withHeader(
@@ -553,7 +551,7 @@ pub fn intrinsicModule(context: *Context) !*model.Module {
 
   // Raw
   b = try types.SigBuilder(.intrinsic).init(
-    &context.storage.allocator, 1, .{.intrinsic = .raw}, true);
+    context.allocator(), 1, .{.intrinsic = .raw}, true);
   try b.push((try intLoc(
     context, "input", model.Type{.intrinsic = .raw})).withPrimary(
       model.Position.intrinsic()));
@@ -569,7 +567,7 @@ pub fn intrinsicModule(context: *Context) !*model.Module {
 
   // declare
   b = try types.SigBuilder(.intrinsic).init(
-    &context.storage.allocator, 3, .{.intrinsic = .ast_node}, false);
+    context.allocator(), 3, .{.intrinsic = .ast_node}, false);
   try b.push(try intLoc(context, "namespace", (try context.types.optional(
       .{.intrinsic = .@"type"})).?));
   try b.push((try intLoc(context, "public", .{.intrinsic = .ast_node})
@@ -582,7 +580,7 @@ pub fn intrinsicModule(context: *Context) !*model.Module {
 
   // if
   b = try types.SigBuilder(.intrinsic).init(
-    &context.storage.allocator, 3, .{.intrinsic = .ast_node}, false);
+    context.allocator(), 3, .{.intrinsic = .ast_node}, false);
   try b.push(try intLoc(context, "condition", .{.intrinsic = .ast_node}));
   try b.push((try intLoc(
     context, "then", .{.intrinsic = .ast_node})).withPrimary(
