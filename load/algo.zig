@@ -130,13 +130,13 @@ fn isPrototype(ef: *model.Symbol.ExtFunc) bool {
 pub const DeclareResolution = struct {
   const Processor = graph.GraphProcessor(*DeclareResolution);
 
-  defs: []*model.Value.Definition,
+  defs: []*model.Node.Definition,
   processor: Processor,
   dep_discovery_ctx: graph.ResolutionContext,
   intpr: *nyarna.Interpreter,
 
   pub fn create(intpr: *nyarna.Interpreter,
-                defs: []*model.Value.Definition,
+                defs: []*model.Node.Definition,
                 ns: u15) !*DeclareResolution {
     var res = try intpr.storage.allocator.create(DeclareResolution);
     res.defs = defs;
@@ -156,7 +156,7 @@ pub const DeclareResolution = struct {
 
   fn genTypeArgs(_: *DeclareResolution,
                  _: *model.Node.ResolvedCall,
-                 _: []*model.Value.Definition) void {
+                 _: []*model.Node.Definition) void {
     unreachable; // TODO
   }
 
@@ -176,12 +176,12 @@ pub const DeclareResolution = struct {
       // referring to them even when not all information (record field types,
       // inner types, default expressions) has been resolved.
       for (defs) |def| {
-        switch (def.content.root.data) {
+        switch (def.content.data) {
           .resolved_call => |*rcall| {
             const t = self.pregenType(rcall) orelse continue;
             const sym = try self.intpr.createPublic(model.Symbol);
             sym.* = .{
-              .defined_at = def.name.value().origin,
+              .defined_at = def.name.node().pos,
               .name = def.name.content,
               .data = .{
                 .@"type" = t,
@@ -198,7 +198,7 @@ pub const DeclareResolution = struct {
       // the type for the location for which the default value cannot be
       // resolved is explicitly given.
       for (defs) |def| {
-        switch (def.content.root.data) {
+        switch (def.content.data) {
           .resolved_call => |*rcall| {
             self.genTypeArgs(rcall, defs);
           },
@@ -220,7 +220,7 @@ pub const DeclareResolution = struct {
                      edges: *[]usize) !void {
     self.dep_discovery_ctx.dependencies = .{};
     _ = try self.intpr.probeType(
-      self.defs[index].content.root, &self.dep_discovery_ctx);
+      self.defs[index].content, &self.dep_discovery_ctx);
     edges.* = self.dep_discovery_ctx.dependencies.items;
   }
 

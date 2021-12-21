@@ -50,14 +50,14 @@ pub const Parser = struct {
       } else .failed;
     }
 
-    fn pushArg(c: *Command, alloc: *std.mem.Allocator, arg: *model.Node) !void {
+    fn pushArg(c: *Command, arg: *model.Node) !void {
       defer c.cur_cursor = .not_pushed;
       const cursor = switch (c.cur_cursor) {
         .mapped => |val| val,
         .failed => return,
         .not_pushed => c.mapper.map(arg.pos, .position, .flow) orelse return,
       };
-      try c.mapper.push(alloc, cursor, arg);
+      try c.mapper.push(cursor, arg);
     }
 
     fn pushPrimary(c: *Command, pos: model.Position, config: bool) void {
@@ -67,33 +67,34 @@ pub const Parser = struct {
           } else .failed;
     }
 
-    fn shift(c: *Command, context: *Interpreter, end: model.Cursor) !void {
-      const newNode = try c.mapper.finalize(
-        &context.storage.allocator, context.input.between(c.start, end));
+    fn shift(c: *Command, ip: *Interpreter, end: model.Cursor) !void {
+      const newNode = try c.mapper.finalize(ip.input.between(c.start, end));
       c.info = .{.unknown = newNode};
     }
 
-    fn startAssignment(c: *Command) void {
+    fn startAssignment(c: *Command, ip: *Interpreter) void {
       const subject = c.info.unknown;
-      c.info = .{.assignment = mapper.AssignmentMapper.init(subject)};
+      c.info = .{.assignment = mapper.AssignmentMapper.init(subject, ip)};
       c.mapper = &c.info.assignment.mapper;
       c.cur_cursor = .not_pushed;
     }
 
     fn startResolvedCall(
-        c: *Command, context: *Interpreter, target: *model.Expression,
+        c: *Command, ip: *Interpreter, target: *model.Expression,
         ns: u15, sig: *const model.Type.Signature) !void {
       c.info = .{
         .resolved_call =
-          try mapper.SignatureMapper.init(context, target, ns, sig),
+          try mapper.SignatureMapper.init(ip, target, ns, sig),
       };
       c.mapper = &c.info.resolved_call.mapper;
       c.cur_cursor = .not_pushed;
     }
 
-    fn startUnresolvedCall(c: *Command, _: *std.mem.Allocator) !void {
+    fn startUnresolvedCall(c: *Command, ip: *Interpreter) !void {
       const subject = c.info.unknown;
-      c.info = .{.unresolved_call = mapper.CollectingMapper.init(subject)};
+      c.info = .{
+        .unresolved_call = mapper.CollectingMapper.init(subject, ip),
+      };
       c.mapper = &c.info.unresolved_call.mapper;
       c.cur_cursor = .not_pushed;
     }
@@ -124,7 +125,7 @@ pub const Parser = struct {
     fullast: bool,
 
     nodes: std.ArrayListUnmanaged(*model.Node),
-    paragraphs: std.ArrayListUnmanaged(model.Node.Paragraphs.Item),
+    paragraphs: std.ArrayListUnmanaged(model.Node.Paras.Item),
 
     block_config: ?*const model.BlockConfig,
     syntax_proc: ?*syntaxes.SpecialSyntax.Processor = null,
@@ -144,45 +145,22 @@ pub const Parser = struct {
         }
         const res = if (level.fullast) item else switch (item.data) {
           .literal, .unresolved_call, .unresolved_symref, .expression,
-          .voidNode => item,
-          else => if (try ip.tryInterpret(item, false, null)) |expr| blk: {
-            const expr_node = try ip.storage.allocator.create(model.Node);
-            expr_node.* = .{
-              .data = .{.expression = expr},
-              .pos = item.pos,
-            };
-            break :blk expr_node;
-          } else item,
+          .void => item,
+          else => if (try ip.tryInterpret(item, false, null)) |expr|
+            try ip.node_gen.expression(expr) else item,
         };
         try level.nodes.append(&ip.storage.allocator, res);
       }
     }
 
-    fn finalizeParagraph(level: *ContentLevel, ip: *Interpreter)
-        !*model.Node {
-      switch(level.nodes.items.len) {
-        0 => {
-          var ret = try ip.storage.allocator.create(model.Node);
-          ret.* = .{
-            .pos = ip.input.at(level.start),
-            .data = .voidNode,
-          };
-          return ret;
-        },
-        1 => return level.nodes.items[0],
-        else => {
-          var ret = try ip.storage.allocator.create(model.Node);
-          ret.* = .{
-            .pos = level.nodes.items[0].pos.span(last(level.nodes.items).*.pos),
-            .data = .{
-              .concatenation = .{
-                .content = level.nodes.items,
-              },
-            },
-          };
-          return ret;
-        }
-      }
+    fn finalizeParagraph(level: *ContentLevel, ip: *Interpreter) !*model.Node {
+      return switch(level.nodes.items.len) {
+        0 => ip.node_gen.void(ip.input.at(level.start)),
+        1 => level.nodes.items[0],
+        else => (try ip.node_gen.concat(
+          level.nodes.items[0].pos.span(last(level.nodes.items).*.pos),
+          .{.items = level.nodes.items})).node(),
+      };
     }
 
     fn implicitBlockConfig(level: *ContentLevel) ?*model.BlockConfig {
@@ -209,18 +187,10 @@ pub const Parser = struct {
             .lf_after = 0,
           });
         }
-
-        var target = try alloc.create(model.Node);
-        target.* = .{
-          .pos = level.paragraphs.items[0].content.pos.span(
+        return (try p.intpr().node_gen.paras(
+          level.paragraphs.items[0].content.pos.span(
             last(level.paragraphs.items).content.pos),
-          .data = .{
-            .paragraphs = .{
-              .items = level.paragraphs.items,
-            },
-          },
-        };
-        return target;
+          .{.items = level.paragraphs.items})).node();
       }
     }
 
@@ -477,7 +447,7 @@ pub const Parser = struct {
           });
       }
     }
-    try parent.command.pushArg(self.int(), lvl_node);
+    try parent.command.pushArg(lvl_node);
     _ = self.levels.pop();
   }
 
@@ -509,14 +479,8 @@ pub const Parser = struct {
             .target = target_expr,
             .ns = fr.ns,
             .signature = fr.signature,
-            .first_arg = if (fr.prefix) |prefix| blk: {
-              const expr_node = try self.int().create(model.Node);
-              expr_node.* = .{
-                .pos = prefix.pos,
-                .data = .{.expression = prefix},
-              };
-              break :blk expr_node;
-            } else null,
+            .first_arg = if (fr.prefix) |prefix|
+              try self.intpr().node_gen.expression(prefix) else null,
           },
         };
       },
@@ -730,16 +694,10 @@ pub const Parser = struct {
                 if (self.cur != .space) break;
               }
             } else {
-              var node = try self.int().create(model.Node);
-              node.* = .{
-                .pos = pos,
-                .data = .{
-                  .literal = .{
-                    .kind = if (non_space_len > 0) .text else .space,
-                    .content = content.items
-                  },
-                },
-              };
+              var node = (try self.intpr().node_gen.literal(pos, .{
+                .kind = if (non_space_len > 0) .text else .space,
+                .content = content.items
+              })).node();
               std.debug.print("  push literal (kind={s}): \"{}\"\n", .{
                   @tagName(node.data.literal.kind),
                   std.zig.fmtEscapes(content.items),
@@ -758,18 +716,12 @@ pub const Parser = struct {
             .access => {
               self.advance();
               if (self.cur != .identifier) unreachable; // TODO: recover
-              var node = try self.int().create(model.Node);
-              node.* = .{
-                .pos =
-                  self.lexer.walker.posFrom(lvl.command.info.unknown.pos.start),
-                .data = .{
-                  .access = .{
-                    .subject = lvl.command.info.unknown,
-                    .id = self.lexer.recent_id,
-                  },
-                },
-              };
-              lvl.command.info.unknown = node;
+              lvl.command.info.unknown = (try self.intpr().node_gen.access(
+                self.lexer.walker.posFrom(lvl.command.info.unknown.pos.start),
+                .{
+                  .subject = lvl.command.info.unknown,
+                  .id = self.lexer.recent_id,
+                })).node();
               self.advance();
             },
             .assign => {
@@ -783,7 +735,7 @@ pub const Parser = struct {
                 },
                 else => unreachable // TODO: recover
               }
-              lvl.command.startAssignment();
+              lvl.command.startAssignment(self.intpr());
               self.advance();
             },
             .list_start, .blocks_sep => {
@@ -800,14 +752,14 @@ pub const Parser = struct {
                     call_context.target, call_context.ns,
                     call_context.signature);
                   if (call_context.first_arg) |prefix| {
-                    try lvl.command.pushArg(self.int(), prefix);
+                    try lvl.command.pushArg(prefix);
                   }
                 },
                 .unknown =>
-                  try lvl.command.startUnresolvedCall(self.int()),
+                  try lvl.command.startUnresolvedCall(self.intpr()),
                 .poison => {
-                  target.data = .poisonNode;
-                  try lvl.command.startUnresolvedCall(self.int());
+                  target.data = .poison;
+                  try lvl.command.startUnresolvedCall(self.intpr());
                 }
               }
               self.state = if (self.cur == .list_start) .possible_start
@@ -1269,7 +1221,7 @@ pub const Parser = struct {
             while (i > target_level) : (i -= 1) {
               const cur_parent = &self.levels.items[i - 1];
               try cur_parent.command.pushArg(
-                self.int(), try self.levels.items[i].finalize(self));
+                try self.levels.items[i].finalize(self));
               try cur_parent.command.shift(self.intpr(), end_cursor);
               try cur_parent.append(
                 self.intpr(), cur_parent.command.info.unknown);

@@ -68,6 +68,28 @@ pub fn lexTest(f: *tml.File) !void {
   }
 }
 
+const AdditionalsWithContext = struct {
+  value: *const model.Node.Location.Additionals,
+  context: *nyarna.Context,
+};
+
+fn formatAdditionals(
+    a: AdditionalsWithContext, comptime fmt: []const u8,
+    options: std.fmt.FormatOptions, writer: anytype) !void {
+  try writer.writeByte('{');
+  var first = true;
+  inline for ([_][]const u8{"primary", "varargs", "varmap", "mutable"}) |f| {
+    if (@field(a.value, f) != null) {
+      if (first) first = false else try writer.writeAll(", ");
+      try writer.writeAll(f);
+    }
+  }
+  try writer.writeAll("}");
+  if (a.value.header) |h|
+    try formatBlockHeader(
+      .{.header = h, .context = a.context}, fmt, options, writer);
+}
+
 fn formatTypeName(t: model.Type, comptime _: []const u8,
                   _: std.fmt.FormatOptions, writer: anytype) !void {
   switch (t) {
@@ -182,7 +204,7 @@ fn AstEmitter(Handler: anytype) type {
           try self.emitLine("=ID \"{s}\"", .{a.id});
           try access.pop();
         },
-        .assignment => |a| {
+        .assign => |a| {
           const ass = try self.push("ASS");
           {
             const target = try self.push("TARGET");
@@ -199,12 +221,18 @@ fn AstEmitter(Handler: anytype) type {
           }
           try ass.pop();
         },
+        .definition => |d| {
+          const def = try self.pushWithKey("DEF", d.name.content,
+            if (d.root != null) @as(?[]const u8, "root") else null);
+          try self.process(d.content);
+          try def.pop();
+        },
         .literal => |a| {
           try self.emitLine("=LIT {s} \"{}\"",
             .{@tagName(a.kind), std.zig.fmtEscapes(a.content)});
         },
-        .concatenation => |c| {
-          for (c.content) |item| try self.process(item);
+        .concat => |c| {
+          for (c.items) |item| try self.process(item);
         },
         .branches => |b| {
           const branches = try self.push("BRANCHES");
@@ -215,7 +243,7 @@ fn AstEmitter(Handler: anytype) type {
           }
           try branches.pop();
         },
-        .paragraphs => |p| {
+        .paras => |p| {
           for (p.items) |i| {
             const para = try self.push("PARA");
             try self.process(i.content);
@@ -255,7 +283,6 @@ fn AstEmitter(Handler: anytype) type {
             .structural => |s| name = @tagName(s.*),
             .instantiated => |inst| name = @tagName(inst.data),
           }
-          std.debug.print("RCALL target: {s}\n", .{name});
 
           const sig = switch (rc.target.expected_type.structural.*) {
             .callable => |cl| cl.sig,
@@ -267,9 +294,80 @@ fn AstEmitter(Handler: anytype) type {
           }
           try rcall.pop();
         },
+        .typegen => |tg| {
+          const tgen =
+            try self.pushWithKey("TYPEGEN", @tagName(tg.content), null);
+          switch (tg.content) {
+            .optional => |opt| try self.process(opt.inner),
+            .concat => |con| try self.process(con.inner),
+            .list => |lst| try self.process(lst.inner),
+            .paragraphs => |para| {
+              if (para.auto) |a| {
+                const auto = try self.push("AUTO");
+                try self.process(a);
+                try auto.pop();
+              }
+              for (para.inners) |inner| try self.process(inner);
+            },
+            .map => |map| {
+              try self.process(map.key);
+              try self.process(map.value);
+            },
+            .record => |rec|
+              for (rec.fields) |field| try self.process(field.node()),
+            .intersection => |inter| {
+              if (inter.scalar_type) |s| try self.process(s);
+              for (inter.record_types) |r| try self.process(r);
+            },
+            .textual => unreachable, // TODO
+            .numeric => |num| {
+              if (num.min) |min| {
+                const m = try self.push("MIN");
+                try self.process(min);
+                try m.pop();
+              }
+              if (num.max) |max| {
+                const m = try self.push("MAX");
+                try self.process(max);
+                try m.pop();
+              }
+              if (num.decimals) |dec| {
+                const l = try self.push("DECIMALS");
+                try self.process(dec);
+                try l.pop();
+              }
+            },
+            .float => |fl| try self.process(fl.precision),
+            .@"enum" => |en| for (en.values) |v| try self.process(v),
+          }
+          try tgen.pop();
+        },
+        .location => |loc| {
+          const l = try self.pushWithKey("LOC", loc.name.content, null);
+          if (loc.@"type") |t| {
+            const tnode = try self.push("TYPE");
+            try self.process(t);
+            try tnode.pop();
+          }
+          if (loc.additionals) |a| {
+            if (a.primary != null or a.varargs != null or a.varmap != null or
+                a.mutable != null or a.header != null) {
+              const fmt = std.fmt.Formatter(formatAdditionals){.data = .{
+                .value = a, .context = self.context,
+              }};
+              try self.emitLine("=FLAGS {}", .{fmt});
+            }
+          }
+          if (loc.default) |d| {
+            const dnode = try self.push("DEFAULT");
+            try self.process(d);
+            try dnode.pop();
+          }
+          try l.pop();
+        },
         .expression => |e| try self.processExpr(e),
-        .poisonNode => try self.emitLine("=POISON", .{}),
-        .voidNode => try self.emitLine("=VOID", .{}),
+        .poison => try self.emitLine("=POISON", .{}),
+        .void => try self.emitLine("=VOID", .{}),
       }
     }
 
@@ -374,7 +472,7 @@ fn AstEmitter(Handler: anytype) type {
           unreachable;
         },
         .location => |loc| {
-          const wrap = try self.pushWithKey("LOC", loc.name, null);
+          const wrap = try self.pushWithKey("LOC", loc.name.content, null);
           try self.processType(loc.tloc);
           inline for ([_][]const u8{"primary", "varargs", "varmap", "mutable"})
               |flag|
@@ -395,7 +493,7 @@ fn AstEmitter(Handler: anytype) type {
         .definition => |def| {
           const wrap = try self.pushWithKey("DEF", def.name.content,
             if (def.root != null) @as([]const u8, "{root}") else null);
-          try self.process(def.content.root);
+          try self.processValue(def.content);
           try wrap.pop();
         },
         .ast => |a| {

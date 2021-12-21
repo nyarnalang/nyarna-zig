@@ -22,20 +22,24 @@
     >ARG namespace
     =VOID
     >ARG public
-    +DEF Data
-      +RCALL
-        =PROTO record
-        >ARG fields
-        +LOC a
-          =TYPE raw
-        -LOC
-        +LOC b
-          =TYPE raw
-        -LOC
-      -RCALL
-    -DEF
+    +AST
+      +DEF Data
+        +RCALL
+          =PROTO record
+          >ARG fields
+          +LOC a
+            =TYPE raw
+          -LOC
+          +LOC b
+            =TYPE raw
+          -LOC
+        -RCALL
+      -DEF
+    -AST
     >ARG private
-    =VOID
+    +AST
+      =VOID
+    -AST
   -RCALL
 -PARA
 +PARA
@@ -44,37 +48,41 @@
     >ARG namespace
     =VOID
     >ARG public
-    +DEF foo
-      +UCALL
-        +TARGET
-          =SYMREF [0]func
-        -TARGET
-        +PROTO primary
-          =LIT text "data : "
-          =SYMREF [0]Data
-          =LIT text ";"
-        -PROTO
-        +PROTO name="body"
-          =LIT text "("
-          +ACCESS
-            +SUBJECT
-              =SYMREF [0]data
-            -SUBJECT
-            =ID "a"
-          -ACCESS
-          =LIT text ", "
-          +ACCESS
-            +SUBJECT
-              =SYMREF [0]data
-            -SUBJECT
-            =ID "b"
-          -ACCESS
-          =LIT text ")"
-        -PROTO
-      -UCALL
-    -DEF
+    +AST
+      +DEF foo
+        +UCALL
+          +TARGET
+            =SYMREF [0]func
+          -TARGET
+          +PROTO primary
+            =LIT text "data : "
+            =SYMREF [0]Data
+            =LIT text ";"
+          -PROTO
+          +PROTO name="body"
+            =LIT text "("
+            +ACCESS
+              +SUBJECT
+                =SYMREF [0]data
+              -SUBJECT
+              =ID "a"
+            -ACCESS
+            =LIT text ", "
+            +ACCESS
+              +SUBJECT
+                =SYMREF [0]data
+              -SUBJECT
+              =ID "b"
+            -ACCESS
+            =LIT text ")"
+          -PROTO
+        -UCALL
+      -DEF
+    -AST
     >ARG private
-    =VOID
+    +AST
+      =VOID
+    -AST
   -RCALL
 -PARA
 +PARA

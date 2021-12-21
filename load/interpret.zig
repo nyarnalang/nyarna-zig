@@ -60,17 +60,24 @@ pub const Interpreter = struct {
   /// inside \declare. If set, prototype invocations may create incomplete types
   /// as long as they can push the incomplete parts here.
   currently_built_type: ?*algo.DeclaredType = null,
+  /// convenience object to generate nodes using the interpreter's storage.
+  node_gen: model.NodeGenerator,
 
-  pub fn init(loader: *ModuleLoader, input: *const model.Source) !Interpreter {
-    var ret = Interpreter{
+  pub fn create(loader: *ModuleLoader,
+                input: *const model.Source) !*Interpreter {
+    var arena = std.heap.ArenaAllocator.init(loader.context.allocator);
+    var ret = try arena.allocator.create(Interpreter);
+    ret.* = .{
       .input = input,
       .loader = loader,
-      .storage = std.heap.ArenaAllocator.init(loader.context.allocator),
+      .storage = arena,
       .command_characters = .{},
       .namespaces = .{},
       .syntax_registry = .{syntaxes.SymbolDefs.locations(),
                            syntaxes.SymbolDefs.definitions()},
+      .node_gen = undefined,
     };
+    ret.node_gen = model.NodeGenerator.init(&ret.storage.allocator);
     errdefer ret.deinit();
     try ret.addNamespace('\\');
     return ret;
@@ -120,10 +127,10 @@ pub const Interpreter = struct {
   fn reportResolveFailures(
       self: *Interpreter, node: *model.Node, immediate: bool) void {
     switch (node.data) {
-      .resolved_call, .literal, .resolved_symref, .expression, .poisonNode,
-      .voidNode => {},
+      .resolved_call, .literal, .resolved_symref, .expression, .poison,.void =>
+        {},
       .access => |*acc| self.reportResolveFailures(acc.subject, immediate),
-      .assignment => |*ass| {
+      .assign => |*ass| {
         switch (ass.target) {
           .unresolved => |unres| self.reportResolveFailures(unres, immediate),
           .resolved => {},
@@ -141,10 +148,10 @@ pub const Interpreter = struct {
         for (br.branches) |branch|
           self.reportResolveFailures(branch, immediate);
       },
-      .concatenation => |*con| {
-        for (con.content) |item| self.reportResolveFailures(item, immediate);
+      .concat => |*con| {
+        for (con.items) |item| self.reportResolveFailures(item, immediate);
       },
-      .paragraphs => |*para| {
+      .paras => |*para| {
         for (para.items) |*item|
           self.reportResolveFailures(item.content, immediate);
       },
@@ -152,7 +159,439 @@ pub const Interpreter = struct {
         self.loader.logger.CannotResolveImmediately(node.pos)
       else
         self.loader.logger.UnknownSymbol(node.pos),
+      .typegen => |*tg| switch (tg.content) {
+        .optional => |*opt| self.reportResolveFailures(opt.inner, immediate),
+        .concat => |*con| self.reportResolveFailures(con.inner, immediate),
+        .list => |*lst| self.reportResolveFailures(lst.inner, immediate),
+        .paragraphs => |*para|
+          for (para.inners) |item| self.reportResolveFailures(item, immediate),
+        .map => |*map| {
+          self.reportResolveFailures(map.key, immediate);
+          self.reportResolveFailures(map.value, immediate);
+        },
+        .record => |*rct| for (rct.fields) |field|
+          self.reportResolveFailures(field.node(), immediate),
+        .intersection => |*inter| {
+          if (inter.scalar_type) |s| self.reportResolveFailures(s, immediate);
+          for (inter.record_types) |r| self.reportResolveFailures(r, immediate);
+        },
+        .textual => unreachable,
+        .numeric => |*num| {
+          if (num.min) |min| self.reportResolveFailures(min, immediate);
+          if (num.max) |max| self.reportResolveFailures(max, immediate);
+          if (num.decimals) |dec| self.reportResolveFailures(dec, immediate);
+        },
+        .float => |*fl| self.reportResolveFailures(fl.precision, immediate),
+        .@"enum" => |*en|
+          for (en.values) |v| self.reportResolveFailures(v, immediate),
+      },
+      .location => |*loc| {
+        if (loc.@"type") |t| self.reportResolveFailures(t, immediate);
+        if (loc.@"default") |d| self.reportResolveFailures(d, immediate);
+      },
+      .definition => |*def| self.reportResolveFailures(def.content, immediate),
     }
+  }
+
+  fn tryInterpretAccess(
+      self: *Interpreter, input: *model.Node, report_failure: bool,
+      ctx: ?*graph.ResolutionContext) nyarna.Error!?*model.Expression {
+    switch (try self.resolveChain(input, report_failure, ctx)) {
+      .var_chain => |vc| {
+        const retr =
+          try self.createPublic(model.Expression);
+        retr.* = .{
+          .pos = vc.target.pos,
+          .data = .{
+            .var_retrieval = .{
+              .variable = vc.target.variable
+            },
+          },
+          .expected_type = vc.target.variable.t,
+        };
+        const expr =
+          try self.createPublic(model.Expression);
+        expr.* = .{
+          .pos = input.pos,
+          .data = .{
+            .access = .{
+              .subject = retr,
+              .path = vc.field_chain.items
+            },
+          },
+          .expected_type = vc.t,
+        };
+        return expr;
+      },
+      .func_ref => |ref| {
+        const expr =
+          try self.createPublic(model.Expression);
+        if (ref.prefix != null) {
+          self.loader.logger.PrefixedFunctionMustBeCalled(input.pos);
+          expr.fillPoison(input.pos);
+        } else {
+          self.fillLiteral(input.pos, expr, .{
+            .funcref = .{
+              .func = ref.target
+            },
+          });
+        }
+        return expr;
+      },
+      .type_ref => |ref| {
+        const expr = try self.createPublic(model.Expression);
+        self.fillLiteral(input.pos, expr, .{
+          .@"type" = .{
+            .t = ref.*,
+          },
+        });
+        return expr;
+      },
+      .proto_ref => |ref| {
+        const expr = try self.createPublic(model.Expression);
+        self.fillLiteral(input.pos, expr, .{
+          .prototype = .{
+            .pt = ref.*,
+          },
+        });
+        return expr;
+      },
+      .expr_chain => |ec| {
+        const expr = try self.createPublic(model.Expression);
+        expr.* = .{
+          .pos = input.pos,
+          .data = .{
+            .access = .{
+              .subject = ec.expr,
+              .path = ec.field_chain.items,
+            },
+          },
+          .expected_type = ec.t,
+        };
+        return expr;
+      },
+      .failed => return null,
+      .poison => {
+        const expr = try self.createPublic(model.Expression);
+        expr.fillPoison(input.pos);
+        return expr;
+      },
+    }
+  }
+
+  fn tryInterpretAss(self: *Interpreter, ass: *model.Node.Assign,
+                     report_failure: bool, ctx: ?*graph.ResolutionContext)
+      nyarna.Error!?*model.Expression {
+    const target = switch (ass.target) {
+      .resolved => |*val| val,
+      .unresolved => |node| innerblk: {
+        switch (try self.resolveChain(node, report_failure, ctx)) {
+          .var_chain => |*vc| {
+            ass.target = .{
+              .resolved = .{
+                .target = vc.target.variable,
+                .path = vc.field_chain.items,
+                .t = vc.t,
+              },
+            };
+            break :innerblk &ass.target.resolved;
+          },
+          .func_ref, .type_ref, .proto_ref, .expr_chain => {
+            self.loader.logger.InvalidLvalue(node.pos);
+            const expr = try self.createPublic(model.Expression);
+            expr.fillPoison(ass.node().pos);
+            return expr;
+          },
+          .poison => {
+            const expr = try self.createPublic(model.Expression);
+            expr.fillPoison(ass.node().pos);
+            return expr;
+          },
+          .failed => return null,
+        }
+      }
+    };
+    const target_expr = (try self.associate(ass.replacement, target.t, ctx))
+        orelse {
+      if (report_failure)
+        self.reportResolveFailures(ass.replacement, false);
+      return null;
+    };
+    const expr = try self.createPublic(model.Expression);
+    const path = try std.mem.dupe(&self.loader.context.storage.allocator,
+      usize, target.path);
+    expr.* = .{
+      .pos = ass.node().pos,
+      .data = .{
+        .assignment = .{
+          .target = target.target,
+          .path = path,
+          .expr = target_expr,
+        },
+      },
+      .expected_type = model.Type{.intrinsic = .void},
+    };
+    return expr;
+  }
+
+  fn tryProbeAndInterpret(self: *Interpreter, input: *model.Node,
+                          report_failure: bool, ctx: ?*graph.ResolutionContext)
+      nyarna.Error!?*model.Expression {
+    const ret_type = (try self.probeType(input, ctx)) orelse {
+      if (report_failure) self.reportResolveFailures(input, false);
+      return null;
+    };
+    return self.interpretWithTargetType(input, ret_type, true, ctx);
+  }
+
+  fn tryInterpretSymref(self: *Interpreter, ref: *model.Node.ResolvedSymref)
+      nyarna.Error!*model.Expression {
+    const expr = try self.createPublic(model.Expression);
+    switch (ref.sym.data) {
+      .ext_func, .ny_func => self.fillLiteral(ref.node().pos, expr, .{
+        .funcref = .{
+          .func = ref.sym,
+        },
+      }),
+      .variable => |*v| {
+        expr.* = .{
+          .pos = ref.node().pos,
+          .data = .{
+            .var_retrieval = .{
+              .variable = v
+            },
+          },
+          .expected_type = v.t,
+        };
+      },
+      .@"type" => |*t| self.fillLiteral(ref.node().pos, expr, .{
+        .@"type" = .{
+          .t = t.*
+        },
+      }),
+      .prototype => |pt| self.fillLiteral(ref.node().pos, expr, .{
+        .prototype = .{
+          .pt = pt,
+        },
+      }),
+    }
+    return expr;
+  }
+
+  fn tryInterpretCall(self: *Interpreter, rc: *model.Node.ResolvedCall,
+                      report_failure: bool, ctx: ?*graph.ResolutionContext)
+      nyarna.Error!?*model.Expression {
+    const sig = switch (rc.target.expected_type) {
+      .intrinsic  => |intr| std.debug.panic(
+        "call target has unexpected type {s}", .{@tagName(intr)}),
+      .structural => |strct| switch (strct.*) {
+        .callable => |*c| c.sig,
+        else => std.debug.panic(
+          "call target has unexpected type: {s}", .{@tagName(strct.*)}),
+      },
+      .instantiated => |inst| std.debug.panic(
+        "call target has unexpected type: {s}", .{@tagName(inst.data)}),
+    };
+    const is_keyword = sig.returns.is(.ast_node);
+    const allocator = if (is_keyword) &self.storage.allocator
+                      else &self.loader.context.storage.allocator;
+    var failed_to_interpret = std.ArrayListUnmanaged(*model.Node){};
+    var args_failed_to_interpret = false;
+    // in-place modification of args requires that the arg nodes have been
+    // created by the current document. The only way a node from another
+    // document can be referenced in the current document is through
+    // compile-time functions. Therefore, we always copy call nodes that
+    // originate from calls of compile-time functions.
+    for (rc.args) |*arg, i| {
+      if (arg.*.data != .expression) {
+        arg.*.data =
+          if (try self.associate(arg.*, sig.parameters[i].ptype, ctx)) |e| .{
+            .expression = e,
+          } else {
+            args_failed_to_interpret = true;
+            if (is_keyword) try
+              failed_to_interpret.append(&self.storage.allocator, arg.*);
+            continue;
+          };
+      }
+    }
+
+    if (args_failed_to_interpret) {
+      if (is_keyword) {
+        for (failed_to_interpret.items) |arg|
+          self.reportResolveFailures(arg, true);
+        const expr = try self.createPublic(model.Expression);
+        expr.fillPoison(rc.node().pos);
+        return expr;
+      } else {
+        if (report_failure) {
+          for (failed_to_interpret.items) |arg|
+            self.reportResolveFailures(arg, false);
+        }
+        return null;
+      }
+    }
+
+    const args = try allocator.alloc(
+      *model.Expression, sig.parameters.len);
+    var seen_poison = false;
+    for (rc.args) |arg, i| {
+      args[i] = arg.data.expression;
+      if (args[i].expected_type.is(.poison)) seen_poison = true;
+    }
+    const expr = try allocator.create(model.Expression);
+    expr.* = .{
+      .pos = rc.node().pos,
+      .data = .{
+        .call = .{
+          .ns = rc.ns,
+          .target = rc.target,
+          .exprs = args,
+        },
+      },
+      .expected_type = sig.returns,
+    };
+    if (is_keyword) {
+      var eval = nyarna.Evaluator{.context = self.loader.context};
+      const res = try eval.evaluateKeywordCall(self, &expr.data.call);
+      const interpreted_res =
+        try self.tryInterpret(res, report_failure, ctx);
+      // a call to a keyword can never return a node that cannot be
+      // interpreted.
+      std.debug.assert(interpreted_res != null);
+      return interpreted_res;
+    } else {
+      return expr;
+    }
+  }
+
+  fn tryInterpretLoc(self: *Interpreter, loc: *model.Node.Location,
+                     report_failure: bool, ctx: ?*graph.ResolutionContext)
+      nyarna.Error!?*model.Expression {
+    var incomplete = false;
+    var poison = false;
+    var t = if (loc.@"type") |node| blk: {
+      var expr = (try self.associate(
+        node, model.Type{.intrinsic = .@"type"}, ctx))
+      orelse {
+        incomplete = true;
+        break :blk null;
+      };
+      if (expr.expected_type.is(.poison)) {
+        poison = true;
+        break :blk null;
+      }
+      var eval = nyarna.Evaluator{.context = self.loader.context};
+      var val = try eval.evaluate(expr);
+      break :blk val.data.@"type".t;
+    } else null;
+
+    var expr = if (loc.default) |node| blk: {
+      var val = (try self.tryInterpret(node, report_failure, ctx)) orelse {
+        incomplete = true;
+        break :blk null;
+      };
+      if (val.expected_type.is(.poison)) {
+        poison = true;
+        break :blk null;
+      }
+      if (t) |given_type| {
+        if (!self.types().lesserEqual(val.expected_type, given_type)
+            and !val.expected_type.is(.poison)) {
+          self.loader.logger.ExpectedExprOfTypeXGotY(
+            val.pos, &[_]model.Type{given_type, val.expected_type});
+          poison = true;
+          break :blk null;
+        }
+      }
+      break :blk val;
+    } else null;
+    if (!poison and !incomplete and t == null and expr == null) {
+      self.loader.logger.MissingSymbolType(loc.node().pos);
+      poison = true;
+    }
+    if (loc.additionals) |add| {
+      if (add.varmap) |varmap| {
+        if (add.varargs) |varargs| {
+          self.loader.logger.IncompatibleFlag("varmap", varmap, varargs);
+          poison = true;
+        } else if (add.mutable) |mutable| {
+          self.loader.logger.IncompatibleFlag("varmap", varmap, mutable);
+          poison = true;
+        }
+      } else if (add.varargs) |varargs| if (add.mutable) |mutable| {
+        self.loader.logger.IncompatibleFlag("mutable", mutable, varargs);
+        poison = true;
+      };
+    }
+
+    if (poison) {
+      const pe = try self.storage.allocator.create(model.Expression);
+      pe.fillPoison(loc.node().pos);
+      return pe;
+    }
+    if (incomplete) return null;
+    const ltype = if (t) |given_type| given_type else expr.?.expected_type;
+
+    const name = try self.createPublic(model.Value);
+    name.* = .{
+      .origin = loc.name.node().pos,
+      .data = .{
+        .text = .{
+          .t = model.Type{.intrinsic = .literal},
+          .content = try std.mem.dupe(&self.loader.context.storage.allocator,
+            u8, loc.name.content),
+        },
+      },
+    };
+
+    return self.genPublicLiteral(loc.node().pos, .{
+      .location = .{
+        .name = &name.data.text,
+        .tloc = ltype,
+        .default = expr,
+        .primary = if (loc.additionals) |add| add.primary else null,
+        .varargs = if (loc.additionals) |add| add.varargs else null,
+        .varmap  = if (loc.additionals) |add| add.varmap else null,
+        .mutable = if (loc.additionals) |add| add.mutable else null,
+        .block_header = if (loc.additionals) |add| add.header else null,
+      },
+    });
+  }
+
+  fn tryInterpretDef(self: *Interpreter, def: *model.Node.Definition,
+                     report_failure: bool, ctx: ?*graph.ResolutionContext)
+      nyarna.Error!?*model.Expression {
+    const expr = (try self.tryInterpret(def.content, report_failure, ctx))
+      orelse return null;
+    if (!self.types().lesserEqual(
+        expr.expected_type, model.Type{.intrinsic = .@"type"}) and
+        !expr.expected_type.isStructural(.callable)) {
+      self.loader.logger.InvalidDefinitionValue(
+        expr.pos, &.{expr.expected_type});
+      const pe = try self.storage.allocator.create(model.Expression);
+      pe.fillPoison(def.node().pos);
+      return pe;
+    }
+    var eval = nyarna.Evaluator{.context = self.loader.context};
+    var name = try self.createPublic(model.Value);
+    name.* = .{
+      .origin = def.name.node().pos,
+      .data = .{
+        .text = .{
+          .t = model.Type{.intrinsic = .literal},
+          .content = try std.mem.dupe(
+            &self.loader.context.storage.allocator, u8, def.name.content),
+        },
+      },
+    };
+    return self.genPublicLiteral(def.node().pos, .{
+      .definition = .{
+        .name = &name.data.text,
+        .content = try eval.evaluate(expr),
+        .root = def.root
+      },
+    });
   }
 
   /// Tries to interpret the given node. Consumes the `input` node.
@@ -169,291 +608,40 @@ pub const Interpreter = struct {
   pub fn tryInterpret(
       self: *Interpreter, input: *model.Node, report_failure: bool,
       ctx: ?*graph.ResolutionContext) nyarna.Error!?*model.Expression {
-    switch (input.data) {
-      .access => {
-        switch (try self.resolveChain(input, report_failure, ctx)) {
-          .var_chain => |vc| {
-            const retr =
-              try self.createPublic(model.Expression);
-            retr.* = .{
-              .pos = vc.target.pos,
-              .data = .{
-                .var_retrieval = .{
-                  .variable = vc.target.variable
-                },
-              },
-              .expected_type = vc.target.variable.t,
-            };
-            const expr =
-              try self.createPublic(model.Expression);
-            expr.* = .{
-              .pos = input.pos,
-              .data = .{
-                .access = .{
-                  .subject = retr,
-                  .path = vc.field_chain.items
-                },
-              },
-              .expected_type = vc.t,
-            };
-            return expr;
-          },
-          .func_ref => |ref| {
-            const expr =
-              try self.createPublic(model.Expression);
-            if (ref.prefix != null) {
-              self.loader.logger.PrefixedFunctionMustBeCalled(input.pos);
-              expr.fillPoison(input.pos);
-            } else {
-              self.fillLiteral(input.pos, expr, .{
-                .funcref = .{
-                  .func = ref.target
-                },
-              });
-            }
-            return expr;
-          },
-          .type_ref => |ref| {
-            const expr = try self.createPublic(model.Expression);
-            self.fillLiteral(input.pos, expr, .{
-              .@"type" = .{
-                .t = ref.*,
-              },
-            });
-            return expr;
-          },
-          .proto_ref => |ref| {
-            const expr = try self.createPublic(model.Expression);
-            self.fillLiteral(input.pos, expr, .{
-              .prototype = .{
-                .pt = ref.*,
-              },
-            });
-            return expr;
-          },
-          .expr_chain => |ec| {
-            const expr = try self.createPublic(model.Expression);
-            expr.* = .{
-              .pos = input.pos,
-              .data = .{
-                .access = .{
-                  .subject = ec.expr,
-                  .path = ec.field_chain.items,
-                },
-              },
-              .expected_type = ec.t,
-            };
-            return expr;
-          },
-          .failed => return null,
-          .poison => {
-            const expr = try self.createPublic(model.Expression);
-            expr.fillPoison(input.pos);
-            return expr;
-          },
-        }
-      },
-      .assignment => |*ass| {
-        const target = switch (ass.target) {
-          .resolved => |*val| val,
-          .unresolved => |node| innerblk: {
-            switch (try self.resolveChain(node, report_failure, ctx)) {
-              .var_chain => |*vc| {
-                ass.target = .{
-                  .resolved = .{
-                    .target = vc.target.variable,
-                    .path = vc.field_chain.items,
-                    .t = vc.t,
-                  },
-                };
-                break :innerblk &ass.target.resolved;
-              },
-              .func_ref, .type_ref, .proto_ref, .expr_chain => {
-                self.loader.logger.InvalidLvalue(node.pos);
-                const expr = try self.createPublic(model.Expression);
-                expr.fillPoison(input.pos);
-                return expr;
-              },
-              .poison => {
-                const expr = try self.createPublic(model.Expression);
-                expr.fillPoison(input.pos);
-                return expr;
-              },
-              .failed => return null,
-            }
-          }
-        };
-        const target_expr = (try self.associate(ass.replacement, target.t))
-            orelse {
-          if (report_failure)
-            self.reportResolveFailures(ass.replacement, false);
-          return null;
-        };
-        const expr = try self.createPublic(model.Expression);
-        const path = try std.mem.dupe(&self.loader.context.storage.allocator,
-          usize, target.path);
-        expr.* = .{
-          .pos = input.pos,
-          .data = .{
-            .assignment = .{
-              .target = target.target,
-              .path = path,
-              .expr = target_expr,
-            },
-          },
-          .expected_type = model.Type{.intrinsic = .void},
-        };
-        return expr;
-      },
-      .branches, .concatenation, .paragraphs => {
-        const ret_type = (try self.probeType(input, ctx)) orelse {
-          if (report_failure) self.reportResolveFailures(input, false);
-          return null;
-        };
-        return self.interpretWithTargetType(input, ret_type, true);
-      },
-      .resolved_symref => |ref| {
-        const expr = try self.createPublic(model.Expression);
-        switch (ref.sym.data) {
-          .ext_func, .ny_func => self.fillLiteral(input.pos, expr, .{
-            .funcref = .{
-              .func = ref.sym,
-            },
-          }),
-          .variable => |*v| {
-            expr.* = .{
-              .pos = input.pos,
-              .data = .{
-                .var_retrieval = .{
-                  .variable = v
-                },
-              },
-              .expected_type = v.t,
-            };
-          },
-          .@"type" => |*t| self.fillLiteral(input.pos, expr, .{
-            .@"type" = .{
-              .t = t.*
-            },
-          }),
-          .prototype => |pt| self.fillLiteral(input.pos, expr, .{
-            .prototype = .{
-              .pt = pt,
-            },
-          }),
-        }
-        return expr;
-      },
-      .resolved_call => |*rc| {
-        const sig = switch (rc.target.expected_type) {
-          .intrinsic  => |intr| std.debug.panic(
-            "call target has unexpected type {s}", .{@tagName(intr)}),
-          .structural => |strct| switch (strct.*) {
-            .callable => |*c| c.sig,
-            else => std.debug.panic(
-              "call target has unexpected type: {s}", .{@tagName(strct.*)}),
-          },
-          .instantiated => |inst| std.debug.panic(
-            "call target has unexpected type: {s}", .{@tagName(inst.data)}),
-        };
-        const is_keyword = sig.returns.is(.ast_node);
-        const allocator = if (is_keyword) &self.storage.allocator
-                          else &self.loader.context.storage.allocator;
-        var failed_to_interpret = std.ArrayListUnmanaged(*model.Node){};
-        var args_failed_to_interpret = false;
-        // in-place modification of args requires that the arg nodes have been
-        // created by the current document. The only way a node from another
-        // document can be referenced in the current document is through
-        // compile-time functions. Therefore, we always copy call nodes that
-        // originate from calls of compile-time functions.
-        for (rc.args) |*arg, i| {
-          if (arg.*.data != .expression) {
-            arg.*.data =
-              if (try self.associate(arg.*, sig.parameters[i].ptype)) |e| .{
-                .expression = e,
-              } else {
-                args_failed_to_interpret = true;
-                if (is_keyword) try
-                  failed_to_interpret.append(&self.storage.allocator, arg.*);
-                continue;
-              };
-          }
-        }
-
-        if (args_failed_to_interpret) {
-          if (is_keyword) {
-            for (failed_to_interpret.items) |arg|
-              self.reportResolveFailures(arg, true);
-            const expr = try self.createPublic(model.Expression);
-            expr.fillPoison(input.pos);
-            return expr;
-          } else {
-            if (report_failure) {
-              for (failed_to_interpret.items) |arg|
-                self.reportResolveFailures(arg, false);
-            }
-            return null;
-          }
-        }
-
-        const args = try allocator.alloc(
-          *model.Expression, sig.parameters.len);
-        var seen_poison = false;
-        for (rc.args) |arg, i| {
-          args[i] = arg.data.expression;
-          if (args[i].expected_type.is(.poison)) seen_poison = true;
-        }
-        const expr = try allocator.create(model.Expression);
-        expr.* = .{
-          .pos = input.pos,
-          .data = .{
-            .call = .{
-              .ns = rc.ns,
-              .target = rc.target,
-              .exprs = args,
-            },
-          },
-          .expected_type = sig.returns,
-        };
-        if (is_keyword) {
-          var eval = nyarna.Evaluator{.context = self.loader.context};
-          const res = try eval.evaluateKeywordCall(self, &expr.data.call);
-          const interpreted_res =
-            try self.tryInterpret(res, report_failure, ctx);
-          // a call to a keyword can never return a node that cannot be
-          // interpreted.
-          std.debug.assert(interpreted_res != null);
-          return interpreted_res;
-        } else {
-          return expr;
-        }
-      },
-      .expression => |expr| return expr,
-      .voidNode => {
+    return switch (input.data) {
+      .access => self.tryInterpretAccess(input, report_failure, ctx),
+      .assign => |*ass| self.tryInterpretAss(ass, report_failure, ctx),
+      .branches, .concat, .paras =>
+        self.tryProbeAndInterpret(input, report_failure, ctx),
+      .resolved_symref => |*ref| self.tryInterpretSymref(ref),
+      .resolved_call => |*rc| self.tryInterpretCall(rc, report_failure, ctx),
+      .location => |*loc| self.tryInterpretLoc(loc, report_failure, ctx),
+      .definition => |*def| self.tryInterpretDef(def, report_failure, ctx),
+      .typegen => unreachable, // TODO
+      .expression => |expr| expr,
+      .void => blk: {
         const expr = try self.storage.allocator.create(model.Expression);
         expr.fillVoid(input.pos);
-        return expr;
+        break :blk expr;
       },
-      .poisonNode => {
+      .poison => blk: {
         const expr = try self.storage.allocator.create(model.Expression);
         expr.fillPoison(input.pos);
-        return expr;
+        break :blk expr;
       },
-      .literal => |lit| {
-        return try self.genPublicLiteral(input.pos, .{
-          .text = .{
-            .t = model.Type{
-              .intrinsic = if (lit.kind == .space) .space else .literal},
-            .content = try std.mem.dupe(
-              &self.loader.context.storage.allocator, u8, lit.content),
-          },
-        });
-      },
-      .unresolved_symref, .unresolved_call => {
+      .literal => |lit| try self.genPublicLiteral(input.pos, .{
+        .text = .{
+          .t = model.Type{
+            .intrinsic = if (lit.kind == .space) .space else .literal},
+          .content = try std.mem.dupe(
+            &self.loader.context.storage.allocator, u8, lit.content),
+        },
+      }),
+      .unresolved_symref, .unresolved_call => blk: {
         if (report_failure) self.reportResolveFailures(input, false);
-        return null;
+        break :blk null;
       },
-    }
+    };
   }
 
   pub fn interpret(self: *Interpreter, input: *model.Node)
@@ -688,16 +876,16 @@ pub const Interpreter = struct {
     switch (node.data) {
       .literal => |l| return model.Type{.intrinsic =
         if (l.kind == .space) .space else .literal},
-      .access, .assignment => {
+      .access, .assign => {
         if (try self.tryInterpret(node, false, ctx)) |expr| {
           node.data = .{.expression = expr};
           return expr.expected_type;
         } else return null;
       },
       .branches => |br| return try self.probeNodeList(br.branches, ctx),
-      .concatenation => |con| {
+      .concat => |con| {
         var inner =
-          (try self.probeNodeList(con.content, ctx)) orelse return null;
+          (try self.probeNodeList(con.items, ctx)) orelse return null;
         if (!inner.is(.poison))
           inner = (try self.types().concat(inner)) orelse {
             self.loader.logger.InvalidInnerConcatType(
@@ -707,11 +895,11 @@ pub const Interpreter = struct {
             return model.Type{.intrinsic = .poison};
           };
         if (inner.is(.poison)) {
-          node.data = .poisonNode;
+          node.data = .poison;
         }
         return inner;
       },
-      .paragraphs => |*para| {
+      .paras => |*para| {
         var builder =
           nyarna.types.ParagraphTypeBuilder.init(self.types(), false);
         var seen_unfinished = false;
@@ -766,14 +954,17 @@ pub const Interpreter = struct {
             node.data = .{.expression = expr};
             return expr.expected_type;
           } else {
-            node.data = .poisonNode;
+            node.data = .poison;
             return model.Type{.intrinsic = .poison};
           }
         } else return rc.target.expected_type.structural.callable.sig.returns;
       },
+      .typegen => return model.Type{.intrinsic = .@"type"},
+      .location => return model.Type{.intrinsic = .location},
+      .definition => return model.Type{.intrinsic = .definition},
       .expression => |e| return e.expected_type,
-      .poisonNode => return model.Type{.intrinsic = .poison},
-      .voidNode => return model.Type{.intrinsic = .void},
+      .poison => return model.Type{.intrinsic = .poison},
+      .void => return model.Type{.intrinsic = .void},
     }
   }
 
@@ -806,7 +997,7 @@ pub const Interpreter = struct {
     switch (t) {
       .intrinsic => |it| switch (it) {
         .space => if (l.kind == .space)
-          self.fillLiteral(l.pos(), e, .{
+          self.fillLiteral(l.node().pos, e, .{
             .text = .{
               .t = t,
               .content = try std.mem.dupe(
@@ -814,11 +1005,11 @@ pub const Interpreter = struct {
             },
           }) else {
             self.loader.logger.ExpectedExprOfTypeXGotY(
-              l.pos(), &[_]model.Type{t, .{.intrinsic = .literal}});
-            e.fillPoison(l.pos());
+              l.node().pos, &[_]model.Type{t, .{.intrinsic = .literal}});
+            e.fillPoison(l.node().pos);
           },
         .literal, .raw =>
-          self.fillLiteral(l.pos(), e, .{
+          self.fillLiteral(l.node().pos, e, .{
             .text = .{
               .t = t,
               .content = try std.mem.dupe(
@@ -826,7 +1017,7 @@ pub const Interpreter = struct {
             },
           }),
         else =>
-          self.fillLiteral(l.pos(), e, .{
+          self.fillLiteral(l.node().pos, e, .{
           .text = .{
             .t = .{.intrinsic = if (l.kind == .text) .literal else .space},
             .content = try std.mem.dupe(
@@ -841,16 +1032,16 @@ pub const Interpreter = struct {
         .list => |*list| try self.createTextLiteral(l, list.inner, e), // TODO
         .map, .callable => {
           self.loader.logger.ExpectedExprOfTypeXGotY(
-            l.pos(), &[_]model.Type{t, .{.intrinsic = .literal}});
-          e.fillPoison(l.pos());
+            l.node().pos, &[_]model.Type{t, .{.intrinsic = .literal}});
+          e.fillPoison(l.node().pos);
         },
         .intersection => |*inter|
           if (inter.scalar) |scalar| {
             try self.createTextLiteral(l, scalar, e);
           } else {
             self.loader.logger.ExpectedExprOfTypeXGotY(
-              l.pos(), &[_]model.Type{t, .{.intrinsic = .literal}});
-            e.fillPoison(l.pos());
+              l.node().pos, &[_]model.Type{t, .{.intrinsic = .literal}});
+            e.fillPoison(l.node().pos);
           }
       },
       .instantiated => |ti| switch (ti.data) {
@@ -859,11 +1050,11 @@ pub const Interpreter = struct {
         .float => unreachable, // TODO
         .tenum => unreachable, // TODO
         .record => {
-          self.loader.logger.ExpectedExprOfTypeXGotY(l.pos(),
+          self.loader.logger.ExpectedExprOfTypeXGotY(l.node().pos,
             &[_]model.Type{
               t, .{.intrinsic = if (l.kind == .text) .literal else .space},
             });
-          e.fillPoison(l.pos());
+          e.fillPoison(l.node().pos);
         },
       },
     }
@@ -876,8 +1067,8 @@ pub const Interpreter = struct {
   /// calculate the actual type of inner structures and check them for
   /// compatibility with t.
   fn interpretWithTargetType(
-      self: *Interpreter, input: *model.Node, t: model.Type, probed: bool)
-      nyarna.Error!?*model.Expression {
+      self: *Interpreter, input: *model.Node, t: model.Type, probed: bool,
+      ctx: ?*graph.ResolutionContext) nyarna.Error!?*model.Expression {
     switch (input.data) {
       // for text literals, do compile-time type conversions if possible
       .literal => |*l| {
@@ -886,8 +1077,9 @@ pub const Interpreter = struct {
         expr.expected_type = t;
         return expr;
       },
-      .access, .assignment, .resolved_symref, .resolved_call =>
-        return self.tryInterpret(input, false, null),
+      .access, .assign, .resolved_symref, .resolved_call, .typegen,
+      .location, .definition =>
+        return self.tryInterpret(input, false, ctx),
       .branches => |br| {
         if (!probed) {
           var actual_type =
@@ -906,8 +1098,8 @@ pub const Interpreter = struct {
         }
         const condition = cblk: {
           // TODO: use intrinsic Boolean type here
-          if (try self.interpretWithTargetType(
-              br.condition, model.Type{.intrinsic = .literal}, false)) |expr|
+          if (try self.interpretWithTargetType(br.condition,
+              model.Type{.intrinsic = .literal}, false, ctx)) |expr|
             break :cblk expr
           else return null;
         };
@@ -915,7 +1107,8 @@ pub const Interpreter = struct {
         var failed_some = false;
         for (br.branches) |*node| {
           if (node.*.data != .expression) {
-            if (try self.interpretWithTargetType(node.*, t, probed)) |expr| {
+            if (try self.interpretWithTargetType(node.*, t, probed, ctx))
+                |expr| {
               const expr_node = try self.storage.allocator.create(model.Node);
               expr_node.* = .{
                 .data = .{.expression = expr},
@@ -943,7 +1136,7 @@ pub const Interpreter = struct {
         };
         return expr;
       },
-      .concatenation => |con| {
+      .concat => |con| {
         if (!probed) {
           var actual_type =
             (try self.probeType(input, null)) orelse return null;
@@ -960,9 +1153,10 @@ pub const Interpreter = struct {
           }
         }
         var failed_some = false;
-        for (con.content) |*node| {
+        for (con.items) |*node| {
           if (node.*.data != .expression) {
-            if (try self.interpretWithTargetType(node.*, t, probed)) |expr| {
+            if (try self.interpretWithTargetType(node.*, t, probed, ctx))
+                |expr| {
               const expr_node = try self.storage.allocator.create(model.Node);
               expr_node.* = .{
                 .data = .{.expression = expr},
@@ -974,9 +1168,9 @@ pub const Interpreter = struct {
         }
         if (failed_some) return null;
         const exprs = try self.loader.context.storage.allocator.alloc(
-          *model.Expression, con.content.len);
+          *model.Expression, con.items.len);
         // TODO: properly handle paragraph types
-        for (con.content) |item, i|
+        for (con.items) |item, i|
           exprs[i] = item.data.expression;
         const expr = try self.createPublic(model.Expression);
         expr.* = .{
@@ -988,14 +1182,14 @@ pub const Interpreter = struct {
         };
         return expr;
       },
-      .paragraphs => unreachable,
+      .paras => unreachable, // TODO
       .unresolved_symref, .unresolved_call, .expression => return null,
-      .voidNode => {
+      .void => {
         const expr = try self.createPublic(model.Expression);
         expr.fillVoid(input.pos);
         return expr;
       },
-      .poisonNode => {
+      .poison => {
         const expr = try self.createPublic(model.Expression);
         expr.fillPoison(input.pos);
         return expr;
@@ -1013,20 +1207,21 @@ pub const Interpreter = struct {
   ///    conversion.
   /// null is returned if the association cannot be made currently because of
   /// unresolved symbols.
-  pub fn associate(self: *Interpreter, node: *model.Node, t: model.Type)
-      !?*model.Expression {
-    return if (try self.interpretWithTargetType(node, t, false)) |expr| blk: {
-      if (expr.expected_type.is(.poison)) break :blk expr;
-      if (self.types().lesserEqual(expr.expected_type, t)) {
-        expr.expected_type = t;
+  pub fn associate(self: *Interpreter, node: *model.Node, t: model.Type,
+      ctx: ?*graph.ResolutionContext) !?*model.Expression {
+    return if (try self.interpretWithTargetType(node, t, false, ctx)) |expr|
+      blk: {
+        if (expr.expected_type.is(.poison)) break :blk expr;
+        if (self.types().lesserEqual(expr.expected_type, t)) {
+          expr.expected_type = t;
+          break :blk expr;
+        }
+        // TODO: semantic conversions here
+        self.loader.logger.ExpectedExprOfTypeXGotY(
+          node.pos, &[_]model.Type{t, expr.expected_type});
+        expr.fillPoison(node.pos);
         break :blk expr;
-      }
-      // TODO: semantic conversions here
-      self.loader.logger.ExpectedExprOfTypeXGotY(
-        node.pos, &[_]model.Type{t, expr.expected_type});
-      expr.fillPoison(node.pos);
-      break :blk expr;
-    } else null;
+      } else null;
   }
 
 };

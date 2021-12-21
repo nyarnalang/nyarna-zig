@@ -92,6 +92,8 @@ pub const WrongTypeError = enum {
    IncompatibleTypes,
    /// gives one type.
    InvalidInnerConcatType,
+   /// gives one type
+   InvalidDefinitionValue,
 };
 
 pub const Reporter = struct {
@@ -363,6 +365,12 @@ pub const CmdLineReporter = struct {
         self.renderError(
           "given expressions' types' intersection is '{}' " ++
           "which is not concatenable", .{t});
+      },
+      .InvalidDefinitionValue => {
+        const t = std.fmt.Formatter(formatType){.data = types[0]};
+        self.renderError(
+          "given value for symbol definition is '{}' " ++
+          "which cannot be made into a symbol", .{t});
       },
     }
   }

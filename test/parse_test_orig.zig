@@ -65,9 +65,9 @@ test "parse assignment" {
   var ml = try nyarna.ModuleLoader.create(ctx, &src, &.{});
   defer ml.destroy();
   var res = try ml.loadAsNode(true);
-  try std.testing.expectEqual(model.Node.Data.assignment, res.data);
-  try ensureUnresSymref(res.data.assignment.target.unresolved, 0, "foo");
-  try ensureLiteral(res.data.assignment.replacement, .text, "bar");
+  try std.testing.expectEqual(model.Node.Data.assign, res.data);
+  try ensureUnresSymref(res.data.assign.target.unresolved, 0, "foo");
+  try ensureLiteral(res.data.assign.replacement, .text, "bar");
 }
 
 test "parse access" {
@@ -123,14 +123,14 @@ test "parse concat" {
   var ml = try nyarna.ModuleLoader.create(ctx, &src, &.{});
   defer ml.destroy();
   var res = try ml.loadAsNode(true);
-  try std.testing.expectEqual(model.Node.Data.concatenation, res.data);
-  try ensureLiteral(res.data.concatenation.content[0], .text, "lorem");
-  try ensureUnresSymref(res.data.concatenation.content[1], 0, "a");
-  try ensureLiteral(res.data.concatenation.content[2], .text, "ipsum");
-  try ensureUnresSymref(res.data.concatenation.content[3], 0, "b");
-  try ensureLiteral(res.data.concatenation.content[4], .space, " ");
-  try ensureUnresSymref(res.data.concatenation.content[5], 0, "c");
-  try ensureLiteral(res.data.concatenation.content[6], .text, "#dolor");
+  try std.testing.expectEqual(model.Node.Data.concat, res.data);
+  try ensureLiteral(res.data.concat.items[0], .text, "lorem");
+  try ensureUnresSymref(res.data.concat.items[1], 0, "a");
+  try ensureLiteral(res.data.concat.items[2], .text, "ipsum");
+  try ensureUnresSymref(res.data.concat.items[3], 0, "b");
+  try ensureLiteral(res.data.concat.items[4], .space, " ");
+  try ensureUnresSymref(res.data.concat.items[5], 0, "c");
+  try ensureLiteral(res.data.concat.items[6], .text, "#dolor");
 }
 
 test "parse paragraphs" {
@@ -154,14 +154,14 @@ test "parse paragraphs" {
   var ml = try nyarna.ModuleLoader.create(ctx, &src, &.{});
   defer ml.destroy();
   var res = try ml.loadAsNode(true);
-  try std.testing.expectEqual(model.Node.Data.paragraphs, res.data);
-  try ensureLiteral(res.data.paragraphs.items[0].content, .text, "lorem");
+  try std.testing.expectEqual(model.Node.Data.paras, res.data);
+  try ensureLiteral(res.data.paras.items[0].content, .text, "lorem");
   try std.testing.expectEqual(
-    @as(usize, 2), res.data.paragraphs.items[0].lf_after);
-  try ensureLiteral(res.data.paragraphs.items[1].content, .text, "ipsum");
+    @as(usize, 2), res.data.paras.items[0].lf_after);
+  try ensureLiteral(res.data.paras.items[1].content, .text, "ipsum");
   try std.testing.expectEqual(
-    @as(usize, 3), res.data.paragraphs.items[1].lf_after);
-  try ensureLiteral(res.data.paragraphs.items[2].content, .text, "dolor");
+    @as(usize, 3), res.data.paras.items[1].lf_after);
+  try ensureLiteral(res.data.paras.items[2].content, .text, "dolor");
 }
 
 test "parse unknown call" {

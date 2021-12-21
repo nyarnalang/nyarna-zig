@@ -91,14 +91,7 @@ pub const Evaluator = struct {
         };
         return ret;
       },
-      *nyarna.Interpreter => {
-        const ret = try impl_ctx.storage.allocator.create(model.Node);
-        ret.* = .{
-          .pos = pos,
-          .data = .poisonNode,
-        };
-        return ret;
-      },
+      *nyarna.Interpreter => return impl_ctx.node_gen.poison(pos),
       else => unreachable,
     }
   }
@@ -189,8 +182,7 @@ pub const Evaluator = struct {
       .poison => return switch (@TypeOf(impl_ctx)) {
         *Evaluator => model.Value.create(
           &self.context.storage.allocator, call.expr().pos, .poison),
-        *nyarna.Interpreter => model.Node.poison(
-          &impl_ctx.storage.allocator,  call.expr().pos),
+        *nyarna.Interpreter => impl_ctx.node_gen.poison(call.expr().pos),
         else => unreachable,
       },
       else => unreachable

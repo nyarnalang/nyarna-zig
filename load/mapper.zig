@@ -25,12 +25,10 @@ pub const Mapper = struct {
 
   mapFn: fn(self: *Self, pos: model.Position, input: ArgKind,
             flag: ProtoArgFlag) ?Cursor,
-  pushFn: fn(self: *Self, alloc: *std.mem.Allocator, at: Cursor,
-             content: *model.Node) nyarna.Error!void,
+  pushFn: fn(self: *Self, at: Cursor, content: *model.Node) nyarna.Error!void,
   configFn: fn(self: *Self, at: Cursor) ?*model.BlockConfig,
   paramTypeFn: fn(self: *Self, at: Cursor) ?model.Type,
-  finalizeFn: fn(self: *Self, alloc: *std.mem.Allocator,
-                 pos: model.Position) nyarna.Error!*model.Node,
+  finalizeFn: fn(self: *Self, pos: model.Position) nyarna.Error!*model.Node,
 
   pub fn map(self: *Self, pos: model.Position, input: ArgKind,
              flag: ProtoArgFlag) ?Cursor {
@@ -45,14 +43,12 @@ pub const Mapper = struct {
     return self.paramTypeFn(self, at);
   }
 
-  pub fn push(self: *Self, alloc: *std.mem.Allocator, at: Cursor,
-              content: *model.Node) !void {
-    try self.pushFn(self, alloc, at, content);
+  pub fn push(self: *Self, at: Cursor, content: *model.Node) !void {
+    try self.pushFn(self, at, content);
   }
 
-  pub fn finalize(self: *Self, alloc: *std.mem.Allocator, pos: model.Position)
-      nyarna.Error!*model.Node {
-    return self.finalizeFn(self, alloc, pos);
+  pub fn finalize(self: *Self, pos: model.Position) nyarna.Error!*model.Node {
+    return self.finalizeFn(self, pos);
   }
 };
 
@@ -63,10 +59,10 @@ pub const SignatureMapper = struct {
   cur_pos: ?u21 = 0,
   args: []*model.Node,
   filled: []bool,
-  context: *Interpreter,
+  intpr: *Interpreter,
   ns: u15,
 
-  pub fn init(ctx: *Interpreter, subject: *model.Expression, ns: u15,
+  pub fn init(intpr: *Interpreter, subject: *model.Expression, ns: u15,
               sig: *const model.Type.Signature) !SignatureMapper {
     var res = SignatureMapper{
       .mapper = .{
@@ -78,10 +74,11 @@ pub const SignatureMapper = struct {
       },
       .subject = subject,
       .signature = sig,
-      .context = ctx,
+      .intpr = intpr,
       .ns = ns,
-      .args = try ctx.storage.allocator.alloc(*model.Node, sig.parameters.len),
-      .filled = try ctx.storage.allocator.alloc(bool, sig.parameters.len),
+      .args =
+        try intpr.storage.allocator.alloc(*model.Node, sig.parameters.len),
+      .filled = try intpr.storage.allocator.alloc(bool, sig.parameters.len),
     };
     for (res.filled) |*item| item.* = false;
     return res;
@@ -108,7 +105,7 @@ pub const SignatureMapper = struct {
               .config = flag == .block_with_config, .direct = input == .named};
           }
         }
-        self.context.loader.logger.UnknownParameter(pos);
+        self.intpr.loader.logger.UnknownParameter(pos);
         return null;
       },
       .primary => {
@@ -118,7 +115,7 @@ pub const SignatureMapper = struct {
             .param = .{.index = index},
             .config = flag == .block_with_config, .direct = true};
         } else {
-          self.context.loader.logger.UnexpectedPrimaryBlock(pos);
+          self.intpr.loader.logger.UnexpectedPrimaryBlock(pos);
           return null;
         }
       },
@@ -131,11 +128,11 @@ pub const SignatureMapper = struct {
             return Mapper.Cursor{.param = .{.index = index},
               .config = flag == .block_with_config, .direct = false};
           } else {
-            self.context.loader.logger.TooManyArguments(pos);
+            self.intpr.loader.logger.TooManyArguments(pos);
             return null;
           }
         } else {
-          self.context.loader.logger.InvalidPositionalArgument(pos);
+          self.intpr.loader.logger.InvalidPositionalArgument(pos);
           return null;
         }
       },
@@ -159,8 +156,8 @@ pub const SignatureMapper = struct {
     };
   }
 
-  fn push(mapper: *Mapper, _: *std.mem.Allocator, at: Mapper.Cursor,
-          content: *model.Node) nyarna.Error!void {
+  fn push(mapper: *Mapper, at: Mapper.Cursor, content: *model.Node)
+      nyarna.Error!void {
     const self = @fieldParentPtr(SignatureMapper, "mapper", mapper);
     const param = &self.signature.parameters[at.param.index];
     const target_type =
@@ -171,11 +168,11 @@ pub const SignatureMapper = struct {
       else => param.ptype,
     };
     const arg = if (target_type.is(.ast_node))
-      try self.context.genValueNode(content.pos, .{
+      try self.intpr.genValueNode(content.pos, .{
         .ast = .{.root = content},
       })
     else blk: {
-      if (try self.context.associate(content, param.ptype)) |expr|
+      if (try self.intpr.associate(content, param.ptype, null)) |expr|
         content.data = .{.expression = expr};
       break :blk content;
     };
@@ -185,7 +182,7 @@ pub const SignatureMapper = struct {
       else => {}
     }
     if (self.filled[at.param.index])
-      self.context.loader.logger.DuplicateParameterArgument(
+      self.intpr.loader.logger.DuplicateParameterArgument(
         self.signature.parameters[at.param.index].name, content.pos,
         self.args[at.param.index].pos)
     else {
@@ -194,48 +191,41 @@ pub const SignatureMapper = struct {
     }
   }
 
-  fn finalize(mapper: *Mapper, alloc: *std.mem.Allocator, pos: model.Position)
-      nyarna.Error!*model.Node {
+  fn finalize(mapper: *Mapper, pos: model.Position) nyarna.Error!*model.Node {
     const self = @fieldParentPtr(SignatureMapper, "mapper", mapper);
     var missing_param = false;
     for (self.signature.parameters) |param, i| {
       if (!self.filled[i]) {
         self.args[i] = switch (param.ptype) {
           .intrinsic => |intr| switch (intr) {
-            .void => try model.Node.genVoid(alloc, pos),
+            .void => try self.intpr.node_gen.@"void"(pos),
             .ast_node => blk: {
-              break :blk try self.context.genValueNode(pos, .{
-                .ast = .{.root = try model.Node.genVoid(alloc, pos)},
+              break :blk try self.intpr.genValueNode(pos, .{
+                .ast = .{.root = try self.intpr.node_gen.@"void"(pos)},
               });
             },
             else => null,
           },
           .structural => |strct| switch (strct.*) {
             .optional, .concat, .paragraphs =>
-              try model.Node.genVoid(alloc, pos),
+              try self.intpr.node_gen.@"void"(pos),
             else => null,
           },
           .instantiated => null,
         } orelse {
-          self.context.loader.logger.MissingParameterArgument(
+          self.intpr.loader.logger.MissingParameterArgument(
             param.name, pos, param.pos);
           missing_param = true;
           continue;
         };
       }
     }
-    const ret = try alloc.create(model.Node);
-    ret.* = .{
-      .pos = pos,
-      .data = if (missing_param) .poisonNode else .{
-        .resolved_call = .{
-          .ns = self.ns,
-          .target = self.subject,
-          .args = self.args,
-        },
-      },
-    };
-    return ret;
+    return if (missing_param) try self.intpr.node_gen.poison(pos) else
+      (try self.intpr.node_gen.rcall(pos, .{
+        .ns = self.ns,
+        .target = self.subject,
+        .args = self.args,
+      })).node();
   }
 };
 
@@ -244,8 +234,10 @@ pub const CollectingMapper = struct {
   target: *model.Node,
   items: std.ArrayListUnmanaged(model.Node.UnresolvedCall.ProtoArg) = .{},
   first_block: ?usize = null,
+  intpr: *Interpreter,
 
-  pub fn init(target: *model.Node) CollectingMapper {
+  pub fn init(target: *model.Node, intpr: *Interpreter)
+      CollectingMapper {
     return .{
       .mapper = .{
         .mapFn = CollectingMapper.map,
@@ -255,6 +247,7 @@ pub const CollectingMapper = struct {
         .finalizeFn = CollectingMapper.finalize,
       },
       .target = target,
+      .intpr = intpr,
     };
   }
 
@@ -278,30 +271,23 @@ pub const CollectingMapper = struct {
     return null;
   }
 
-  fn push(mapper: *Mapper, alloc: *std.mem.Allocator, at: Mapper.Cursor,
+  fn push(mapper: *Mapper, at: Mapper.Cursor,
           content: *model.Node) nyarna.Error!void {
     const self = @fieldParentPtr(CollectingMapper, "mapper", mapper);
-    try self.items.append(alloc, .{
+    try self.items.append(&self.intpr.storage.allocator, .{
         .kind = at.param.kind, .content = content,
         .had_explicit_block_config = at.config
       });
   }
 
-  fn finalize(mapper: *Mapper, alloc: *std.mem.Allocator, pos: model.Position)
+  fn finalize(mapper: *Mapper, pos: model.Position)
       nyarna.Error!*model.Node {
     const self = @fieldParentPtr(CollectingMapper, "mapper", mapper);
-    var ret = try alloc.create(model.Node);
-    ret.* = .{
-      .pos = pos,
-      .data = .{
-        .unresolved_call = .{
-          .target = self.target,
-          .proto_args = self.items.items,
-          .first_block_arg = self.first_block orelse self.items.items.len,
-        },
-      },
-    };
-    return ret;
+    return (try self.intpr.node_gen.ucall(pos, .{
+      .target = self.target,
+      .proto_args = self.items.items,
+      .first_block_arg = self.first_block orelse self.items.items.len,
+    })).node();
   }
 };
 
@@ -309,8 +295,9 @@ pub const AssignmentMapper = struct {
   mapper: Mapper,
   subject: *model.Node,
   replacement: ?*model.Node,
+  intpr: *Interpreter,
 
-  pub fn init(subject: *model.Node) AssignmentMapper {
+  pub fn init(subject: *model.Node, intpr: *Interpreter) AssignmentMapper {
     return .{
       .mapper = .{
         .mapFn = AssignmentMapper.map,
@@ -321,6 +308,7 @@ pub const AssignmentMapper = struct {
       },
       .subject = subject,
       .replacement = null,
+      .intpr = intpr,
     };
   }
 
@@ -340,8 +328,7 @@ pub const AssignmentMapper = struct {
     };
   }
 
-  fn push(mapper: *Mapper, _: *std.mem.Allocator, _: Mapper.Cursor,
-          content: *model.Node) !void {
+  fn push(mapper: *Mapper, _: Mapper.Cursor, content: *model.Node) !void {
     const self = @fieldParentPtr(AssignmentMapper, "mapper", mapper);
     self.replacement = content;
   }
@@ -356,21 +343,13 @@ pub const AssignmentMapper = struct {
     return null;
   }
 
-  fn finalize(mapper: *Mapper, alloc: *std.mem.Allocator, pos: model.Position)
-      !*model.Node {
+  fn finalize(mapper: *Mapper, pos: model.Position) !*model.Node {
     const self = @fieldParentPtr(AssignmentMapper, "mapper", mapper);
-    const ret = try alloc.create(model.Node);
-    ret.* = .{
-      .pos = pos,
-      .data = .{
-        .assignment = .{
-          .target = .{
-            .unresolved = self.subject,
-          },
-          .replacement = self.replacement.? // TODO: error when missing
-        },
+    return (try self.intpr.node_gen.assign(pos, .{
+      .target = .{
+        .unresolved = self.subject,
       },
-    };
-    return ret;
+      .replacement = self.replacement.? // TODO: error when missing
+    })).node();
   }
 };

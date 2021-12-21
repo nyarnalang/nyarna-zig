@@ -14,7 +14,7 @@ const lex = @import("lex.zig");
 pub const ModuleLoader = struct {
   context: *Context,
   parser: parse.Parser,
-  interpreter: nyarna.Interpreter,
+  interpreter: *nyarna.Interpreter,
   /// The error handler which is used to report any recoverable errors that
   /// are encountered. If one or more errors are encountered during loading,
   /// the input is considered to be invalid.
@@ -31,8 +31,7 @@ pub const ModuleLoader = struct {
       .reporter = context.reporter,
     };
     errdefer context.storage.allocator.destroy(ret);
-    ret.interpreter = try nyarna.Interpreter.init(ret, input);
-    errdefer ret.interpreter.deinit();
+    ret.interpreter = try nyarna.Interpreter.create(ret, input);
     ret.parser = parse.Parser.init();
     return ret;
   }
@@ -42,8 +41,9 @@ pub const ModuleLoader = struct {
   }
 
   pub fn destroy(self: *ModuleLoader) void {
+    const context = self.interpreter.loader.context;
     self.deinit();
-    self.interpreter.loader.context.storage.allocator.destroy(self);
+    context.storage.allocator.destroy(self);
   }
 
   pub fn load(self: *ModuleLoader, fullast: bool) !*model.Module {
@@ -57,12 +57,12 @@ pub const ModuleLoader = struct {
   }
 
   pub fn loadAsNode(self: *ModuleLoader, fullast: bool) !*model.Node {
-    return try self.parser.parseSource(&self.interpreter, fullast);
+    return try self.parser.parseSource(self.interpreter, fullast);
   }
 
   /// this function mainly exists for testing the lexer. as far as the public
   /// API is concerned, the lexer is an implementation detail.
   pub fn initLexer(self: *ModuleLoader) !lex.Lexer {
-    return lex.Lexer.init(&self.interpreter);
+    return lex.Lexer.init(self.interpreter);
   }
 };

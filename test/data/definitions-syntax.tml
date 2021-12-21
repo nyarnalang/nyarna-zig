@@ -10,65 +10,41 @@
     =SYMREF [0]block
   -TARGET
   +PROTO primary
-    +RCALL
-      =TYPE definition
-      >ARG name
-      =LIT text "Money"
-      >ARG root
-      =ENUM Boolean "false"
-      >ARG item
-      +AST
-        +UCALL
-          +TARGET
-            =SYMREF [0]numeric
-          -TARGET
-          +PROTO name="decimals"
-            =LIT text "2"
-          -PROTO
-        -UCALL
-      -AST
-    -RCALL
-    +RCALL
-      =TYPE definition
-      >ARG name
-      =LIT text "PostalNumber"
-      >ARG root
-      =ENUM Boolean "false"
-      >ARG item
-      +AST
-        +UCALL
-          +TARGET
-            =SYMREF [0]textual
-          -TARGET
-          +PROTO name="include"
-            =LIT text "0123456789"
-          -PROTO
-        -UCALL
-      -AST
-    -RCALL
-    +RCALL
-      =TYPE definition
-      >ARG name
-      =LIT text "TrafficLight"
-      >ARG root
-      =ENUM Boolean "true"
-      >ARG item
-      +AST
-        +UCALL
-          +TARGET
-            =SYMREF [0]enum
-          -TARGET
-          +PROTO pos
-            =LIT text "red"
-          -PROTO
-          +PROTO pos
-            =LIT text "yellow"
-          -PROTO
-          +PROTO pos
-            =LIT text "green"
-          -PROTO
-        -UCALL
-      -AST
-    -RCALL
+    +DEF Money
+      +UCALL
+        +TARGET
+          =SYMREF [0]numeric
+        -TARGET
+        +PROTO name="decimals"
+          =LIT text "2"
+        -PROTO
+      -UCALL
+    -DEF
+    +DEF PostalNumber
+      +UCALL
+        +TARGET
+          =SYMREF [0]textual
+        -TARGET
+        +PROTO name="include"
+          =LIT text "0123456789"
+        -PROTO
+      -UCALL
+    -DEF
+    +DEF TrafficLight="root"
+      +UCALL
+        +TARGET
+          =SYMREF [0]enum
+        -TARGET
+        +PROTO pos
+          =LIT text "red"
+        -PROTO
+        +PROTO pos
+          =LIT text "yellow"
+        -PROTO
+        +PROTO pos
+          =LIT text "green"
+        -PROTO
+      -UCALL
+    -DEF
   -PROTO
 -UCALL

@@ -43,14 +43,14 @@ pub const SymbolDefs = struct {
   variant: Variant,
   // ----- current line ------
   start: model.Cursor,
-  names: std.ArrayListUnmanaged(*model.Node),
+  names: std.ArrayListUnmanaged(*model.Node.Literal),
   primary: ?model.Position,
   varargs: ?model.Position,
   varmap: ?model.Position,
   mutable: ?model.Position,
   root: ?model.Position,
   header: ?*model.Value.BlockHeader,
-  ltype: ?*model.Node,
+  @"type": ?*model.Node,
   expr: ?*model.Node,
   // -------------------------
 
@@ -118,7 +118,7 @@ pub const SymbolDefs = struct {
     l.mutable = null;
     l.header = null;
     l.root = null;
-    l.ltype = null;
+    l.@"type" = null;
     l.expr = null;
     l.names.clearRetainingCapacity();
   }
@@ -138,18 +138,9 @@ pub const SymbolDefs = struct {
         .names => switch (item) {
           .space => return .none,
           .literal => |name| {
-            const name_node =
-              try self.intpr.storage.allocator.create(model.Node);
-            name_node.* = .{
-              .pos = pos,
-              .data = .{
-                .literal = .{
-                  .kind = .text,
-                  .content = name,
-                },
-              },
-            };
-            try self.names.append(&self.intpr.storage.allocator, name_node);
+            try self.names.append(&self.intpr.storage.allocator,
+              try self.intpr.node_gen.literal(
+                pos, .{.kind = .text, .content = name}));
             break .after_name;
           },
           .escaped => {
@@ -267,7 +258,7 @@ pub const SymbolDefs = struct {
             },
           },
           .node => |n| {
-            self.ltype = n;
+            self.@"type" = n;
             break .after_ltype;
           },
           .newlines => {
@@ -552,15 +543,39 @@ pub const SymbolDefs = struct {
   fn finish(p: *Processor, pos: model.Position)
       std.mem.Allocator.Error!*model.Node {
     const self = @fieldParentPtr(SymbolDefs, "proc", p);
+    return (try self.intpr.node_gen.concat(
+      pos, .{.items = self.produced.items})).node();
+  }
+
+  fn genLineNode(
+      self: *SymbolDefs, name: *model.Node.Literal, pos: model.Position,
+      comptime kind: []const u8, comptime content_field: []const u8,
+      comptime additionals_field: ?[]const u8,
+      comptime optional_pos_fields: []const []const u8,
+      comptime optional_node_fields: []const []const u8) !*model.Node {
     const ret = try self.intpr.storage.allocator.create(model.Node);
-    ret.* = .{
-      .pos = pos,
-      .data = .{
-        .concatenation = .{
-          .content = self.produced.items,
-        },
-      },
-    };
+    ret.pos = pos;
+    ret.data = @unionInit(@TypeOf(ret.data), kind, undefined);
+    const val = &@field(ret.data, kind);
+    val.name = name;
+    const pos_into = if (additionals_field) |a| blk: {
+      const af = try self.intpr.storage.allocator.create(
+        @typeInfo(
+          @typeInfo(@TypeOf(@field(val, a))).Optional.child
+        ).Pointer.child);
+      @field(val, a) = af;
+      break :blk af;
+    } else val;
+    inline for (optional_pos_fields) |f| {
+      @field(pos_into, f) = @field(self, f);
+    }
+    inline for (optional_node_fields) |f| {
+      @field(val, f) = @field(self, f);
+    }
+    if (@typeInfo(@TypeOf(@field(val, content_field))) == .Optional)
+      @field(val, content_field) = self.expr
+    else
+      @field(val, content_field) = self.expr.?;
     return ret;
   }
 
@@ -570,85 +585,33 @@ pub const SymbolDefs = struct {
       self.logger().MissingSymbolName(pos);
       return;
     }
-    if (self.ltype == null and self.expr == null) {
-      if (self.variant == .locs)
-        self.logger().MissingSymbolType(pos)
-      else
+    if (self.variant == .defs and self.expr == null) {
         self.logger().MissingSymbolEntity(pos);
       return;
     }
     const line_pos = self.intpr.input.between(self.start, pos.end);
 
-    const lexpr = try self.intpr.genPublicLiteral(line_pos, .{
-      .@"type" = .{
-        .t = .{
-          .intrinsic = if (self.variant == .locs) .location else .definition
-        },
-      },
-    });
-
     for (self.names.items) |name| {
-      const args = try self.intpr.storage.allocator.alloc(*model.Node,
-          switch (self.variant) {.locs => @as(usize, 8), .defs => 3});
-      args[0] = name;
-      var additionals = switch (self.variant) {
-        .locs => ptr: {
-          args[1] = self.ltype orelse
-            try model.Node.genVoid(&self.intpr.storage.allocator, pos);
-          break :ptr args.ptr + 2;
-        },
-        .defs => args.ptr + 1,
-      };
-      switch (self.variant) {
-        .locs => {
-          additionals[0] = try self.boolFrom(self.primary, pos);
-          additionals[1] = try self.boolFrom(self.varargs, pos);
-          additionals[2] = try self.boolFrom(self.varmap, pos);
-          additionals[3] = try self.boolFrom(self.mutable, pos);
-          const bhn = try self.intpr.storage.allocator.create(model.Node);
-          bhn.* = if (self.header) |bh| .{
-            .pos = bh.value().origin,
-            .data = .{
-              .expression = @fieldParentPtr(
-                model.Expression.Literal, "value", bh.value()).expr(),
-            },
-          } else .{
-            .pos = pos,
-            .data = .voidNode,
-          };
-          additionals[4] = bhn;
+      const node = try switch (self.variant) {
+        .locs => blk: {
           if (self.root) |rpos| self.logger().NonLocationFlag(rpos);
-          additionals += 5;
+          break :blk self.genLineNode(
+            name, line_pos, "location", "default", "additionals",
+            &[_][]const u8{"primary", "varargs", "varmap", "mutable", "header"},
+            &[_][]const u8{"type"});
         },
-        .defs => {
-          additionals[0] = try self.boolFrom(self.root, pos);
-          if (self.primary) |ppos| self.logger().NonDefinitionFlag(ppos);
-          if (self.varargs) |vpos| self.logger().NonDefinitionFlag(vpos);
-          if (self.varmap) |mpos| self.logger().NonDefinitionFlag(mpos);
-          if (self.mutable) |mpos| self.logger().NonDefinitionFlag(mpos);
+        .defs => blk: {
+          inline for (.{"primary", "varargs", "varmap", "mutable"}) |item|
+            if (@field(self, item)) |p|
+              self.logger().NonDefinitionFlag(p);
           if (self.header) |bh|
             self.logger().BlockHeaderNotAllowedForDefinition(bh.value().origin);
-          additionals += 1;
-        }
-      }
-
-      additionals.* = try if (self.expr) |content|
-        self.intpr.genValueNode(pos, .{.ast = .{.root = content}})
-      else
-        model.Node.genVoid(&self.intpr.storage.allocator, pos);
-
-      const constructor = try self.intpr.storage.allocator.create(model.Node);
-      constructor.* = .{
-        .pos = line_pos,
-        .data = .{
-          .resolved_call = .{
-            .ns = 0, // location constructor resides in the primary namespace.
-            .target = lexpr,
-            .args = args,
-          },
+          break :blk self.genLineNode(
+            name, line_pos, "definition", "content", null,
+            &[_][]const u8{"root"}, &[_][]const u8{});
         },
       };
-      try self.produced.append(&self.intpr.storage.allocator, constructor);
+      try self.produced.append(&self.intpr.storage.allocator, node);
     }
   }
 

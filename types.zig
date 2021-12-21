@@ -861,7 +861,7 @@ pub fn SigBuilder(comptime kind: SigBuilderEnv) type {
       const param = &self.val.parameters[self.next_param];
       param.* = .{
         .pos = loc.value().origin,
-        .name = loc.name,
+        .name = loc.name.content,
         .ptype = loc.tloc,
         .capture = if (loc.varargs) |_| .varargs else if (loc.mutable) |_|
           @as(@TypeOf(param.capture), .mutable) else .default,
@@ -907,7 +907,7 @@ pub fn SigBuilder(comptime kind: SigBuilderEnv) type {
       if (self.repr) |sig| {
         sig.parameters[self.next_param] = .{
           .pos = loc.value().origin,
-          .name = loc.name,
+          .name = loc.name.content,
           .ptype = loc.tloc,
           .capture = .default,
           .default = null,

@@ -16,43 +16,13 @@
     =SYMREF [0]block
   -TARGET
   +PROTO primary
-    +RCALL
-      =TYPE location
-      >ARG name
-      =LIT text "spam"
-      >ARG type
-      =SYMREF <intrinsic>.Raw
-      >ARG primary
-      =ENUM Boolean "false"
-      >ARG varargs
-      =ENUM Boolean "false"
-      >ARG varmap
-      =ENUM Boolean "false"
-      >ARG mutable
-      =ENUM Boolean "false"
-      >ARG header
-      =VOID
-      >ARG default
-      =VOID
-    -RCALL
-    +RCALL
-      =TYPE location
-      >ARG name
-      =LIT text "egg"
-      >ARG type
-      =VOID
-      >ARG primary
-      =ENUM Boolean "false"
-      >ARG varargs
-      =ENUM Boolean "false"
-      >ARG varmap
-      =ENUM Boolean "false"
-      >ARG mutable
-      =ENUM Boolean "false"
-      >ARG header
-      =VOID
-      >ARG default
-      +AST
+    +LOC spam
+      +TYPE
+        =SYMREF <intrinsic>.Raw
+      -TYPE
+    -LOC
+    +LOC egg
+      +DEFAULT
         +UCALL
           +TARGET
             =SYMREF [0]Integer
@@ -61,26 +31,10 @@
             =LIT text "42"
           -PROTO
         -UCALL
-      -AST
-    -RCALL
-    +RCALL
-      =TYPE location
-      >ARG name
-      =LIT text "sausage"
-      >ARG type
-      =VOID
-      >ARG primary
-      =ENUM Boolean "false"
-      >ARG varargs
-      =ENUM Boolean "false"
-      >ARG varmap
-      =ENUM Boolean "false"
-      >ARG mutable
-      =ENUM Boolean "false"
-      >ARG header
-      =VOID
-      >ARG default
-      +AST
+      -DEFAULT
+    -LOC
+    +LOC sausage
+      +DEFAULT
         +UCALL
           +TARGET
             =SYMREF [0]Integer
@@ -89,52 +43,24 @@
             =LIT text "42"
           -PROTO
         -UCALL
-      -AST
-    -RCALL
-    +RCALL
-      =TYPE location
-      >ARG name
-      =LIT text "baked"
-      >ARG type
-      +UCALL
-        +TARGET
-          =SYMREF [0]List
-        -TARGET
-        +PROTO pos
-          =SYMREF [0]Text
-        -PROTO
-      -UCALL
-      >ARG primary
-      =ENUM Boolean "false"
-      >ARG varargs
-      =ENUM Boolean "true"
-      >ARG varmap
-      =ENUM Boolean "false"
-      >ARG mutable
-      =ENUM Boolean "false"
-      >ARG header
-      =VOID
-      >ARG default
-      =VOID
-    -RCALL
-    +RCALL
-      =TYPE location
-      >ARG name
-      =LIT text "beans"
-      >ARG type
-      =VOID
-      >ARG primary
-      =ENUM Boolean "true"
-      >ARG varargs
-      =ENUM Boolean "false"
-      >ARG varmap
-      =ENUM Boolean "false"
-      >ARG mutable
-      =ENUM Boolean "false"
-      >ARG header
-      =VOID
-      >ARG default
-      +AST
+      -DEFAULT
+    -LOC
+    +LOC baked
+      +TYPE
+        +UCALL
+          +TARGET
+            =SYMREF [0]List
+          -TARGET
+          +PROTO pos
+            =SYMREF [0]Text
+          -PROTO
+        -UCALL
+      -TYPE
+      =FLAGS {varargs}
+    -LOC
+    +LOC beans
+      =FLAGS {primary}
+      +DEFAULT
         +RCALL
           =FUNCREF .std.intrinsic.if
           >ARG condition
@@ -150,26 +76,13 @@
             =LIT text "wirbl"
           -AST
         -RCALL
-      -AST
-    -RCALL
-    +RCALL
-      =TYPE location
-      >ARG name
-      =LIT text "schwurbl"
-      >ARG type
-      =SYMREF [0]Boolean
-      >ARG primary
-      =ENUM Boolean "false"
-      >ARG varargs
-      =ENUM Boolean "false"
-      >ARG varmap
-      =ENUM Boolean "false"
-      >ARG mutable
-      =ENUM Boolean "false"
-      >ARG header
-      =HEADER :<syntax locations>:3>
-      >ARG default
-      =VOID
-    -RCALL
+      -DEFAULT
+    -LOC
+    +LOC schwurbl
+      +TYPE
+        =SYMREF [0]Boolean
+      -TYPE
+      =FLAGS {}:<syntax locations>:3>
+    -LOC
   -PROTO
 -UCALL
