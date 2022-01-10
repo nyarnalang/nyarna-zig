@@ -47,14 +47,13 @@
     -LOC
     +LOC baked
       +TYPE
-        +UCALL
-          +TARGET
-            =SYMREF [0]List
-          -TARGET
-          +PROTO pos
+        +RCALL
+          =PROTO list
+          >ARG inner
+          +AST
             =SYMREF [0]Text
-          -PROTO
-        -UCALL
+          -AST
+        -RCALL
       -TYPE
       =FLAGS {varargs}
     -LOC

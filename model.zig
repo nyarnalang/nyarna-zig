@@ -442,12 +442,7 @@ pub const Node = struct {
   /// passes for interpretation since they can refer to each other (e.g. inside
   /// of a \declare command).
   pub const Typegen = struct {
-    /// this holds the (possibly unfinished) type and can also be undefined,
-    /// depending on the current pass.
-    generated: Type = undefined,
-    /// defines which prototype is instaniated and which arguments have been
-    /// given.
-    content: union(enum) {
+    pub const Content = union(enum) {
       optional: struct {
         inner: *Node,
       },
@@ -484,7 +479,13 @@ pub const Node = struct {
       @"enum": struct {
         values: []*Node,
       },
-    },
+    };
+    /// this holds the (possibly unfinished) type and can also be undefined,
+    /// depending on the current pass.
+    generated: Type = undefined,
+    /// defines which prototype is instaniated and which arguments have been
+    /// given.
+    content: Content,
 
     pub inline fn node(self: *@This()) *Node {
       return Node.parent(self);
@@ -730,6 +731,7 @@ pub const Type = union(enum) {
     repr: *Callable,
 
     pub inline fn typedef(self: *const @This()) Type {
+      std.debug.print("Callable.typedef({s})\n", .{@tagName(self.kind)});
       return Structural.typedef(self);
     }
   };
@@ -962,7 +964,7 @@ pub const Type = union(enum) {
 };
 
 pub const Prototype = enum {
-  numeric, float, @"enum", optional, concat, list, paragraphs, record,
+  numeric, float, @"enum", optional, concat, list, paragraphs, map, record,
   intersection,
 };
 
@@ -1226,6 +1228,11 @@ pub const Value = struct {
       self.primary = v;
       return self;
     }
+
+    pub inline fn withVarargs(self: *Location, v: Position) *Location {
+      self.varargs = v;
+      return self;
+    }
   };
 
   pub const Definition = struct {
@@ -1452,9 +1459,11 @@ pub const NodeGenerator = struct {
       pos, .{.resolved_symref = content})).data.resolved_symref;
   }
 
-  pub inline fn typegen(self: *Self, pos: Position, content: Node.Typegen)
+  pub inline fn typegen(
+      self: *Self, pos: Position, content: Node.Typegen.Content)
       !*Node.Typegen {
-    return &(try self.node(pos, .{.typegen = content})).data.typegen;
+    return &(try self.node(
+      pos, .{.typegen = .{.content = content}})).data.typegen;
   }
 
   pub inline fn ucall(self: *Self, pos: Position,

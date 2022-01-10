@@ -146,11 +146,15 @@ pub const Lattice = struct {
     location: Constructor,
     definition: Constructor,
     raw: Constructor,
-    /// Prototype implementations that generate type instances.
+    /// Prototype implementations that generate types.
     prototypes: struct {
-      record: Constructor,
+      optional: Constructor,
       concat: Constructor,
       list: Constructor,
+      paragraphs: Constructor,
+      map: Constructor,
+      record: Constructor,
+      // TODO: intersection, scalars
     },
   },
   /// predefined types. TODO: move these to system.ny
@@ -211,10 +215,13 @@ pub const Lattice = struct {
   pub fn prototypeConstructor(self: *const Self, pt: model.Prototype)
       *const Constructor {
     return switch (pt) {
-      .record => &self.constructors.prototypes.record,
-      .concat => &self.constructors.prototypes.concat,
-      .list   => &self.constructors.prototypes.list,
-      else    => unreachable,
+      .optional   => &self.constructors.prototypes.optional,
+      .concat     => &self.constructors.prototypes.concat,
+      .list       => &self.constructors.prototypes.list,
+      .paragraphs => &self.constructors.prototypes.paragraphs,
+      .map        => &self.constructors.prototypes.map,
+      .record     => &self.constructors.prototypes.record,
+      else    => unreachable, // TODO
     };
   }
 
@@ -617,7 +624,7 @@ pub const Lattice = struct {
   pub fn list(self: *Self, t: model.Type) std.mem.Allocator.Error!?model.Type {
     switch (t) {
       .intrinsic => |i| switch (i) {
-        .void, .prototype, .schema, .extension, .ast_node => return null,
+        .void, .prototype, .schema, .extension => return null,
         else => {},
       },
       else => {},

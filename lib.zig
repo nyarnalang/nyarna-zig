@@ -268,6 +268,81 @@ pub const Intrinsics = Provider.Wrapper(struct {
     return intpr.node_gen.@"void"(pos);
   }
 
+  fn @"Optional"(intpr: *Interpreter, pos: model.Position,
+                 inner: *model.Node) nyarna.Error!*model.Node {
+    return if (switch (inner.data) {
+      .void => blk: {
+        intpr.loader.logger.MissingParameterArgument(
+          "inner", pos, model.Position.intrinsic());
+        break :blk true;
+      },
+      .poison => true,
+      else => false
+    }) intpr.node_gen.poison(pos) else (
+      try intpr.node_gen.typegen(pos, .{.optional = .{.inner = inner}})).node();
+  }
+
+  fn @"Concat"(intpr: *Interpreter, pos: model.Position,
+               inner: *model.Node) nyarna.Error!*model.Node {
+    return if (switch (inner.data) {
+      .void => blk: {
+        intpr.loader.logger.MissingParameterArgument(
+          "inner", pos, model.Position.intrinsic());
+        break :blk true;
+      },
+      .poison => true,
+      else => false,
+    }) intpr.node_gen.poison(pos) else (
+      try intpr.node_gen.typegen(pos, .{.concat = .{.inner = inner}})).node();
+  }
+
+  fn @"List"(intpr: *Interpreter, pos: model.Position,
+             inner: *model.Node) nyarna.Error!*model.Node {
+    return if (switch (inner.data) {
+      .void => blk: {
+        intpr.loader.logger.MissingParameterArgument(
+          "inner", pos, model.Position.intrinsic());
+        break :blk true;
+      },
+      .poison => true,
+      else => false,
+    }) intpr.node_gen.poison(pos) else (
+      try intpr.node_gen.typegen(pos, .{.list = .{.inner = inner}})).node();
+  }
+
+  fn @"Paragraphs"(intpr: *Interpreter, pos: model.Position,
+                   inners: []*model.Node, auto: ?*model.Node)
+      nyarna.Error!*model.Node {
+    return (try intpr.node_gen.typegen(pos, .{.paragraphs = .{
+      .inners = inners, .auto = auto}})).node();
+  }
+
+  fn @"Map"(intpr: *Interpreter, pos: model.Position,
+            key: *model.Node, value: *model.Node) nyarna.Error!*model.Node {
+    var invalid = switch (key.data) {
+      .void => blk: {
+        intpr.loader.logger.MissingParameterArgument(
+          "key", pos, model.Position.intrinsic());
+        break :blk true;
+      },
+      .poison => true,
+      else => false
+    };
+    switch (value.data) {
+      .void => {
+        intpr.loader.logger.MissingParameterArgument(
+          "value", pos, model.Position.intrinsic());
+        invalid = true;
+      },
+      .poison => invalid = true,
+      else => {}
+    }
+    return if (invalid) intpr.node_gen.poison(pos)
+    else (try intpr.node_gen.typegen(pos, .{
+      .map = .{.key = key, .value = value}
+    })).node();
+  }
+
   fn @"Record"(intpr: *Interpreter, pos: model.Position,
             fields: *model.Value.Concat) nyarna.Error!*model.Node {
     var res = try intpr.createPublic(model.Type.Instantiated);
@@ -445,7 +520,7 @@ fn prototypeConstructor(context: *Context, p: *Provider, name: []const u8,
 pub fn intrinsicModule(context: *Context) !*model.Module {
   var ret = try context.allocator().create(model.Module);
   ret.root = try context.genLiteral(model.Position.intrinsic(), .void);
-  ret.symbols = try context.allocator().alloc(*model.Symbol, 6);
+  ret.symbols = try context.allocator().alloc(*model.Symbol, 11);
   var index: usize = 0;
 
   var ip = Intrinsics.init();
@@ -500,7 +575,7 @@ pub fn intrinsicModule(context: *Context) !*model.Module {
   // type symbols
   //-------------
 
-  // location
+  // Location
   var b = try types.SigBuilder(.intrinsic).init(
     context.allocator(), 8, .{.intrinsic = .ast_node}, false);
   try b.push(try intLoc(context, "name", .{.intrinsic = .literal})); // TODO: identifier
@@ -523,7 +598,7 @@ pub fn intrinsicModule(context: *Context) !*model.Module {
     typeSymbol(context, "Location", model.Type{.intrinsic = .location});
   index += 1;
 
-  // definition
+  // Definition
   b = try types.SigBuilder(.intrinsic).init(
     context.allocator(), 3, .{.intrinsic = .ast_node}, false);
   try b.push(try intLoc(context, "name", .{.intrinsic = .literal})); // TODO: identifier
@@ -533,20 +608,7 @@ pub fn intrinsicModule(context: *Context) !*model.Module {
   context.types.constructors.definition = try
     typeConstructor(context, &ip.provider, "Definition", b.finish());
   ret.symbols[index] = try
-    typeSymbol(context, "Definition", model.Type{.intrinsic = .definition});
-  index += 1;
-
-  // record
-  b = try types.SigBuilder(.intrinsic).init(
-    context.allocator(), 1, .{.intrinsic = .ast_node}, false);
-  // TODO: allow record to extend other record (?)
-  try b.push((try intLoc(context, "fields", (try context.types.concat(
-    model.Type{.intrinsic = .location})).?)).withHeader(
-      location_block).withPrimary(model.Position.intrinsic()));
-  context.types.constructors.prototypes.record = try
-    prototypeConstructor(context, &ip.provider, "Record", b.finish());
-  ret.symbols[index] = try
-    prototypeSymbol(context, "Record", .record);
+    typeSymbol(context, "Definition", .{.intrinsic = .definition});
   index += 1;
 
   // Raw
@@ -557,8 +619,76 @@ pub fn intrinsicModule(context: *Context) !*model.Module {
       model.Position.intrinsic()));
   context.types.constructors.raw = try
     typeConstructor(context, &ip.provider, "Raw", b.finish());
-  ret.symbols[index] =
-    try typeSymbol(context, "Raw", model.Type{.intrinsic = .raw});
+  ret.symbols[index] = try typeSymbol(context, "Raw", .{.intrinsic = .raw});
+  index += 1;
+
+  //------------------
+  // prototype symbols
+  //------------------
+
+  // Optional
+  b = try types.SigBuilder(.intrinsic).init(
+    context.allocator(), 1, .{.intrinsic = .ast_node}, false);
+  try b.push((try intLoc(context, "inner", .{.intrinsic = .ast_node}
+    )).withPrimary(model.Position.intrinsic()));
+  context.types.constructors.prototypes.optional = try
+    prototypeConstructor(context, &ip.provider, "Optional", b.finish());
+  ret.symbols[index] = try prototypeSymbol(context, "Optional", .optional);
+  index += 1;
+
+  // Concat
+  b = try types.SigBuilder(.intrinsic).init(
+    context.allocator(), 1, .{.intrinsic = .ast_node}, false);
+  try b.push((try intLoc(context, "inner", .{.intrinsic = .ast_node}
+    )).withPrimary(model.Position.intrinsic()));
+  context.types.constructors.prototypes.concat = try
+    prototypeConstructor(context, &ip.provider, "Concat", b.finish());
+  ret.symbols[index] = try prototypeSymbol(context, "Concat", .concat);
+  index += 1;
+
+  // List
+  b = try types.SigBuilder(.intrinsic).init(
+    context.allocator(), 1, .{.intrinsic = .ast_node}, false);
+  try b.push((try intLoc(context, "inner", .{.intrinsic = .ast_node}
+    )).withPrimary(model.Position.intrinsic()));
+  context.types.constructors.prototypes.list = try
+    prototypeConstructor(context, &ip.provider, "List", b.finish());
+  ret.symbols[index] = try prototypeSymbol(context, "List", .list);
+  index += 1;
+
+  // Paragraphs
+  b = try types.SigBuilder(.intrinsic).init(
+    context.allocator(), 2, .{.intrinsic = .ast_node}, false);
+  try b.push((try intLoc(context, "inners", (try context.types.list(
+    .{.intrinsic = .ast_node})).?)).withVarargs(model.Position.intrinsic()
+    ).withPrimary(model.Position.intrinsic()));
+  try b.push(try intLoc(context, "auto", (try context.types.optional(
+    .{.intrinsic = .ast_node})).?));
+  context.types.constructors.prototypes.paragraphs = try
+    prototypeConstructor(context, &ip.provider, "Paragraphs", b.finish());
+  ret.symbols[index] = try prototypeSymbol(context, "Paragraphs", .paragraphs);
+  index += 1;
+
+  // Map
+  b = try types.SigBuilder(.intrinsic).init(
+    context.allocator(), 2, .{.intrinsic = .ast_node}, false);
+  try b.push(try intLoc(context, "key", .{.intrinsic = .ast_node}));
+  try b.push(try intLoc(context, "value", .{.intrinsic = .ast_node}));
+  context.types.constructors.prototypes.map = try
+    prototypeConstructor(context, &ip.provider, "Map", b.finish());
+  ret.symbols[index] = try prototypeSymbol(context, "Map", .map);
+  index += 1;
+
+  // Record
+  b = try types.SigBuilder(.intrinsic).init(
+    context.allocator(), 1, .{.intrinsic = .ast_node}, false);
+  // TODO: allow record to extend other record (?)
+  try b.push((try intLoc(context, "fields", (try context.types.concat(
+    model.Type{.intrinsic = .location})).?)).withHeader(
+      location_block).withPrimary(model.Position.intrinsic()));
+  context.types.constructors.prototypes.record = try
+    prototypeConstructor(context, &ip.provider, "Record", b.finish());
+  ret.symbols[index] = try prototypeSymbol(context, "Record", .record);
   index += 1;
 
   //-------------------
