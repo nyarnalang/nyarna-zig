@@ -3,7 +3,7 @@ const builtin = @import("builtin");
 const nyarna = @import("../nyarna.zig");
 const model = nyarna.model;
 const errors = nyarna.errors;
-const Interpreter = nyarna.Interpreter;
+const Interpreter = @import("interpret.zig").Interpreter;
 
 const lex = @import("lex.zig");
 const mapper = @import("mapper.zig");
@@ -277,7 +277,7 @@ pub const Parser = struct {
   }
 
   inline fn logger(self: *@This()) *errors.Handler {
-    return &self.intpr().loader.logger;
+    return self.intpr().ctx.logger;
   }
 
   pub fn init() Parser {
@@ -497,7 +497,7 @@ pub const Parser = struct {
           .known = .{
             .target = target_expr,
             .ns = undefined,
-            .signature = self.intpr().types().prototypeConstructor(
+            .signature = self.intpr().ctx.types().prototypeConstructor(
               pref.*).callable.sig,
             .first_arg = null,
           },
@@ -936,7 +936,7 @@ pub const Parser = struct {
               const check_swallow = if (self.cur == .diamond_open) blk: {
                 bh.config = @as(model.BlockConfig, undefined);
                 try self.readBlockConfig(&bh.config.?,
-                  self.intpr().loader.context.allocator());
+                  self.intpr().ctx.global());
                 if (self.cur == .blocks_sep) {
                   self.advance();
                   break :blk true;

@@ -27,10 +27,10 @@ pub fn lexTest(f: *tml.File) !void {
     .locator_ctx = ".doc.",
   };
   var r = errors.CmdLineReporter.init();
-  var ctx = try nyarna.Context.create(
+  var data = try nyarna.Globals.create(
     std.testing.allocator, &r.reporter, nyarna.default_stack_size);
-  defer ctx.destroy();
-  var ml = try nyarna.ModuleLoader.create(ctx, &src, &.{});
+  defer data.destroy();
+  var ml = try nyarna.ModuleLoader.create(data, &src, &.{});
   defer ml.destroy();
   var lexer = try ml.initLexer();
   defer lexer.deinit();
@@ -68,13 +68,13 @@ pub fn lexTest(f: *tml.File) !void {
   }
 }
 
-const AdditionalsWithContext = struct {
+const AdditionalsWithGlobal = struct {
   value: *const model.Node.Location.Additionals,
-  context: *nyarna.Context,
+  data: *nyarna.Globals,
 };
 
 fn formatAdditionals(
-    a: AdditionalsWithContext, comptime fmt: []const u8,
+    a: AdditionalsWithGlobal, comptime fmt: []const u8,
     options: std.fmt.FormatOptions, writer: anytype) !void {
   try writer.writeByte('{');
   var first = true;
@@ -87,7 +87,7 @@ fn formatAdditionals(
   try writer.writeAll("}");
   if (a.value.header) |h|
     try formatBlockHeader(
-      .{.header = h, .context = a.context}, fmt, options, writer);
+      .{.header = h, .data = a.data}, fmt, options, writer);
 }
 
 fn formatTypeName(t: model.Type, comptime _: []const u8,
@@ -100,12 +100,12 @@ fn formatTypeName(t: model.Type, comptime _: []const u8,
   }
 }
 
-const HeaderWithContext = struct {
+const HeaderWithGlobal = struct {
   header: *const model.Value.BlockHeader,
-  context: *nyarna.Context,
+  data: *nyarna.Globals,
 };
 
-fn formatBlockHeader(hc: HeaderWithContext, comptime _: []const u8,
+fn formatBlockHeader(hc: HeaderWithGlobal, comptime _: []const u8,
                      _: std.fmt.FormatOptions, writer: anytype) !void {
   if (hc.header.config) |config| {
     try writer.writeAll(":<");
@@ -168,7 +168,7 @@ fn AstEmitter(Handler: anytype) type {
 
     handler: Handler,
     depth: usize,
-    context: *nyarna.Context,
+    data: *nyarna.Globals,
 
     fn emitLine(self: *Self, comptime fmt: []const u8, args: anytype)
         !void {
@@ -316,8 +316,7 @@ fn AstEmitter(Handler: anytype) type {
             .record => |rec|
               for (rec.fields) |field| try self.process(field.node()),
             .intersection => |inter| {
-              if (inter.scalar_type) |s| try self.process(s);
-              for (inter.record_types) |r| try self.process(r);
+              for (inter.types) |t| try self.process(t);
             },
             .textual => unreachable, // TODO
             .numeric => |num| {
@@ -353,7 +352,7 @@ fn AstEmitter(Handler: anytype) type {
             if (a.primary != null or a.varargs != null or a.varmap != null or
                 a.mutable != null or a.header != null) {
               const fmt = std.fmt.Formatter(formatAdditionals){.data = .{
-                .value = a, .context = self.context,
+                .value = a, .data = self.data,
               }};
               try self.emitLine("=FLAGS {}", .{fmt});
             }
@@ -451,7 +450,7 @@ fn AstEmitter(Handler: anytype) type {
         .float => |_| {
           unreachable;
         },
-        .enumval => |ev| {
+        .@"enum" => |ev| {
           const t = std.fmt.Formatter(formatTypeName){.data = ev.t.typedef()};
           try self.emitLine("=ENUM {} \"{s}\"",
             .{t, ev.t.values.entries.items(.key)[ev.index]});
@@ -509,7 +508,7 @@ fn AstEmitter(Handler: anytype) type {
         .void => try self.emitLine("=VOID", .{}),
         .block_header => |*h| {
           const hf = std.fmt.Formatter(formatBlockHeader){
-            .data = .{.header = h, .context = self.context}
+            .data = .{.header = h, .data = self.data}
           };
           try self.emitLine("=HEADER {}", .{hf});
         },
@@ -560,15 +559,15 @@ const Checker = struct {
       .locator_ctx = ".doc.",
     };
     var r = errors.CmdLineReporter.init();
-    var ctx = try nyarna.Context.create(
+    var data = try nyarna.Globals.create(
       std.testing.allocator, &r.reporter, nyarna.default_stack_size);
-    defer ctx.destroy();
-    var ml = try nyarna.ModuleLoader.create(ctx, &src, &.{});
+    defer data.destroy();
+    var ml = try nyarna.ModuleLoader.create(data, &src, &.{});
     defer ml.destroy();
     var emitter = AstEmitter(*Checker){
       .depth = 0,
       .handler = self,
-      .context = ctx,
+      .data = data,
     };
     try process(&emitter, ml);
     if (self.expected_iter.next()) |line| {

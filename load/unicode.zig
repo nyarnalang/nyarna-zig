@@ -308,11 +308,23 @@ pub const CategorySet = struct {
   }
 
   pub fn create(included: anytype) CategorySet {
-    var ret = CategorySet{.content = 0};
+    var ret = empty();
     inline for (included) |c| {
       ret.content |= 1 << @enumToInt(@as(Category, c));
     }
     return ret;
+  }
+
+  pub fn empty() CategorySet {
+    return .{.content = 0};
+  }
+
+  pub fn include(s: *CategorySet, c: Category) void {
+    s.content |= 1 << @enumToInt(c);
+  }
+
+  pub fn includeSet(s: *CategorySet, other: CategorySet) void {
+    s.content |= other.content;
   }
 };
 

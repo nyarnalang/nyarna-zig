@@ -2,7 +2,7 @@ const std = @import("std");
 const nyarna = @import("../nyarna.zig");
 const model = nyarna.model;
 const Type = model.Type;
-const Interpreter = nyarna.Interpreter;
+const Interpreter = @import("interpret.zig").Interpreter;
 
 pub const Mapper = struct {
   const Self = @This();
@@ -105,7 +105,7 @@ pub const SignatureMapper = struct {
               .config = flag == .block_with_config, .direct = input == .named};
           }
         }
-        self.intpr.loader.logger.UnknownParameter(pos);
+        self.intpr.ctx.logger.UnknownParameter(pos);
         return null;
       },
       .primary => {
@@ -115,7 +115,7 @@ pub const SignatureMapper = struct {
             .param = .{.index = index},
             .config = flag == .block_with_config, .direct = true};
         } else {
-          self.intpr.loader.logger.UnexpectedPrimaryBlock(pos);
+          self.intpr.ctx.logger.UnexpectedPrimaryBlock(pos);
           return null;
         }
       },
@@ -128,11 +128,11 @@ pub const SignatureMapper = struct {
             return Mapper.Cursor{.param = .{.index = index},
               .config = flag == .block_with_config, .direct = false};
           } else {
-            self.intpr.loader.logger.TooManyArguments(pos);
+            self.intpr.ctx.logger.TooManyArguments(pos);
             return null;
           }
         } else {
-          self.intpr.loader.logger.InvalidPositionalArgument(pos);
+          self.intpr.ctx.logger.InvalidPositionalArgument(pos);
           return null;
         }
       },
@@ -182,7 +182,7 @@ pub const SignatureMapper = struct {
       else => {}
     }
     if (self.filled[at.param.index])
-      self.intpr.loader.logger.DuplicateParameterArgument(
+      self.intpr.ctx.logger.DuplicateParameterArgument(
         self.signature.parameters[at.param.index].name, content.pos,
         self.args[at.param.index].pos)
     else {
@@ -213,7 +213,7 @@ pub const SignatureMapper = struct {
           },
           .instantiated => null,
         } orelse {
-          self.intpr.loader.logger.MissingParameterArgument(
+          self.intpr.ctx.logger.MissingParameterArgument(
             param.name, pos, param.pos);
           missing_param = true;
           continue;

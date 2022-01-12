@@ -5,7 +5,6 @@ const errors = nyarna.errors;
 const types = nyarna.types;
 const lib = nyarna.lib;
 
-const ModuleLoader = @import("load.zig").ModuleLoader;
 const parse = @import("parse.zig");
 const syntaxes = @import("syntaxes.zig");
 const graph = @import("graph.zig");
@@ -29,8 +28,8 @@ pub const Interpreter = struct {
   /// The source that is being parsed. Must not be changed during an
   /// interpreter's operation.
   input: *const model.Source,
-  /// The loader that owns this interpreter.
-  loader: *ModuleLoader,
+  /// Context of the ModuleLoader that owns this interpreter.
+  ctx: nyarna.Context,
   /// Maps each existing command character to the index of the namespace it
   /// references. Lexer uses this to check whether a character is a command
   /// character; the namespace mapping is relevant later for the interpreter.
@@ -63,13 +62,13 @@ pub const Interpreter = struct {
   /// convenience object to generate nodes using the interpreter's storage.
   node_gen: model.NodeGenerator,
 
-  pub fn create(loader: *ModuleLoader,
+  pub fn create(ctx: nyarna.Context,
                 input: *const model.Source) !*Interpreter {
-    var arena = std.heap.ArenaAllocator.init(loader.context.backing_allocator);
+    var arena = std.heap.ArenaAllocator.init(ctx.local());
     var ret = try arena.allocator().create(Interpreter);
     ret.* = .{
       .input = input,
-      .loader = loader,
+      .ctx = ctx,
       .storage = arena,
       .command_characters = .{},
       .namespaces = .{},
@@ -93,11 +92,7 @@ pub const Interpreter = struct {
 
   /// create an object in the public (Loader-wide) storage.
   pub inline fn createPublic(self: *Interpreter, comptime T: type) !*T {
-    return self.loader.context.allocator().create(T);
-  }
-
-  pub inline fn types(self: *Interpreter) *nyarna.types.Lattice {
-    return &self.loader.context.types;
+    return self.ctx.global().create(T);
   }
 
   /// returns the allocator for interpreter-local storage, i.e. values that
@@ -116,7 +111,7 @@ pub const Interpreter = struct {
     try self.namespaces.append(self.allocator(), .{});
     //const ns = &self.namespaces.items[index]; TODO: do we need this?
     // intrinsic symbols of every namespace.
-    try self.importModuleSyms(self.loader.context.intrinsics, index);
+    try self.importModuleSyms(self.ctx.data.intrinsics, index);
   }
 
   pub fn importModuleSyms(self: *Interpreter, module: *const model.Module,
@@ -167,9 +162,9 @@ pub const Interpreter = struct {
           self.reportResolveFailures(item.content, immediate);
       },
       .unresolved_symref => if (immediate)
-        self.loader.logger.CannotResolveImmediately(node.pos)
+        self.ctx.logger.CannotResolveImmediately(node.pos)
       else
-        self.loader.logger.UnknownSymbol(node.pos),
+        self.ctx.logger.UnknownSymbol(node.pos),
       .typegen => |*tg| switch (tg.content) {
         .optional => |*opt| self.reportResolveFailures(opt.inner, immediate),
         .concat => |*con| self.reportResolveFailures(con.inner, immediate),
@@ -183,8 +178,7 @@ pub const Interpreter = struct {
         .record => |*rct| for (rct.fields) |field|
           self.reportResolveFailures(field.node(), immediate),
         .intersection => |*inter| {
-          if (inter.scalar_type) |s| self.reportResolveFailures(s, immediate);
-          for (inter.record_types) |r| self.reportResolveFailures(r, immediate);
+          for (inter.types) |t| self.reportResolveFailures(t, immediate);
         },
         .textual => unreachable,
         .numeric => |*num| {
@@ -238,7 +232,7 @@ pub const Interpreter = struct {
         const expr =
           try self.createPublic(model.Expression);
         if (ref.prefix != null) {
-          self.loader.logger.PrefixedFunctionMustBeCalled(input.pos);
+          self.ctx.logger.PrefixedFunctionMustBeCalled(input.pos);
           expr.fillPoison(input.pos);
         } else {
           self.fillLiteral(input.pos, expr, .{
@@ -308,7 +302,7 @@ pub const Interpreter = struct {
             break :innerblk &ass.target.resolved;
           },
           .func_ref, .type_ref, .proto_ref, .expr_chain => {
-            self.loader.logger.InvalidLvalue(node.pos);
+            self.ctx.logger.InvalidLvalue(node.pos);
             const expr = try self.createPublic(model.Expression);
             expr.fillPoison(ass.node().pos);
             return expr;
@@ -329,7 +323,7 @@ pub const Interpreter = struct {
       return null;
     };
     const expr = try self.createPublic(model.Expression);
-    const path = try self.loader.context.allocator().dupe(usize, target.path);
+    const path = try self.ctx.global().dupe(usize, target.path);
     expr.* = .{
       .pos = ass.node().pos,
       .data = .{
@@ -404,7 +398,7 @@ pub const Interpreter = struct {
     };
     const is_keyword = sig.returns.is(.ast_node);
     const cur_allocator = if (is_keyword) self.allocator()
-                          else self.loader.context.allocator();
+                          else self.ctx.global();
     var failed_to_interpret = std.ArrayListUnmanaged(*model.Node){};
     var args_failed_to_interpret = false;
     // in-place modification of args requires that the arg nodes have been
@@ -462,7 +456,7 @@ pub const Interpreter = struct {
       .expected_type = sig.returns,
     };
     if (is_keyword) {
-      var eval = nyarna.Evaluator{.context = self.loader.context};
+      var eval = self.ctx.evaluator();
       const res = try eval.evaluateKeywordCall(self, &expr.data.call);
       const interpreted_res =
         try self.tryInterpret(res, report_failure, ctx);
@@ -491,7 +485,7 @@ pub const Interpreter = struct {
         poison = true;
         break :blk null;
       }
-      var eval = nyarna.Evaluator{.context = self.loader.context};
+      var eval = self.ctx.evaluator();
       var val = try eval.evaluate(expr);
       break :blk val.data.@"type".t;
     } else null;
@@ -506,9 +500,9 @@ pub const Interpreter = struct {
         break :blk null;
       }
       if (t) |given_type| {
-        if (!self.types().lesserEqual(val.expected_type, given_type)
+        if (!self.ctx.types().lesserEqual(val.expected_type, given_type)
             and !val.expected_type.is(.poison)) {
-          self.loader.logger.ExpectedExprOfTypeXGotY(
+          self.ctx.logger.ExpectedExprOfTypeXGotY(
             val.pos, &[_]model.Type{given_type, val.expected_type});
           poison = true;
           break :blk null;
@@ -517,20 +511,20 @@ pub const Interpreter = struct {
       break :blk val;
     } else null;
     if (!poison and !incomplete and t == null and expr == null) {
-      self.loader.logger.MissingSymbolType(loc.node().pos);
+      self.ctx.logger.MissingSymbolType(loc.node().pos);
       poison = true;
     }
     if (loc.additionals) |add| {
       if (add.varmap) |varmap| {
         if (add.varargs) |varargs| {
-          self.loader.logger.IncompatibleFlag("varmap", varmap, varargs);
+          self.ctx.logger.IncompatibleFlag("varmap", varmap, varargs);
           poison = true;
         } else if (add.mutable) |mutable| {
-          self.loader.logger.IncompatibleFlag("varmap", varmap, mutable);
+          self.ctx.logger.IncompatibleFlag("varmap", varmap, mutable);
           poison = true;
         }
       } else if (add.varargs) |varargs| if (add.mutable) |mutable| {
-        self.loader.logger.IncompatibleFlag("mutable", mutable, varargs);
+        self.ctx.logger.IncompatibleFlag("mutable", mutable, varargs);
         poison = true;
       };
     }
@@ -550,7 +544,7 @@ pub const Interpreter = struct {
         .text = .{
           .t = model.Type{.intrinsic = .literal},
           .content =
-            try self.loader.context.allocator().dupe(u8, loc.name.content),
+            try self.ctx.global().dupe(u8, loc.name.content),
         },
       },
     };
@@ -574,16 +568,16 @@ pub const Interpreter = struct {
       nyarna.Error!?*model.Expression {
     const expr = (try self.tryInterpret(def.content, report_failure, ctx))
       orelse return null;
-    if (!self.types().lesserEqual(
+    if (!self.ctx.types().lesserEqual(
         expr.expected_type, model.Type{.intrinsic = .@"type"}) and
         !expr.expected_type.isStructural(.callable)) {
-      self.loader.logger.InvalidDefinitionValue(
+      self.ctx.logger.InvalidDefinitionValue(
         expr.pos, &.{expr.expected_type});
       const pe = try self.allocator().create(model.Expression);
       pe.fillPoison(def.node().pos);
       return pe;
     }
-    var eval = nyarna.Evaluator{.context = self.loader.context};
+    var eval = self.ctx.evaluator();
     var name = try self.createPublic(model.Value);
     name.* = .{
       .origin = def.name.node().pos,
@@ -591,7 +585,7 @@ pub const Interpreter = struct {
         .text = .{
           .t = model.Type{.intrinsic = .literal},
           .content =
-            try self.loader.context.allocator().dupe(u8, def.name.content),
+            try self.ctx.global().dupe(u8, def.name.content),
         },
       },
     };
@@ -643,7 +637,7 @@ pub const Interpreter = struct {
         .text = .{
           .t = model.Type{
             .intrinsic = if (lit.kind == .space) .space else .literal},
-          .content = try self.loader.context.allocator().dupe(u8, lit.content),
+          .content = try self.ctx.global().dupe(u8, lit.content),
         },
       }),
       .unresolved_symref, .unresolved_call => blk: {
@@ -746,7 +740,7 @@ pub const Interpreter = struct {
           },
           .func_ref => |ref| {
             if (ref.prefix != null) {
-              self.loader.logger.PrefixedFunctionMustBeCalled(
+              self.ctx.logger.PrefixedFunctionMustBeCalled(
                 value.subject.pos);
               return .poison;
             }
@@ -832,7 +826,7 @@ pub const Interpreter = struct {
         already_poison = true;
         continue;
       }
-      sup = try self.types().sup(sup, t);
+      sup = try self.ctx.types().sup(sup, t);
       if (first_incompatible == null and sup.is(.poison)) {
         first_incompatible = i;
       }
@@ -845,7 +839,7 @@ pub const Interpreter = struct {
       while (j < index) : (j += 1) {
         type_arr[j + 1] = (try self.probeType(nodes[j], ctx)).?;
       }
-      self.loader.logger.IncompatibleTypes(nodes[index].pos, type_arr);
+      self.ctx.logger.IncompatibleTypes(nodes[index].pos, type_arr);
       break :blk model.Type{.intrinsic = .poison};
     } else if (already_poison) model.Type{.intrinsic = .poison}
     else if (seen_unfinished) null else sup;
@@ -865,7 +859,7 @@ pub const Interpreter = struct {
         seen_unfinished = true;
         break;
       };
-      sup = try self.types().sup(sup, self.containedScalar(t) or continue);
+      sup = try self.ctx.types().sup(sup, self.containedScalar(t) or continue);
     }
     return if (seen_unfinished) null else sup;
   }
@@ -896,8 +890,8 @@ pub const Interpreter = struct {
         var inner =
           (try self.probeNodeList(con.items, ctx)) orelse return null;
         if (!inner.is(.poison))
-          inner = (try self.types().concat(inner)) orelse {
-            self.loader.logger.InvalidInnerConcatType(
+          inner = (try self.ctx.types().concat(inner)) orelse {
+            self.ctx.logger.InvalidInnerConcatType(
               node.pos, &[_]model.Type{inner});
             std.debug.panic("here", .{});
             node.data = .poisonNode;
@@ -910,7 +904,7 @@ pub const Interpreter = struct {
       },
       .paras => |*para| {
         var builder =
-          nyarna.types.ParagraphTypeBuilder.init(self.types(), false);
+          nyarna.types.ParagraphTypeBuilder.init(self.ctx.types(), false);
         var seen_unfinished = false;
         for (para.items) |*item|
           try builder.push((try self.probeType(item.content, ctx)) orelse {
@@ -942,11 +936,11 @@ pub const Interpreter = struct {
           },
           .prototype => |pt| return @as(?model.Type, switch (pt) {
             .record =>
-              self.types().constructors.prototypes.record.callable.typedef(),
+              self.ctx.types().constructors.prototypes.record.callable.typedef(),
             .concat =>
-              self.types().constructors.prototypes.concat.callable.typedef(),
+              self.ctx.types().constructors.prototypes.concat.callable.typedef(),
             .list =>
-              self.types().constructors.prototypes.list.callable.typedef(),
+              self.ctx.types().constructors.prototypes.list.callable.typedef(),
             else => model.Type{.intrinsic = .prototype},
           }),
         };
@@ -980,12 +974,12 @@ pub const Interpreter = struct {
   pub inline fn fillLiteral(
       self: *Interpreter, at: model.Position, e: *model.Expression,
       content: model.Value.Data) void {
-    self.loader.context.fillLiteral(at, e, content);
+    self.ctx.data.fillLiteral(at, e, content);
   }
 
   pub inline fn genPublicLiteral(self: *Interpreter, at: model.Position,
                                  content: model.Value.Data) !*model.Expression {
-    return self.loader.context.genLiteral(at, content);
+    return self.ctx.data.genLiteral(at, content);
   }
 
   pub inline fn genValueNode(self: *Interpreter, pos: model.Position,
@@ -1010,10 +1004,10 @@ pub const Interpreter = struct {
             .text = .{
               .t = t,
               .content =
-                try self.loader.context.allocator().dupe(u8, l.content),
+                try self.ctx.global().dupe(u8, l.content),
             },
           }) else {
-            self.loader.logger.ExpectedExprOfTypeXGotY(
+            self.ctx.logger.ExpectedExprOfTypeXGotY(
               l.node().pos, &[_]model.Type{t, .{.intrinsic = .literal}});
             e.fillPoison(l.node().pos);
           },
@@ -1022,7 +1016,7 @@ pub const Interpreter = struct {
             .text = .{
               .t = t,
               .content =
-                try self.loader.context.allocator().dupe(u8, l.content),
+                try self.ctx.global().dupe(u8, l.content),
             },
           }),
         else =>
@@ -1030,7 +1024,7 @@ pub const Interpreter = struct {
           .text = .{
             .t = .{.intrinsic = if (l.kind == .text) .literal else .space},
             .content =
-              try self.loader.context.allocator().dupe(u8, l.content),
+              try self.ctx.global().dupe(u8, l.content),
           },
         }),
       },
@@ -1040,7 +1034,7 @@ pub const Interpreter = struct {
         .paragraphs => unreachable,
         .list => |*list| try self.createTextLiteral(l, list.inner, e), // TODO
         .map, .callable => {
-          self.loader.logger.ExpectedExprOfTypeXGotY(
+          self.ctx.logger.ExpectedExprOfTypeXGotY(
             l.node().pos, &[_]model.Type{t, .{.intrinsic = .literal}});
           e.fillPoison(l.node().pos);
         },
@@ -1048,7 +1042,7 @@ pub const Interpreter = struct {
           if (inter.scalar) |scalar| {
             try self.createTextLiteral(l, scalar, e);
           } else {
-            self.loader.logger.ExpectedExprOfTypeXGotY(
+            self.ctx.logger.ExpectedExprOfTypeXGotY(
               l.node().pos, &[_]model.Type{t, .{.intrinsic = .literal}});
             e.fillPoison(l.node().pos);
           }
@@ -1059,7 +1053,7 @@ pub const Interpreter = struct {
         .float => unreachable, // TODO
         .tenum => unreachable, // TODO
         .record => {
-          self.loader.logger.ExpectedExprOfTypeXGotY(l.node().pos,
+          self.ctx.logger.ExpectedExprOfTypeXGotY(l.node().pos,
             &[_]model.Type{
               t, .{.intrinsic = if (l.kind == .text) .literal else .space},
             });
@@ -1094,9 +1088,9 @@ pub const Interpreter = struct {
           var actual_type =
             (try self.probeType(input, null)) orelse return null;
           if (!actual_type.is(.poison) and
-              !self.types().lesserEqual(actual_type, t)) {
+              !self.ctx.types().lesserEqual(actual_type, t)) {
             actual_type = .{.intrinsic = .poison};
-            self.loader.logger.ExpectedExprOfTypeXGotY(
+            self.ctx.logger.ExpectedExprOfTypeXGotY(
               input.pos, &[_]model.Type{t, actual_type});
           }
           if (actual_type.is(.poison)) {
@@ -1128,7 +1122,7 @@ pub const Interpreter = struct {
           }
         }
         if (failed_some) return null;
-        const exprs = try self.loader.context.allocator().alloc(
+        const exprs = try self.ctx.global().alloc(
           *model.Expression, br.branches.len);
         for (br.branches) |item, i|
           exprs[i] = item.data.expression;
@@ -1150,9 +1144,9 @@ pub const Interpreter = struct {
           var actual_type =
             (try self.probeType(input, null)) orelse return null;
           if (!actual_type.is(.poison) and
-              !self.types().lesserEqual(actual_type, t)) {
+              !self.ctx.types().lesserEqual(actual_type, t)) {
             actual_type = .{.intrinsic = .poison};
-            self.loader.logger.ExpectedExprOfTypeXGotY(
+            self.ctx.logger.ExpectedExprOfTypeXGotY(
               input.pos, &[_]model.Type{t, actual_type});
           }
           if (actual_type.is(.poison)) {
@@ -1176,7 +1170,7 @@ pub const Interpreter = struct {
           }
         }
         if (failed_some) return null;
-        const exprs = try self.loader.context.allocator().alloc(
+        const exprs = try self.ctx.global().alloc(
           *model.Expression, con.items.len);
         // TODO: properly handle paragraph types
         for (con.items) |item, i|
@@ -1221,12 +1215,12 @@ pub const Interpreter = struct {
     return if (try self.interpretWithTargetType(node, t, false, ctx)) |expr|
       blk: {
         if (expr.expected_type.is(.poison)) break :blk expr;
-        if (self.types().lesserEqual(expr.expected_type, t)) {
+        if (self.ctx.types().lesserEqual(expr.expected_type, t)) {
           expr.expected_type = t;
           break :blk expr;
         }
         // TODO: semantic conversions here
-        self.loader.logger.ExpectedExprOfTypeXGotY(
+        self.ctx.logger.ExpectedExprOfTypeXGotY(
           node.pos, &[_]model.Type{t, expr.expected_type});
         expr.fillPoison(node.pos);
         break :blk expr;

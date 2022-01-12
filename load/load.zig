@@ -5,6 +5,7 @@ const errors = nyarna.errors;
 const model = nyarna.model;
 const lib = nyarna.lib;
 const Context = nyarna.Context;
+const Interpreter = @import("interpret.zig").Interpreter;
 const parse = @import("parse.zig");
 const lex = @import("lex.zig");
 
@@ -12,9 +13,9 @@ const lex = @import("lex.zig");
 /// interruptible loader of a module. Interrupts happen when a reference to
 /// a module that has not yet been loaded occurs.
 pub const ModuleLoader = struct {
-  context: *Context,
+  data: *nyarna.Globals,
   parser: parse.Parser,
-  interpreter: *nyarna.Interpreter,
+  interpreter: *Interpreter,
   /// The error handler which is used to report any recoverable errors that
   /// are encountered. If one or more errors are encountered during loading,
   /// the input is considered to be invalid.
@@ -22,18 +23,20 @@ pub const ModuleLoader = struct {
   public_syms: std.ArrayListUnmanaged(*model.Symbol),
 
   /// TODO: process args
-  pub fn create(context: *Context, input: *const model.Source,
+  pub fn create(data: *nyarna.Globals, input: *const model.Source,
                 _: []*const model.Source) !*ModuleLoader {
-    var ret = try context.allocator().create(ModuleLoader);
-    ret.context = context;
+    var ret = try data.storage.allocator().create(ModuleLoader);
+    ret.data = data;
     ret.public_syms = .{};
-    ret.logger = .{
-      .reporter = context.reporter,
-    };
-    errdefer context.allocator().destroy(ret);
-    ret.interpreter = try nyarna.Interpreter.create(ret, input);
+    ret.logger = .{.reporter = data.reporter};
+    errdefer data.storage.allocator().destroy(ret);
+    ret.interpreter = try Interpreter.create(ret.ctx(), input);
     ret.parser = parse.Parser.init();
     return ret;
+  }
+
+  inline fn ctx(self: *ModuleLoader) Context {
+    return Context{.data = self.data, .logger = &self.logger};
   }
 
   pub fn deinit(self: *ModuleLoader) void {
@@ -41,9 +44,9 @@ pub const ModuleLoader = struct {
   }
 
   pub fn destroy(self: *ModuleLoader) void {
-    const context = self.interpreter.loader.context;
+    const allocator = self.data.storage.allocator();
     self.deinit();
-    context.allocator().destroy(self);
+    allocator.destroy(self);
   }
 
   pub fn load(self: *ModuleLoader, fullast: bool) !*model.Module {

@@ -1,11 +1,12 @@
 const std = @import("std");
 const model = @import("model.zig");
-const interpret = @import("load/interpret.zig");
+const nyarna = @import("nyarna.zig");
+const unicode = @import("load/unicode.zig");
 
 /// a type or prototype constructor.
 pub const Constructor = struct {
   /// contains the signature of the constructor when called.
-  /// has is_type set to true if it's a type, false if it's a prototype.
+  /// has kind set to .@"type" if it's a type, .prototype if it's a prototype.
   callable: *model.Type.Callable,
   /// index of the constructor's implementation.
   impl_index: usize,
@@ -140,12 +141,23 @@ pub const Lattice = struct {
     paragraphs: TreeNode(void),
     callable: TreeNode(bool),
   },
-  /// constructors for all types that have constructors.
-  /// these are to be queried via fn constructor().
+  /// Constructors for all types that have constructors.
+  /// These are to be queried via typeConstructor() and prototypeConstructor().
   constructors: struct {
+    raw: Constructor,
     location: Constructor,
     definition: Constructor,
-    raw: Constructor,
+
+    // the signature of instantiated types' constructors differ per type.
+    // they use the same implementation though. Those implementations' indexes
+    // are given here.
+    generic: struct {
+      textual: usize,
+      numeric: usize,
+      float: usize,
+      @"enum": usize,
+    },
+
     /// Prototype implementations that generate types.
     prototypes: struct {
       optional: Constructor,
@@ -154,36 +166,68 @@ pub const Lattice = struct {
       paragraphs: Constructor,
       map: Constructor,
       record: Constructor,
-      // TODO: intersection, scalars
+      intersection: Constructor,
+      textual: Constructor,
+      numeric: Constructor,
+      float: Constructor,
+      @"enum": Constructor,
     },
   },
   /// predefined types. TODO: move these to system.ny
-  boolean: model.Type.Instantiated,
+  boolean: *model.Type.Instantiated,
+  unicode_category: *model.Type.Instantiated,
 
-  pub fn init(alloc: *std.heap.ArenaAllocator) !Lattice {
+  pub fn init(ctx: nyarna.Context) !Lattice {
     var ret = Lattice{
-      .allocator = alloc.allocator(),
+      .allocator = ctx.global(),
       .optionals = .{},
       .concats = .{},
       .lists = .{},
-      .self_ref_list = try alloc.allocator().create(model.Type.Structural),
+      .self_ref_list = try ctx.global().create(model.Type.Structural),
       .prefix_trees = .{
         .intersection = .{},
         .paragraphs = .{},
         .callable = .{},
       },
       .constructors = undefined, // set later by loading the intrinsic lib
-      .boolean = .{
-        .at = model.Position.intrinsic(), .name = null,
-        .data = .{.tenum = undefined}
-      },
+      .boolean = undefined,
+      .unicode_category = undefined,
     };
-    ret.boolean.data.tenum = try model.Type.Enum.predefBoolean(ret.allocator);
-    const boolsym = try ret.allocator.create(model.Symbol);
-    boolsym.defined_at = model.Position.intrinsic();
-    boolsym.name = "Boolean";
-    boolsym.data = .{.@"type" = .{.instantiated = &ret.boolean}};
-    ret.boolean.name = boolsym;
+
+    var builder = try EnumTypeBuilder.init(ctx, model.Position.intrinsic());
+    ret.boolean = blk: {
+      try builder.add("false");
+      try builder.add("true");
+      const e = try builder.finish();
+      const boolsym = try ret.allocator.create(model.Symbol);
+      boolsym.defined_at = model.Position.intrinsic();
+      boolsym.name = "Boolean";
+      boolsym.data = .{.@"type" = .{.instantiated = e.instantiated()}};
+      e.instantiated().name = boolsym;
+      break :blk e.instantiated();
+    };
+
+    builder = try EnumTypeBuilder.init(ctx, model.Position.intrinsic());
+    ret.unicode_category = blk: {
+      inline for (@typeInfo(unicode.Category).Enum.fields) |f| {
+        try builder.add(f.name);
+      }
+      try builder.add("Lut");
+      try builder.add("LC");
+      try builder.add("L");
+      try builder.add("M");
+      try builder.add("P");
+      try builder.add("S");
+      try builder.add("MPS");
+      const e = try builder.finish();
+      const unisym = try ret.allocator.create(model.Symbol);
+      unisym.defined_at = model.Position.intrinsic();
+      unisym.name = "UnicodeCategory";
+      unisym.data = .{.@"type" = .{.instantiated = e.instantiated()}};
+      e.instantiated().name = unisym;
+      break :blk e.instantiated();
+    };
+
     ret.self_ref_list.* = .{
       .list = .{
         .inner = .{
@@ -191,6 +235,7 @@ pub const Lattice = struct {
         },
       },
     };
+
     return ret;
   }
 
@@ -200,28 +245,51 @@ pub const Lattice = struct {
   }
 
   /// may only be called on types that do have constructors
-  pub fn typeConstructor(self: *const Self, t: model.Type) *const Constructor {
+  pub fn typeConstructor(self: *const Self, t: model.Type) Constructor {
     return switch (t) {
       .intrinsic => |it| switch (it) {
-        .location   => &self.constructors.location,
-        .definition => &self.constructors.definition,
-        .raw,       => &self.constructors.raw,
+        .location   => self.constructors.location,
+        .definition => self.constructors.definition,
+        .raw,       => self.constructors.raw,
         else        => unreachable,
+      },
+      .instantiated => |inst| switch (inst.data) {
+        .textual    => |*text| Constructor{
+          .callable   = text.constructor,
+          .impl_index = self.constructors.generic.textual,
+        },
+        .numeric    => |*numeric| Constructor{
+          .callable   = numeric.constructor,
+          .impl_index = self.constructors.generic.numeric,
+        },
+        .float      => |*float| Constructor{
+          .callable   = float.constructor,
+          .impl_index = self.constructors.generic.float,
+        },
+        .tenum      => |*tenum| Constructor{
+          .callable   = tenum.constructor,
+          .impl_index = self.constructors.generic.@"enum",
+        },
+        else => unreachable,
       },
       else => unreachable,
     };
   }
 
   pub fn prototypeConstructor(self: *const Self, pt: model.Prototype)
-      *const Constructor {
+      Constructor {
     return switch (pt) {
-      .optional   => &self.constructors.prototypes.optional,
-      .concat     => &self.constructors.prototypes.concat,
-      .list       => &self.constructors.prototypes.list,
-      .paragraphs => &self.constructors.prototypes.paragraphs,
-      .map        => &self.constructors.prototypes.map,
-      .record     => &self.constructors.prototypes.record,
-      else    => unreachable, // TODO
+      .optional     => self.constructors.prototypes.optional,
+      .concat       => self.constructors.prototypes.concat,
+      .list         => self.constructors.prototypes.list,
+      .paragraphs   => self.constructors.prototypes.paragraphs,
+      .map          => self.constructors.prototypes.map,
+      .record       => self.constructors.prototypes.record,
+      .intersection => self.constructors.prototypes.intersection,
+      .textual      => self.constructors.prototypes.textual,
+      .numeric      => self.constructors.prototypes.numeric,
+      .float        => self.constructors.prototypes.float,
+      .@"enum"      => self.constructors.prototypes.@"enum",
     };
   }
 
@@ -646,7 +714,7 @@ pub const Lattice = struct {
       .text => |*txt| txt.t,
       .number => |*num| num.t.typedef(),
       .float => |*fl| fl.t.typedef(),
-      .enumval => |*en| en.t.typedef(),
+      .@"enum" => |*en| en.t.typedef(),
       .record => |*rec| rec.t.typedef(),
       .concat => |*con| con.t.typedef(),
       .para => |*para| para.t.typedef(),
@@ -660,7 +728,7 @@ pub const Lattice = struct {
         },
         .structural => model.Type{.intrinsic = .@"type"}, // TODO
         .instantiated => |inst| switch (inst.data) {
-          .record => |rec| rec.callable.typedef(),
+          .record => |rec| rec.constructor.typedef(),
           else => model.Type{.intrinsic = .@"type"}, // TODO
         },
       },
@@ -746,40 +814,6 @@ pub fn containedScalar(t: model.Type) ?model.Type {
   };
 }
 
-const SigBuilderEnv = enum{
-  intrinsic, userdef,
-
-  fn contextType(comptime e: SigBuilderEnv) type {
-    return switch (e) {
-      .intrinsic => std.mem.Allocator,
-      .userdef => *interpret.Interpreter
-    };
-  }
-
-  fn create(comptime e: SigBuilderEnv, ctx: anytype, comptime T: type) !*T {
-    return switch (e) {
-      .intrinsic => ctx.create(T),
-      .userdef => ctx.allocator().create(T)
-    };
-  }
-
-  fn alloc(comptime e: SigBuilderEnv, ctx: anytype, comptime T: type,
-           num: usize) ![]T {
-    return switch (e) {
-      .intrinsic => ctx.alloc(T, num),
-      .userdef => ctx.allocator().alloc(T, num),
-    };
-  }
-
-  fn errorMsg(comptime e: SigBuilderEnv, ctx: anytype,
-              comptime error_name: []const u8, args: anytype) void {
-    switch (e) {
-      .intrinsic => unreachable,
-      .userdef => @call(.{}, @field(ctx.loader.logger, error_name), args),
-    }
-  }
-};
-
 pub const SigBuilderResult = struct {
   /// the built signature
   sig: *model.Type.Signature,
@@ -816,124 +850,122 @@ pub const SigBuilderResult = struct {
   }
 };
 
-pub fn SigBuilder(comptime kind: SigBuilderEnv) type {
-  return struct {
-    const Result = SigBuilderResult;
+pub const SigBuilder = struct {
+  const Result = SigBuilderResult;
 
-    val: *model.Type.Signature,
-    repr: ?*model.Type.Signature,
-    ctx: kind.contextType(),
-    next_param: u21,
-    seen_error: bool,
+  val: *model.Type.Signature,
+  repr: ?*model.Type.Signature,
+  ctx: nyarna.Context,
+  next_param: u21,
+  seen_error: bool,
 
-    const Self = @This();
+  const Self = @This();
 
-    /// if returns type is yet to be determined, give .{.intrinsic = .every}.
-    /// the returns type is given early to know whether this is a keyword.
-    ///
-    /// if build_repr is true, a second signature will be built to be the
-    /// signature of the repr Callable in the type lattice.
-    pub fn init(context: kind.contextType(), num_params: usize,
-                returns: model.Type, build_repr: bool) !Self {
-      var ret = Self{
-        .val = try kind.create(context, model.Type.Signature),
-        .repr = if (build_repr) try kind.create(context, model.Type.Signature)
-                else null,
-        .ctx = context,
-        .next_param = 0,
-        .seen_error = false,
-      };
-      ret.val.* = .{
-        .parameters =
-          try kind.alloc(context, model.Type.Signature.Parameter, num_params),
+  /// if returns type is yet to be determined, give .{.intrinsic = .every}.
+  /// the returns type is given early to know whether this is a keyword.
+  ///
+  /// if build_repr is true, a second signature will be built to be the
+  /// signature of the repr Callable in the type lattice.
+  pub fn init(ctx: nyarna.Context, num_params: usize,
+              returns: model.Type, build_repr: bool) !Self {
+    var ret = Self{
+      .val = try ctx.global().create(model.Type.Signature),
+      .repr = if (build_repr)
+          try ctx.global().create(model.Type.Signature)
+        else null,
+      .ctx = ctx,
+      .next_param = 0,
+      .seen_error = false,
+    };
+    ret.val.* = .{
+      .parameters = try ctx.global().alloc(
+        model.Type.Signature.Parameter, num_params),
+      .primary = null,
+      .varmap = null,
+      .auto_swallow = null,
+      .returns = returns,
+    };
+    if (ret.repr) |sig| {
+      sig.* = .{
+        .parameters = try ctx.global().alloc(
+          model.Type.Signature.Parameter, num_params),
         .primary = null,
         .varmap = null,
         .auto_swallow = null,
         .returns = returns,
       };
-      if (ret.repr) |sig| {
-        sig.* = .{
-          .parameters = try kind.alloc(context, model.Type.Signature.Parameter,
-                                       num_params),
-          .primary = null,
-          .varmap = null,
-          .auto_swallow = null,
-          .returns = returns,
-        };
-      }
-      return ret;
     }
+    return ret;
+  }
 
-    pub fn push(self: *Self, loc: *model.Value.Location) !void {
-      const param = &self.val.parameters[self.next_param];
-      param.* = .{
+  pub fn push(self: *Self, loc: *model.Value.Location) !void {
+    const param = &self.val.parameters[self.next_param];
+    param.* = .{
+      .pos = loc.value().origin,
+      .name = loc.name.content,
+      .ptype = loc.tloc,
+      .capture = if (loc.varargs) |_| .varargs else if (loc.mutable) |_|
+        @as(@TypeOf(param.capture), .mutable) else .default,
+      .default = loc.default,
+      .config = if (loc.block_header) |bh| bh.config else null,
+    };
+    // TODO: use contains(.ast_node) instead (?)
+    if (!self.val.isKeyword() and loc.tloc.is(.ast_node)) {
+      self.ctx.logger.AstNodeInNonKeyword(loc.value().origin);
+      self.seen_error = true;
+    }
+    if (loc.primary) |p| {
+      if (self.val.primary) |pindex| {
+        self.ctx.logger.DuplicateFlag(
+          "primary", p, self.val.parameters[pindex].pos);
+        self.seen_error = true;
+      } else {
+        self.val.primary = self.next_param;
+      }
+    }
+    if (loc.block_header) |bh| {
+      if (bh.swallow_depth) |depth| {
+        if (self.val.auto_swallow) |as| {
+          var buf: [4]u8 = undefined;
+          // inlining this into the errorMsg call leads to a compiler bug :)
+          const repr = if (as.depth == 0) blk: {
+            std.mem.copy(u8, &buf, ":>");
+            break :blk @as([]const u8, buf[0..2]);
+          } else std.fmt.bufPrint(&buf, ":{}>", .{as.depth})
+            catch unreachable;
+          self.ctx.logger.DuplicateAutoSwallow(
+            repr, bh.value().origin, self.val.parameters[as.param_index].pos);
+          self.seen_error = true;
+        } else {
+          self.val.auto_swallow = .{
+            .depth = depth,
+            .param_index = self.next_param
+          };
+        }
+      }
+    }
+    if (self.repr) |sig| {
+      sig.parameters[self.next_param] = .{
         .pos = loc.value().origin,
         .name = loc.name.content,
         .ptype = loc.tloc,
-        .capture = if (loc.varargs) |_| .varargs else if (loc.mutable) |_|
-          @as(@TypeOf(param.capture), .mutable) else .default,
-        .default = loc.default,
-        .config = if (loc.block_header) |bh| bh.config else null,
+        .capture = .default,
+        .default = null,
+        .config = null,
       };
-      // TODO: use contains(.ast_node) instead (?)
-      if (!self.val.isKeyword() and loc.tloc.is(.ast_node)) {
-        kind.errorMsg(self.ctx, "AstNodeInNonKeyword", .{loc.value().origin});
-        self.seen_error = true;
-      }
-      if (loc.primary) |p| {
-        if (self.val.primary) |pindex| {
-          kind.errorMsg(self.ctx, "DuplicateFlag",
-            .{"primary", p, self.val.parameters[pindex].pos});
-          self.seen_error = true;
-        } else {
-          self.val.primary = self.next_param;
-        }
-      }
-      if (loc.block_header) |bh| {
-        if (bh.swallow_depth) |depth| {
-          if (self.val.auto_swallow) |as| {
-            var buf: [4]u8 = undefined;
-            // inlining this into the errorMsg call leads to a compiler bug :)
-            const repr = if (as.depth == 0) blk: {
-              std.mem.copy(u8, &buf, ":>");
-              break :blk @as([]const u8, buf[0..2]);
-            } else std.fmt.bufPrint(&buf, ":{}>", .{as.depth})
-              catch unreachable;
-            kind.errorMsg(self.ctx, "DuplicateAutoSwallow", .{
-              repr, bh.value().origin, self.val.parameters[as.param_index].pos
-            });
-            self.seen_error = true;
-          } else {
-            self.val.auto_swallow = .{
-              .depth = depth,
-              .param_index = self.next_param
-            };
-          }
-        }
-      }
-      if (self.repr) |sig| {
-        sig.parameters[self.next_param] = .{
-          .pos = loc.value().origin,
-          .name = loc.name.content,
-          .ptype = loc.tloc,
-          .capture = .default,
-          .default = null,
-          .config = null,
-        };
-      }
-      self.next_param += 1;
     }
+    self.next_param += 1;
+  }
 
-    pub fn finish(self: *Self) if (kind == .intrinsic) Result else ?Result {
-      std.debug.assert(self.next_param == self.val.parameters.len);
-      if (self.seen_error) if (kind == .intrinsic) unreachable else return null;
-      return Result{
-        .sig = self.val,
-        .repr = if (self.repr) |rval| rval else undefined,
-      };
-    }
-  };
-}
+  pub fn finish(self: *Self) ?Result {
+    std.debug.assert(self.next_param == self.val.parameters.len);
+    if (self.seen_error) return null;
+    return Result{
+      .sig = self.val,
+      .repr = self.repr,
+    };
+  }
+};
 
 pub const CallableReprFinder = struct {
   pub const Result = struct {
@@ -1022,5 +1054,38 @@ pub const ParagraphTypeBuilder = struct {
         };
       },
     };
+  }
+};
+
+pub const EnumTypeBuilder = struct {
+  const Self = @This();
+
+  ctx: nyarna.Context,
+  ret: *model.Type.Enum,
+
+  pub fn init(ctx: nyarna.Context, pos: model.Position) !Self {
+    const inst = try ctx.global().create(model.Type.Instantiated);
+    inst.* = .{
+      .at = pos,
+      .name = null,
+      .data = .{.tenum = .{.constructor = undefined, .values = .{}}},
+    };
+    return Self{.ctx = ctx, .ret = &inst.data.tenum};
+  }
+
+  pub inline fn add(self: *Self, value: []const u8) !void {
+    try self.ret.values.put(self.ctx.global(), value, 0);
+  }
+
+  pub fn finish(self: *Self) !*model.Type.Enum {
+    var sb = try SigBuilder.init(
+      self.ctx, 1, self.ret.typedef(), true);
+    try sb.push((try self.ctx.values.location(
+      self.ret.instantiated().at, try self.ctx.values.textScalar(
+        model.Position.intrinsic(), .{.intrinsic = .raw}, "input"
+      ), self.ret.typedef())).withPrimary(model.Position.intrinsic()));
+    self.ret.constructor =
+      try sb.finish().?.createCallable(self.ctx.global(), .type);
+    return self.ret;
   }
 };

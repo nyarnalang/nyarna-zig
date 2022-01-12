@@ -1,7 +1,7 @@
 const std = @import("std");
 const nyarna = @import("../nyarna.zig");
 const model = nyarna.model;
-const Interpreter = nyarna.Interpreter;
+const Interpreter = @import("interpret.zig").Interpreter;
 const errors = nyarna.errors;
 
 pub const SpecialSyntax = struct {
@@ -99,7 +99,7 @@ pub const SymbolDefs = struct {
   }
 
   inline fn logger(self: *SymbolDefs) *errors.Handler {
-    return &self.intpr.loader.logger;
+    return self.intpr.ctx.logger;
   }
 
   fn initLocations(intpr: *Interpreter) !*Processor {
@@ -618,7 +618,7 @@ pub const SymbolDefs = struct {
       !*model.Node {
     return self.intpr.genValueNode(pos orelse at, .{
       .enumval = .{
-        .t = self.intpr.loader.context.types.getBoolean(),
+        .t = self.intpr.types().getBoolean(),
         .index = if (pos) |_| 1 else 0,
       }
     });

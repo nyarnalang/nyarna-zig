@@ -3,6 +3,7 @@ const std = @import("std");
 const graph = @import("graph.zig");
 const nyarna = @import("../nyarna.zig");
 const model = nyarna.model;
+const Interpreter = @import("interpret.zig").Interpreter;
 
 /// A type definition inside a \declare that might not yet be finished.
 pub const DeclaredType = struct {
@@ -50,7 +51,7 @@ const DeclaredItems = struct {
 const TypeResolution = struct {
   context: graph.ResolutionContext,
   data: *DeclaredItems,
-  intpr: *nyarna.Interpreter,
+  intpr: *Interpreter,
   filling: bool,
 
   fn init(data: *DeclaredItems) TypeResolution {
@@ -133,9 +134,9 @@ pub const DeclareResolution = struct {
   defs: []*model.Node.Definition,
   processor: Processor,
   dep_discovery_ctx: graph.ResolutionContext,
-  intpr: *nyarna.Interpreter,
+  intpr: *Interpreter,
 
-  pub fn create(intpr: *nyarna.Interpreter,
+  pub fn create(intpr: *Interpreter,
                 defs: []*model.Node.Definition,
                 ns: u15) !*DeclareResolution {
     var res = try intpr.allocator().create(DeclareResolution);

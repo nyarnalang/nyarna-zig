@@ -1,5 +1,6 @@
 const std = @import("std");
 const unicode = @import("load/unicode.zig");
+const nyarna = @import("nyarna.zig");
 
 /// an item on the stack
 pub const StackItem = union {
@@ -464,10 +465,13 @@ pub const Node = struct {
         fields: []*Location,
       },
       intersection: struct {
-        scalar_type: ?*Node,
-        record_types: []*Node,
+        types: []*Node,
       },
-      textual: struct {}, // TODO
+      textual: struct {
+        categories: []*Node,
+        include_chars: *Node,
+        exclude_chars: *Node,
+      },
       numeric: struct {
         min: ?*Node,
         max: ?*Node,
@@ -780,11 +784,12 @@ pub const Type = union(enum) {
   ///  * all characters with a category in include.categories that are not in
   ///    exclude are in the set.
   pub const Textual = struct {
+    constructor: *Callable,
     include: struct {
-      chars: []u8,
+      chars: []const u21,
       categories: unicode.CategorySet,
     },
-    exclude: []u8,
+    exclude: []const u21,
 
     pub inline fn pos(self: *@This()) Position {
       return Instantiated.pos(self);
@@ -797,6 +802,7 @@ pub const Type = union(enum) {
 
   /// parameters of a Numeric type.
   pub const Numeric = struct {
+    constructor: *Callable,
     min: i64,
     max: i64,
     decimals: u32,
@@ -815,6 +821,8 @@ pub const Type = union(enum) {
     pub const Precision = enum {
       half, single, double, quadruple, octuple
     };
+
+    constructor: *Callable,
     precision: Precision,
 
     pub inline fn pos(self: *@This()) Position {
@@ -828,6 +836,7 @@ pub const Type = union(enum) {
 
   /// parameters of an Enum type.
   pub const Enum = struct {
+    constructor: *Callable,
     /// retains the order of the enum values.
     /// must not be modified after creation.
     values: std.StringArrayHashMapUnmanaged(u0),
@@ -840,18 +849,15 @@ pub const Type = union(enum) {
       return Instantiated.typedef(self);
     }
 
-    pub fn predefBoolean(allocator: std.mem.Allocator) !Enum {
-      var ret = Enum{.values = .{}};
-      try ret.values.put(allocator, "false", 0);
-      try ret.values.put(allocator, "true", 0);
-      return ret;
+    pub inline fn instantiated(self: *const @This()) *Instantiated {
+      return Instantiated.parent(self);
     }
   };
 
   /// parameters of a Record type. contains the signature of its constructor.
   /// its fields are derived from that signature.
   pub const Record = struct {
-    callable: *Callable,
+    constructor: *Callable,
 
     pub fn pos(self: *@This()) Position {
       return Instantiated.pos(self);
@@ -964,8 +970,8 @@ pub const Type = union(enum) {
 };
 
 pub const Prototype = enum {
-  numeric, float, @"enum", optional, concat, list, paragraphs, map, record,
-  intersection,
+  textual, numeric, float, @"enum", optional, concat, list, paragraphs, map,
+  record, intersection,
 };
 
 pub const Expression = struct {
@@ -1100,13 +1106,15 @@ pub const Value = struct {
   };
   /// a Float value
   pub const FloatNumber = struct {
-    t: *const Type.Float,
-    content: union {
+    pub const Content = union {
       half: f16,
       single: f32,
       double: f64,
       quadruple: f128,
-    },
+    };
+
+    t: *const Type.Float,
+    content: Content,
 
     pub inline fn value(self: *@This()) *Value {
       return Value.parent(self);
@@ -1159,8 +1167,10 @@ pub const Value = struct {
   };
   /// a Map value
   pub const Map = struct {
+    const Items = std.HashMap(*Value, *Value, Value.HashContext, 50);
+
     t: *const Type.Map,
-    items: std.HashMap(*Value, *Value, Value.HashContext, 50),
+    items: Items,
 
     pub inline fn value(self: *@This()) *Value {
       return Value.parent(self);
@@ -1195,23 +1205,15 @@ pub const Value = struct {
   pub const Location = struct {
     name: *Value.TextScalar,
     tloc: Type,
-    default: ?*Expression,
-    primary: ?Position,
-    varargs: ?Position,
-    varmap: ?Position,
-    mutable: ?Position,
-    block_header: ?*BlockHeader,
+    default: ?*Expression = null,
+    primary: ?Position = null,
+    varargs: ?Position = null,
+    varmap: ?Position = null,
+    mutable: ?Position = null,
+    block_header: ?*BlockHeader = null,
 
     pub inline fn value(self: *@This()) *Value {
       return Value.parent(self);
-    }
-
-    pub inline fn init(name: *Value.TextScalar, t: Type) Location {
-      return .{
-        .name = name, .tloc = t, .default = null,
-        .primary = null, .varargs = null, .varmap = null, .mutable = null,
-        .block_header = null,
-      };
     }
 
     pub inline fn withDefault(self: *Location, v: *Expression) *Location {
@@ -1239,7 +1241,7 @@ pub const Value = struct {
     name: *Value.TextScalar,
     // must be either function or type value
     content: *Value,
-    root: ?Position,
+    root: ?Position = null,
 
     pub inline fn value(self: *@This()) *Value {
       return Value.parent(self);
@@ -1269,7 +1271,7 @@ pub const Value = struct {
     text: TextScalar,
     number: Number,
     float: FloatNumber,
-    enumval: Enum,
+    @"enum": Enum,
     record: Record,
     concat: Concat,
     para: Para,
@@ -1297,7 +1299,7 @@ pub const Value = struct {
           .quadruple, .octuple =>
             @truncate(u64, @bitCast(u128, fl.content.quadruple)),
         },
-        .enumval => |ev| @intCast(u64, ev.index),
+        .@"enum" => |ev| @intCast(u64, ev.index),
         else => unreachable,
       };
     }
@@ -1313,7 +1315,7 @@ pub const Value = struct {
           .quadruple, .octuple =>
             fl.content.quadruple == b.data.float.content.quadruple,
         },
-        .enumval => |ev| ev.index == b.data.enumval.index,
+        .@"enum" => |ev| ev.index == b.data.@"enum".index,
         else => unreachable,
       };
     }
@@ -1353,7 +1355,7 @@ pub const Value = struct {
       TextScalar   => offset(Data, "text"),
       Number       => offset(Data, "number"),
       FloatNumber  => offset(Data, "float"),
-      Enum         => offset(Data, "enumval"),
+      Enum         => offset(Data, "enum"),
       Record       => offset(Data, "record"),
       Concat       => offset(Data, "concat"),
       Para         => offset(Data, "para"),
@@ -1485,5 +1487,158 @@ pub const NodeGenerator = struct {
 
   pub inline fn @"void"(self: *Self, pos: Position) !*Node {
     return self.node(pos, .void);
+  }
+};
+
+pub const ValueGenerator = struct {
+  const Self = @This();
+
+  dummy: u8 = 0, // needed for @fieldParentPtr to work
+
+  inline fn allocator(self: *const Self) std.mem.Allocator {
+    return @fieldParentPtr(nyarna.Context, "values", self).global();
+  }
+
+  inline fn create(self: *const Self) !*Value {
+    return self.allocator().create(Value);
+  }
+
+  pub inline fn value(self: *const Self, pos: Position, data: Value.Data)
+      !*Value {
+    const ret = try self.create();
+    ret.* = .{.origin = pos, .data = data};
+    return ret;
+  }
+
+  pub inline fn textScalar(self: *const Self, pos: Position, t: Type,
+                           content: []const u8) !*Value.TextScalar {
+    return &(try self.value(
+      pos, .{.text = .{.t = t, .content = content}})).data.text;
+  }
+
+  pub inline fn number(self: *const Self, pos: Position, t: *const Type.Numeric,
+                       content: i64) !*Value.Number {
+    return &(try self.value(
+      pos, .{.number = .{.t = t, .content = content}})).data.number;
+  }
+
+  pub inline fn float(self: *const Self, pos: Position, t: *const Type.Float,
+                      content: Value.FloatNumber.Content) !*Value.FloatNumber {
+    return &(try self.value(
+      pos, .{.float = .{.t = t, .content = content}})).data.float;
+  }
+
+  pub inline fn @"enum"(self: *const Self, pos: Position, t: *const Type.Enum,
+                        index: usize) !*Value.Enum {
+    return &(try self.value(
+      pos, .{.@"enum" = .{.t = t, .index = index}})).data.@"enum";
+  }
+
+  pub inline fn record(self: *const Self, pos: Position, t: *const Type.Record)
+      !*Value.Record {
+    const fields =
+      try self.allocator().alloc(*Value, t.callable.sig.parameters.len);
+    errdefer self.allocator().free(fields);
+    return &(try self.value(
+      pos, .{.record = .{.t = t, .fields = fields}})).data.record;
+  }
+
+  pub inline fn concat(self: *const Self, pos: Position, t: *const Type.Concat)
+      !*Value.Concat {
+    return &(try self.value(pos, .{
+      .concat = .{
+        .t = t,
+        .content = std.ArrayList(*Value).init(self.allocator()),
+      },
+    })).data.concat;
+  }
+
+  pub inline fn para(self: *const Self, pos: Position, t: *const Type.Paragraphs)
+      !*Value.Para {
+    return &(try self.value(pos, .{
+      .para = .{
+        .t = t,
+        .content = std.ArrayList(*Value).init(self.allocator()),
+      },
+    })).data.para;
+  }
+
+  pub inline fn list(self: *const Self, pos: Position, t: *const Type.List)
+      !*Value.List {
+    return &(try self.value(pos, .{
+      .list = .{
+        .t = t,
+        .content = std.ArrayList(*Value).init(self.allocator()),
+      },
+    })).data.list;
+  }
+
+  pub inline fn map(self: *const Self, pos: Position, t: *const Type.Map)
+      !*Value.Map {
+    return &(try self.value(pos, .{
+      .map = .{
+        .t = t,
+        .items = Value.Map.Items.init(self.allocator()),
+      },
+    })).data.map;
+  }
+
+  pub inline fn @"type"(self: *const Self, pos: Position, t: Type)
+      !*Value.TypeVal {
+    return &(try self.value(
+      pos, .{.@"type" = .{.t = t}})).data.@"type";
+  }
+
+  pub inline fn prototype(self: *const Self, pos: Position, pt: Prototype)
+      !*Value.PrototypeVal {
+    return &(try self.value(
+      pos, .{.prototype = .{.pt = pt}})).data.prototype;
+  }
+
+  pub inline fn funcRef(self: *const Self, pos: Position, func: *Symbol)
+      !*Value.FuncRef {
+    std.debug.assert(func.data == .ext_func or func.data == .ny_func);
+    return &(try self.value(
+      pos, .{.funcref = .{.func = func}})).data.funcref;
+  }
+
+  pub inline fn location(self: *const Self, pos: Position, name: *Value.TextScalar,
+                         t: Type) !*Value.Location {
+    return &(try self.value(
+      pos, .{.location = .{.name = name, .tloc = t}})).data.location;
+  }
+
+  /// Generates an intrinsic location (contained positions are <intrinsic>).
+  /// The given name must live at least as long as the Context.
+  pub inline fn intLocation(self: *const Self, name: []const u8, t: Type)
+      !*Value.Location {
+    const name_val = try self.textScalar(Position.intrinsic(),
+      .{.intrinsic = .literal}, name);
+    return self.location(Position.intrinsic(), name_val, t);
+  }
+
+  pub inline fn definition(self: *const Self, pos: Position, name: *Value.TextScalar,
+                           content: *Value) !*Value.Definition {
+    return &(try self.value(pos,
+      .{.definition = .{.name = name, .content = content}})).data.definition;
+  }
+
+  pub inline fn ast(self: *const Self, pos: Position, root: *Node) !*Value.Ast {
+    return &(try self.value(pos, .{.ast = .{.root = root}})).data.ast;
+  }
+
+  pub inline fn blockHeader(self: *const Self, pos: Position, config: ?BlockConfig,
+                            swallow_depth: ?u21) !*Value.BlockHeader {
+    return &(try self.value(pos,
+      .{.block_header = .{.config = config, .swallow_depth = swallow_depth}}
+    )).data.block_header;
+  }
+
+  pub inline fn @"void"(self: *const Self, pos: Position) !*Value {
+    return self.value(pos, .void);
+  }
+
+  pub inline fn poison(self: *const Self, pos: Position) !*Value {
+    return self.value(pos, .poison);
   }
 };

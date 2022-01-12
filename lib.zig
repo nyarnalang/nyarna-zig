@@ -1,11 +1,12 @@
 const std = @import("std");
 const nyarna = @import("nyarna.zig");
-const Interpreter = nyarna.Interpreter;
+const Interpreter = @import("load/interpret.zig").Interpreter;
 const Context = nyarna.Context;
-const Evaluator = nyarna.Evaluator;
+const Evaluator = @import("runtime.zig").Evaluator;
 const model = nyarna.model;
 const types = nyarna.types;
 const algo = @import("load/algo.zig");
+const unicode = @import("load/unicode.zig");
 
 /// A provider implements all external functions for a certain Nyarna module.
 pub const Provider = struct {
@@ -69,7 +70,7 @@ pub const Provider = struct {
               model.Value.TextScalar => &v.data.text,
               model.Value.Number => &v.data.number,
               model.Value.FloatNumber => &v.data.float,
-              model.Value.Enum => &v.data.enumval,
+              model.Value.Enum => &v.data.@"enum",
               model.Value.Record => &v.data.record,
               model.Value.Concat => &v.data.concat,
               model.Value.List => &v.data.list,
@@ -161,81 +162,9 @@ pub const Provider = struct {
 };
 
 pub const Intrinsics = Provider.Wrapper(struct {
-  fn @"Location"(
-      intpr: *Interpreter, pos: model.Position, name: *model.Value.TextScalar,
-      t: ?model.Type, primary: *model.Value.Enum, varargs: *model.Value.Enum,
-      varmap: *model.Value.Enum, mutable: *model.Value.Enum,
-      header: ?*model.Value.BlockHeader, default: ?*model.Value.Ast)
-      nyarna.Error!*model.Node {
-    var expr = if (default) |node| blk: {
-      var val = try intpr.interpret(node.root);
-      if (val.expected_type.is(.poison))
-        return intpr.node_gen.poison(pos);
-      if (t) |given_type| {
-        if (!intpr.types().lesserEqual(val.expected_type, given_type)
-            and !val.expected_type.is(.poison)) {
-          intpr.loader.logger.ExpectedExprOfTypeXGotY(
-            val.pos, &[_]model.Type{given_type, val.expected_type});
-          return intpr.node_gen.poison(pos);
-        }
-      }
-      break :blk val;
-    } else null;
-    var ltype = if (t) |given_type| given_type
-                else if (expr) |given_expr| given_expr.expected_type else {
-      unreachable; // TODO: evaluation error
-    };
-    // TODO: check various things here:
-    // - varargs must have List type
-    // - varmap must have Map type
-    // - mutable must have non-virtual type
-    // - special syntax in block config must yield expected type (?)
-    if (varmap.index == 1) {
-      if (varargs.index == 1) {
-        intpr.loader.logger.IncompatibleFlag("varmap",
-          varmap.value().origin, varargs.value().origin);
-        return intpr.node_gen.poison(pos);
-      } else if (mutable.index == 1) {
-        intpr.loader.logger.IncompatibleFlag("varmap",
-          varmap.value().origin, mutable.value().origin);
-        return intpr.node_gen.poison(pos);
-      }
-    } else if (varargs.index == 1) if (mutable.index == 1) {
-      intpr.loader.logger.IncompatibleFlag("mutable",
-        mutable.value().origin, varargs.value().origin);
-      return intpr.node_gen.poison(pos);
-    };
-
-    return intpr.genValueNode(pos, .{
-      .location = .{
-        .name = name,
-        .tloc = ltype,
-        .default = expr,
-        .primary = if (primary.index == 1) primary.value().origin else null,
-        .varargs = if (varargs.index == 1) varargs.value().origin else null,
-        .varmap  = if (varmap.index  == 1)  varmap.value().origin else null,
-        .mutable = if (mutable.index == 1) mutable.value().origin else null,
-        .block_header = header,
-      },
-    });
-  }
-
-  fn @"Definition"(
-      intpr: *Interpreter, pos: model.Position, name: *model.Value.TextScalar,
-      root: *model.Value.Enum, node: *model.Value.Ast) !*model.Node {
-    const expr = try intpr.interpret(node.root);
-    if (expr.expected_type.is(.poison)) return intpr.genValueNode(pos, .poison);
-    var eval = nyarna.Evaluator.init(intpr.loader.context);
-    var val = try eval.evaluate(expr);
-    std.debug.assert(val.data == .@"type" or val.data == .funcref); // TODO
-    return intpr.genValueNode(pos, .{
-      .definition = .{
-        .name = name,
-        .content = val,
-        .root = if (root.index == 1) root.value().origin else null,
-      },
-    });
-  }
+  //---------
+  // keywords
+  //---------
 
   fn declare(intpr: *Interpreter, pos: model.Position, ns: u15,
              _: ?model.Type, public: *model.Node, private: *model.Node)
@@ -268,11 +197,35 @@ pub const Intrinsics = Provider.Wrapper(struct {
     return intpr.node_gen.@"void"(pos);
   }
 
+  fn @"if"(intpr: *Interpreter, pos: model.Position,
+           condition: *model.Value.Ast, then: *model.Value.Ast,
+           @"else": *model.Value.Ast) nyarna.Error!*model.Node {
+    const nodes = try intpr.allocator().alloc(*model.Node, 2);
+    nodes[1] = then.root;
+    nodes[0] = @"else".root;
+
+    const ret = try intpr.allocator().create(model.Node);
+    ret.* = .{
+      .pos = pos,
+      .data = .{
+        .branches = .{
+          .condition = condition.root,
+          .branches = nodes,
+        },
+      },
+    };
+    return ret;
+  }
+
+  //-----------------------
+  // prototype constructors
+  //-----------------------
+
   fn @"Optional"(intpr: *Interpreter, pos: model.Position,
                  inner: *model.Node) nyarna.Error!*model.Node {
     return if (switch (inner.data) {
       .void => blk: {
-        intpr.loader.logger.MissingParameterArgument(
+        intpr.ctx.logger.MissingParameterArgument(
           "inner", pos, model.Position.intrinsic());
         break :blk true;
       },
@@ -286,7 +239,7 @@ pub const Intrinsics = Provider.Wrapper(struct {
                inner: *model.Node) nyarna.Error!*model.Node {
     return if (switch (inner.data) {
       .void => blk: {
-        intpr.loader.logger.MissingParameterArgument(
+        intpr.ctx.logger.MissingParameterArgument(
           "inner", pos, model.Position.intrinsic());
         break :blk true;
       },
@@ -300,7 +253,7 @@ pub const Intrinsics = Provider.Wrapper(struct {
              inner: *model.Node) nyarna.Error!*model.Node {
     return if (switch (inner.data) {
       .void => blk: {
-        intpr.loader.logger.MissingParameterArgument(
+        intpr.ctx.logger.MissingParameterArgument(
           "inner", pos, model.Position.intrinsic());
         break :blk true;
       },
@@ -321,7 +274,7 @@ pub const Intrinsics = Provider.Wrapper(struct {
             key: *model.Node, value: *model.Node) nyarna.Error!*model.Node {
     var invalid = switch (key.data) {
       .void => blk: {
-        intpr.loader.logger.MissingParameterArgument(
+        intpr.ctx.logger.MissingParameterArgument(
           "key", pos, model.Position.intrinsic());
         break :blk true;
       },
@@ -330,7 +283,7 @@ pub const Intrinsics = Provider.Wrapper(struct {
     };
     switch (value.data) {
       .void => {
-        intpr.loader.logger.MissingParameterArgument(
+        intpr.ctx.logger.MissingParameterArgument(
           "value", pos, model.Position.intrinsic());
         invalid = true;
       },
@@ -355,12 +308,12 @@ pub const Intrinsics = Provider.Wrapper(struct {
     };
     const res_type = model.Type{.instantiated = res};
 
-    var finder = types.CallableReprFinder.init(intpr.types());
+    var finder = types.CallableReprFinder.init(intpr.ctx.types());
     for (fields.content.items) |field| try finder.push(&field.data.location);
     const finder_result = try finder.finish(res_type, true);
     std.debug.assert(finder_result.found.* == null);
 
-    var b = try types.SigBuilder(.userdef).init(intpr, fields.content.items.len,
+    var b = try types.SigBuilder.init(intpr.ctx, fields.content.items.len,
       res_type, finder_result.needs_different_repr);
     for (fields.content.items) |field| try b.push(&field.data.location);
     const builder_res = b.finish() orelse
@@ -387,9 +340,8 @@ pub const Intrinsics = Provider.Wrapper(struct {
       break :blk &repr.callable;
     } else &structural.callable;
 
-
     res.data.record = .{
-      .callable = & structural.callable,
+      .constructor = &structural.callable,
     };
     return try intpr.genValueNode(pos, .{
       .@"type" = .{
@@ -398,90 +350,210 @@ pub const Intrinsics = Provider.Wrapper(struct {
     });
   }
 
-  fn @"Raw"(_: *Evaluator, _: model.Position,
-            input: *model.Value.TextScalar) !*model.Value {
+  fn @"Intersection"(intpr: *Interpreter, pos: model.Position,
+                     input_types: []*model.Node) nyarna.Error!*model.Node {
+    return (try intpr.node_gen.typegen(pos, .{
+      .intersection = .{.types = input_types},
+    })).node();
+  }
+
+  fn @"Textual"(intpr: *Interpreter, pos: model.Position,
+                cats: []*model.Node, include: *model.Node,
+                exclude: *model.Node) nyarna.Error!*model.Node {
+    return (try intpr.node_gen.typegen(pos, .{
+      .textual = .{
+        .categories = cats,
+        .include_chars = include,
+        .exclude_chars = exclude,
+      },
+    })).node();
+  }
+
+  fn @"Numeric"(intpr: *Interpreter, pos: model.Position, min: *model.Node,
+                max: *model.Node, decimals: *model.Node)
+      nyarna.Error!*model.Node {
+    return (try intpr.node_gen.typegen(pos, .{
+      .numeric = .{.min = min, .max = max, .decimals = decimals},
+    })).node();
+  }
+
+  fn @"Float"(intpr: *Interpreter, pos: model.Position, precision: *model.Node)
+      nyarna.Error!*model.Node {
+    return (try intpr.node_gen.typegen(pos, .{
+      .float = .{.precision = precision},
+    })).node();
+  }
+
+  fn @"Enum"(intpr: *Interpreter, pos: model.Position, values: []*model.Node)
+      nyarna.Error!*model.Node {
+    return (try intpr.node_gen.typegen(pos, .{
+      .@"enum" = .{.values = values},
+    })).node();
+  }
+
+  //------------------
+  // type constructors
+  //------------------
+
+  fn constrRaw(_: *Evaluator, _: model.Position,
+            input: *model.Value.TextScalar) nyarna.Error!*model.Value {
     return input.value();
   }
 
-  fn @"if"(intpr: *Interpreter, pos: model.Position,
-           condition: *model.Value.Ast, then: *model.Value.Ast,
-           @"else": *model.Value.Ast) !*model.Node {
-    const nodes = try intpr.allocator().alloc(*model.Node, 2);
-    nodes[1] = then.root;
-    nodes[0] = @"else".root;
-
-    const ret = try intpr.allocator().create(model.Node);
-    ret.* = .{
-      .pos = pos,
-      .data = .{
-        .branches = .{
-          .condition = condition.root,
-          .branches = nodes,
-        },
-      },
+  fn constrLocation(
+      intpr: *Interpreter, pos: model.Position, name: *model.Value.TextScalar,
+      t: ?model.Type, primary: *model.Value.Enum, varargs: *model.Value.Enum,
+      varmap: *model.Value.Enum, mutable: *model.Value.Enum,
+      header: ?*model.Value.BlockHeader, default: ?*model.Value.Ast)
+      nyarna.Error!*model.Node {
+    var expr = if (default) |node| blk: {
+      var val = try intpr.interpret(node.root);
+      if (val.expected_type.is(.poison))
+        return intpr.node_gen.poison(pos);
+      if (t) |given_type| {
+        if (!intpr.ctx.types().lesserEqual(val.expected_type, given_type)
+            and !val.expected_type.is(.poison)) {
+          intpr.ctx.logger.ExpectedExprOfTypeXGotY(
+            val.pos, &[_]model.Type{given_type, val.expected_type});
+          return intpr.node_gen.poison(pos);
+        }
+      }
+      break :blk val;
+    } else null;
+    var ltype = if (t) |given_type| given_type
+                else if (expr) |given_expr| given_expr.expected_type else {
+      unreachable; // TODO: evaluation error
     };
-    return ret;
+    // TODO: check various things here:
+    // - varargs must have List type
+    // - varmap must have Map type
+    // - mutable must have non-virtual type
+    // - special syntax in block config must yield expected type (?)
+    if (varmap.index == 1) {
+      if (varargs.index == 1) {
+        intpr.ctx.logger.IncompatibleFlag("varmap",
+          varmap.value().origin, varargs.value().origin);
+        return intpr.node_gen.poison(pos);
+      } else if (mutable.index == 1) {
+        intpr.ctx.logger.IncompatibleFlag("varmap",
+          varmap.value().origin, mutable.value().origin);
+        return intpr.node_gen.poison(pos);
+      }
+    } else if (varargs.index == 1) if (mutable.index == 1) {
+      intpr.ctx.logger.IncompatibleFlag("mutable",
+        mutable.value().origin, varargs.value().origin);
+      return intpr.node_gen.poison(pos);
+    };
+
+    return intpr.genValueNode(pos, .{
+      .location = .{
+        .name = name,
+        .tloc = ltype,
+        .default = expr,
+        .primary = if (primary.index == 1) primary.value().origin else null,
+        .varargs = if (varargs.index == 1) varargs.value().origin else null,
+        .varmap  = if (varmap.index  == 1)  varmap.value().origin else null,
+        .mutable = if (mutable.index == 1) mutable.value().origin else null,
+        .block_header = header,
+      },
+    });
+  }
+
+  fn constrDefinition(
+      intpr: *Interpreter, pos: model.Position, name: *model.Value.TextScalar,
+      root: *model.Value.Enum, node: *model.Value.Ast)
+      nyarna.Error!*model.Node {
+    const expr = try intpr.interpret(node.root);
+    if (expr.expected_type.is(.poison)) return intpr.genValueNode(pos, .poison);
+    var eval = intpr.ctx.evaluator();
+    var val = try eval.evaluate(expr);
+    std.debug.assert(val.data == .@"type" or val.data == .funcref); // TODO
+    return intpr.genValueNode(pos, .{
+      .definition = .{
+        .name = name,
+        .content = val,
+        .root = if (root.index == 1) root.value().origin else null,
+      },
+    });
+  }
+
+  fn constrTextual(eval: *Evaluator, pos: model.Position,
+                   input: *model.Value.TextScalar) nyarna.Error!*model.Value {
+    _ = eval; _ = pos; _ = input;
+    unreachable; // TODO
+  }
+
+  fn constrNumeric(eval: *Evaluator, pos: model.Position,
+                   input: *model.Value.TextScalar) nyarna.Error!*model.Value {
+    _ = eval; _ = pos; _ = input;
+    unreachable; // TODO
+  }
+
+  fn constrFloat(eval: *Evaluator, pos: model.Position,
+                 input: *model.Value.TextScalar) nyarna.Error!*model.Value {
+    _ = eval; _ = pos; _ = input;
+    unreachable; // TODO
+  }
+
+  fn constrEnum(eval: *Evaluator, pos: model.Position,
+                input: *model.Value.TextScalar) nyarna.Error!*model.Value {
+    const enum_type = &eval.target_type.instantiated.data.tenum;
+    return if (enum_type.values.getIndex(input.content)) |index|
+      (try eval.ctx.values.@"enum"(pos, enum_type, index)).value()
+    else blk: {
+      // TODO: report error
+      break :blk try eval.ctx.values.poison(pos);
+    };
   }
 });
 
-fn registerExtImpl(context: *Context, p: *const Provider, name: []const u8,
+fn registerExtImpl(ctx: Context, p: *const Provider, name: []const u8,
                    bres: types.SigBuilderResult) !usize {
   return if (bres.sig.isKeyword()) blk: {
     const impl = p.getKeyword(name) orelse
       std.debug.panic("don't know keyword: {s}\n", .{name});
-    try context.keyword_registry.append(context.allocator(), impl);
-    break :blk context.keyword_registry.items.len - 1;
+    try ctx.data.keyword_registry.append(ctx.global(), impl);
+    break :blk ctx.data.keyword_registry.items.len - 1;
   } else blk: {
     const impl = p.getBuiltin(name) orelse
       std.debug.panic("don't know keyword: {s}\n", .{name});
-    try context.builtin_registry.append(context.allocator(), impl);
-    break :blk context.builtin_registry.items.len - 1;
+    try ctx.data.builtin_registry.append(ctx.global(), impl);
+    break :blk ctx.data.builtin_registry.items.len - 1;
   };
 }
 
-fn extFunc(context: *Context, name: []const u8, bres: types.SigBuilderResult,
+fn registerGenericImpl(ctx: Context, p: *const Provider, name: []const u8)
+    !usize {
+  const impl = p.getBuiltin(name) orelse
+    std.debug.panic("don't know generic builtin: {s}\n", .{name});
+  try ctx.data.builtin_registry.append(ctx.global(), impl);
+  return ctx.data.builtin_registry.items.len - 1;
+}
+
+fn extFunc(ctx: Context, name: []const u8, bres: types.SigBuilderResult,
            ns_dependent: bool, p: *const Provider) !model.Symbol.ExtFunc {
   return model.Symbol.ExtFunc{
-    .callable = try bres.createCallable(context.allocator(), .function),
+    .callable = try bres.createCallable(ctx.global(), .function),
     .ns_dependent = ns_dependent,
-    .impl_index = try registerExtImpl(context, p, name, bres),
+    .impl_index = try registerExtImpl(ctx, p, name, bres),
     .cur_frame = null,
   };
 }
 
-fn extFuncSymbol(context: *Context, name: []const u8, ns_dependent: bool,
+fn extFuncSymbol(ctx: Context, name: []const u8, ns_dependent: bool,
                  bres: types.SigBuilderResult, p: *Provider) !*model.Symbol {
-  const ret = try context.allocator().create(model.Symbol);
+  const ret = try ctx.global().create(model.Symbol);
   ret.defined_at = model.Position.intrinsic();
   ret.name = name;
   ret.data = .{
-    .ext_func = try extFunc(context, name, bres, ns_dependent, p),
+    .ext_func = try extFunc(ctx, name, bres, ns_dependent, p),
   };
   return ret;
 }
 
-pub inline fn intLoc(context: *Context, name: []const u8, t: model.Type)
-    !*model.Value.Location {
-  const name_val = try context.allocator().create(model.Value);
-  name_val.* = .{
-    .origin = model.Position.intrinsic(),
-    .data = .{
-      .text = .{
-        .t = model.Type{.intrinsic = .literal},
-        .content = name,
-      },
-    },
-  };
-
-  const value = try context.allocator().create(model.Value);
-  value.origin = model.Position.intrinsic();
-  value.data = .{.location = model.Value.Location.init(&name_val.data.text, t)};
-  return &value.data.location;
-}
-
-fn typeSymbol(context: *Context, name: []const u8, t: model.Type)
+fn typeSymbol(ctx: Context, name: []const u8, t: model.Type)
     !*model.Symbol {
-  const ret = try context.allocator().create(model.Symbol);
+  const ret = try ctx.global().create(model.Symbol);
   ret.* = model.Symbol{
     .defined_at = model.Position.intrinsic(),
     .name = name,
@@ -490,9 +562,9 @@ fn typeSymbol(context: *Context, name: []const u8, t: model.Type)
   return ret;
 }
 
-fn prototypeSymbol(context: *Context, name: []const u8, pt: model.Prototype)
+fn prototypeSymbol(ctx: Context, name: []const u8, pt: model.Prototype)
     !*model.Symbol {
-  const ret = try context.allocator().create(model.Symbol);
+  const ret = try ctx.global().create(model.Symbol);
   ret.* = model.Symbol{
     .defined_at = model.Position.intrinsic(),
     .name = name,
@@ -501,194 +573,219 @@ fn prototypeSymbol(context: *Context, name: []const u8, pt: model.Prototype)
   return ret;
 }
 
-fn typeConstructor(context: *Context, p: *Provider, name: []const u8,
+fn typeConstructor(ctx: Context, p: *Provider, name: []const u8,
                    bres: types.SigBuilderResult) !types.Constructor {
   return types.Constructor{
-    .callable = try bres.createCallable(context.allocator(), .@"type"),
-    .impl_index = try registerExtImpl(context, p, name, bres),
+    .callable = try bres.createCallable(ctx.global(), .@"type"),
+    .impl_index = try registerExtImpl(ctx, p, name, bres),
   };
 }
 
-fn prototypeConstructor(context: *Context, p: *Provider, name: []const u8,
+fn prototypeConstructor(ctx: Context, p: *Provider, name: []const u8,
                         bres: types.SigBuilderResult) !types.Constructor {
   return types.Constructor{
-    .callable = try bres.createCallable(context.allocator(), .prototype),
-    .impl_index = try registerExtImpl(context, p, name, bres),
+    .callable = try bres.createCallable(ctx.global(), .prototype),
+    .impl_index = try registerExtImpl(ctx, p, name, bres),
   };
 }
 
-pub fn intrinsicModule(context: *Context) !*model.Module {
-  var ret = try context.allocator().create(model.Module);
-  ret.root = try context.genLiteral(model.Position.intrinsic(), .void);
-  ret.symbols = try context.allocator().alloc(*model.Symbol, 11);
+pub fn intrinsicModule(ctx: Context) !*model.Module {
+  var ret = try ctx.global().create(model.Module);
+  ret.root = try ctx.data.genLiteral(model.Position.intrinsic(), .void);
+  ret.symbols = try ctx.global().alloc(*model.Symbol, 16);
   var index: usize = 0;
 
   var ip = Intrinsics.init();
 
-  const location_block = blk: {
-    const value_header_location = try context.allocator().create(model.Value);
-    value_header_location.* = .{
-      .data = .{
-        .block_header = .{
-          .config = .{
-            .syntax = .{
-              .pos = model.Position.intrinsic(),
-              .index = 0,
-            },
-            .map = &.{},
-            .off_colon = null,
-            .off_comment = null,
-            .full_ast = null,
-          },
-          .swallow_depth = null,
-        },
-      },
-      .origin = model.Position.intrinsic(),
-    };
-    break :blk &value_header_location.data.block_header;
-  };
+  const loc_syntax = // zig 0.9.0 crashes when inlining this
+    model.BlockConfig.SyntaxDef{.pos = model.Position.intrinsic(), .index = 0};
+  const location_block = try ctx.values.blockHeader(
+    model.Position.intrinsic(), model.BlockConfig{
+      .syntax = loc_syntax,
+      .map = &.{},
+      .off_colon = null,
+      .off_comment = null,
+      .full_ast = null,
+    }, null);
 
-  const definition_block = blk: {
-    const value_header_definition = try context.allocator().create(model.Value);
-    value_header_definition.* = .{
-      .data = .{
-        .block_header = .{
-          .config = .{
-            .syntax = .{
-              .pos = model.Position.intrinsic(),
-              .index = 1,
-            },
-            .map = &.{},
-            .off_colon = null,
-            .off_comment = null,
-            .full_ast = null,
-          },
-          .swallow_depth = null,
-        },
-      },
-      .origin = model.Position.intrinsic(),
-    };
-    break :blk &value_header_definition.data.block_header;
-  };
+  const def_syntax = // zig 0.9.0 crashes when inlining this
+    model.BlockConfig.SyntaxDef{.pos = model.Position.intrinsic(), .index = 1};
+  const definition_block = try ctx.values.blockHeader(
+    model.Position.intrinsic(), model.BlockConfig{
+      .syntax = def_syntax,
+      .map = &.{},
+      .off_colon = null,
+      .off_comment = null,
+      .full_ast = null,
+    }, null);
 
   //-------------
   // type symbols
   //-------------
 
+  // Raw
+  var b = try types.SigBuilder.init(ctx, 1, .{.intrinsic = .raw}, true);
+  try b.push((try ctx.values.intLocation(
+    "input", model.Type{.intrinsic = .raw})).withPrimary(
+      model.Position.intrinsic()));
+  ctx.types().constructors.raw = try
+    typeConstructor(ctx, &ip.provider, "constrRaw", b.finish().?);
+  ret.symbols[index] = try typeSymbol(ctx, "Raw", .{.intrinsic = .raw});
+  index += 1;
+
   // Location
-  var b = try types.SigBuilder(.intrinsic).init(
-    context.allocator(), 8, .{.intrinsic = .ast_node}, false);
-  try b.push(try intLoc(context, "name", .{.intrinsic = .literal})); // TODO: identifier
-  try b.push(try intLoc(context, "type", .{.intrinsic = .@"type"}));
-  try b.push(try intLoc(
-    context, "primary", .{.instantiated = &context.types.boolean}));
-  try b.push(try intLoc(
-    context, "varargs", .{.instantiated = &context.types.boolean}));
-  try b.push(try intLoc(
-    context, "varmap", .{.instantiated = &context.types.boolean}));
-  try b.push(try intLoc(
-    context, "mutable", .{.instantiated = &context.types.boolean}));
-  try b.push(try intLoc(context, "header", (try context.types.optional(
+  b = try types.SigBuilder.init(ctx, 8, .{.intrinsic = .ast_node}, false);
+  try b.push(try ctx.values.intLocation("name", .{.intrinsic = .literal})); // TODO: identifier
+  try b.push(try ctx.values.intLocation("type", .{.intrinsic = .@"type"}));
+  try b.push(try ctx.values.intLocation(
+    "primary", ctx.types().getBoolean().typedef()));
+  try b.push(try ctx.values.intLocation(
+    "varargs", ctx.types().getBoolean().typedef()));
+  try b.push(try ctx.values.intLocation(
+    "varmap", ctx.types().getBoolean().typedef()));
+  try b.push(try ctx.values.intLocation(
+    "mutable", ctx.types().getBoolean().typedef()));
+  try b.push(try ctx.values.intLocation("header", (try ctx.types().optional(
       .{.intrinsic = .block_header})).?));
-  try b.push((try intLoc(context, "default", (try context.types.optional(
+  try b.push((try ctx.values.intLocation(
+    "default", (try ctx.types().optional(
       .{.intrinsic = .ast_node})).?)).withPrimary(model.Position.intrinsic()));
-  context.types.constructors.location = try
-    typeConstructor(context, &ip.provider, "Location", b.finish());
+  ctx.types().constructors.location = try
+    typeConstructor(ctx, &ip.provider, "constrLocation", b.finish().?);
   ret.symbols[index] = try
-    typeSymbol(context, "Location", model.Type{.intrinsic = .location});
+    typeSymbol(ctx, "Location", model.Type{.intrinsic = .location});
   index += 1;
 
   // Definition
-  b = try types.SigBuilder(.intrinsic).init(
-    context.allocator(), 3, .{.intrinsic = .ast_node}, false);
-  try b.push(try intLoc(context, "name", .{.intrinsic = .literal})); // TODO: identifier
-  try b.push(try intLoc(
-    context, "root", .{.instantiated = &context.types.boolean}));
-  try b.push(try intLoc(context, "item", .{.intrinsic = .ast_node}));
-  context.types.constructors.definition = try
-    typeConstructor(context, &ip.provider, "Definition", b.finish());
+  b = try types.SigBuilder.init(ctx, 3, .{.intrinsic = .ast_node}, false);
+  try b.push(try ctx.values.intLocation("name", .{.intrinsic = .literal})); // TODO: identifier
+  try b.push(try ctx.values.intLocation(
+    "root", ctx.types().getBoolean().typedef()));
+  try b.push(try ctx.values.intLocation("item", .{.intrinsic = .ast_node}));
+  ctx.types().constructors.definition = try
+    typeConstructor(ctx, &ip.provider, "constrDefinition", b.finish().?);
   ret.symbols[index] = try
-    typeSymbol(context, "Definition", .{.intrinsic = .definition});
+    typeSymbol(ctx, "Definition", .{.intrinsic = .definition});
   index += 1;
 
-  // Raw
-  b = try types.SigBuilder(.intrinsic).init(
-    context.allocator(), 1, .{.intrinsic = .raw}, true);
-  try b.push((try intLoc(
-    context, "input", model.Type{.intrinsic = .raw})).withPrimary(
-      model.Position.intrinsic()));
-  context.types.constructors.raw = try
-    typeConstructor(context, &ip.provider, "Raw", b.finish());
-  ret.symbols[index] = try typeSymbol(context, "Raw", .{.intrinsic = .raw});
-  index += 1;
+  // instantiated scalars
+  ctx.types().constructors.generic.textual =
+    try registerGenericImpl(ctx, &ip.provider, "constrTextual");
+  ctx.types().constructors.generic.numeric =
+    try registerGenericImpl(ctx, &ip.provider, "constrNumeric");
+  ctx.types().constructors.generic.float =
+    try registerGenericImpl(ctx, &ip.provider, "constrFloat");
+  ctx.types().constructors.generic.@"enum" =
+    try registerGenericImpl(ctx, &ip.provider, "constrEnum");
 
   //------------------
   // prototype symbols
   //------------------
 
   // Optional
-  b = try types.SigBuilder(.intrinsic).init(
-    context.allocator(), 1, .{.intrinsic = .ast_node}, false);
-  try b.push((try intLoc(context, "inner", .{.intrinsic = .ast_node}
+  b = try types.SigBuilder.init(ctx, 1, .{.intrinsic = .ast_node}, false);
+  try b.push((try ctx.values.intLocation("inner", .{.intrinsic = .ast_node}
     )).withPrimary(model.Position.intrinsic()));
-  context.types.constructors.prototypes.optional = try
-    prototypeConstructor(context, &ip.provider, "Optional", b.finish());
-  ret.symbols[index] = try prototypeSymbol(context, "Optional", .optional);
+  ctx.types().constructors.prototypes.optional = try
+    prototypeConstructor(ctx, &ip.provider, "Optional", b.finish().?);
+  ret.symbols[index] = try prototypeSymbol(ctx, "Optional", .optional);
   index += 1;
 
   // Concat
-  b = try types.SigBuilder(.intrinsic).init(
-    context.allocator(), 1, .{.intrinsic = .ast_node}, false);
-  try b.push((try intLoc(context, "inner", .{.intrinsic = .ast_node}
+  b = try types.SigBuilder.init(ctx, 1, .{.intrinsic = .ast_node}, false);
+  try b.push((try ctx.values.intLocation("inner", .{.intrinsic = .ast_node}
     )).withPrimary(model.Position.intrinsic()));
-  context.types.constructors.prototypes.concat = try
-    prototypeConstructor(context, &ip.provider, "Concat", b.finish());
-  ret.symbols[index] = try prototypeSymbol(context, "Concat", .concat);
+  ctx.types().constructors.prototypes.concat = try
+    prototypeConstructor(ctx, &ip.provider, "Concat", b.finish().?);
+  ret.symbols[index] = try prototypeSymbol(ctx, "Concat", .concat);
   index += 1;
 
   // List
-  b = try types.SigBuilder(.intrinsic).init(
-    context.allocator(), 1, .{.intrinsic = .ast_node}, false);
-  try b.push((try intLoc(context, "inner", .{.intrinsic = .ast_node}
+  b = try types.SigBuilder.init(ctx, 1, .{.intrinsic = .ast_node}, false);
+  try b.push((try ctx.values.intLocation("inner", .{.intrinsic = .ast_node}
     )).withPrimary(model.Position.intrinsic()));
-  context.types.constructors.prototypes.list = try
-    prototypeConstructor(context, &ip.provider, "List", b.finish());
-  ret.symbols[index] = try prototypeSymbol(context, "List", .list);
+  ctx.types().constructors.prototypes.list = try
+    prototypeConstructor(ctx, &ip.provider, "List", b.finish().?);
+  ret.symbols[index] = try prototypeSymbol(ctx, "List", .list);
   index += 1;
 
   // Paragraphs
-  b = try types.SigBuilder(.intrinsic).init(
-    context.allocator(), 2, .{.intrinsic = .ast_node}, false);
-  try b.push((try intLoc(context, "inners", (try context.types.list(
+  b = try types.SigBuilder.init(ctx, 2, .{.intrinsic = .ast_node}, false);
+  try b.push((try ctx.values.intLocation("inners", (try ctx.types().list(
     .{.intrinsic = .ast_node})).?)).withVarargs(model.Position.intrinsic()
     ).withPrimary(model.Position.intrinsic()));
-  try b.push(try intLoc(context, "auto", (try context.types.optional(
+  try b.push(try ctx.values.intLocation("auto", (try ctx.types().optional(
     .{.intrinsic = .ast_node})).?));
-  context.types.constructors.prototypes.paragraphs = try
-    prototypeConstructor(context, &ip.provider, "Paragraphs", b.finish());
-  ret.symbols[index] = try prototypeSymbol(context, "Paragraphs", .paragraphs);
+  ctx.types().constructors.prototypes.paragraphs = try
+    prototypeConstructor(ctx, &ip.provider, "Paragraphs", b.finish().?);
+  ret.symbols[index] = try prototypeSymbol(ctx, "Paragraphs", .paragraphs);
   index += 1;
 
   // Map
-  b = try types.SigBuilder(.intrinsic).init(
-    context.allocator(), 2, .{.intrinsic = .ast_node}, false);
-  try b.push(try intLoc(context, "key", .{.intrinsic = .ast_node}));
-  try b.push(try intLoc(context, "value", .{.intrinsic = .ast_node}));
-  context.types.constructors.prototypes.map = try
-    prototypeConstructor(context, &ip.provider, "Map", b.finish());
-  ret.symbols[index] = try prototypeSymbol(context, "Map", .map);
+  b = try types.SigBuilder.init(ctx, 2, .{.intrinsic = .ast_node}, false);
+  try b.push(try ctx.values.intLocation("key", .{.intrinsic = .ast_node}));
+  try b.push(try ctx.values.intLocation("value", .{.intrinsic = .ast_node}));
+  ctx.types().constructors.prototypes.map = try
+    prototypeConstructor(ctx, &ip.provider, "Map", b.finish().?);
+  ret.symbols[index] = try prototypeSymbol(ctx, "Map", .map);
   index += 1;
 
   // Record
-  b = try types.SigBuilder(.intrinsic).init(
-    context.allocator(), 1, .{.intrinsic = .ast_node}, false);
+  b = try types.SigBuilder.init(ctx, 1, .{.intrinsic = .ast_node}, false);
   // TODO: allow record to extend other record (?)
-  try b.push((try intLoc(context, "fields", (try context.types.concat(
+  try b.push((try ctx.values.intLocation("fields", (try ctx.types().concat(
     model.Type{.intrinsic = .location})).?)).withHeader(
       location_block).withPrimary(model.Position.intrinsic()));
-  context.types.constructors.prototypes.record = try
-    prototypeConstructor(context, &ip.provider, "Record", b.finish());
-  ret.symbols[index] = try prototypeSymbol(context, "Record", .record);
+  ctx.types().constructors.prototypes.record = try
+    prototypeConstructor(ctx, &ip.provider, "Record", b.finish().?);
+  ret.symbols[index] = try prototypeSymbol(ctx, "Record", .record);
+  index += 1;
+
+  // Intersection
+  b = try types.SigBuilder.init(ctx, 1, .{.intrinsic = .ast_node}, false);
+  try b.push((try ctx.values.intLocation("types", (try ctx.types().list(
+    .{.intrinsic = .@"type"})).?)).withVarargs(model.Position.intrinsic()));
+  ctx.types().constructors.prototypes.intersection = try
+    prototypeConstructor(ctx, &ip.provider, "Intersection", b.finish().?);
+  ret.symbols[index] =
+    try prototypeSymbol(ctx, "Intersection", .intersection);
+  index += 1;
+
+  // Textual
+  b = try types.SigBuilder.init(ctx, 3, .{.intrinsic = .ast_node}, false);
+  try b.push(try ctx.values.intLocation("cats", .{.intrinsic = .ast_node}));
+  try b.push(try ctx.values.intLocation("include", .{.intrinsic = .ast_node}));
+  try b.push(try ctx.values.intLocation("exclude", .{.intrinsic = .ast_node}));
+  ctx.types().constructors.prototypes.textual = try
+    prototypeConstructor(ctx, &ip.provider, "Textual", b.finish().?);
+  ret.symbols[index] = try prototypeSymbol(ctx, "Textual", .textual);
+  index += 1;
+
+  // Numeric
+  b = try types.SigBuilder.init(ctx, 3, .{.intrinsic = .ast_node}, false);
+  try b.push(try ctx.values.intLocation("min", .{.intrinsic = .ast_node}));
+  try b.push(try ctx.values.intLocation("max", .{.intrinsic = .ast_node}));
+  try b.push(try ctx.values.intLocation("decimals", .{.intrinsic = .ast_node}));
+  ctx.types().constructors.prototypes.numeric = try
+    prototypeConstructor(ctx, &ip.provider, "Numeric", b.finish().?);
+  ret.symbols[index] = try prototypeSymbol(ctx, "Numeric", .numeric);
+  index += 1;
+
+  // Float
+  b = try types.SigBuilder.init(ctx, 1, .{.intrinsic = .ast_node}, false);
+  try b.push(try ctx.values.intLocation("precision", .{.intrinsic = .ast_node}));
+  ctx.types().constructors.prototypes.float = try
+    prototypeConstructor(ctx, &ip.provider, "Float", b.finish().?);
+  ret.symbols[index] = try prototypeSymbol(ctx, "Float", .float);
+  index += 1;
+
+  // Enum
+  b = try types.SigBuilder.init(ctx, 1, .{.intrinsic = .ast_node}, false);
+  try b.push((try ctx.values.intLocation("values", (try ctx.types().list(
+    .{.intrinsic = .raw})).?)).withVarargs(model.Position.intrinsic()));
+  ctx.types().constructors.prototypes.@"enum" = try
+    prototypeConstructor(ctx, &ip.provider, "Enum", b.finish().?);
+  ret.symbols[index] = try prototypeSymbol(ctx, "Enum", .@"enum");
   index += 1;
 
   //-------------------
@@ -696,29 +793,30 @@ pub fn intrinsicModule(context: *Context) !*model.Module {
   //-------------------
 
   // declare
-  b = try types.SigBuilder(.intrinsic).init(
-    context.allocator(), 3, .{.intrinsic = .ast_node}, false);
-  try b.push(try intLoc(context, "namespace", (try context.types.optional(
+  b = try types.SigBuilder.init(ctx, 3, .{.intrinsic = .ast_node}, false);
+  try b.push(try ctx.values.intLocation("namespace", (try ctx.types().optional(
       .{.intrinsic = .@"type"})).?));
-  try b.push((try intLoc(context, "public", .{.intrinsic = .ast_node})
+  try b.push((try ctx.values.intLocation("public", .{.intrinsic = .ast_node})
     ).withPrimary(model.Position.intrinsic()).withHeader(definition_block));
-  try b.push((try intLoc(context, "private", .{.intrinsic = .ast_node})
+  try b.push((try ctx.values.intLocation("private", .{.intrinsic = .ast_node})
     ).withHeader(definition_block));
   ret.symbols[index] =
-    try extFuncSymbol(context, "declare", true, b.finish(), &ip.provider);
+    try extFuncSymbol(ctx, "declare", true, b.finish().?, &ip.provider);
   index += 1;
 
   // if
-  b = try types.SigBuilder(.intrinsic).init(
-    context.allocator(), 3, .{.intrinsic = .ast_node}, false);
-  try b.push(try intLoc(context, "condition", .{.intrinsic = .ast_node}));
-  try b.push((try intLoc(
-    context, "then", .{.intrinsic = .ast_node})).withPrimary(
+  b = try types.SigBuilder.init(ctx, 3, .{.intrinsic = .ast_node}, false);
+  try b.push(try ctx.values.intLocation(
+    "condition", .{.intrinsic = .ast_node}));
+  try b.push((try ctx.values.intLocation(
+    "then", .{.intrinsic = .ast_node})).withPrimary(
       model.Position.intrinsic()));
-  try b.push(try intLoc(context, "else", .{.intrinsic = .ast_node}));
+  try b.push(try ctx.values.intLocation("else", .{.intrinsic = .ast_node}));
   ret.symbols[index]  =
-    try extFuncSymbol(context, "if", false, b.finish(), &ip.provider);
+    try extFuncSymbol(ctx, "if", false, b.finish().?, &ip.provider);
   index += 1;
+
+  std.debug.assert(index == ret.symbols.len);
 
   return ret;
 }

@@ -1,26 +1,27 @@
 const std = @import("std");
 const nyarna = @import("nyarna.zig");
 const model = nyarna.model;
+const Interpreter = @import("load/interpret.zig").Interpreter;
 
 /// evaluates expressions and returns values.
 pub const Evaluator = struct {
-  context: *nyarna.Context,
-
-  pub fn init(context: *nyarna.Context) Evaluator {
-    return Evaluator{.context = context};
-  }
+  ctx: nyarna.Context,
+  // current type that is being called. used by type constructors that need to
+  // behave depending on the target type
+  target_type: model.Type = undefined,
 
   fn setupParameterStackFrame(
       self: *Evaluator, sig: *const model.Type.Signature, ns_dependent: bool,
       prev_frame: ?[*]model.StackItem) ![*]model.StackItem {
+    const data = self.ctx.data;
     const num_params =
       sig.parameters.len + if (ns_dependent) @as(usize, 1) else 0;
-    if ((@ptrToInt(self.context.stack_ptr) - @ptrToInt(self.context.stack.ptr))
-        / @sizeOf(model.StackItem) + num_params > self.context.stack.len) {
+    if ((@ptrToInt(data.stack_ptr) - @ptrToInt(data.stack.ptr))
+        / @sizeOf(model.StackItem) + num_params > data.stack.len) {
       return nyarna.Error.nyarna_stack_overflow;
     }
-    const ret = self.context.stack_ptr;
-    self.context.stack_ptr += num_params + 1;
+    const ret = data.stack_ptr;
+    data.stack_ptr += num_params + 1;
     ret.* = .{.frame_ref = prev_frame};
     return ret;
   }
@@ -28,7 +29,7 @@ pub const Evaluator = struct {
   fn resetParameterStackFrame(self: *Evaluator, frame_ptr: *?[*]model.StackItem,
                               sig: *const model.Type.Signature) void {
     frame_ptr.* = frame_ptr.*.?[0].frame_ref;
-    self.context.stack_ptr -= sig.parameters.len - 1;
+    self.ctx.data.stack_ptr -= sig.parameters.len - 1;
   }
 
   fn fillParameterStackFrame(self: *Evaluator, exprs: []*model.Expression,
@@ -58,7 +59,7 @@ pub const Evaluator = struct {
   fn RetTypeForCtx(comptime ImplCtx: type) type {
     return switch (ImplCtx) {
       *Evaluator => *model.Value,
-      *nyarna.Interpreter => *model.Node,
+      *Interpreter => *model.Node,
       else => unreachable
     };
   }
@@ -66,7 +67,7 @@ pub const Evaluator = struct {
   fn FnTypeForCtx(comptime ImplCtx: type) type {
     return switch (ImplCtx) {
       *Evaluator => nyarna.lib.Provider.BuiltinWrapper,
-      *nyarna.Interpreter => nyarna.lib.Provider.KeywordWrapper,
+      *Interpreter => nyarna.lib.Provider.KeywordWrapper,
       else => unreachable
     };
   }
@@ -74,8 +75,8 @@ pub const Evaluator = struct {
   fn registeredFnForCtx(self: *Evaluator, comptime ImplCtx: type, index: usize)
       FnTypeForCtx(ImplCtx) {
     return switch (ImplCtx) {
-      *Evaluator => self.context.builtin_registry.items[index],
-      *nyarna.Interpreter => self.context.keyword_registry.items[index],
+      *Evaluator => self.ctx.data.builtin_registry.items[index],
+      *Interpreter => self.ctx.data.keyword_registry.items[index],
       else => unreachable
     };
   }
@@ -83,22 +84,14 @@ pub const Evaluator = struct {
   fn poison(impl_ctx: anytype, pos: model.Position)
       nyarna.Error!RetTypeForCtx(@TypeOf(impl_ctx)) {
     switch (@TypeOf(impl_ctx)) {
-      *Evaluator => {
-        const ret =
-          try impl_ctx.context.allocator().create(model.Value);
-        ret.* = .{
-          .data = .poison,
-          .origin = pos,
-        };
-        return ret;
-      },
-      *nyarna.Interpreter => return impl_ctx.node_gen.poison(pos),
+      *Evaluator => return try impl_ctx.ctx.values.poison(pos),
+      *Interpreter => return impl_ctx.node_gen.poison(pos),
       else => unreachable,
     }
   }
 
   fn callConstructor(self: *Evaluator, impl_ctx: anytype,
-      call: *model.Expression.Call, constr: *const nyarna.types.Constructor)
+      call: *model.Expression.Call, constr: nyarna.types.Constructor)
       nyarna.Error!RetTypeForCtx(@TypeOf(impl_ctx)) {
     const target_impl =
       self.registeredFnForCtx(@TypeOf(impl_ctx), constr.impl_index);
@@ -164,7 +157,7 @@ pub const Evaluator = struct {
               const val = try self.evaluate(nf.body);
               return switch (@TypeOf(impl_ctx)) {
                 *Evaluator => val,
-                *nyarna.Interpreter => val.data.ast.root,
+                *Interpreter => val.data.ast.root,
                 else => unreachable,
               };
             } else return poison(impl_ctx, call.expr().pos);
@@ -173,24 +166,24 @@ pub const Evaluator = struct {
         }
       },
       .@"type" => |tv| {
-        const constr = self.context.types.typeConstructor(tv.t);
+        const constr = self.ctx.types().typeConstructor(tv.t);
+        self.target_type = tv.t;
         return self.callConstructor(impl_ctx, call, constr);
       },
       .prototype => |pv| {
-        const constr = self.context.types.prototypeConstructor(pv.pt);
+        const constr = self.ctx.types().prototypeConstructor(pv.pt);
         return self.callConstructor(impl_ctx, call, constr);
       },
       .poison => return switch (@TypeOf(impl_ctx)) {
-        *Evaluator => model.Value.create(
-          self.context.allocator(), call.expr().pos, .poison),
-        *nyarna.Interpreter => impl_ctx.node_gen.poison(call.expr().pos),
+        *Evaluator => self.ctx.values.poison(call.expr().pos),
+        *Interpreter => impl_ctx.node_gen.poison(call.expr().pos),
         else => unreachable,
       },
       else => unreachable
     }
   }
 
-  pub fn evaluateKeywordCall(self: *Evaluator, intpr: *nyarna.Interpreter,
+  pub fn evaluateKeywordCall(self: *Evaluator, intpr: *Interpreter,
                              call: *model.Expression.Call) !*model.Node {
     return self.evaluateCall(intpr, call);
   }
@@ -211,7 +204,7 @@ pub const Evaluator = struct {
         }
         cur_ptr.* = try self.evaluate(assignment.expr);
         return try model.Value.create(
-          self.context.allocator(), expr.pos, .void);
+          self.ctx.global(), expr.pos, .void);
       },
       .access => |*access| {
         var cur = try self.evaluate(access.subject);
@@ -226,15 +219,15 @@ pub const Evaluator = struct {
       },
       .branches => |*branches| {
         var condition = try self.evaluate(branches.condition);
-        if (self.context.types.valueType(condition).is(.poison))
+        if (self.ctx.types().valueType(condition).is(.poison))
           return model.Value.create(
-            self.context.allocator(), expr.pos, .poison);
+            self.ctx.global(), expr.pos, .poison);
         return self.evaluate(
-          branches.branches[condition.data.enumval.index]);
+          branches.branches[condition.data.@"enum".index]);
       },
       .concatenation => |concat| {
         var builder = ConcatBuilder.init(
-          self.context, expr.pos, expr.expected_type);
+          self.ctx, expr.pos, expr.expected_type);
         var i: usize = 0;
         while (i < concat.len) : (i += 1) {
           var cur = try self.evaluate(concat[i]);
@@ -247,30 +240,22 @@ pub const Evaluator = struct {
             } else {
               var content_builder = std.ArrayListUnmanaged(u8){};
               try content_builder.appendSlice(
-                self.context.allocator(), cur.data.text.content);
+                self.ctx.global(), cur.data.text.content);
               try content_builder.appendSlice(
-                self.context.allocator(), next.data.text.content);
+                self.ctx.global(), next.data.text.content);
               i += 1;
               var last_pos = next.origin;
               while (i < concat.len) : (i += 1) {
                 next = try self.evaluate(concat[i]);
                 if (next.data != .text) break;
                 try content_builder.appendSlice(
-                  self.context.allocator(), next.data.text.content);
+                  self.ctx.global(), next.data.text.content);
                 last_pos = next.origin;
               }
-              const scalar_val =
-                try self.context.allocator().create(model.Value);
-              scalar_val.* = .{
-                .origin = cur.origin.span(last_pos),
-                .data = .{
-                  .text = .{
-                    .t = builder.scalar_type,
-                    .content = content_builder.items,
-                  },
-                },
-              };
-              try builder.push(scalar_val);
+              const scalar_val = try self.ctx.values.textScalar(
+                cur.origin.span(last_pos), builder.scalar_type,
+                content_builder.items);
+              try builder.push(scalar_val.value());
               if (i == concat.len) break;
               cur = next;
             }
@@ -281,20 +266,18 @@ pub const Evaluator = struct {
       },
       .var_retrieval => |*var_retr| return var_retr.variable.cur_value.?.value,
       .literal => |*literal| return &literal.value,
-      .poison => return
-        model.Value.create(self.context.allocator(), expr.pos, .poison),
-      .void => return
-        model.Value.create(self.context.allocator(), expr.pos, .void),
+      .poison => return self.ctx.values.poison(expr.pos),
+      .void => return self.ctx.values.void(expr.pos),
     }
   }
 
   inline fn toString(self: *Evaluator, input: anytype) ![]u8 {
-    return std.fmt.allocPrint(self.context.allocator(), "{}", .{input});
+    return std.fmt.allocPrint(self.ctx.global(), "{}", .{input});
   }
 
   fn coerce(self: *Evaluator, value: *model.Value, expected_type: model.Type)
       std.mem.Allocator.Error!*model.Value {
-    const value_type = self.context.types.valueType(value);
+    const value_type = self.ctx.types().valueType(value);
     if (value_type.eql(expected_type)) return value;
     switch (expected_type) {
       .intrinsic => |intr| switch (intr) {
@@ -312,12 +295,12 @@ pub const Evaluator = struct {
               .quadruple, .octuple =>
                 self.toString(float_val.content.quadruple),
             },
-            .enumval => |ev| ev.t.values.entries.items(.key)[ev.index],
+            .@"enum" => |ev| ev.t.values.entries.items(.key)[ev.index],
             // type checking ensures this never happens
             else => unreachable,
           };
           return model.Value.create(
-            self.context.allocator(), value.origin,
+            self.ctx.global(), value.origin,
             model.Value.TextScalar{.t = expected_type, .content = content});
         },
         // other coercions can never happen.
@@ -336,29 +319,23 @@ pub const Evaluator = struct {
         // these are virtual types and thus can never be the expected type.
         .optional, .intersection => unreachable,
         .concat => |*concat| {
-          var list = std.ArrayList(*model.Value).init(
-            self.context.allocator());
+          var cv = try self.ctx.values.concat(value.origin, concat);
           if (!value_type.is(.void)) {
             const inner_value = try self.coerce(value, concat.inner);
-            try list.append(inner_value);
+            try cv.content.append(inner_value);
           }
-          return model.Value.create(
-            self.context.allocator(), value.origin,
-              model.Value.Concat{.t = concat, .content = list});
+          return cv.value();
         },
         .paragraphs => |*para| {
-          var list = std.ArrayList(*model.Value).init(
-            self.context.allocator());
+          var lv = try self.ctx.values.para(value.origin, para);
           if (!value_type.is(.void)) {
             const para_value = for (para.inner) |cur| {
-              if (self.context.types.lesserEqual(value_type, cur))
+              if (self.ctx.types().lesserEqual(value_type, cur))
                 break try self.coerce(value, cur);
             } else unreachable;
-            try list.append(para_value);
+            try lv.content.append(para_value);
           }
-          return model.Value.create(
-            self.context.allocator(), value.origin,
-              model.Value.Para{.t = para, .content = list});
+          return lv.value();
         },
         .list, .map => unreachable, // TODO: implement coercion of inner values.
         .callable => unreachable, // TODO: implement callable wrapper.
@@ -371,8 +348,8 @@ pub const Evaluator = struct {
   pub fn evaluate(self: *Evaluator, expr: *model.Expression)
       nyarna.Error!*model.Value {
     const res = try self.doEvaluate(expr);
-    const expected_type = self.context.types.expectedType(
-      self.context.types.valueType(res), expr.expected_type);
+    const expected_type = self.ctx.types().expectedType(
+      self.ctx.types().valueType(res), expr.expected_type);
     return try self.coerce(res, expected_type);
   }
 };
@@ -380,18 +357,18 @@ pub const Evaluator = struct {
 const ConcatBuilder = struct {
   cur: ?*model.Value,
   concat_val: ?*model.Value.Concat,
-  context: *nyarna.Context,
+  ctx: nyarna.Context,
   pos: model.Position,
   inner_type: model.Type,
   expected_type: model.Type,
   scalar_type: model.Type,
 
-  fn init(context: *nyarna.Context, pos: model.Position,
+  fn init(ctx: nyarna.Context, pos: model.Position,
           expected_type: model.Type) ConcatBuilder {
     return .{
       .cur = null,
       .concat_val = null,
-      .context = context,
+      .ctx = ctx,
       .pos = pos,
       .inner_type = model.Type{.intrinsic = .every},
       .expected_type = expected_type,
@@ -401,18 +378,8 @@ const ConcatBuilder = struct {
   }
 
   fn emptyConcat(self: *ConcatBuilder) !*model.Value.Concat {
-    const v = try self.context.allocator().create(model.Value);
-    v.* = .{
-      .origin = self.pos,
-      .data = .{
-        .concat = .{
-          .t = &self.expected_type.structural.concat,
-          .content = std.ArrayList(*model.Value).init(self.context.allocator()),
-        },
-      },
-    };
-    const cval = &v.data.concat;
-    return cval;
+    return self.ctx.values.concat(
+      self.pos, &self.expected_type.structural.concat);
   }
 
   fn concatWith(self: *ConcatBuilder, first_val: *model.Value)
@@ -427,8 +394,8 @@ const ConcatBuilder = struct {
       self.concat_val = try self.concatWith(first_val);
       self.cur = null;
     }
-    self.inner_type = try self.context.types.sup(
-      self.inner_type, self.context.types.valueType(item));
+    self.inner_type = try self.ctx.types().sup(
+      self.inner_type, self.ctx.types().valueType(item));
 
     if (self.concat_val) |cval| try cval.content.append(item)
     else self.cur = item;
@@ -444,21 +411,12 @@ const ConcatBuilder = struct {
       return if (self.expected_type.isStructural(.concat))
         (try self.emptyConcat()).value()
       else if (self.expected_type.is(.void)) try
-        model.Value.create(self.context.allocator(), self.pos, .void)
+        model.Value.create(self.ctx.global(), self.pos, .void)
       else blk: {
         std.debug.assert(
           nyarna.types.containedScalar(self.expected_type) != null);
-        const scalar_val = try self.context.allocator().create(model.Value);
-        scalar_val.* = .{
-          .origin = self.pos,
-          .data = .{
-            .text = .{
-              .t = self.scalar_type,
-              .content = "",
-            },
-          },
-        };
-        break :blk scalar_val;
+        break :blk (try self.ctx.values.textScalar(
+          self.pos, self.scalar_type, "")).value();
       };
     }
   }

@@ -1,7 +1,7 @@
 const std = @import("std");
 const nyarna = @import("../nyarna.zig");
 const model = nyarna.model;
-const Interpreter = nyarna.Interpreter;
+const Interpreter = @import("interpret.zig").Interpreter;
 
 const unicode = @import("unicode.zig");
 const Token = model.Token;

@@ -1,15 +1,12 @@
 const std = @import("std");
 
-pub const EncodedCharacter = @import("load/unicode.zig").EncodedCharacter;
-pub const Lexer       = @import("load/lex.zig").Lexer;
-pub const Interpreter = @import("load/interpret.zig").Interpreter;
-pub const ModuleLoader = @import("load/load.zig").ModuleLoader;
 pub const Evaluator = @import("runtime.zig").Evaluator;
-
 pub const model = @import("model.zig");
 pub const types = @import("types.zig");
 pub const errors = @import("errors");
 pub const lib = @import("lib.zig");
+pub const ModuleLoader = @import("load/load.zig").ModuleLoader;
+pub const EncodedCharacter = @import("load/unicode.zig").EncodedCharacter;
 
 pub const default_stack_size = 1024 * 1024; // 1MB
 
@@ -17,22 +14,18 @@ pub const Error = error {
   OutOfMemory,
   nyarna_stack_overflow,
   too_many_namespaces,
+  step_produced_errors,
 };
 
-/// the Context is the entry point to the API and the owner of all non-local
-/// resources allocated during operation. Local resources are internal data of
-/// the lexer, parser and interpreter, including intermediate AST representation
-/// of the input, while non-local resources are the generated expressions,
-/// values, types and functions.
+/// Globals is the owner of all data that lives through the processing pipeline.
+/// This data includes intrinsic and generated types, and most allocated
+/// model.Expression and model.Value objects. Quite some of those objects could
+/// theoretically be garbage-collected earlier, but the current implementation
+/// assumes we have enough memory to not waste time on implementing that.
 ///
-/// All modules created from the same context are interoperable with other
-/// modules of that context, and must not be used with modules created by
-/// another context.
-///
-/// all functionality of this type intended to be public is available via its
-/// functions. these are not thread-safe. a called should usually not access
-/// this type's fields directly.
-pub const Context = struct {
+/// This is an internal, not an external API. External code should solely
+/// interact with Globals via the limited interface of the Context type.
+pub const Globals = struct {
   /// The error reporter for this loader, supplied externally.
   reporter: *errors.Reporter,
   /// The backing allocator for heap allocations used by this loader.
@@ -61,8 +54,8 @@ pub const Context = struct {
   stack_ptr: [*]model.StackItem,
 
   pub fn create(backing_allocator: std.mem.Allocator,
-                reporter: *errors.Reporter, stack_size: usize) !*Context {
-    const ret = try backing_allocator.create(Context);
+                reporter: *errors.Reporter, stack_size: usize) !*Globals {
+    const ret = try backing_allocator.create(Globals);
     ret.* = .{
       .reporter = reporter,
       .backing_allocator = backing_allocator,
@@ -79,21 +72,27 @@ pub const Context = struct {
     ret.stack = try backing_allocator.alloc(model.StackItem, stack_size);
     ret.stack_ptr = ret.stack.ptr;
     errdefer backing_allocator.free(ret.stack);
-    ret.types = try types.Lattice.init(&ret.storage);
+
+    var logger = errors.Handler{.reporter = reporter};
+    var init_ctx = Context{.data = ret, .logger = &logger};
+    ret.types = try types.Lattice.init(init_ctx);
     errdefer ret.types.deinit();
-    ret.intrinsics = try lib.intrinsicModule(ret);
+    ret.intrinsics = try lib.intrinsicModule(init_ctx);
+    if (logger.count > 0) {
+      return Error.step_produced_errors;
+    }
     return ret;
   }
 
-  pub fn destroy(context: *Context) void {
-    context.types.deinit();
-    context.storage.deinit();
-    context.backing_allocator.free(context.stack);
-    context.backing_allocator.destroy(context);
+  pub fn destroy(self: *Globals) void {
+    self.types.deinit();
+    self.storage.deinit();
+    self.backing_allocator.free(self.stack);
+    self.backing_allocator.destroy(self);
   }
 
   pub inline fn fillLiteral(
-      self: *Context, at: model.Position, e: *model.Expression,
+      self: *Globals, at: model.Position, e: *model.Expression,
       content: model.Value.Data) void {
     e.* = .{
       .pos = at,
@@ -110,16 +109,49 @@ pub const Context = struct {
     e.expected_type = self.types.valueType(&e.data.literal.value);
   }
 
-  /// allocator for context-owned memory. Will go out of scope when the context
-  /// vanishes.
-  pub inline fn allocator(self: *Context) std.mem.Allocator {
-    return self.storage.allocator();
-  }
-
-  pub inline fn genLiteral(self: *Context, at: model.Position,
+  pub inline fn genLiteral(self: *Globals, at: model.Position,
                            content: model.Value.Data) !*model.Expression {
-    const e = try self.allocator().create(model.Expression);
+    const e = try self.storage.allocator().create(model.Expression);
     self.fillLiteral(at, e, content);
     return e;
+  }
+};
+
+const Lattice = types.Lattice; // to avoid ambiguity in the following struct
+
+/// The Context is a public API for accessing global values and logging.
+/// External code shall not directly interface with the data field and only use
+/// the accessors defined in Context. This both provides a more stable external
+/// API, and prevents external callers from bringing the data into an invalid
+/// state.
+pub const Context = struct {
+  /// private, do not access outside of Nyarna source code.
+  data: *Globals,
+  /// public, used for reporting errors and warnings.
+  logger: *errors.Handler,
+  /// public interface for generating values.
+  values: model.ValueGenerator = .{},
+
+  /// The allocator used for any global data. All data allocated with this
+  /// will be owned by Globals, though you are allowed (but not required)
+  /// to deallocate it again using this allocator. Globals will deallocate
+  /// all remaining data at the end of its lifetime.
+  pub inline fn global(self: *const Context) std.mem.Allocator {
+    return self.data.storage.allocator();
+  }
+
+  /// The allocator used for data local to some processing step. Data allocated
+  /// with this is owned by the caller, who must explicitly deallocated it.
+  pub inline fn local(self: *const Context) std.mem.Allocator {
+    return self.data.backing_allocator;
+  }
+
+  /// Interface to the type lattice. It allows you to create and compare types.
+  pub inline fn types(self: *const Context) *Lattice {
+    return &self.data.types;
+  }
+
+  pub inline fn evaluator(self: *const Context) Evaluator {
+    return Evaluator{.ctx = self.*};
   }
 };
