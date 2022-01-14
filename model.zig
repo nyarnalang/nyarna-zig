@@ -495,6 +495,35 @@ pub const Node = struct {
       return Node.parent(self);
     }
   };
+  /// Funcgen nodes define functions. Just like Typegen nodes, they may need
+  /// multiple passes to be processed.
+  pub const Funcgen = struct {
+    /// params are initially unresolved. Trying to interpret the Funcgen may
+    /// successfully resolve the params while failing to interpret the body
+    /// completely.
+    params: union(enum) {
+      /// This is whatever the input gave, with no checking whether it is a
+      /// structure that can be associated to Concat(Location). That check only
+      /// happens when interpreting the Funcgen Node, either directly or
+      /// step-by-step within \declare.
+      unresolved: *Node,
+      /// the result of associating the original node with Concat(Location).
+      /// only used during \declare processing.
+      resolved: struct {
+        locations: []*Location,
+        variables: VariableContainer,
+      },
+    },
+    returns: ?*Node,
+    body: *Node,
+    /// used during fixpoint operation for type inference.
+    /// unused if `returns` is set.
+    cur_returns: Type = undefined,
+
+    pub inline fn node(self: *@This()) *Node {
+      return Node.parent(self);
+    }
+  };
 
   pub const Data = union(enum) {
     access: Access,
@@ -503,6 +532,7 @@ pub const Node = struct {
     concat: Concat,
     definition: Definition,
     expression: *Expression,
+    funcgen: Funcgen,
     literal: Literal,
     location: Location,
     paras: Paras,
@@ -527,6 +557,7 @@ pub const Node = struct {
       Concat => offset(Data, "concat"),
       Definition => offset(Data, "definition"),
       *Expression => offset(Data, "expression"),
+      Funcgen => offset(Data, "funcgen"),
       Literal => offset(Data, "literal"),
       Location => offset(Data, "location"),
       Paras => offset(Data, "paras"),
@@ -583,7 +614,7 @@ pub const Symbol = struct {
     ///
     /// the initial value is null, however due to Nyarna's semantics, any access
     /// will always happen when cur_value is non-null.
-    cur_value: ?*StackItem,
+    cur_value: ?*StackItem = null,
   };
 
   pub const Data = union(enum) {
@@ -602,7 +633,7 @@ pub const Symbol = struct {
 /// part of any structure that defines variables.
 /// contains a list of variables, the list itself must not be modified after
 /// creation.
-pub const VariableContainer = []Symbol.Variable;
+pub const VariableContainer = []*Symbol.Variable;
 
 /// workaround for https://github.com/ziglang/zig/issues/6611
 fn offset(comptime T: type, comptime field: []const u8) usize {
@@ -1210,7 +1241,7 @@ pub const Value = struct {
     varargs: ?Position = null,
     varmap: ?Position = null,
     mutable: ?Position = null,
-    block_header: ?*BlockHeader = null,
+    header: ?*BlockHeader = null,
 
     pub inline fn value(self: *@This()) *Value {
       return Value.parent(self);
@@ -1222,7 +1253,7 @@ pub const Value = struct {
     }
 
     pub inline fn withHeader(self: *Location, v: *BlockHeader) *Location {
-      self.block_header = v;
+      self.header = v;
       return self;
     }
 
@@ -1434,6 +1465,13 @@ pub const NodeGenerator = struct {
     return self.node(content.pos, .{.expression = content});
   }
 
+  pub inline fn funcgen(self: *Self, pos: Position, returns: ?*Node,
+                        params: *Node, body: *Node) !*Node.Funcgen {
+    return &(try self.node(pos, .{.funcgen = .{
+      .returns = returns, .params = .{.unresolved = params}, .body = body,
+    }})).data.funcgen;
+  }
+
   pub inline fn literal(self: *Self, pos: Position, content: Node.Literal)
       !*Node.Literal {
     return &(try self.node(pos, .{.literal = content})).data.literal;
@@ -1442,6 +1480,35 @@ pub const NodeGenerator = struct {
   pub inline fn location(self: *Self, pos: Position, content: Node.Location)
       !*Node.Location {
     return &(try self.node(pos, .{.location = content})).data.location;
+  }
+
+  pub fn locationFromValue(
+      self: *Self, ctx: nyarna.Context, value: *Value.Location)
+      !*Node.Location {
+    const loc_node = try self.location(value.value().origin, .{
+      .name = try self.literal(
+        value.name.value().origin, .{
+          .kind = .text, .content = value.name.content,
+        }),
+      .@"type" = try self.expression(
+        try ctx.createValueExpr(value.value().origin, .{
+          .@"type" = .{.t = value.tloc},
+        })),
+      .default = if (value.default) |d|
+        try self.expression(d)
+      else null,
+      .additionals = null
+    });
+    if (value.primary != null or value.varargs != null or
+        value.varmap != null or value.mutable != null or
+        value.header != null) {
+      const add = try self.allocator.create(Node.Location.Additionals);
+      inline for ([_][]const u8{
+          "primary", "varargs", "varmap", "mutable", "header"}) |field|
+        @field(add, field) = @field(value, field);
+      loc_node.additionals = add;
+    }
+    return loc_node;
   }
 
   pub inline fn paras(self: *Self, pos: Position, content: Node.Paras)
@@ -1602,8 +1669,9 @@ pub const ValueGenerator = struct {
       pos, .{.funcref = .{.func = func}})).data.funcref;
   }
 
-  pub inline fn location(self: *const Self, pos: Position, name: *Value.TextScalar,
-                         t: Type) !*Value.Location {
+  pub inline fn location(
+      self: *const Self, pos: Position, name: *Value.TextScalar,
+      t: Type) !*Value.Location {
     return &(try self.value(
       pos, .{.location = .{.name = name, .tloc = t}})).data.location;
   }

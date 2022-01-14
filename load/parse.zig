@@ -472,7 +472,7 @@ pub const Parser = struct {
         unreachable; // TODO
       },
       .func_ref => |fr| {
-        const target_expr = try self.intpr().genPublicLiteral(
+        const target_expr = try self.intpr().ctx.createValueExpr(
           pos, .{.funcref = .{.func = fr.target}});
         return CallContext{
           .known = .{
@@ -491,7 +491,7 @@ pub const Parser = struct {
         unreachable; // TODO
       },
       .proto_ref => |pref| {
-        const target_expr = try self.intpr().genPublicLiteral(
+        const target_expr = try self.intpr().ctx.createValueExpr(
           pos, .{.prototype = .{.pt = pref.*}});
         return CallContext{
           .known = .{

@@ -133,8 +133,6 @@ pub const Interpreter = struct {
   fn reportResolveFailures(
       self: *Interpreter, node: *model.Node, immediate: bool) void {
     switch (node.data) {
-      .resolved_call, .literal, .resolved_symref, .expression, .poison,.void =>
-        {},
       .access => |*acc| self.reportResolveFailures(acc.subject, immediate),
       .assign => |*ass| {
         switch (ass.target) {
@@ -143,12 +141,6 @@ pub const Interpreter = struct {
         }
         self.reportResolveFailures(ass.replacement, immediate);
       },
-      .unresolved_call => |*uc| {
-        self.reportResolveFailures(uc.target, immediate);
-        for (uc.proto_args) |*arg|
-          self.reportResolveFailures(arg.content, immediate);
-      },
-
       .branches => |*br| {
         self.reportResolveFailures(br.condition, immediate);
         for (br.branches) |branch|
@@ -157,14 +149,22 @@ pub const Interpreter = struct {
       .concat => |*con| {
         for (con.items) |item| self.reportResolveFailures(item, immediate);
       },
+      .definition => |*def| self.reportResolveFailures(def.content, immediate),
+      .expression, .literal, .resolved_call, .resolved_symref,.void, .poison =>
+        {},
+      .funcgen => |*fgen| {
+        self.reportResolveFailures(fgen.params.unresolved, immediate);
+        if (fgen.returns) |ret| self.reportResolveFailures(ret, immediate);
+        self.reportResolveFailures(fgen.body, immediate);
+      },
+      .location => |*loc| {
+        if (loc.@"type") |t| self.reportResolveFailures(t, immediate);
+        if (loc.@"default") |d| self.reportResolveFailures(d, immediate);
+      },
       .paras => |*para| {
         for (para.items) |*item|
           self.reportResolveFailures(item.content, immediate);
       },
-      .unresolved_symref => if (immediate)
-        self.ctx.logger.CannotResolveImmediately(node.pos)
-      else
-        self.ctx.logger.UnknownSymbol(node.pos),
       .typegen => |*tg| switch (tg.content) {
         .optional => |*opt| self.reportResolveFailures(opt.inner, immediate),
         .concat => |*con| self.reportResolveFailures(con.inner, immediate),
@@ -190,11 +190,15 @@ pub const Interpreter = struct {
         .@"enum" => |*en|
           for (en.values) |v| self.reportResolveFailures(v, immediate),
       },
-      .location => |*loc| {
-        if (loc.@"type") |t| self.reportResolveFailures(t, immediate);
-        if (loc.@"default") |d| self.reportResolveFailures(d, immediate);
+      .unresolved_call => |*uc| {
+        self.reportResolveFailures(uc.target, immediate);
+        for (uc.proto_args) |*arg|
+          self.reportResolveFailures(arg.content, immediate);
       },
-      .definition => |*def| self.reportResolveFailures(def.content, immediate),
+      .unresolved_symref => if (immediate)
+        self.ctx.logger.CannotResolveImmediately(node.pos)
+      else
+        self.ctx.logger.UnknownSymbol(node.pos),
     }
   }
 
@@ -235,7 +239,7 @@ pub const Interpreter = struct {
           self.ctx.logger.PrefixedFunctionMustBeCalled(input.pos);
           expr.fillPoison(input.pos);
         } else {
-          self.fillLiteral(input.pos, expr, .{
+          self.ctx.assignValue(expr, input.pos, .{
             .funcref = .{
               .func = ref.target
             },
@@ -243,24 +247,16 @@ pub const Interpreter = struct {
         }
         return expr;
       },
-      .type_ref => |ref| {
-        const expr = try self.createPublic(model.Expression);
-        self.fillLiteral(input.pos, expr, .{
-          .@"type" = .{
-            .t = ref.*,
-          },
-        });
-        return expr;
-      },
-      .proto_ref => |ref| {
-        const expr = try self.createPublic(model.Expression);
-        self.fillLiteral(input.pos, expr, .{
-          .prototype = .{
-            .pt = ref.*,
-          },
-        });
-        return expr;
-      },
+      .type_ref => |ref| return self.ctx.createValueExpr(input.pos, .{
+        .@"type" = .{
+          .t = ref.*,
+        },
+      }),
+      .proto_ref => |ref| return self.ctx.createValueExpr(input.pos, .{
+        .prototype = .{
+          .pt = ref.*,
+        },
+      }),
       .expr_chain => |ec| {
         const expr = try self.createPublic(model.Expression);
         expr.* = .{
@@ -352,7 +348,7 @@ pub const Interpreter = struct {
       nyarna.Error!*model.Expression {
     const expr = try self.createPublic(model.Expression);
     switch (ref.sym.data) {
-      .ext_func, .ny_func => self.fillLiteral(ref.node().pos, expr, .{
+      .ext_func, .ny_func => self.ctx.assignValue(expr, ref.node().pos, .{
         .funcref = .{
           .func = ref.sym,
         },
@@ -368,12 +364,12 @@ pub const Interpreter = struct {
           .expected_type = v.t,
         };
       },
-      .@"type" => |*t| self.fillLiteral(ref.node().pos, expr, .{
+      .@"type" => |*t| self.ctx.assignValue(expr, ref.node().pos, .{
         .@"type" = .{
           .t = t.*
         },
       }),
-      .prototype => |pt| self.fillLiteral(ref.node().pos, expr, .{
+      .prototype => |pt| self.ctx.assignValue(expr, ref.node().pos, .{
         .prototype = .{
           .pt = pt,
         },
@@ -460,9 +456,12 @@ pub const Interpreter = struct {
       const res = try eval.evaluateKeywordCall(self, &expr.data.call);
       const interpreted_res =
         try self.tryInterpret(res, report_failure, ctx);
-      // a call to a keyword can never return a node that cannot be
-      // interpreted.
-      std.debug.assert(interpreted_res != null);
+      if (interpreted_res == null) {
+        // it would be nicer to actually replace the original node with `res`
+        // but that would make the tryInterpret API more complicated so we just
+        // update the original node instead.
+        rc.node().* = res.*;
+      }
       return interpreted_res;
     } else {
       return expr;
@@ -549,7 +548,7 @@ pub const Interpreter = struct {
       },
     };
 
-    return self.genPublicLiteral(loc.node().pos, .{
+    return self.ctx.createValueExpr(loc.node().pos, .{
       .location = .{
         .name = &name.data.text,
         .tloc = ltype,
@@ -558,7 +557,7 @@ pub const Interpreter = struct {
         .varargs = if (loc.additionals) |add| add.varargs else null,
         .varmap  = if (loc.additionals) |add| add.varmap else null,
         .mutable = if (loc.additionals) |add| add.mutable else null,
-        .block_header = if (loc.additionals) |add| add.header else null,
+        .header = if (loc.additionals) |add| add.header else null,
       },
     });
   }
@@ -589,13 +588,121 @@ pub const Interpreter = struct {
         },
       },
     };
-    return self.genPublicLiteral(def.node().pos, .{
+    return self.ctx.createValueExpr(def.node().pos, .{
       .definition = .{
         .name = &name.data.text,
         .content = try eval.evaluate(expr),
         .root = def.root
       },
     });
+  }
+
+  fn locationsCanGenVars(
+      self: *Interpreter, node: *model.Node, report_failure: bool,
+      ctx: ?*graph.ResolutionContext) nyarna.Error!bool {
+    switch (node.data) {
+      .location => |*loc| {
+        if (loc.@"type") |tnode| {
+          if (try self.tryInterpret(tnode, report_failure, ctx)) |texpr| {
+            tnode.data = .{.expression = texpr};
+            return true;
+          } else return false;
+        } else {
+          return (try self.probeType(loc.default.?, ctx)) != null;
+        }
+      },
+      .concat => |*con| {
+        for (con.items) |item|
+          if (!(try self.locationsCanGenVars(item, report_failure, ctx)))
+            return false;
+        return true;
+      },
+      else => if (try self.tryInterpret(node, report_failure, ctx)) |expr| {
+        node.data = .{.expression = expr};
+        return true;
+      } else return false,
+    }
+  }
+
+  fn collectLocations(self: *Interpreter, node: *model.Node,
+                      collector: *std.ArrayList(*model.Node.Location))
+      nyarna.Error!void {
+    switch (node.data) {
+      .location => |*loc| {
+        if (loc.@"type") |tnode| {
+          const expr =
+            (try self.associate(tnode, .{.intrinsic = .@"type"}, null)).?;
+          if (expr.data.literal.value.data == .poison) return;
+        } else if ((try self.probeType(loc.default.?, null)).?.is(.poison))
+          return;
+        try collector.append(loc);
+      },
+      .concat => |*con|
+        for (con.items) |item| try self.collectLocations(item, collector),
+      .void, .poison => {},
+      else => {
+        const expr = (try self.associate(
+          node, (try self.ctx.types().concat(.{.intrinsic = .location})).?, null
+        )).?;
+        const value = try self.ctx.evaluator().evaluate(expr);
+        switch (value.data) {
+          .concat => |*con| {
+            for (con.content.items) |item|
+              try collector.append(try self.node_gen.locationFromValue(
+                self.ctx, &item.data.location));
+          },
+          .poison => {},
+          else => unreachable,
+        }
+      },
+    }
+  }
+
+  /// Tries to change func.params.unresolved to func.params.resolved.
+  /// returns true if that transition was successful. A return value of false
+  /// implies that there is at least one yet unresolved reference in the params.
+  pub fn tryInterpretFuncParams(self: *Interpreter, func: *model.Node.Funcgen,
+                                report_failure: bool,
+                                ctx: ?*graph.ResolutionContext) !bool {
+    if (!(try self.locationsCanGenVars(
+        func.params.unresolved, report_failure, ctx)))
+      return false;
+    var locs = std.ArrayList(*model.Node.Location).init(self.allocator());
+    try self.collectLocations(func.params.unresolved, &locs);
+    var variables =
+      try self.allocator().alloc(*model.Symbol.Variable, locs.items.len);
+    for (locs.items) |loc, index| {
+      const sym = try self.ctx.global().create(model.Symbol);
+      sym.* = .{
+        .defined_at = loc.name.node().pos,
+        .name = try self.ctx.global().dupe(u8, loc.name.content),
+        .data = .{
+          .variable = .{
+            .t = if (loc.@"type") |lt|
+              lt.data.expression.data.literal.value.data.@"type".t
+            else (try self.probeType(loc.default.?, ctx)).?,
+          },
+        },
+      };
+      variables[index] = &sym.data.variable;
+    }
+    func.params = .{
+      .resolved = .{
+        .locations = locs.items,
+        .variables = variables,
+      },
+    };
+    return true;
+  }
+
+  fn tryInterpretFunc(self: *Interpreter, func: *model.Node.Funcgen,
+                      report_failure: bool, ctx: ?*graph.ResolutionContext)
+      nyarna.Error!?*model.Expression {
+    if (func.params == .unresolved)
+      if (!try self.tryInterpretFuncParams(func, report_failure, ctx))
+        return null;
+    // TODO: add symbols to namespace. interpret body. remove symbols from ns.
+    unreachable;
   }
 
   /// Tries to interpret the given node. Consumes the `input` node.
@@ -617,12 +724,24 @@ pub const Interpreter = struct {
       .assign => |*ass| self.tryInterpretAss(ass, report_failure, ctx),
       .branches, .concat, .paras =>
         self.tryProbeAndInterpret(input, report_failure, ctx),
+      .definition => |*def| self.tryInterpretDef(def, report_failure, ctx),
+      .expression => |expr| expr,
+      .funcgen => |*func| self.tryInterpretFunc(func, report_failure, ctx),
+      .literal => |lit| try self.ctx.createValueExpr(input.pos, .{
+        .text = .{
+          .t = model.Type{
+            .intrinsic = if (lit.kind == .space) .space else .literal},
+          .content = try self.ctx.global().dupe(u8, lit.content),
+        },
+      }),
+      .location => |*loc| self.tryInterpretLoc(loc, report_failure, ctx),
       .resolved_symref => |*ref| self.tryInterpretSymref(ref),
       .resolved_call => |*rc| self.tryInterpretCall(rc, report_failure, ctx),
-      .location => |*loc| self.tryInterpretLoc(loc, report_failure, ctx),
-      .definition => |*def| self.tryInterpretDef(def, report_failure, ctx),
       .typegen => unreachable, // TODO
-      .expression => |expr| expr,
+      .unresolved_symref, .unresolved_call => blk: {
+        if (report_failure) self.reportResolveFailures(input, false);
+        break :blk null;
+      },
       .void => blk: {
         const expr = try self.allocator().create(model.Expression);
         expr.fillVoid(input.pos);
@@ -632,17 +751,6 @@ pub const Interpreter = struct {
         const expr = try self.allocator().create(model.Expression);
         expr.fillPoison(input.pos);
         break :blk expr;
-      },
-      .literal => |lit| try self.genPublicLiteral(input.pos, .{
-        .text = .{
-          .t = model.Type{
-            .intrinsic = if (lit.kind == .space) .space else .literal},
-          .content = try self.ctx.global().dupe(u8, lit.content),
-        },
-      }),
-      .unresolved_symref, .unresolved_call => blk: {
-        if (report_failure) self.reportResolveFailures(input, false);
-        break :blk null;
       },
     };
   }
@@ -877,9 +985,7 @@ pub const Interpreter = struct {
   pub fn probeType(self: *Interpreter, node: *model.Node,
                    ctx: ?*graph.ResolutionContext) nyarna.Error!?model.Type {
     switch (node.data) {
-      .literal => |l| return model.Type{.intrinsic =
-        if (l.kind == .space) .space else .literal},
-      .access, .assign => {
+      .access, .assign, .funcgen, .typegen => {
         if (try self.tryInterpret(node, false, ctx)) |expr| {
           node.data = .{.expression = expr};
           return expr.expected_type;
@@ -902,6 +1008,11 @@ pub const Interpreter = struct {
         }
         return inner;
       },
+      .definition => return model.Type{.intrinsic = .definition},
+      .expression => |e| return e.expected_type,
+      .literal => |l| return model.Type{.intrinsic =
+        if (l.kind == .space) .space else .literal},
+      .location => return model.Type{.intrinsic = .location},
       .paras => |*para| {
         var builder =
           nyarna.types.ParagraphTypeBuilder.init(self.ctx.types(), false);
@@ -914,7 +1025,19 @@ pub const Interpreter = struct {
         return if (seen_unfinished) null else
           (try builder.finish()).resulting_type;
       },
-      .unresolved_symref => return null,
+      .resolved_call => |rc| {
+        if (rc.target.expected_type.structural.callable.sig.returns.is(
+            .ast_node)) {
+          // call to keywords must be interpretable at this point.
+          if (try self.tryInterpret(node, true, ctx)) |expr| {
+            node.data = .{.expression = expr};
+            return expr.expected_type;
+          } else {
+            node.data = .poison;
+            return model.Type{.intrinsic = .poison};
+          }
+        } else return rc.target.expected_type.structural.callable.sig.returns;
+      },
       .resolved_symref => |ref| {
         const callable = switch (ref.sym.data) {
           .ext_func => |ef| ef.callable,
@@ -948,43 +1071,15 @@ pub const Interpreter = struct {
         std.debug.assert(!callable.sig.returns.is(.ast_node));
         return callable.typedef();
       },
-      .unresolved_call => return null,
-      .resolved_call => |rc| {
-        if (rc.target.expected_type.structural.callable.sig.returns.is(
-            .ast_node)) {
-          // call to keywords must be interpretable at this point.
-          if (try self.tryInterpret(node, true, ctx)) |expr| {
-            node.data = .{.expression = expr};
-            return expr.expected_type;
-          } else {
-            node.data = .poison;
-            return model.Type{.intrinsic = .poison};
-          }
-        } else return rc.target.expected_type.structural.callable.sig.returns;
-      },
-      .typegen => return model.Type{.intrinsic = .@"type"},
-      .location => return model.Type{.intrinsic = .location},
-      .definition => return model.Type{.intrinsic = .definition},
-      .expression => |e| return e.expected_type,
-      .poison => return model.Type{.intrinsic = .poison},
+      .unresolved_call, .unresolved_symref => return null,
       .void => return model.Type{.intrinsic = .void},
+      .poison => return model.Type{.intrinsic = .poison},
     }
-  }
-
-  pub inline fn fillLiteral(
-      self: *Interpreter, at: model.Position, e: *model.Expression,
-      content: model.Value.Data) void {
-    self.ctx.data.fillLiteral(at, e, content);
-  }
-
-  pub inline fn genPublicLiteral(self: *Interpreter, at: model.Position,
-                                 content: model.Value.Data) !*model.Expression {
-    return self.ctx.data.genLiteral(at, content);
   }
 
   pub inline fn genValueNode(self: *Interpreter, pos: model.Position,
                              content: model.Value.Data) !*model.Node {
-    const expr = try self.genPublicLiteral(pos, content);
+    const expr = try self.ctx.createValueExpr(pos, content);
     var ret = try self.allocator().create(model.Node);
     ret.* = .{
       .pos = pos,
@@ -1000,7 +1095,7 @@ pub const Interpreter = struct {
     switch (t) {
       .intrinsic => |it| switch (it) {
         .space => if (l.kind == .space)
-          self.fillLiteral(l.node().pos, e, .{
+          self.ctx.assignValue(e, l.node().pos, .{
             .text = .{
               .t = t,
               .content =
@@ -1012,7 +1107,7 @@ pub const Interpreter = struct {
             e.fillPoison(l.node().pos);
           },
         .literal, .raw =>
-          self.fillLiteral(l.node().pos, e, .{
+          self.ctx.assignValue(e, l.node().pos, .{
             .text = .{
               .t = t,
               .content =
@@ -1020,7 +1115,7 @@ pub const Interpreter = struct {
             },
           }),
         else =>
-          self.fillLiteral(l.node().pos, e, .{
+          self.ctx.assignValue(e, l.node().pos, .{
           .text = .{
             .t = .{.intrinsic = if (l.kind == .text) .literal else .space},
             .content =
@@ -1073,15 +1168,8 @@ pub const Interpreter = struct {
       self: *Interpreter, input: *model.Node, t: model.Type, probed: bool,
       ctx: ?*graph.ResolutionContext) nyarna.Error!?*model.Expression {
     switch (input.data) {
-      // for text literals, do compile-time type conversions if possible
-      .literal => |*l| {
-        const expr = try self.createPublic(model.Expression);
-        try self.createTextLiteral(l, t, expr);
-        expr.expected_type = t;
-        return expr;
-      },
-      .access, .assign, .resolved_symref, .resolved_call, .typegen,
-      .location, .definition =>
+      .access, .assign, .definition, .funcgen, .location, .resolved_symref,
+      .resolved_call, .typegen =>
         return self.tryInterpret(input, false, ctx),
       .branches => |br| {
         if (!probed) {
@@ -1185,8 +1273,15 @@ pub const Interpreter = struct {
         };
         return expr;
       },
+      .expression, .unresolved_call, .unresolved_symref => return null,
+      // for text literals, do compile-time type conversions if possible
+      .literal => |*l| {
+        const expr = try self.createPublic(model.Expression);
+        try self.createTextLiteral(l, t, expr);
+        expr.expected_type = t;
+        return expr;
+      },
       .paras => unreachable, // TODO
-      .unresolved_symref, .unresolved_call, .expression => return null,
       .void => {
         const expr = try self.createPublic(model.Expression);
         expr.fillVoid(input.pos);

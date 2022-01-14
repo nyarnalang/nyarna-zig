@@ -46,11 +46,11 @@ pub const Evaluator = struct {
   fn bindVariables(vars: model.VariableContainer,
                    frame: ?[*]model.StackItem) void {
     if (frame) |base| {
-      for (vars) |*v, i| {
+      for (vars) |v, i| {
         v.cur_value = &base[i];
       }
     } else {
-      for (vars) |*v| {
+      for (vars) |v| {
         v.cur_value = null;
       }
     }

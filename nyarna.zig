@@ -90,31 +90,6 @@ pub const Globals = struct {
     self.backing_allocator.free(self.stack);
     self.backing_allocator.destroy(self);
   }
-
-  pub inline fn fillLiteral(
-      self: *Globals, at: model.Position, e: *model.Expression,
-      content: model.Value.Data) void {
-    e.* = .{
-      .pos = at,
-      .data = .{
-        .literal = .{
-          .value = .{
-            .origin = at,
-            .data = content,
-          },
-        },
-      },
-      .expected_type = undefined,
-    };
-    e.expected_type = self.types.valueType(&e.data.literal.value);
-  }
-
-  pub inline fn genLiteral(self: *Globals, at: model.Position,
-                           content: model.Value.Data) !*model.Expression {
-    const e = try self.storage.allocator().create(model.Expression);
-    self.fillLiteral(at, e, content);
-    return e;
-  }
 };
 
 const Lattice = types.Lattice; // to avoid ambiguity in the following struct
@@ -149,6 +124,26 @@ pub const Context = struct {
   /// Interface to the type lattice. It allows you to create and compare types.
   pub inline fn types(self: *const Context) *Lattice {
     return &self.data.types;
+  }
+
+  pub fn assignValue(
+      self: *const Context, e: *model.Expression, at: model.Position,
+      content: model.Value.Data) void {
+    e.* = .{
+      .pos = at,
+      .data = .{
+        .literal = .{.value = .{.origin = at, .data = content}},
+      },
+      .expected_type = undefined,
+    };
+    e.expected_type = self.types().valueType(&e.data.literal.value);
+  }
+
+  pub inline fn createValueExpr(self: *const Context, at: model.Position,
+                                content: model.Value.Data) !*model.Expression {
+    const e = try self.global().create(model.Expression);
+    self.assignValue(e, at, content);
+    return e;
   }
 
   pub inline fn evaluator(self: *const Context) Evaluator {

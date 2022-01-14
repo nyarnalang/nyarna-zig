@@ -50,16 +50,22 @@
     >ARG public
     +AST
       +DEF foo
-        +UCALL
-          +TARGET
-            =SYMREF [0]func
-          -TARGET
-          +PROTO primary
-            =LIT text "data : "
-            =SYMREF [0]Data
-            =LIT text ";"
-          -PROTO
-          +PROTO name="body"
+        +RCALL
+          =FUNCREF .std.intrinsic.func
+          >ARG return
+          +AST
+            =VOID
+          -AST
+          >ARG params
+          +AST
+            +LOC data
+              +TYPE
+                =SYMREF [0]Data
+              -TYPE
+            -LOC
+          -AST
+          >ARG body
+          +AST
             =LIT text "("
             +ACCESS
               +SUBJECT
@@ -75,8 +81,8 @@
               =ID "b"
             -ACCESS
             =LIT text ")"
-          -PROTO
-        -UCALL
+          -AST
+        -RCALL
       -DEF
     -AST
     >ARG private

@@ -907,7 +907,7 @@ pub const SigBuilder = struct {
       .capture = if (loc.varargs) |_| .varargs else if (loc.mutable) |_|
         @as(@TypeOf(param.capture), .mutable) else .default,
       .default = loc.default,
-      .config = if (loc.block_header) |bh| bh.config else null,
+      .config = if (loc.header) |bh| bh.config else null,
     };
     // TODO: use contains(.ast_node) instead (?)
     if (!self.val.isKeyword() and loc.tloc.is(.ast_node)) {
@@ -923,7 +923,7 @@ pub const SigBuilder = struct {
         self.val.primary = self.next_param;
       }
     }
-    if (loc.block_header) |bh| {
+    if (loc.header) |bh| {
       if (bh.swallow_depth) |depth| {
         if (self.val.auto_swallow) |as| {
           var buf: [4]u8 = undefined;
@@ -990,7 +990,7 @@ pub const CallableReprFinder = struct {
   pub fn push(self: *Self, loc: *model.Value.Location) !void {
     try self.iter.descend(loc.tloc, loc.mutable != null);
     if (loc.default != null or loc.primary != null or loc.varargs != null or
-        loc.varmap != null or loc.block_header != null)
+        loc.varmap != null or loc.header != null)
       self.needs_different_repr = true;
   }
 

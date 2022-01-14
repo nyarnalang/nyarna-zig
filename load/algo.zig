@@ -7,22 +7,8 @@ const Interpreter = @import("interpret.zig").Interpreter;
 
 /// A type definition inside a \declare that might not yet be finished.
 pub const DeclaredType = struct {
-  /// unfinished parts of an inner item of a type that has been constructed
-  /// but not finished. the inner item may be an inner type of a
-  /// concat/list/optional, or a field of a record.
-  const UnfinishedDetails = struct {
-    /// index of the item in the type structure
-    index: usize,
-    /// unresolved node describing the type, if any
-    item_type: ?*model.Node,
-    /// unresolved node describing the default expression of a field, if any.
-    default_expr: ?*model.Node,
-  };
-
   name: []const u8,
-  value: model.Type,
-  /// list of unresolved inner parts of the type.
-  details: []UnfinishedDetails,
+  declaration: *model.Node.Typegen,
 };
 
 // A func definition inside a \declare that might not yet be finished.
@@ -89,7 +75,7 @@ const TypeResolution = struct {
               },
               .declared_type => |*dt| {
                 item.data = .{
-                  .expression = try self.intpr.genPublicLiteral(
+                  .expression = try self.intpr.ctx.createValueExpr(
                     item.pos, .{
                       .@"type" = .{.t = dt.value},
                     }),

@@ -221,19 +221,6 @@ fn AstEmitter(Handler: anytype) type {
           }
           try ass.pop();
         },
-        .definition => |d| {
-          const def = try self.pushWithKey("DEF", d.name.content,
-            if (d.root != null) @as(?[]const u8, "root") else null);
-          try self.process(d.content);
-          try def.pop();
-        },
-        .literal => |a| {
-          try self.emitLine("=LIT {s} \"{}\"",
-            .{@tagName(a.kind), std.zig.fmtEscapes(a.content)});
-        },
-        .concat => |c| {
-          for (c.items) |item| try self.process(item);
-        },
         .branches => |b| {
           const branches = try self.push("BRANCHES");
           try self.process(b.condition);
@@ -243,36 +230,62 @@ fn AstEmitter(Handler: anytype) type {
           }
           try branches.pop();
         },
+        .concat => |c| {
+          for (c.items) |item| try self.process(item);
+        },
+        .definition => |d| {
+          const def = try self.pushWithKey("DEF", d.name.content,
+            if (d.root != null) @as(?[]const u8, "root") else null);
+          try self.process(d.content);
+          try def.pop();
+        },
+        .expression => |e| try self.processExpr(e),
+        .literal => |a| {
+          try self.emitLine("=LIT {s} \"{}\"",
+            .{@tagName(a.kind), std.zig.fmtEscapes(a.content)});
+        },
+        .funcgen => |fg| {
+          const func = try self.push("FUNC");
+          if (fg.returns) |ret| {
+            const rl = try self.push("RETURN");
+            try self.process(ret);
+            try rl.pop();
+          }
+          try self.process(fg.params.unresolved);
+          const body = try self.push("BODY");
+          try self.process(fg.body);
+          try body.pop();
+          try func.pop();
+        },
+        .location => |loc| {
+          const l = try self.pushWithKey("LOC", loc.name.content, null);
+          if (loc.@"type") |t| {
+            const tnode = try self.push("TYPE");
+            try self.process(t);
+            try tnode.pop();
+          }
+          if (loc.additionals) |a| {
+            if (a.primary != null or a.varargs != null or a.varmap != null or
+                a.mutable != null or a.header != null) {
+              const fmt = std.fmt.Formatter(formatAdditionals){.data = .{
+                .value = a, .data = self.data,
+              }};
+              try self.emitLine("=FLAGS {}", .{fmt});
+            }
+          }
+          if (loc.default) |d| {
+            const dnode = try self.push("DEFAULT");
+            try self.process(d);
+            try dnode.pop();
+          }
+          try l.pop();
+        },
         .paras => |p| {
           for (p.items) |i| {
             const para = try self.push("PARA");
             try self.process(i.content);
             try para.pop();
           }
-        },
-        .unresolved_symref => |u|
-          try self.emitLine("=SYMREF [{}]{s}", .{u.ns, u.name}),
-        .resolved_symref => |res|
-          try self.emitLine("=SYMREF {s}.{s}",
-            .{res.sym.defined_at.source.name, res.sym.name}),
-        .unresolved_call => |uc| {
-          const ucall = try self.push("UCALL");
-          {
-            const t = try self.push("TARGET");
-            try self.process(uc.target);
-            try t.pop();
-          }
-          for (uc.proto_args) |a| {
-            const parg = try switch (a.kind) {
-              .position => self.pushWithKey("PROTO", "pos", null),
-              .named => |named| self.pushWithKey("PROTO", "name", named),
-              .direct => |direct| self.pushWithKey("PROTO", "direct", direct),
-              .primary => self.pushWithKey("PROTO", "primary", null),
-            };
-            try self.process(a.content);
-            try parg.pop();
-          }
-          try ucall.pop();
         },
         .resolved_call => |rc| {
           const rcall = try self.push("RCALL");
@@ -294,6 +307,9 @@ fn AstEmitter(Handler: anytype) type {
           }
           try rcall.pop();
         },
+        .resolved_symref => |res|
+          try self.emitLine("=SYMREF {s}.{s}",
+            .{res.sym.defined_at.source.name, res.sym.name}),
         .typegen => |tg| {
           const tgen =
             try self.pushWithKey("TYPEGEN", @tagName(tg.content), null);
@@ -341,32 +357,29 @@ fn AstEmitter(Handler: anytype) type {
           }
           try tgen.pop();
         },
-        .location => |loc| {
-          const l = try self.pushWithKey("LOC", loc.name.content, null);
-          if (loc.@"type") |t| {
-            const tnode = try self.push("TYPE");
-            try self.process(t);
-            try tnode.pop();
+        .unresolved_call => |uc| {
+          const ucall = try self.push("UCALL");
+          {
+            const t = try self.push("TARGET");
+            try self.process(uc.target);
+            try t.pop();
           }
-          if (loc.additionals) |a| {
-            if (a.primary != null or a.varargs != null or a.varmap != null or
-                a.mutable != null or a.header != null) {
-              const fmt = std.fmt.Formatter(formatAdditionals){.data = .{
-                .value = a, .data = self.data,
-              }};
-              try self.emitLine("=FLAGS {}", .{fmt});
-            }
+          for (uc.proto_args) |a| {
+            const parg = try switch (a.kind) {
+              .position => self.pushWithKey("PROTO", "pos", null),
+              .named => |named| self.pushWithKey("PROTO", "name", named),
+              .direct => |direct| self.pushWithKey("PROTO", "direct", direct),
+              .primary => self.pushWithKey("PROTO", "primary", null),
+            };
+            try self.process(a.content);
+            try parg.pop();
           }
-          if (loc.default) |d| {
-            const dnode = try self.push("DEFAULT");
-            try self.process(d);
-            try dnode.pop();
-          }
-          try l.pop();
+          try ucall.pop();
         },
-        .expression => |e| try self.processExpr(e),
-        .poison => try self.emitLine("=POISON", .{}),
+        .unresolved_symref => |u|
+          try self.emitLine("=SYMREF [{}]{s}", .{u.ns, u.name}),
         .void => try self.emitLine("=VOID", .{}),
+        .poison => try self.emitLine("=POISON", .{}),
       }
     }
 
@@ -482,7 +495,7 @@ fn AstEmitter(Handler: anytype) type {
             try self.processExpr(defexpr);
             try default.pop();
           }
-          if (loc.block_header) |hval| {
+          if (loc.header) |hval| {
             const header = try self.push("HEADER");
             try self.processValue(hval.value());
             try header.pop();
