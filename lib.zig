@@ -217,14 +217,15 @@ pub const Intrinsics = Provider.Wrapper(struct {
     return ret;
   }
 
-  fn func(intpr: *Interpreter, pos: model.Position,
+  fn func(intpr: *Interpreter, pos: model.Position, ns: u15,
           @"return": *model.Node, params: *model.Node, body: *model.Node)
       nyarna.Error!*model.Node {
     var returns_node: ?*model.Node = switch (@"return".data) {
       .poison, .void => null,
       else => @"return",
     };
-    return (try intpr.node_gen.funcgen(pos, returns_node, params, body)).node();
+    return (try intpr.node_gen.funcgen(
+      pos, returns_node, params, ns, body)).node();
   }
 
   //-----------------------
@@ -326,32 +327,11 @@ pub const Intrinsics = Provider.Wrapper(struct {
     var b = try types.SigBuilder.init(intpr.ctx, fields.content.items.len,
       res_type, finder_result.needs_different_repr);
     for (fields.content.items) |field| try b.push(&field.data.location);
-    const builder_res = b.finish() orelse
-      return intpr.node_gen.poison(pos);
-
-    const structural = try intpr.createPublic(model.Type.Structural);
-    structural.* = .{
-      .callable = .{
-        .sig = builder_res.sig,
-        .kind = .@"type",
-        .repr = undefined,
-      },
-    };
-    structural.callable.repr = if (builder_res.repr) |repr_sig| blk: {
-      const repr = try intpr.createPublic(model.Type.Structural);
-      repr.* = .{
-        .callable = .{
-          .sig = repr_sig,
-          .kind = .@"type",
-          .repr = undefined,
-        },
-      };
-      repr.callable.repr = &repr.callable;
-      break :blk &repr.callable;
-    } else &structural.callable;
+    const builder_res = b.finish();
 
     res.data.record = .{
-      .constructor = &structural.callable,
+      .constructor =
+        try builder_res.createCallable(intpr.ctx.global(), .@"type"),
     };
     return try intpr.genValueNode(pos, .{
       .@"type" = .{
@@ -540,14 +520,21 @@ fn registerGenericImpl(ctx: Context, p: *const Provider, name: []const u8)
   return ctx.data.builtin_registry.items.len - 1;
 }
 
-fn extFunc(ctx: Context, name: []const u8, bres: types.SigBuilderResult,
-           ns_dependent: bool, p: *const Provider) !model.Symbol.ExtFunc {
-  return model.Symbol.ExtFunc{
+fn extFunc(ctx: Context, name: *model.Symbol, bres: types.SigBuilderResult,
+           ns_dependent: bool, p: *const Provider) !*model.Function {
+  const ret = try ctx.global().create(model.Function);
+  ret.* = .{
     .callable = try bres.createCallable(ctx.global(), .function),
-    .ns_dependent = ns_dependent,
-    .impl_index = try registerExtImpl(ctx, p, name, bres),
-    .cur_frame = null,
+    .defined_at = model.Position.intrinsic(),
+    .data = .{
+      .ext = .{
+        .ns_dependent = ns_dependent,
+        .impl_index = try registerExtImpl(ctx, p, name.name, bres),
+      },
+    },
+    .name = name,
   };
+  return ret;
 }
 
 fn extFuncSymbol(ctx: Context, name: []const u8, ns_dependent: bool,
@@ -555,9 +542,7 @@ fn extFuncSymbol(ctx: Context, name: []const u8, ns_dependent: bool,
   const ret = try ctx.global().create(model.Symbol);
   ret.defined_at = model.Position.intrinsic();
   ret.name = name;
-  ret.data = .{
-    .ext_func = try extFunc(ctx, name, bres, ns_dependent, p),
-  };
+  ret.data = .{.func = try extFunc(ctx, ret, bres, ns_dependent, p)};
   return ret;
 }
 
@@ -639,7 +624,7 @@ pub fn intrinsicModule(ctx: Context) !*model.Module {
     "input", model.Type{.intrinsic = .raw})).withPrimary(
       model.Position.intrinsic()));
   ctx.types().constructors.raw = try
-    typeConstructor(ctx, &ip.provider, "constrRaw", b.finish().?);
+    typeConstructor(ctx, &ip.provider, "constrRaw", b.finish());
   ret.symbols[index] = try typeSymbol(ctx, "Raw", .{.intrinsic = .raw});
   index += 1;
 
@@ -661,7 +646,7 @@ pub fn intrinsicModule(ctx: Context) !*model.Module {
     "default", (try ctx.types().optional(
       .{.intrinsic = .ast_node})).?)).withPrimary(model.Position.intrinsic()));
   ctx.types().constructors.location = try
-    typeConstructor(ctx, &ip.provider, "constrLocation", b.finish().?);
+    typeConstructor(ctx, &ip.provider, "constrLocation", b.finish());
   ret.symbols[index] = try
     typeSymbol(ctx, "Location", model.Type{.intrinsic = .location});
   index += 1;
@@ -673,7 +658,7 @@ pub fn intrinsicModule(ctx: Context) !*model.Module {
     "root", ctx.types().getBoolean().typedef()));
   try b.push(try ctx.values.intLocation("item", .{.intrinsic = .ast_node}));
   ctx.types().constructors.definition = try
-    typeConstructor(ctx, &ip.provider, "constrDefinition", b.finish().?);
+    typeConstructor(ctx, &ip.provider, "constrDefinition", b.finish());
   ret.symbols[index] = try
     typeSymbol(ctx, "Definition", .{.intrinsic = .definition});
   index += 1;
@@ -697,7 +682,7 @@ pub fn intrinsicModule(ctx: Context) !*model.Module {
   try b.push((try ctx.values.intLocation("inner", .{.intrinsic = .ast_node}
     )).withPrimary(model.Position.intrinsic()));
   ctx.types().constructors.prototypes.optional = try
-    prototypeConstructor(ctx, &ip.provider, "Optional", b.finish().?);
+    prototypeConstructor(ctx, &ip.provider, "Optional", b.finish());
   ret.symbols[index] = try prototypeSymbol(ctx, "Optional", .optional);
   index += 1;
 
@@ -706,7 +691,7 @@ pub fn intrinsicModule(ctx: Context) !*model.Module {
   try b.push((try ctx.values.intLocation("inner", .{.intrinsic = .ast_node}
     )).withPrimary(model.Position.intrinsic()));
   ctx.types().constructors.prototypes.concat = try
-    prototypeConstructor(ctx, &ip.provider, "Concat", b.finish().?);
+    prototypeConstructor(ctx, &ip.provider, "Concat", b.finish());
   ret.symbols[index] = try prototypeSymbol(ctx, "Concat", .concat);
   index += 1;
 
@@ -715,7 +700,7 @@ pub fn intrinsicModule(ctx: Context) !*model.Module {
   try b.push((try ctx.values.intLocation("inner", .{.intrinsic = .ast_node}
     )).withPrimary(model.Position.intrinsic()));
   ctx.types().constructors.prototypes.list = try
-    prototypeConstructor(ctx, &ip.provider, "List", b.finish().?);
+    prototypeConstructor(ctx, &ip.provider, "List", b.finish());
   ret.symbols[index] = try prototypeSymbol(ctx, "List", .list);
   index += 1;
 
@@ -727,7 +712,7 @@ pub fn intrinsicModule(ctx: Context) !*model.Module {
   try b.push(try ctx.values.intLocation("auto", (try ctx.types().optional(
     .{.intrinsic = .ast_node})).?));
   ctx.types().constructors.prototypes.paragraphs = try
-    prototypeConstructor(ctx, &ip.provider, "Paragraphs", b.finish().?);
+    prototypeConstructor(ctx, &ip.provider, "Paragraphs", b.finish());
   ret.symbols[index] = try prototypeSymbol(ctx, "Paragraphs", .paragraphs);
   index += 1;
 
@@ -736,7 +721,7 @@ pub fn intrinsicModule(ctx: Context) !*model.Module {
   try b.push(try ctx.values.intLocation("key", .{.intrinsic = .ast_node}));
   try b.push(try ctx.values.intLocation("value", .{.intrinsic = .ast_node}));
   ctx.types().constructors.prototypes.map = try
-    prototypeConstructor(ctx, &ip.provider, "Map", b.finish().?);
+    prototypeConstructor(ctx, &ip.provider, "Map", b.finish());
   ret.symbols[index] = try prototypeSymbol(ctx, "Map", .map);
   index += 1;
 
@@ -747,7 +732,7 @@ pub fn intrinsicModule(ctx: Context) !*model.Module {
     model.Type{.intrinsic = .location})).?)).withHeader(
       location_block).withPrimary(model.Position.intrinsic()));
   ctx.types().constructors.prototypes.record = try
-    prototypeConstructor(ctx, &ip.provider, "Record", b.finish().?);
+    prototypeConstructor(ctx, &ip.provider, "Record", b.finish());
   ret.symbols[index] = try prototypeSymbol(ctx, "Record", .record);
   index += 1;
 
@@ -756,7 +741,7 @@ pub fn intrinsicModule(ctx: Context) !*model.Module {
   try b.push((try ctx.values.intLocation("types", (try ctx.types().list(
     .{.intrinsic = .@"type"})).?)).withVarargs(model.Position.intrinsic()));
   ctx.types().constructors.prototypes.intersection = try
-    prototypeConstructor(ctx, &ip.provider, "Intersection", b.finish().?);
+    prototypeConstructor(ctx, &ip.provider, "Intersection", b.finish());
   ret.symbols[index] =
     try prototypeSymbol(ctx, "Intersection", .intersection);
   index += 1;
@@ -767,7 +752,7 @@ pub fn intrinsicModule(ctx: Context) !*model.Module {
   try b.push(try ctx.values.intLocation("include", .{.intrinsic = .ast_node}));
   try b.push(try ctx.values.intLocation("exclude", .{.intrinsic = .ast_node}));
   ctx.types().constructors.prototypes.textual = try
-    prototypeConstructor(ctx, &ip.provider, "Textual", b.finish().?);
+    prototypeConstructor(ctx, &ip.provider, "Textual", b.finish());
   ret.symbols[index] = try prototypeSymbol(ctx, "Textual", .textual);
   index += 1;
 
@@ -777,7 +762,7 @@ pub fn intrinsicModule(ctx: Context) !*model.Module {
   try b.push(try ctx.values.intLocation("max", .{.intrinsic = .ast_node}));
   try b.push(try ctx.values.intLocation("decimals", .{.intrinsic = .ast_node}));
   ctx.types().constructors.prototypes.numeric = try
-    prototypeConstructor(ctx, &ip.provider, "Numeric", b.finish().?);
+    prototypeConstructor(ctx, &ip.provider, "Numeric", b.finish());
   ret.symbols[index] = try prototypeSymbol(ctx, "Numeric", .numeric);
   index += 1;
 
@@ -785,7 +770,7 @@ pub fn intrinsicModule(ctx: Context) !*model.Module {
   b = try types.SigBuilder.init(ctx, 1, .{.intrinsic = .ast_node}, false);
   try b.push(try ctx.values.intLocation("precision", .{.intrinsic = .ast_node}));
   ctx.types().constructors.prototypes.float = try
-    prototypeConstructor(ctx, &ip.provider, "Float", b.finish().?);
+    prototypeConstructor(ctx, &ip.provider, "Float", b.finish());
   ret.symbols[index] = try prototypeSymbol(ctx, "Float", .float);
   index += 1;
 
@@ -794,7 +779,7 @@ pub fn intrinsicModule(ctx: Context) !*model.Module {
   try b.push((try ctx.values.intLocation("values", (try ctx.types().list(
     .{.intrinsic = .raw})).?)).withVarargs(model.Position.intrinsic()));
   ctx.types().constructors.prototypes.@"enum" = try
-    prototypeConstructor(ctx, &ip.provider, "Enum", b.finish().?);
+    prototypeConstructor(ctx, &ip.provider, "Enum", b.finish());
   ret.symbols[index] = try prototypeSymbol(ctx, "Enum", .@"enum");
   index += 1;
 
@@ -811,7 +796,7 @@ pub fn intrinsicModule(ctx: Context) !*model.Module {
   try b.push((try ctx.values.intLocation("private", .{.intrinsic = .ast_node})
     ).withHeader(definition_block));
   ret.symbols[index] =
-    try extFuncSymbol(ctx, "declare", true, b.finish().?, &ip.provider);
+    try extFuncSymbol(ctx, "declare", true, b.finish(), &ip.provider);
   index += 1;
 
   // if
@@ -823,7 +808,7 @@ pub fn intrinsicModule(ctx: Context) !*model.Module {
       model.Position.intrinsic()));
   try b.push(try ctx.values.intLocation("else", .{.intrinsic = .ast_node}));
   ret.symbols[index] =
-    try extFuncSymbol(ctx, "if", false, b.finish().?, &ip.provider);
+    try extFuncSymbol(ctx, "if", false, b.finish(), &ip.provider);
   index += 1;
 
   // func
@@ -834,7 +819,7 @@ pub fn intrinsicModule(ctx: Context) !*model.Module {
       model.Position.intrinsic()).withHeader(location_block));
   try b.push(try ctx.values.intLocation("body", .{.intrinsic = .ast_node}));
   ret.symbols[index] =
-    try extFuncSymbol(ctx, "func", false, b.finish().?, &ip.provider);
+    try extFuncSymbol(ctx, "func", true, b.finish(), &ip.provider);
   index += 1;
 
   std.debug.assert(index == ret.symbols.len);

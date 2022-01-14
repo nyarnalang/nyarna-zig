@@ -146,7 +146,7 @@ pub const Parser = struct {
         const res = if (level.fullast) item else switch (item.data) {
           .literal, .unresolved_call, .unresolved_symref, .expression,
           .void => item,
-          else => if (try ip.tryInterpret(item, false, null)) |expr|
+          else => if (try ip.tryInterpret(item, .{.kind = .initial})) |expr|
             try ip.node_gen.expression(expr) else item,
         };
         try level.nodes.append(ip.allocator(), res);
@@ -455,59 +455,6 @@ pub const Parser = struct {
     return last(self.levels.items);
   }
 
-  const CallContext = union(enum) {
-    known: struct {
-      target: *model.Expression,
-      ns: u15,
-      signature: *const model.Type.Signature,
-      first_arg: ?*model.Node,
-    },
-    unknown, poison,
-  };
-
-  fn chainResToContext(self: *Parser, pos: model.Position,
-                       res: Interpreter.ChainResolution) !CallContext {
-    switch (res) {
-      .var_chain => |_| {
-        unreachable; // TODO
-      },
-      .func_ref => |fr| {
-        const target_expr = try self.intpr().ctx.createValueExpr(
-          pos, .{.funcref = .{.func = fr.target}});
-        return CallContext{
-          .known = .{
-            .target = target_expr,
-            .ns = fr.ns,
-            .signature = fr.signature,
-            .first_arg = if (fr.prefix) |prefix|
-              try self.intpr().node_gen.expression(prefix) else null,
-          },
-        };
-      },
-      .expr_chain => |_| {
-        unreachable; // TODO
-      },
-      .type_ref => |_| {
-        unreachable; // TODO
-      },
-      .proto_ref => |pref| {
-        const target_expr = try self.intpr().ctx.createValueExpr(
-          pos, .{.prototype = .{.pt = pref.*}});
-        return CallContext{
-          .known = .{
-            .target = target_expr,
-            .ns = undefined,
-            .signature = self.intpr().ctx.types().prototypeConstructor(
-              pref.*).callable.sig,
-            .first_arg = null,
-          },
-        };
-      },
-      .failed => return .unknown,
-      .poison => return .poison,
-    }
-  }
-
   fn doParse(self: *Parser, implicit_fullast: bool) !*model.Node {
     while (true) {
       std.debug.print("parse step. state={s}, level stack =\n",
@@ -742,8 +689,8 @@ pub const Parser = struct {
               const target = lvl.command.info.unknown;
               const ctx = switch (target.data) {
                 .resolved_symref, .unresolved_symref, .access =>
-                  try self.chainResToContext(target.pos,
-                    try self.intpr().resolveChain(target, false, null)),
+                  try self.intpr().chainResToContext(target.pos,
+                    try self.intpr().resolveChain(target, .{.kind = .initial})),
                 else => unreachable, // TODO
               };
               switch (ctx) {

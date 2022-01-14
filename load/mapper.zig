@@ -172,8 +172,8 @@ pub const SignatureMapper = struct {
         .ast = .{.root = content},
       })
     else blk: {
-      if (try self.intpr.associate(content, param.ptype, null)) |expr|
-        content.data = .{.expression = expr};
+      if (try self.intpr.associate(content, param.ptype, .{.kind = .initial}))
+          |expr| content.data = .{.expression = expr};
       break :blk content;
     };
     if (self.varmapAt(at.param.index)) unreachable

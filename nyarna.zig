@@ -92,7 +92,9 @@ pub const Globals = struct {
   }
 };
 
-const Lattice = types.Lattice; // to avoid ambiguity in the following struct
+// to avoid ambiguity in the following struct
+const Lattice = types.Lattice;
+const SigBuilderRes = types.SigBuilderRes;
 
 /// The Context is a public API for accessing global values and logging.
 /// External code shall not directly interface with the data field and only use

@@ -733,11 +733,7 @@ pub const Lattice = struct {
         },
       },
       .prototype => |pv| self.prototypeConstructor(pv.pt).callable.typedef(),
-      .funcref => |*fr| switch (fr.func.data) {
-        .ny_func => |*nf| nf.callable.typedef(),
-        .ext_func => |*ef| ef.callable.typedef(),
-        else => unreachable,
-      },
+      .funcref => |*fr| fr.func.callable.typedef(),
       .location => .{.intrinsic = .location},
       .definition => .{.intrinsic = .definition},
       .ast => .{.intrinsic = .ast_node},
@@ -857,7 +853,6 @@ pub const SigBuilder = struct {
   repr: ?*model.Type.Signature,
   ctx: nyarna.Context,
   next_param: u21,
-  seen_error: bool,
 
   const Self = @This();
 
@@ -875,7 +870,6 @@ pub const SigBuilder = struct {
         else null,
       .ctx = ctx,
       .next_param = 0,
-      .seen_error = false,
     };
     ret.val.* = .{
       .parameters = try ctx.global().alloc(
@@ -910,15 +904,14 @@ pub const SigBuilder = struct {
       .config = if (loc.header) |bh| bh.config else null,
     };
     // TODO: use contains(.ast_node) instead (?)
-    if (!self.val.isKeyword() and loc.tloc.is(.ast_node)) {
+    const t = if (!self.val.isKeyword() and loc.tloc.is(.ast_node)) blk: {
       self.ctx.logger.AstNodeInNonKeyword(loc.value().origin);
-      self.seen_error = true;
-    }
+      break :blk model.Type{.intrinsic = .poison};
+    } else loc.tloc;
     if (loc.primary) |p| {
       if (self.val.primary) |pindex| {
         self.ctx.logger.DuplicateFlag(
           "primary", p, self.val.parameters[pindex].pos);
-        self.seen_error = true;
       } else {
         self.val.primary = self.next_param;
       }
@@ -935,7 +928,6 @@ pub const SigBuilder = struct {
             catch unreachable;
           self.ctx.logger.DuplicateAutoSwallow(
             repr, bh.value().origin, self.val.parameters[as.param_index].pos);
-          self.seen_error = true;
         } else {
           self.val.auto_swallow = .{
             .depth = depth,
@@ -948,7 +940,7 @@ pub const SigBuilder = struct {
       sig.parameters[self.next_param] = .{
         .pos = loc.value().origin,
         .name = loc.name.content,
-        .ptype = loc.tloc,
+        .ptype = t,
         .capture = .default,
         .default = null,
         .config = null,
@@ -957,9 +949,8 @@ pub const SigBuilder = struct {
     self.next_param += 1;
   }
 
-  pub fn finish(self: *Self) ?Result {
+  pub fn finish(self: *Self) Result {
     std.debug.assert(self.next_param == self.val.parameters.len);
-    if (self.seen_error) return null;
     return Result{
       .sig = self.val,
       .repr = self.repr,
@@ -994,7 +985,7 @@ pub const CallableReprFinder = struct {
       self.needs_different_repr = true;
   }
 
-  pub fn finish(self: *Self, returns: model.Type, is_type: bool) !Result {
+  pub fn finish (self: *Self, returns: model.Type, is_type: bool) !Result {
     try self.iter.descend(returns, is_type);
     return Result{
       .found = &self.iter.cur.value,
@@ -1085,7 +1076,7 @@ pub const EnumTypeBuilder = struct {
         model.Position.intrinsic(), .{.intrinsic = .raw}, "input"
       ), self.ret.typedef())).withPrimary(model.Position.intrinsic()));
     self.ret.constructor =
-      try sb.finish().?.createCallable(self.ctx.global(), .type);
+      try sb.finish().createCallable(self.ctx.global(), .type);
     return self.ret;
   }
 };

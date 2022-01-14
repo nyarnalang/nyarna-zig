@@ -516,7 +516,8 @@ fn AstEmitter(Handler: anytype) type {
         .@"type" => |tv| try self.processType(tv.t),
         .prototype => |pv| try self.emitLine("=PROTO {s}", .{@tagName(pv.pt)}),
         .funcref => |fr| try self.emitLine("=FUNCREF {s}.{s}",
-          .{fr.func.defined_at.source.locator, fr.func.name}),
+          .{fr.func.defined_at.source.locator, if (fr.func.name) |sym|
+            sym.name else "<anonymous>"}),
         .poison => try self.emitLine("=POISON", .{}),
         .void => try self.emitLine("=VOID", .{}),
         .block_header => |*h| {

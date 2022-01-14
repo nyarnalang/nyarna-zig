@@ -206,8 +206,8 @@ pub const DeclareResolution = struct {
   pub fn collectDeps(self: *DeclareResolution, index: usize,
                      edges: *[]usize) !void {
     self.dep_discovery_ctx.dependencies = .{};
-    _ = try self.intpr.probeType(
-      self.defs[index].content, &self.dep_discovery_ctx);
+    _ = try self.intpr.probeType(self.defs[index].content,
+      .{.kind = .initial, .resolve = &self.dep_discovery_ctx});
     edges.* = self.dep_discovery_ctx.dependencies.items;
   }
 
@@ -232,9 +232,12 @@ pub const DeclareResolution = struct {
         return graph.ResolutionContext.Result.failed;
       },
       .unresolved_call => |*uc| {
-        _ = try self.intpr.probeType(uc.target, &self.dep_discovery_ctx);
-        for (uc.proto_args) |*arg|
-          _ = try self.intpr.probeType(arg.content, ctx);
+        _ = try self.intpr.probeType(
+          uc.target, .{.kind = .initial, .resolve = ctx});
+        for (uc.proto_args) |*arg| {
+          _ = try self.intpr.probeType(
+            arg.content, .{.kind = .initial, .resolve = ctx});
+        }
         return graph.ResolutionContext.Result{.known = null};
       },
       else => unreachable,

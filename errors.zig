@@ -15,7 +15,7 @@ pub const GenericParserError = enum {
   MissingSymbolName, MissingSymbolType, MissingSymbolEntity, UnknownSyntax,
   PrefixedFunctionMustBeCalled, AstNodeInNonKeyword, CannotResolveImmediately,
   InvalidLvalue, UnknownParameter, TooManyArguments, UnexpectedPrimaryBlock,
-  InvalidPositionalArgument, UnknownSymbol, UnknownEnumValue,
+  InvalidPositionalArgument, UnknownSymbol, UnknownEnumValue, BlockNeedsConfig,
 };
 
 pub const WrongItemError = enum {

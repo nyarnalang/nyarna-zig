@@ -498,6 +498,11 @@ pub const Node = struct {
   /// Funcgen nodes define functions. Just like Typegen nodes, they may need
   /// multiple passes to be processed.
   pub const Funcgen = struct {
+    pub const LocRef = union(enum) {
+      node: *Location,
+      value: *Value.Location,
+    };
+
     /// params are initially unresolved. Trying to interpret the Funcgen may
     /// successfully resolve the params while failing to interpret the body
     /// completely.
@@ -510,10 +515,11 @@ pub const Node = struct {
       /// the result of associating the original node with Concat(Location).
       /// only used during \declare processing.
       resolved: struct {
-        locations: []*Location,
+        locations: []LocRef,
         variables: VariableContainer,
       },
     },
+    params_ns: u15,
     returns: ?*Node,
     body: *Node,
     /// used during fixpoint operation for type inference.
@@ -572,39 +578,43 @@ pub const Node = struct {
   }
 };
 
-pub const Symbol = struct {
-  /// externally defined function, pre-defined by Nyarna or registered via
-  /// Nyarna's API.
-  pub const ExtFunc = struct {
-    callable: *const Type.Callable,
+pub const Function = struct {
+  /// Function defined in Nyarna code.
+  const Nyarna = struct {
+    variables: VariableContainer,
+    body: *Expression,
+  };
+  /// externally defined function, pre-defined by the Nyarna processor or
+  /// registered via Nyarna's API.
+  const External = struct {
     /// tells the interpreter under which index to look up the implementation.
     impl_index: usize,
-    /// whether the implementation of this extFunc depends on the namespace by
-    /// which the it is called. This is used for for intrinsic keywords such as
-    /// \declare and \import.
+    /// whether the implementation depends on the namespace by which the it is
+    /// called. This is used for for intrinsic keywords such as \declare,
+    /// \import or \func.
     ns_dependent: bool,
-    /// reference to the current stack frame of this function.
-    /// null if no calls to this function are currently being evaluated.
-    cur_frame: ?[*]StackItem,
-
-    pub fn sig(self: *const ExtFunc) *const Type.Signature {
-      return self.callable.sig;
-    }
+  };
+  const Data = union(enum) {
+    ny: Nyarna,
+    ext: External,
   };
 
-  /// Internal function, defined in Nyarna code.
-  pub const NyFunc = struct {
-    callable: *const Type.Callable,
-    variables: VariableContainer,
-    /// reference to the current stack frame of this function.
-    /// null if no calls to this function are currently being evaluated.
-    cur_frame: ?[*]StackItem,
-    body: *Expression,
+  callable: *const Type.Callable,
+  /// if the function is named, this is the reference to the symbol naming the
+  /// function.
+  name: ?*Symbol,
+  data: Data,
+  defined_at: Position,
+  /// reference to the current stack frame of this function.
+  /// null if no calls to this function are currently being evaluated.
+  cur_frame: ?[*]StackItem = null,
 
-    pub fn sig(self: *const NyFunc) *const Type.Signature {
-      return self.callable.sig;
-    }
-  };
+  pub inline fn sig(self: *const Function) *const Type.Signature {
+    return self.callable.sig;
+  }
+};
+
+pub const Symbol = struct {
   /// A variable defined in Nyarna code.
   pub const Variable = struct {
     t: Type,
@@ -615,11 +625,14 @@ pub const Symbol = struct {
     /// the initial value is null, however due to Nyarna's semantics, any access
     /// will always happen when cur_value is non-null.
     cur_value: ?*StackItem = null,
+
+    pub inline fn sym(self: *Variable) *Symbol {
+      return Symbol.parent(self);
+    }
   };
 
   pub const Data = union(enum) {
-    ext_func: ExtFunc,
-    ny_func: NyFunc,
+    func: *Function,
     variable: Variable,
     @"type": Type,
     prototype: Prototype,
@@ -628,6 +641,18 @@ pub const Symbol = struct {
   defined_at: Position,
   name: []const u8,
   data: Data,
+
+  fn parent(it: anytype) *Symbol {
+    const t = @typeInfo(@TypeOf(it)).Pointer.child;
+    const addr = @ptrToInt(it) - switch(t) {
+      *Function => offset(Data, "func"),
+      Variable => offset(Data, "variable"),
+      Type => offset(Data, "type"),
+      Prototype => offset(Data, "prototype"),
+      else => unreachable
+    };
+    return @fieldParentPtr(Symbol, "data", @intToPtr(*Data, addr));
+  }
 };
 
 /// part of any structure that defines variables.
@@ -1225,8 +1250,7 @@ pub const Value = struct {
   };
 
   pub const FuncRef = struct {
-    /// ExtFunc or NyFunc
-    func: *Symbol,
+    func: *Function,
 
     pub inline fn value(self: *@This()) *Value {
       return Value.parent(self);
@@ -1466,9 +1490,11 @@ pub const NodeGenerator = struct {
   }
 
   pub inline fn funcgen(self: *Self, pos: Position, returns: ?*Node,
-                        params: *Node, body: *Node) !*Node.Funcgen {
+                        params: *Node, params_ns: u15, body: *Node)
+      !*Node.Funcgen {
     return &(try self.node(pos, .{.funcgen = .{
-      .returns = returns, .params = .{.unresolved = params}, .body = body,
+      .returns = returns, .params = .{.unresolved = params},
+      .params_ns = params_ns, .body = body,
     }})).data.funcgen;
   }
 

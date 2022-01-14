@@ -114,14 +114,14 @@ pub const Evaluator = struct {
       .funcref => |fr| {
         std.debug.print("evaluateCall => {s}\n", .{fr.func.name});
         switch (fr.func.data) {
-          .ext_func => |*ef| {
+          .ext => |*ef| {
             const target_impl =
               self.registeredFnForCtx(@TypeOf(impl_ctx), ef.impl_index);
             std.debug.assert(
-              call.exprs.len == ef.sig().parameters.len);
-            ef.cur_frame = try self.setupParameterStackFrame(
-              ef.sig(), ef.ns_dependent, ef.cur_frame);
-            var frame_ptr = ef.cur_frame.? + 1;
+              call.exprs.len == fr.func.sig().parameters.len);
+            fr.func.cur_frame = try self.setupParameterStackFrame(
+              fr.func.sig(), ef.ns_dependent, fr.func.cur_frame);
+            var frame_ptr = fr.func.cur_frame.? + 1;
             var ns_val: model.Value = undefined;
             if (ef.ns_dependent) {
               ns_val = .{
@@ -140,20 +140,22 @@ pub const Evaluator = struct {
               };
               frame_ptr += 1;
             }
-            defer self.resetParameterStackFrame(&ef.cur_frame, ef.sig());
+            defer self.resetParameterStackFrame(
+              &fr.func.cur_frame, fr.func.sig());
             return if (try self.fillParameterStackFrame(
                 call.exprs, frame_ptr))
-              target_impl(impl_ctx, call.expr().pos, ef.cur_frame.? + 1)
+              target_impl(impl_ctx, call.expr().pos, fr.func.cur_frame.? + 1)
             else poison(impl_ctx, call.expr().pos);
           },
-          .ny_func => |*nf| {
-            defer bindVariables(nf.variables, nf.cur_frame);
-            nf.cur_frame = try self.setupParameterStackFrame(
-              nf.sig(), false, nf.cur_frame);
-            defer self.resetParameterStackFrame(&nf.cur_frame, nf.sig());
+          .ny => |*nf| {
+            defer bindVariables(nf.variables, fr.func.cur_frame);
+            fr.func.cur_frame = try self.setupParameterStackFrame(
+              fr.func.sig(), false, fr.func.cur_frame);
+            defer self.resetParameterStackFrame(
+              &fr.func.cur_frame, fr.func.sig());
             if (try self.fillParameterStackFrame(
-                call.exprs, nf.cur_frame.? + 1)) {
-              bindVariables(nf.variables, nf.cur_frame);
+                call.exprs, fr.func.cur_frame.? + 1)) {
+              bindVariables(nf.variables, fr.func.cur_frame);
               const val = try self.evaluate(nf.body);
               return switch (@TypeOf(impl_ctx)) {
                 *Evaluator => val,
@@ -162,7 +164,6 @@ pub const Evaluator = struct {
               };
             } else return poison(impl_ctx, call.expr().pos);
           },
-          else => unreachable,
         }
       },
       .@"type" => |tv| {
