@@ -1,13 +1,19 @@
 === CRLF
 --- input {crlf}
-\func(comptime=false
+\func(
   ):
   t : \Raw
 :body:
-  \t\
+  \t#
   \t
   \t
 \end(func)(x)
+--- expr
++CALL
+  =FUNCREF .doc.document.<anonymous>
+  >ARG t
+  =TEXT raw "x"
+-CALL
 --- output
 xx
 x

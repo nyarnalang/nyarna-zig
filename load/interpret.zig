@@ -146,7 +146,6 @@ pub const Interpreter = struct {
     const ns = &self.namespaces.items[ns_index];
     for (module.symbols) |sym| {
       const name = sym.name;
-      std.debug.print("adding symbol {s}\n", .{name});
       try ns.put(self.allocator(), name, sym);
     }
   }
@@ -556,8 +555,9 @@ pub const Interpreter = struct {
   /// implies that there is at least one yet unresolved reference in the params.
   pub fn tryInterpretFuncParams(
       self: *Interpreter, func: *model.Node.Funcgen, stage: Stage) !bool {
-    if (!(try self.locationsCanGenVars(func.params.unresolved, stage)))
+    if (!(try self.locationsCanGenVars(func.params.unresolved, stage))) {
       return false;
+    }
     var locs = std.ArrayList(model.Node.Funcgen.LocRef).init(self.allocator());
     try self.collectLocations(func.params.unresolved, &locs);
     var variables =
@@ -915,12 +915,13 @@ pub const Interpreter = struct {
         },
       },
       else =>
-        return if (try self.tryInterpret(chain, stage)) |_| {
-          // TODO: resolve accessor chain in context of expression's type and
-          // return expr_chain
-          unreachable;
-        } else @as(ChainResolution,
-          if (stage.kind != .initial) .poison else .failed)
+        return if (try self.tryInterpret(chain, stage)) |expr| ChainResolution{
+          .expr_chain = .{
+            .expr = expr,
+            .t = expr.expected_type,
+          },
+        } else
+          @as(ChainResolution, if (stage.kind != .initial) .poison else .failed)
     }
   }
 
@@ -1005,12 +1006,10 @@ pub const Interpreter = struct {
         var inner =
           (try self.probeNodeList(con.items, stage)) orelse return null;
         if (!inner.is(.poison))
-          inner = (try self.ctx.types().concat(inner)) orelse {
+          inner = (try self.ctx.types().concat(inner)) orelse blk: {
             self.ctx.logger.InvalidInnerConcatType(
               node.pos, &[_]model.Type{inner});
-            std.debug.panic("here", .{});
-            node.data = .poisonNode;
-            return model.Type{.intrinsic = .poison};
+            break :blk .{.intrinsic = .poison};
           };
         if (inner.is(.poison)) {
           node.data = .poison;
@@ -1080,7 +1079,13 @@ pub const Interpreter = struct {
         std.debug.assert(!callable.sig.returns.is(.ast_node));
         return callable.typedef();
       },
-      .unresolved_call, .unresolved_symref => return null,
+      .unresolved_call, .unresolved_symref => {
+        if (stage.kind == .initial) return null;
+        if (try self.tryInterpret(node, stage)) |expr| {
+          node.data = .{.expression = expr};
+          return expr.expected_type;
+        } else return null;
+      },
       .void => return model.Type{.intrinsic = .void},
       .poison => return model.Type{.intrinsic = .poison},
     }
@@ -1281,7 +1286,8 @@ pub const Interpreter = struct {
         };
         return expr;
       },
-      .expression, .unresolved_call, .unresolved_symref => return null,
+      .expression => |expr| return expr,
+      .unresolved_call, .unresolved_symref => return null,
       // for text literals, do compile-time type conversions if possible
       .literal => |*l| {
         const expr = try self.createPublic(model.Expression);
@@ -1360,8 +1366,38 @@ pub const Interpreter = struct {
           },
         };
       },
-      .expr_chain => |_| {
-        unreachable; // TODO
+      .expr_chain => |ec| {
+        const target_expr = if (ec.field_chain.items.len == 0)
+          ec.expr
+        else blk: {
+          const acc = try self.ctx.global().create(model.Expression);
+          acc.* = .{
+            .pos = pos,
+            .data = .{
+              .access = .{.subject = ec.expr, .path = ec.field_chain.items},
+            },
+            .expected_type = ec.t,
+          };
+          break :blk acc;
+        };
+        const sig = switch (target_expr.expected_type) {
+          .structural => |strct| switch (strct.*) {
+            .callable => |callable| @as(?*model.Type.Signature, callable.sig),
+            else => null
+          },
+          else => null
+        } orelse {
+          self.ctx.logger.CantBeCalled(pos);
+          return .poison;
+        };
+        return CallContext{
+          .known = .{
+            .target = target_expr,
+            .ns = undefined, // cannot be a function depending on this
+            .signature = sig,
+            .first_arg = null,
+          },
+        };
       },
       .type_ref => |_| {
         unreachable; // TODO

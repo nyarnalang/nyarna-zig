@@ -687,14 +687,11 @@ pub const Parser = struct {
             },
             .list_start, .blocks_sep => {
               const target = lvl.command.info.unknown;
-              const ctx = switch (target.data) {
-                .resolved_symref, .unresolved_symref, .access =>
-                  try self.intpr().chainResToContext(target.pos,
-                    try self.intpr().resolveChain(target, .{.kind = .initial})),
-                else => unreachable, // TODO
-              };
+              const ctx = try self.intpr().chainResToContext(target.pos,
+                try self.intpr().resolveChain(target, .{.kind = .initial}));
               switch (ctx) {
                 .known => |call_context| {
+                  std.debug.print("calling something!\n", .{});
                   try lvl.command.startResolvedCall(self.intpr(),
                     call_context.target, call_context.ns,
                     call_context.signature);

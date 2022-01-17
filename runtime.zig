@@ -306,10 +306,8 @@ pub const Evaluator = struct {
         },
         // other coercions can never happen.
         else => {
-          const v =
-            std.fmt.Formatter(nyarna.errors.formatType){.data = value_type};
-          const e =
-            std.fmt.Formatter(nyarna.errors.formatType){.data = expected_type};
+          const v = value_type.formatter();
+          const e = expected_type.formatter();
           std.debug.panic("coercion from {} to {} requested, which is illegal",
             .{v, e});
         }

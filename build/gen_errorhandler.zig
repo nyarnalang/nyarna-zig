@@ -76,6 +76,15 @@ pub fn main() !void {
     \\
     );
   }
+  inline for (@typeInfo(errors.ConstructionError).Enum.fields) |f| {
+    _ = try eh.write("  pub fn " ++ f.name ++ "(self: *@This(), pos: model.Position, t: model.Type) void {\n" ++
+    \\    self.count += 1;
+    \\    self.reporter.constructionErrorFn(self.reporter,
+    ++ "." ++ f.name ++ ", pos, t);\n" ++
+    \\  }
+    \\
+    );
+  }
   _ = try eh.write(
     \\};
   );

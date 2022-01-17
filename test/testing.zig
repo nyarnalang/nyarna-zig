@@ -387,13 +387,11 @@ fn AstEmitter(Handler: anytype) type {
       switch (e.data) {
         .call => |call| {
           const c = try self.push("CALL");
-          const t = try self.push("TARGET");
           try self.processExpr(call.target);
-          try t.pop();
-          for (call.exprs) |expr| {
-            const a = try self.push("ARG");
+          const sig = call.target.expected_type.structural.callable.sig;
+          for (call.exprs) |expr, i| {
+            try self.emitLine(">ARG {s}", .{sig.parameters[i].name});
             try self.processExpr(expr);
-            try a.pop();
           }
           try c.pop();
         },

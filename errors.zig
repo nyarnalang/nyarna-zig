@@ -16,6 +16,7 @@ pub const GenericParserError = enum {
   PrefixedFunctionMustBeCalled, AstNodeInNonKeyword, CannotResolveImmediately,
   InvalidLvalue, UnknownParameter, TooManyArguments, UnexpectedPrimaryBlock,
   InvalidPositionalArgument, UnknownSymbol, UnknownEnumValue, BlockNeedsConfig,
+  CantBeCalled, InvalidNamedArgInAssign,
 };
 
 pub const WrongItemError = enum {
@@ -96,6 +97,10 @@ pub const WrongTypeError = enum {
    InvalidDefinitionValue,
 };
 
+pub const ConstructionError = enum {
+  NotInEnum
+};
+
 pub const Reporter = struct {
   lexerErrorFn:
     fn(reporter: *Reporter, id: LexerError, pos: model.Position) void,
@@ -114,6 +119,9 @@ pub const Reporter = struct {
   wrongTypeErrorFn:
     fn(reporter: *Reporter, id: WrongTypeError, pos: model.Position,
        types: []const model.Type) void,
+  constructionErrorFn:
+    fn(reporter: *Reporter, id: ConstructionError, pos: model.Position,
+       t: model.Type) void,
 };
 
 fn formatItemDescr(d: WrongItemError.ItemDescr, comptime _: []const u8,
@@ -141,86 +149,6 @@ fn formatItemArr(i: []const WrongItemError.ItemDescr, comptime fmt: []const u8,
       try formatItemDescr(cur, fmt, options, writer);
     }
     try writer.writeByte(']');
-  }
-}
-
-fn formatParameterizedType(
-    comptime fmt: []const u8, options: std.fmt.FormatOptions, name: []const u8,
-    inners: []const model.Type, writer: anytype) @TypeOf(writer).Error!void {
-  try writer.writeAll(name);
-  try writer.writeByte('<');
-  for (inners) |inner, index| {
-    if (index > 0) {
-      try writer.writeAll(", ");
-    }
-    try formatType(inner, fmt, options, writer);
-  }
-  try writer.writeByte('>');
-}
-
-pub fn formatType(
-    t: model.Type, comptime fmt: []const u8, options: std.fmt.FormatOptions,
-    writer: anytype) @TypeOf(writer).Error!void {
-  switch (t) {
-    .intrinsic => |it| try writer.writeAll(@tagName(it)),
-    .structural => |struc| try switch (struc.*) {
-      .optional => |op|
-        formatParameterizedType(fmt, options, "Optional",
-                                &[_]model.Type{op.inner}, writer),
-      .concat => |con|
-        formatParameterizedType(fmt, options, "Concat",
-                                &[_]model.Type{con.inner}, writer),
-      .paragraphs => |para|
-        formatParameterizedType(fmt, options, "Paragraphs", para.inner, writer),
-      .list => |list|
-        formatParameterizedType(fmt, options, "List",
-                                &[_]model.Type{list.inner}, writer),
-      .map => |map|
-        formatParameterizedType(fmt, options, "Optional",
-                                &[_]model.Type{map.key, map.value}, writer),
-      .callable => |clb| {
-        try writer.writeAll(switch (clb.kind) {
-          .function => @as([]const u8, "[function] "),
-          .@"type" => "[type] ",
-          .prototype => "[prototype] ",
-        });
-        try writer.writeByte('(');
-        for (clb.sig.parameters) |param, i| {
-          if (i > 0) try writer.writeAll(", ");
-          try formatType(param.ptype, fmt, options, writer);
-        }
-        try writer.writeAll(") -> ");
-        try formatType(clb.sig.returns, fmt, options, writer);
-      },
-      .intersection => |inter| {
-        try writer.writeByte('{');
-        if (inter.scalar) |scalar| try formatType(scalar, fmt, options, writer);
-        for (inter.types) |inner, i| {
-          if (i > 0 or inter.scalar != null) try writer.writeAll(", ");
-          try formatType(inner, fmt, options, writer);
-        }
-        try writer.writeByte('}');
-        return;
-      },
-    },
-    .instantiated => |it| {
-      if (it.name) |sym| {
-        try writer.writeAll(sym.name);
-      } else {
-        // TODO: write representation of type
-        try writer.writeAll("<anonymous>");
-      }
-    }
-  }
-}
-
-pub fn formatTypes(types: []const model.Type, comptime fmt: []const u8,
-                   options: std.fmt.FormatOptions, writer: anytype)
-    @TypeOf(writer).Error!void {
-  for (types) |t, i| {
-    try if (i > 0) writer.writeAll(", '") else writer.writeByte('\'');
-    try formatType(t, fmt, options, writer);
-    try writer.writeByte('\'');
   }
 }
 
@@ -253,6 +181,7 @@ pub const CmdLineReporter = struct {
         .wrongItemErrorFn = CmdLineReporter.wrongItemError,
         .wrongIdErrorFn = CmdLineReporter.wrongIdError,
         .wrongTypeErrorFn = CmdLineReporter.wrongTypeError,
+        .constructionErrorFn = CmdLineReporter.constructionError,
       },
       .writer = stdout.writer(),
       .do_style = std.os.isatty(stdout.handle),
@@ -347,31 +276,42 @@ pub const CmdLineReporter = struct {
     self.renderPos(.{.bold}, pos);
     switch (id) {
       .ExpectedExprOfTypeXGotY => {
-        const t1 = std.fmt.Formatter(formatType){.data = types[0]};
-        const t2 = std.fmt.Formatter(formatType){.data = types[1]};
+        const t1 = types[0].formatter();
+        const t2 = types[1].formatter();
         self.renderError(
           "expression has incompatible type: expected '{}', got '{}'", .{
           t1, t2});
       },
       .IncompatibleTypes => {
-        const main = std.fmt.Formatter(formatType){.data = types[0]};
-        const others = std.fmt.Formatter(formatTypes){.data = types[1..]};
+        const main = types[0].formatter();
+        const others = model.Type.formatterAll(types[1..]);
         self.renderError(
           "expression type '{}' is not compatible with previous types {}", .{
           main, others});
       },
       .InvalidInnerConcatType => {
-        const t = std.fmt.Formatter(formatType){.data = types[0]};
+        const t_fmt = types[0].formatter();
         self.renderError(
           "given expressions' types' intersection is '{}' " ++
-          "which is not concatenable", .{t});
+          "which is not concatenable", .{t_fmt});
       },
       .InvalidDefinitionValue => {
-        const t = std.fmt.Formatter(formatType){.data = types[0]};
+        const t_fmt = types[0].formatter();
         self.renderError(
           "given value for symbol definition is '{}' " ++
-          "which cannot be made into a symbol", .{t});
+          "which cannot be made into a symbol", .{t_fmt});
       },
+    }
+  }
+
+  fn constructionError(reporter: *Reporter, id: ConstructionError,
+                       pos: model.Position, t: model.Type) void {
+    const self = @fieldParentPtr(CmdLineReporter, "reporter", reporter);
+    self.renderPos(.{.bold}, pos);
+    const t_fmt = t.formatter();
+    switch (id) {
+      .NotInEnum =>
+        self.renderError("given value is not part of enum {}", .{t_fmt}),
     }
   }
 };

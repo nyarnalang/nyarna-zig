@@ -312,14 +312,14 @@ pub const AssignmentMapper = struct {
     };
   }
 
-  pub fn map(mapper: *Mapper, _: model.Position,
+  pub fn map(mapper: *Mapper, pos: model.Position,
              input: Mapper.ArgKind, flag: Mapper.ProtoArgFlag) ?Mapper.Cursor {
     const self = @fieldParentPtr(AssignmentMapper, "mapper", mapper);
     if (input == .named or input == .direct) {
-      // TODO: report error
+      self.intpr.ctx.logger.InvalidNamedArgInAssign(pos);
       return null;
     } else if (self.replacement != null) {
-      // TODO: report error
+      self.intpr.ctx.logger.TooManyArguments(pos);
       return null;
     }
     return Mapper.Cursor{

@@ -1023,6 +1023,90 @@ pub const Type = union(enum) {
         switch (b) {.structural => |sb| sa == sb, else => false},
     };
   }
+
+  fn formatParameterized(
+      comptime fmt: []const u8, opt: std.fmt.FormatOptions, name: []const u8,
+      inners: []const Type, writer: anytype) @TypeOf(writer).Error!void {
+    try writer.writeAll(name);
+    try writer.writeByte('<');
+    for (inners) |inner, index| {
+      if (index > 0) {
+        try writer.writeAll(", ");
+      }
+      try inner.format(fmt, opt, writer);
+    }
+    try writer.writeByte('>');
+  }
+
+  pub fn format(
+      self: Type, comptime fmt: []const u8, opt: std.fmt.FormatOptions,
+      writer: anytype) @TypeOf(writer).Error!void {
+    switch (self) {
+      .intrinsic => |it| try writer.writeAll(@tagName(it)),
+      .structural => |struc| try switch (struc.*) {
+        .optional => |op| formatParameterized(
+          fmt, opt, "Optional", &[_]Type{op.inner}, writer),
+        .concat => |con| formatParameterized(
+          fmt, opt, "Concat", &[_]Type{con.inner}, writer),
+        .paragraphs => |para| formatParameterized(
+          fmt, opt, "Paragraphs", para.inner, writer),
+        .list => |list| formatParameterized(
+          fmt, opt, "List", &[_]Type{list.inner}, writer),
+        .map => |map| formatParameterized(
+          fmt, opt, "Optional", &[_]Type{map.key, map.value}, writer),
+        .callable => |clb| {
+          try writer.writeAll(switch (clb.kind) {
+            .function => @as([]const u8, "[function] "),
+            .@"type" => "[type] ",
+            .prototype => "[prototype] ",
+          });
+          try writer.writeByte('(');
+          for (clb.sig.parameters) |param, i| {
+            if (i > 0) try writer.writeAll(", ");
+            try param.ptype.format(fmt, opt, writer);
+          }
+          try writer.writeAll(") -> ");
+          try clb.sig.returns.format(fmt, opt, writer);
+        },
+        .intersection => |inter| {
+          try writer.writeByte('{');
+          if (inter.scalar) |scalar| try scalar.format(fmt, opt, writer);
+          for (inter.types) |inner, i| {
+            if (i > 0 or inter.scalar != null) try writer.writeAll(", ");
+            try inner.format(fmt, opt, writer);
+          }
+          try writer.writeByte('}');
+          return;
+        },
+      },
+      .instantiated => |it| {
+        if (it.name) |sym| {
+          try writer.writeAll(sym.name);
+        } else {
+          // TODO: write representation of type
+          try writer.writeAll("<anonymous>");
+        }
+      }
+    }
+  }
+
+  pub fn formatAll(types: []const Type, comptime fmt: []const u8,
+                   options: std.fmt.FormatOptions, writer: anytype)
+    @TypeOf(writer).Error!void {
+  for (types) |t, i| {
+    if (i > 0) try writer.writeAll(", ");
+    try t.format(fmt, options, writer);
+  }
+}
+
+  pub inline fn formatter(self: Type) std.fmt.Formatter(format) {
+    return .{.data = self};
+  }
+
+  pub inline fn formatterAll(types: []const Type)
+      std.fmt.Formatter(formatAll) {
+    return .{.data = types};
+  }
 };
 
 pub const Prototype = enum {

@@ -491,7 +491,7 @@ pub const Intrinsics = Provider.Wrapper(struct {
     return if (enum_type.values.getIndex(input.content)) |index|
       (try eval.ctx.values.@"enum"(pos, enum_type, index)).value()
     else blk: {
-      // TODO: report error
+      eval.ctx.logger.NotInEnum(pos, eval.target_type);
       break :blk try eval.ctx.values.poison(pos);
     };
   }
