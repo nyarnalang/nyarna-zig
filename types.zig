@@ -1004,6 +1004,7 @@ pub const ParagraphTypeBuilder = struct {
   list: std.ArrayListUnmanaged(model.Type),
   cur_scalar: model.Type,
   non_voids: u21,
+  poison: bool,
 
   pub fn init(types: *Lattice, force_paragraphs: bool) ParagraphTypeBuilder {
     return .{
@@ -1011,11 +1012,16 @@ pub const ParagraphTypeBuilder = struct {
       .list = .{},
       .cur_scalar = .{.intrinsic = .every},
       .non_voids = if (force_paragraphs) 2 else 0,
+      .poison = false,
     };
   }
 
   pub fn push(self: *ParagraphTypeBuilder, t: model.Type) !void {
     if (t.is(.void)) return;
+    if (t.is(.poison)) {
+      self.poison = true;
+      return;
+    }
     self.non_voids += 1;
     for (self.list.items) |existing|
       if (self.types.lesserEqual(t, existing)) return;
@@ -1025,7 +1031,10 @@ pub const ParagraphTypeBuilder = struct {
   }
 
   pub fn finish(self: *ParagraphTypeBuilder) !Result {
-    return switch (self.non_voids) {
+    return if (self.poison) Result{
+      .scalar_type_sup = self.cur_scalar,
+      .resulting_type = .{.intrinsic = .poison},
+    } else switch (self.non_voids) {
       0 => Result{
         .scalar_type_sup = self.cur_scalar,
         .resulting_type = .{.intrinsic = .void},

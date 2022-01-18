@@ -1165,6 +1165,12 @@ pub const Expression = struct {
     root: *Node,
   };
 
+  pub const Paragraph = struct {
+    content: *Expression,
+    lf_after: usize,
+  };
+  pub const Paragraphs = []Paragraph;
+
   pub const Data = union(enum) {
     access: Access,
     assignment: Assignment,
@@ -1172,6 +1178,7 @@ pub const Expression = struct {
     call: Call,
     concatenation: Concatenation,
     literal: Literal,
+    paragraphs: Paragraphs,
     var_retrieval: VarRetrieval,
     poison, void,
   };
@@ -1289,8 +1296,12 @@ pub const Value = struct {
   };
   /// a Paragraphs value
   pub const Para = struct {
+    pub const Item = struct {
+      content: *Value,
+      lf_after: usize,
+    };
     t: *const Type.Paragraphs,
-    content: std.ArrayList(*Value),
+    content: std.ArrayList(Item),
 
     pub inline fn value(self: *@This()) *Value {
       return Value.parent(self);
@@ -1735,7 +1746,7 @@ pub const ValueGenerator = struct {
     return &(try self.value(pos, .{
       .para = .{
         .t = t,
-        .content = std.ArrayList(*Value).init(self.allocator()),
+        .content = std.ArrayList(Value.Para.Item).init(self.allocator()),
       },
     })).data.para;
   }

@@ -266,8 +266,9 @@ pub const Interpreter = struct {
 
   fn tryProbeAndInterpret(self: *Interpreter, input: *model.Node, stage: Stage)
       nyarna.Error!?*model.Expression {
-    const ret_type = (try self.probeType(input, stage)) orelse return null;
-    return self.interpretWithTargetType(input, ret_type, true, stage);
+    const scalar_type = (try self.probeForScalarType(input, stage))
+      orelse return null;
+    return self.interpretWithTargetScalar(input, scalar_type, stage);
   }
 
   fn tryInterpretSymref(self: *Interpreter, ref: *model.Node.ResolvedSymref)
@@ -949,7 +950,7 @@ pub const Interpreter = struct {
         first_incompatible = i;
       }
     }
-    return if (first_incompatible) |index| blk: {
+    return if (seen_unfinished) null else if (first_incompatible) |index| blk: {
       const type_arr =
         try self.allocator().alloc(model.Type, index + 1);
       type_arr[0] = (try self.probeType(nodes[index], stage)).?;
@@ -959,8 +960,7 @@ pub const Interpreter = struct {
       }
       self.ctx.logger.IncompatibleTypes(nodes[index].pos, type_arr);
       break :blk model.Type{.intrinsic = .poison};
-    } else if (already_poison) model.Type{.intrinsic = .poison}
-    else if (seen_unfinished) null else sup;
+    } else if (already_poison) model.Type{.intrinsic = .poison} else sup;
   }
 
   /// Calculate the supremum of all scalar types in the given node's types.
@@ -968,22 +968,14 @@ pub const Interpreter = struct {
   /// concatenations, optionals and paragraphs.
   ///
   /// returns null only in the event of unfinished nodes.
-  fn probeNodesForScalarType(self: *Interpreter, nodes: []*model.Node,
-                             stage: Stage) !?model.Type {
-    var sup = model.Type{.intrinsic = .every};
-    var seen_unfinished = false;
-    for (nodes) |node| {
-      const t = (try self.probeType(node, stage)) orelse {
-        seen_unfinished = true;
-        break;
-      };
-      sup = try self.ctx.types().sup(sup, self.containedScalar(t) or continue);
-    }
-    return if (seen_unfinished) null else sup;
+  fn probeForScalarType(self: *Interpreter, input: *model.Node,
+                        stage: Stage) !?model.Type {
+    const t = (try self.probeType(input, stage)) orelse return null;
+    return types.containedScalar(t) orelse .{.intrinsic = .every};
   }
 
   /// Returns the given node's type, if it can be calculated. If the node or its
-  /// substructures cannot be interpreted, null is returned.
+  /// substructures cannot be fully interpreted, null is returned.
   ///
   /// This will modify the given node by interpreting all substructures that
   /// are guaranteed not to be type-dependent on context. This means that all
@@ -991,7 +983,7 @@ pub const Interpreter = struct {
   /// transitively.
   ///
   /// Semantic errors that are discovered during probing will be logged and lead
-  /// to poison being returned.
+  /// to poison being returned if stage.kind != .initial.
   pub fn probeType(self: *Interpreter, node: *model.Node, stage: Stage)
       nyarna.Error!?model.Type {
     switch (node.data) {
@@ -1172,117 +1164,108 @@ pub const Interpreter = struct {
     }
   }
 
+  fn probeCheckOrPoison(self: *Interpreter, input: *model.Node, t: model.Type,
+                        stage: Stage) nyarna.Error!?*model.Expressio {
+    var actual_type = (try self.probeType(input, stage)) orelse return null;
+    if (!actual_type.is(.poison) and
+        !self.ctx.types().lesserEqual(actual_type, t)) {
+      actual_type = .{.intrinsic = .poison};
+      self.ctx.logger.ExpectedExprOfTypeXGotY(
+        input.pos, &[_]model.Type{t, actual_type});
+    }
+    if (actual_type.is(.poison)) {
+      const expr = try self.createPublic(model.Expression);
+      expr.fillPoison(input.pos);
+      return expr;
+    }
+    return null;
+  }
+
+  fn poisonIfNotCompat(
+      self: *Interpreter, pos: model.Position, actual: model.Type,
+      scalar: model.Type) !?*model.Expression {
+    if (!actual.is(.poison)) {
+      if (types.containedScalar(actual)) |contained| {
+        // TODO: conversion
+        if (self.ctx.types().lesserEqual(contained, scalar)) return null;
+      } else return null;
+    }
+    const expr = try self.ctx.global().create(model.Expression);
+    expr.fillPoison(pos);
+    return expr;
+  }
+
   /// Same as tryInterpret, but takes a target type that may be used to generate
-  /// typed literal values from text literals.
-  ///
-  /// Give probed==true if t resulted from probing input. probed==false will
-  /// calculate the actual type of inner structures and check them for
-  /// compatibility with t.
-  fn interpretWithTargetType(
-      self: *Interpreter, input: *model.Node, t: model.Type, probed: bool,
-      stage: Stage) nyarna.Error!?*model.Expression {
+  /// typed literal values from text literals. The target type *must* be a
+  /// scalar type.
+  fn interpretWithTargetScalar(
+      self: *Interpreter, input: *model.Node, t: model.Type, stage: Stage)
+      nyarna.Error!?*model.Expression {
+    std.debug.assert(switch (t) {
+      .intrinsic => |intr|
+        intr == .literal or intr == .space or intr == .raw or intr == .every,
+      .structural => false,
+      .instantiated => |inst| inst.data == .textual or inst.data == .numeric or
+        inst.data == .float or inst.data == .tenum,
+    });
     switch (input.data) {
       .access, .assign, .definition, .funcgen, .location, .resolved_symref,
-      .resolved_call, .typegen => return self.tryInterpret(input, stage),
-      .branches => |br| {
-        if (!probed) {
-          var actual_type =
-            (try self.probeType(input, stage)) orelse return null;
-          if (!actual_type.is(.poison) and
-              !self.ctx.types().lesserEqual(actual_type, t)) {
-            actual_type = .{.intrinsic = .poison};
-            self.ctx.logger.ExpectedExprOfTypeXGotY(
-              input.pos, &[_]model.Type{t, actual_type});
-          }
-          if (actual_type.is(.poison)) {
-            const expr = try self.createPublic(model.Expression);
+      .resolved_call, .typegen => {
+        if (try self.tryInterpret(input, stage)) |expr| {
+          if (types.containedScalar(expr.expected_type)) |scalar_type| {
+            if (self.ctx.types().lesserEqual(scalar_type, t)) return expr;
+            // TODO: conversion
+            self.ctx.logger.ScalarTypesMismatch(
+              input.pos, &[_]model.Type{t, scalar_type});
             expr.fillPoison(input.pos);
-            return expr;
           }
+          return expr;
         }
+        return null;
+      },
+      .branches => |br| {
         const condition = cblk: {
-          // TODO: use intrinsic Boolean type here
-          if (try self.interpretWithTargetType(br.condition,
-              model.Type{.intrinsic = .literal}, false, stage)) |expr|
+          // TODO: use intrinsic Boolean type here / the type used for braching
+          if (try self.interpretWithTargetScalar(br.condition,
+              model.Type{.intrinsic = .literal}, stage)) |expr|
             break :cblk expr
           else return null;
         };
-
-        var failed_some = false;
-        for (br.branches) |*node| {
-          if (node.*.data != .expression) {
-            if (try self.interpretWithTargetType(node.*, t, probed, stage))
-                |expr| {
-              const expr_node = try self.allocator().create(model.Node);
-              expr_node.* = .{
-                .data = .{.expression = expr},
-                .pos = node.*.pos,
-              };
-              node.* = expr_node;
-            } else failed_some = true;
-          }
+        const actual_type =
+          (try self.probeNodeList(br.branches, stage)) orelse return null;
+        if (try self.poisonIfNotCompat(input.pos, actual_type, t)) |expr| {
+          return expr;
         }
-        if (failed_some) return null;
-        const exprs = try self.ctx.global().alloc(
-          *model.Expression, br.branches.len);
-        for (br.branches) |item, i|
-          exprs[i] = item.data.expression;
+        const exprs =
+          try self.ctx.global().alloc(*model.Expression, br.branches.len);
+        for (br.branches) |item, i| {
+          exprs[i] = (try self.interpretWithTargetScalar(item, t, stage)).?;
+        }
         const expr = try self.createPublic(model.Expression);
         expr.* = .{
           .pos = input.pos,
-          .data = .{
-            .branches = .{
-              .condition = condition,
-              .branches = exprs,
-            },
-          },
-          .expected_type = t,
+          .data = .{.branches = .{.condition = condition, .branches = exprs}},
+          .expected_type = try self.ctx.types().sup(actual_type, t),
         };
         return expr;
       },
       .concat => |con| {
-        if (!probed) {
-          var actual_type =
-            (try self.probeType(input, stage)) orelse return null;
-          if (!actual_type.is(.poison) and
-              !self.ctx.types().lesserEqual(actual_type, t)) {
-            actual_type = .{.intrinsic = .poison};
-            self.ctx.logger.ExpectedExprOfTypeXGotY(
-              input.pos, &[_]model.Type{t, actual_type});
-          }
-          if (actual_type.is(.poison)) {
-            const expr = try self.createPublic(model.Expression);
-            expr.fillPoison(input.pos);
-            return expr;
-          }
+        const actual_type =
+          (try self.probeNodeList(con.items, stage)) orelse return null;
+        if (try self.poisonIfNotCompat(input.pos, actual_type, t)) |expr| {
+          return expr;
         }
-        var failed_some = false;
-        for (con.items) |*node| {
-          if (node.*.data != .expression) {
-            if (try self.interpretWithTargetType(node.*, t, probed, stage))
-                |expr| {
-              const expr_node = try self.allocator().create(model.Node);
-              expr_node.* = .{
-                .data = .{.expression = expr},
-                .pos = node.*.pos,
-              };
-              node.* = expr_node;
-            } else failed_some = true;
-          }
-        }
-        if (failed_some) return null;
         const exprs = try self.ctx.global().alloc(
           *model.Expression, con.items.len);
         // TODO: properly handle paragraph types
-        for (con.items) |item, i|
-          exprs[i] = item.data.expression;
+        for (con.items) |item, i| {
+          exprs[i] = (try self.interpretWithTargetScalar(item, t, stage)).?;
+        }
         const expr = try self.createPublic(model.Expression);
         expr.* = .{
           .pos = input.pos,
-          .data = .{
-            .concatenation = exprs,
-          },
-          .expected_type = t,
+          .data = .{.concatenation = exprs},
+          .expected_type = try self.ctx.types().sup(actual_type, t),
         };
         return expr;
       },
@@ -1295,7 +1278,28 @@ pub const Interpreter = struct {
         expr.expected_type = t;
         return expr;
       },
-      .paras => unreachable, // TODO
+      .paras => |paras| {
+        const probed = (try self.probeType(input, stage)) orelse return null;
+        if (try self.poisonIfNotCompat(input.pos, probed, t)) |expr| {
+          return expr;
+        }
+        const res = try self.ctx.global().alloc(
+          model.Expression.Paragraph, paras.items.len);
+        for (paras.items) |item, i| {
+          res[i] = .{
+            .content =
+              (try self.interpretWithTargetScalar(item.content, t, stage)).?,
+            .lf_after = item.lf_after,
+          };
+        }
+        const expr = try self.createPublic(model.Expression);
+        expr.* = .{
+          .pos = input.pos,
+          .data = .{.paragraphs = res},
+          .expected_type = try self.ctx.types().sup(probed, t),
+        };
+        return expr;
+      },
       .void => {
         const expr = try self.createPublic(model.Expression);
         expr.fillVoid(input.pos);
@@ -1322,7 +1326,10 @@ pub const Interpreter = struct {
   pub fn associate(
       self: *Interpreter, node: *model.Node, t: model.Type, stage: Stage)
       !?*model.Expression {
-    return if (try self.interpretWithTargetType(node, t, false, stage))
+    const scalar_type = types.containedScalar(t) orelse
+      (try self.probeForScalarType(node, stage)) orelse return null;
+
+    return if (try self.interpretWithTargetScalar(node, scalar_type, stage))
         |expr| blk: {
       if (expr.expected_type.is(.poison)) break :blk expr;
       if (self.ctx.types().lesserEqual(expr.expected_type, t)) {

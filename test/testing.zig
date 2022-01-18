@@ -385,20 +385,10 @@ fn AstEmitter(Handler: anytype) type {
 
     pub fn processExpr(self: *Self, e: *model.Expression) anyerror!void {
       switch (e.data) {
-        .call => |call| {
-          const c = try self.push("CALL");
-          try self.processExpr(call.target);
-          const sig = call.target.expected_type.structural.callable.sig;
-          for (call.exprs) |expr, i| {
-            try self.emitLine(">ARG {s}", .{sig.parameters[i].name});
-            try self.processExpr(expr);
-          }
-          try c.pop();
-        },
-        .assignment => |_| {
+        .access => |_| {
           unreachable;
         },
-        .access => |_| {
+        .assignment => |_| {
           unreachable;
         },
         .branches => |b| {
@@ -410,9 +400,27 @@ fn AstEmitter(Handler: anytype) type {
           }
           try branches.pop();
         },
+        .call => |call| {
+          const c = try self.push("CALL");
+          try self.processExpr(call.target);
+          const sig = call.target.expected_type.structural.callable.sig;
+          for (call.exprs) |expr, i| {
+            try self.emitLine(">ARG {s}", .{sig.parameters[i].name});
+            try self.processExpr(expr);
+          }
+          try c.pop();
+        },
         .concatenation => |c| for (c) |expr| try self.processExpr(expr),
         .literal => |l| {
           try self.processValue(&l.value);
+        },
+        .paragraphs => |paras| {
+          const p = try self.push("PARAGRAPHS");
+          for (paras) |para| {
+            try self.emitLine(">PARA {}", .{para.lf_after});
+            try self.processExpr(para.content);
+          }
+          try p.pop();
         },
         .var_retrieval => |_| {
           unreachable;

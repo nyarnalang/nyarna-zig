@@ -1,6 +1,7 @@
 const std = @import("std");
 const nyarna = @import("nyarna.zig");
 const model = nyarna.model;
+const types = nyarna.types;
 const Interpreter = @import("load/interpret.zig").Interpreter;
 
 /// evaluates expressions and returns values.
@@ -193,7 +194,17 @@ pub const Evaluator = struct {
   fn doEvaluate(self: *Evaluator, expr: *model.Expression)
       nyarna.Error!*model.Value {
     switch (expr.data) {
-      .call => |*call| return self.evaluateCall(self, call),
+      .access => |*access| {
+        var cur = try self.evaluate(access.subject);
+        for (access.path) |index| {
+          cur = switch (cur.data) {
+            .record => |*record| record.fields[index],
+            .list   => |*list|   list.content.items[index],
+            else    => unreachable,
+          };
+        }
+        return cur;
+      },
       .assignment => |*assignment| {
         var cur_ptr = &assignment.target.cur_value.?.*.value;
         for (assignment.path) |index| {
@@ -207,17 +218,6 @@ pub const Evaluator = struct {
         return try model.Value.create(
           self.ctx.global(), expr.pos, .void);
       },
-      .access => |*access| {
-        var cur = try self.evaluate(access.subject);
-        for (access.path) |index| {
-          cur = switch (cur.data) {
-            .record => |*record| record.fields[index],
-            .list   => |*list|   list.content.items[index],
-            else    => unreachable,
-          };
-        }
-        return cur;
-      },
       .branches => |*branches| {
         var condition = try self.evaluate(branches.condition);
         if (self.ctx.types().valueType(condition).is(.poison))
@@ -226,47 +226,41 @@ pub const Evaluator = struct {
         return self.evaluate(
           branches.branches[condition.data.@"enum".index]);
       },
+      .call => |*call| return self.evaluateCall(self, call),
       .concatenation => |concat| {
         var builder = ConcatBuilder.init(
           self.ctx, expr.pos, expr.expected_type);
-        var i: usize = 0;
-        while (i < concat.len) : (i += 1) {
-          var cur = try self.evaluate(concat[i]);
-          if (cur.data == .text and i + 1 < concat.len) {
-            i += 1;
-            var next = try self.evaluate(concat[i]);
-            if (next.data != .text) {
-              try builder.push(cur);
-              cur = next;
-            } else {
-              var content_builder = std.ArrayListUnmanaged(u8){};
-              try content_builder.appendSlice(
-                self.ctx.global(), cur.data.text.content);
-              try content_builder.appendSlice(
-                self.ctx.global(), next.data.text.content);
-              i += 1;
-              var last_pos = next.origin;
-              while (i < concat.len) : (i += 1) {
-                next = try self.evaluate(concat[i]);
-                if (next.data != .text) break;
-                try content_builder.appendSlice(
-                  self.ctx.global(), next.data.text.content);
-                last_pos = next.origin;
-              }
-              const scalar_val = try self.ctx.values.textScalar(
-                cur.origin.span(last_pos), builder.scalar_type,
-                content_builder.items);
-              try builder.push(scalar_val.value());
-              if (i == concat.len) break;
-              cur = next;
-            }
-          }
-          try builder.push(cur);
-        }
+        for (concat) |item| try builder.push(try self.evaluate(item));
         return try builder.finish();
       },
-      .var_retrieval => |*var_retr| return var_retr.variable.cur_value.?.value,
       .literal => |*literal| return &literal.value,
+      .paragraphs => |paras| {
+        const gen_para = switch (expr.expected_type) {
+          .structural => |strct| switch (strct.*) {
+            .paragraphs => true,
+            else => false
+          },
+          else => false
+        };
+        if (gen_para) {
+          var builder = ParagraphsBuilder.init(self.ctx);
+          for (paras) |para| {
+            try builder.push(try self.evaluate(para.content), para.lf_after);
+          }
+          return try builder.finish(expr.pos);
+        } else {
+          var ret: ?*model.Value = null;
+          for (paras) |para| {
+            const cur = try self.evaluate(para.content);
+            if (cur.data != .void and cur.data != .poison) {
+              std.debug.assert(ret == null);
+              ret = cur;
+            }
+          }
+          return ret orelse try self.ctx.values.void(expr.pos);
+        }
+      },
+      .var_retrieval => |*var_retr| return var_retr.variable.cur_value.?.value,
       .poison => return self.ctx.values.poison(expr.pos),
       .void => return self.ctx.values.void(expr.pos),
     }
@@ -332,7 +326,7 @@ pub const Evaluator = struct {
               if (self.ctx.types().lesserEqual(value_type, cur))
                 break try self.coerce(value, cur);
             } else unreachable;
-            try lv.content.append(para_value);
+            try lv.content.append(.{.content = para_value, .lf_after = 0});
           }
           return lv.value();
         },
@@ -354,25 +348,36 @@ pub const Evaluator = struct {
 };
 
 const ConcatBuilder = struct {
+  const MoreText = struct {
+    pos: model.Position,
+    content: std.ArrayListUnmanaged(u8) = .{},
+  };
+
   cur: ?*model.Value,
-  concat_val: ?*model.Value.Concat,
+  cur_items: ?std.ArrayList(*model.Value),
   ctx: nyarna.Context,
   pos: model.Position,
   inner_type: model.Type,
   expected_type: model.Type,
   scalar_type: model.Type,
+  state: union(enum) {
+    initial,
+    first_text: *model.Value,
+    more_text: MoreText,
+  },
 
   fn init(ctx: nyarna.Context, pos: model.Position,
           expected_type: model.Type) ConcatBuilder {
     return .{
       .cur = null,
-      .concat_val = null,
+      .cur_items = null,
       .ctx = ctx,
       .pos = pos,
       .inner_type = model.Type{.intrinsic = .every},
       .expected_type = expected_type,
       .scalar_type =
         nyarna.types.containedScalar(expected_type) orelse undefined,
+      .state = .initial,
     };
   }
 
@@ -388,27 +393,92 @@ const ConcatBuilder = struct {
     return cval;
   }
 
-  fn push(self: *ConcatBuilder, item: *model.Value) !void {
+  fn initList(self: *ConcatBuilder, first_val: *model.Value) !void {
+    self.cur_items = blk: {
+      var list = std.ArrayList(*model.Value).init(self.ctx.global());
+      try list.append(first_val);
+      break :blk list;
+    };
+  }
+
+  fn enqueue(self: *ConcatBuilder, item: *model.Value) !void {
+    std.debug.assert(item.data != .para); // TODO
     if (self.cur) |first_val| {
-      self.concat_val = try self.concatWith(first_val);
+      try self.initList(first_val);
       self.cur = null;
     }
     self.inner_type = try self.ctx.types().sup(
       self.inner_type, self.ctx.types().valueType(item));
 
-    if (self.concat_val) |cval| try cval.content.append(item)
+    if (self.cur_items) |*content| try content.append(item)
     else self.cur = item;
   }
 
+  fn finishText(self: *ConcatBuilder, more: *const MoreText) !void {
+    const scalar_val = try self.ctx.values.textScalar(
+      more.pos, self.scalar_type, more.content.items);
+    try self.enqueue(scalar_val.value());
+  }
+
+  pub fn push(self: *ConcatBuilder, item: *model.Value) !void {
+    switch (self.state) {
+      .initial => {
+        if (item.data == .text) {
+          self.state = .{.first_text = item};
+        } else try self.enqueue(item);
+      },
+      .first_text => |start| {
+        if (item.data == .text) {
+          self.state = .{.more_text = .{.pos = start.origin}};
+          try self.state.more_text.content.appendSlice(
+            self.ctx.global(), start.data.text.content);
+          try self.state.more_text.content.appendSlice(
+            self.ctx.global(), item.data.text.content);
+          self.state.more_text.pos.end = item.origin.end;
+        } else {
+          try self.enqueue(start);
+          try self.enqueue(item);
+          self.state = .initial;
+        }
+      },
+      .more_text => |*more| {
+        if (item.data == .text) {
+          try more.content.appendSlice(
+            self.ctx.global(), item.data.text.content);
+          more.pos.end = item.origin.end;
+        } else {
+          try self.finishText(more);
+          try self.enqueue(item);
+          self.state = .initial;
+        }
+      }
+    }
+  }
+
   fn finish(self: *ConcatBuilder) !*model.Value {
-    if (self.concat_val) |cval| {
-      return cval.value();
+    switch (self.state) {
+      .initial => {},
+      .first_text => |first| try self.enqueue(first),
+      .more_text => |*more| try self.finishText(more),
+    }
+    if (self.cur) |single| if (self.expected_type.isStructural(.concat)) {
+      try self.initList(single);
+    };
+    if (self.cur_items) |cval| {
+      const concat = try self.ctx.global().create(model.Value);
+      const t = (try self.ctx.types().concat(self.inner_type)).?;
+      std.debug.assert(t.isStructural(.concat));
+      concat.* = .{
+        .origin = self.pos,
+        .data = .{.concat = .{.t = &t.structural.concat, .content = cval}},
+      };
+      return concat;
     } else if (self.cur) |single| {
-      return if (self.expected_type.isStructural(.concat))
-        (try self.concatWith(single)).value() else single;
+      return single;
     } else {
       return if (self.expected_type.isStructural(.concat))
-        (try self.emptyConcat()).value()
+        (try self.ctx.values.concat(
+          self.pos, &self.expected_type.structural.concat)).value()
       else if (self.expected_type.is(.void)) try
         model.Value.create(self.ctx.global(), self.pos, .void)
       else blk: {
@@ -418,5 +488,55 @@ const ConcatBuilder = struct {
           self.pos, self.scalar_type, "")).value();
       };
     }
+  }
+};
+
+const ParagraphsBuilder = struct {
+  content: std.ArrayList(model.Value.Para.Item),
+  t_builder: types.ParagraphTypeBuilder,
+  ctx: nyarna.Context,
+  is_poison: bool,
+
+  pub fn init(ctx: nyarna.Context) ParagraphsBuilder {
+    return .{
+      .content = std.ArrayList(model.Value.Para.Item).init(ctx.global()),
+      .t_builder = types.ParagraphTypeBuilder.init(ctx.types(), true),
+      .ctx = ctx, .is_poison = false,
+    };
+  }
+
+  fn enqueue(self: *@This(), item: model.Value.Para.Item) !void {
+    try self.content.append(item);
+    const item_type = self.ctx.types().valueType(item.content);
+    try self.t_builder.push(item_type);
+  }
+
+  pub fn push(self: *@This(), value: *model.Value, lf_after: usize)
+      nyarna.Error!void {
+    switch (value.data) {
+      .para => |*children| {
+        for (children.content.items) |*item| {
+          try self.push(item.content, item.lf_after);
+        }
+      },
+      .void => {},
+      .poison => self.is_poison = true,
+      else => try self.enqueue(.{.content = value, .lf_after = lf_after})
+    }
+  }
+
+  pub fn finish(self: *@This(), pos: model.Position) !*model.Value {
+    const ret_t = (try self.t_builder.finish()).resulting_type;
+    const ret = try self.ctx.global().create(model.Value);
+    ret.* = .{
+      .origin = pos,
+      .data = if (ret_t.is(.poison)) .poison else .{
+        .para = .{
+          .content = self.content,
+          .t = &ret_t.structural.paragraphs,
+        },
+      },
+    };
+    return ret;
   }
 };

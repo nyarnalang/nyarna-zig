@@ -86,8 +86,10 @@ pub const PreviousOccurenceError = enum {
 };
 
 pub const WrongTypeError = enum {
-   /// gives two types: first expected, then actual types.
+   /// gives two types: first expected, then actual type.
    ExpectedExprOfTypeXGotY,
+   /// gives two scalar types: first expected, then actual type.
+   ScalarTypesMismatch,
    /// gives at least two types: the first type is the one that makes the set
    /// incompatible, the others are other types in the set.
    IncompatibleTypes,
@@ -281,6 +283,11 @@ pub const CmdLineReporter = struct {
         self.renderError(
           "expression has incompatible type: expected '{}', got '{}'", .{
           t1, t2});
+      },
+      .ScalarTypesMismatch => {
+        const t1 = types[0].formatter();
+        const t2 = types[1].formatter();
+        self.renderError("expected scalar type '{}', got '{}'", .{t1, t2});
       },
       .IncompatibleTypes => {
         const main = types[0].formatter();
