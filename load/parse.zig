@@ -865,16 +865,9 @@ pub const Parser = struct {
             .read_block_header => {
               const start = self.cur_start;
               self.lexer.readBlockHeader();
-              const expr = try self.intpr().createPublic(model.Expression);
-              expr.data = .{
-                .literal = .{
-                  .value = .{
-                    .origin = undefined,
-                    .data = .{.block_header = undefined},
-                  },
-                },
-              };
-              const bh = &expr.data.literal.value.data.block_header;
+              const value = try self.intpr().ctx.global().create(model.Value);
+              value.data = .{.block_header = undefined};
+              const bh = &value.data.block_header;
 
               self.advance();
               const check_swallow = if (self.cur == .diamond_open) blk: {
@@ -889,10 +882,9 @@ pub const Parser = struct {
               if (check_swallow) {
                 bh.swallow_depth = self.checkSwallow();
               }
-              const pos = self.intpr().input.between(start, self.cur_start);
-              expr.data.literal.value.origin = pos;
-              expr.pos = pos;
-              _ = try proc.push(proc, pos, .{.block_header = bh});
+
+              value.origin = self.intpr().input.between(start, self.cur_start);
+              _ = try proc.push(proc, value.origin, .{.block_header = bh});
             }
           }
         }

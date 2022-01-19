@@ -233,7 +233,7 @@ pub const Evaluator = struct {
         for (concat) |item| try builder.push(try self.evaluate(item));
         return try builder.finish();
       },
-      .literal => |*literal| return &literal.value,
+      .value => |value| return value,
       .paragraphs => |paras| {
         const gen_para = switch (expr.expected_type) {
           .structural => |strct| switch (strct.*) {

@@ -411,9 +411,7 @@ fn AstEmitter(Handler: anytype) type {
           try c.pop();
         },
         .concatenation => |c| for (c) |expr| try self.processExpr(expr),
-        .literal => |l| {
-          try self.processValue(&l.value);
-        },
+        .value => |value| try self.processValue(value),
         .paragraphs => |paras| {
           const p = try self.push("PARAGRAPHS");
           for (paras) |para| {

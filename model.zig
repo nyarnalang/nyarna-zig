@@ -1147,14 +1147,6 @@ pub const Expression = struct {
   };
   /// concatenation
   pub const Concatenation = []*Expression;
-  /// a literal value
-  pub const Literal = struct {
-    value: Value,
-
-    pub fn expr(self: *@This()) *Expression {
-      return Expression.parent(self);
-    }
-  };
   // if or switch expression
   pub const Branches = struct {
     condition: *Expression,
@@ -1177,9 +1169,9 @@ pub const Expression = struct {
     branches: Branches,
     call: Call,
     concatenation: Concatenation,
-    literal: Literal,
     paragraphs: Paragraphs,
     var_retrieval: VarRetrieval,
+    value: *Value,
     poison, void,
   };
 
@@ -1195,40 +1187,9 @@ pub const Expression = struct {
       Call => offset(Data, "call"),
       Assignment => offset(Data, "assignment"),
       Access => offset(Data, "access"),
-      Literal => offset(Data, "literal"),
       else => unreachable
     };
     return @fieldParentPtr(Expression, "data", @intToPtr(*Data, addr));
-  }
-
-  pub inline fn fillPoison(e: *Expression, at: Position) void {
-    e.* = .{
-      .pos = at,
-      .data = .{
-        .literal = .{
-          .value = .{
-            .origin = at,
-            .data = .poison
-          }
-        }
-      },
-      .expected_type = .{.intrinsic = .poison},
-    };
-  }
-
-  pub inline fn fillVoid(e: *Expression, at: Position) void {
-    e.* = .{
-      .pos = at,
-      .data = .{
-        .literal = .{
-          .value = .{
-            .origin = at,
-            .data = .void
-          }
-        }
-      },
-      .expected_type = .{.intrinsic = .void},
-    };
   }
 };
 
@@ -1783,9 +1744,8 @@ pub const ValueGenerator = struct {
       pos, .{.prototype = .{.pt = pt}})).data.prototype;
   }
 
-  pub inline fn funcRef(self: *const Self, pos: Position, func: *Symbol)
+  pub inline fn funcRef(self: *const Self, pos: Position, func: *Function)
       !*Value.FuncRef {
-    std.debug.assert(func.data == .ext_func or func.data == .ny_func);
     return &(try self.value(
       pos, .{.funcref = .{.func = func}})).data.funcref;
   }
@@ -1812,8 +1772,8 @@ pub const ValueGenerator = struct {
       .{.definition = .{.name = name, .content = content}})).data.definition;
   }
 
-  pub inline fn ast(self: *const Self, pos: Position, root: *Node) !*Value.Ast {
-    return &(try self.value(pos, .{.ast = .{.root = root}})).data.ast;
+  pub inline fn ast(self: *const Self, root: *Node) !*Value.Ast {
+    return &(try self.value(root.pos, .{.ast = .{.root = root}})).data.ast;
   }
 
   pub inline fn blockHeader(self: *const Self, pos: Position, config: ?BlockConfig,

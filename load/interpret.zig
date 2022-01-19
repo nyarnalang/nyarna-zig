@@ -117,11 +117,6 @@ pub const Interpreter = struct {
     storage.deinit();
   }
 
-  /// create an object in the public (Loader-wide) storage.
-  pub inline fn createPublic(self: *Interpreter, comptime T: type) !*T {
-    return self.ctx.global().create(T);
-  }
-
   /// returns the allocator for interpreter-local storage, i.e. values that
   /// are to go out of scope when the interpreter has finished parsing a source.
   ///
@@ -160,13 +155,13 @@ pub const Interpreter = struct {
       nyarna.Error!?*model.Expression {
     switch (try self.resolveChain(input, stage)) {
       .var_chain => |vc| {
-        const retr = try self.createPublic(model.Expression);
+        const retr = try self.ctx.global().create(model.Expression);
         retr.* = .{
           .pos = vc.target.pos,
           .data = .{.var_retrieval = .{.variable = vc.target.variable}},
           .expected_type = vc.target.variable.t,
         };
-        const expr = try self.createPublic(model.Expression);
+        const expr = try self.ctx.global().create(model.Expression);
         expr.* = .{
           .pos = input.pos,
           .data = .{
@@ -177,25 +172,18 @@ pub const Interpreter = struct {
         return expr;
       },
       .func_ref => |ref| {
-        const expr = try self.createPublic(model.Expression);
-        if (ref.prefix != null) {
-          self.ctx.logger.PrefixedFunctionMustBeCalled(input.pos);
-          expr.fillPoison(input.pos);
-        } else {
-          self.ctx.assignValue(expr, input.pos, .{
-            .funcref = .{.func = ref.target},
-          });
-        }
-        return expr;
+        return try self.ctx.createValueExpr(
+          if (ref.prefix != null) blk: {
+            self.ctx.logger.PrefixedFunctionMustBeCalled(input.pos);
+            break :blk try self.ctx.values.poison(input.pos);
+          } else (try self.ctx.values.funcRef(input.pos, ref.target)).value());
       },
-      .type_ref => |ref| return self.ctx.createValueExpr(input.pos, .{
-        .@"type" = .{.t = ref.*},
-      }),
-      .proto_ref => |ref| return self.ctx.createValueExpr(input.pos, .{
-        .prototype = .{.pt = ref.*},
-      }),
+      .type_ref => |ref| return self.ctx.createValueExpr(
+        (try self.ctx.values.@"type"(input.pos, ref.*)).value()),
+      .proto_ref => |ref| return self.ctx.createValueExpr(
+        (try self.ctx.values.prototype(input.pos, ref.*)).value()),
       .expr_chain => |ec| {
-        const expr = try self.createPublic(model.Expression);
+        const expr = try self.ctx.global().create(model.Expression);
         expr.* = .{
           .pos = input.pos,
           .data = .{
@@ -206,11 +194,8 @@ pub const Interpreter = struct {
         return expr;
       },
       .failed => return null,
-      .poison => {
-        const expr = try self.createPublic(model.Expression);
-        expr.fillPoison(input.pos);
-        return expr;
-      },
+      .poison => return try self.ctx.createValueExpr(
+        try self.ctx.values.poison(input.pos)),
     }
   }
 
@@ -232,14 +217,12 @@ pub const Interpreter = struct {
           },
           .func_ref, .type_ref, .proto_ref, .expr_chain => {
             self.ctx.logger.InvalidLvalue(node.pos);
-            const expr = try self.createPublic(model.Expression);
-            expr.fillPoison(ass.node().pos);
-            return expr;
+            return self.ctx.createValueExpr(
+              try self.ctx.values.poison(ass.node().pos));
           },
           .poison => {
-            const expr = try self.createPublic(model.Expression);
-            expr.fillPoison(ass.node().pos);
-            return expr;
+            return self.ctx.createValueExpr(
+              try self.ctx.values.poison(ass.node().pos));
           },
           .failed => return null,
         }
@@ -248,7 +231,7 @@ pub const Interpreter = struct {
     const target_expr =
       (try self.associate(ass.replacement, target.t, stage))
         orelse return null;
-    const expr = try self.createPublic(model.Expression);
+    const expr = try self.ctx.global().create(model.Expression);
     const path = try self.ctx.global().dupe(usize, target.path);
     expr.* = .{
       .pos = ass.node().pos,
@@ -273,12 +256,11 @@ pub const Interpreter = struct {
 
   fn tryInterpretSymref(self: *Interpreter, ref: *model.Node.ResolvedSymref)
       nyarna.Error!*model.Expression {
-    const expr = try self.createPublic(model.Expression);
     switch (ref.sym.data) {
-      .func => |func| self.ctx.assignValue(expr, ref.node().pos, .{
-        .funcref = .{.func = func},
-      }),
+      .func => |func| return self.ctx.createValueExpr(
+        (try self.ctx.values.funcRef(ref.node().pos, func)).value()),
       .variable => |*v| {
+        const expr = try self.ctx.global().create(model.Expression);
         expr.* = .{
           .pos = ref.node().pos,
           .data = .{
@@ -288,19 +270,13 @@ pub const Interpreter = struct {
           },
           .expected_type = v.t,
         };
+        return expr;
       },
-      .@"type" => |*t| self.ctx.assignValue(expr, ref.node().pos, .{
-        .@"type" = .{
-          .t = t.*
-        },
-      }),
-      .prototype => |pt| self.ctx.assignValue(expr, ref.node().pos, .{
-        .prototype = .{
-          .pt = pt,
-        },
-      }),
+      .@"type" => |t| return self.ctx.createValueExpr(
+        (try self.ctx.values.@"type"(ref.node().pos, t)).value()),
+      .prototype => |pt| return self.ctx.createValueExpr(
+        (try self.ctx.values.prototype(ref.node().pos, pt)).value()),
     }
-    return expr;
   }
 
   fn tryInterpretCall(self: *Interpreter, rc: *model.Node.ResolvedCall,
@@ -340,11 +316,8 @@ pub const Interpreter = struct {
     }
 
     if (args_failed_to_interpret) {
-      if (is_keyword) {
-        const expr = try self.createPublic(model.Expression);
-        expr.fillPoison(rc.node().pos);
-        return expr;
-      } else return null;
+      return if (is_keyword) try self.ctx.createValueExpr(
+        try self.ctx.values.poison(rc.node().pos)) else null;
     }
 
     const args = try cur_allocator.alloc(
@@ -433,29 +406,17 @@ pub const Interpreter = struct {
     if (incomplete) return null;
     const ltype = if (t) |given_type| given_type else expr.?.expected_type;
 
-    const name = try self.createPublic(model.Value);
-    name.* = .{
-      .origin = loc.name.node().pos,
-      .data = .{
-        .text = .{
-          .t = model.Type{.intrinsic = .literal},
-          .content = try self.ctx.global().dupe(u8, loc.name.content),
-        },
-      },
-    };
-
-    return self.ctx.createValueExpr(loc.node().pos, .{
-      .location = .{
-        .name = &name.data.text,
-        .tloc = ltype,
-        .default = expr,
-        .primary = if (loc.additionals) |add| add.primary else null,
-        .varargs = if (loc.additionals) |add| add.varargs else null,
-        .varmap  = if (loc.additionals) |add| add.varmap else null,
-        .mutable = if (loc.additionals) |add| add.mutable else null,
-        .header = if (loc.additionals) |add| add.header else null,
-      },
-    });
+    const name = try self.ctx.values.textScalar(
+      loc.name.node().pos, .{.intrinsic = .literal},
+      try self.ctx.global().dupe(u8, loc.name.content));
+    const loc_val = try self.ctx.values.location(loc.node().pos, name, ltype);
+    loc_val.default = expr;
+    loc_val.primary = if (loc.additionals) |add| add.primary else null;
+    loc_val.varargs = if (loc.additionals) |add| add.varargs else null;
+    loc_val.varmap  = if (loc.additionals) |add| add.varmap  else null;
+    loc_val.mutable = if (loc.additionals) |add| add.mutable else null;
+    loc_val.header  = if (loc.additionals) |add| add.header  else null;
+    return try self.ctx.createValueExpr(loc_val.value());
   }
 
   fn tryInterpretDef(self: *Interpreter, def: *model.Node.Definition,
@@ -467,29 +428,17 @@ pub const Interpreter = struct {
         !expr.expected_type.isStructural(.callable)) {
       self.ctx.logger.InvalidDefinitionValue(
         expr.pos, &.{expr.expected_type});
-      const pe = try self.allocator().create(model.Expression);
-      pe.fillPoison(def.node().pos);
-      return pe;
+      return try self.ctx.createValueExpr(
+        try self.ctx.values.poison(def.node().pos));
     }
     var eval = self.ctx.evaluator();
-    var name = try self.createPublic(model.Value);
-    name.* = .{
-      .origin = def.name.node().pos,
-      .data = .{
-        .text = .{
-          .t = model.Type{.intrinsic = .literal},
-          .content =
-            try self.ctx.global().dupe(u8, def.name.content),
-        },
-      },
-    };
-    return self.ctx.createValueExpr(def.node().pos, .{
-      .definition = .{
-        .name = &name.data.text,
-        .content = try eval.evaluate(expr),
-        .root = def.root
-      },
-    });
+    const name = try self.ctx.values.textScalar(
+      def.name.node().pos, .{.intrinsic = .literal},
+      try self.ctx.global().dupe(u8, def.name.content));
+    const def_val = try self.ctx.values.definition(
+      def.node().pos, name, try eval.evaluate(expr));
+    def_val.root = def.root;
+    return try self.ctx.createValueExpr(def_val.value());
   }
 
   fn locationsCanGenVars(self: *Interpreter, node: *model.Node, stage: Stage)
@@ -526,7 +475,7 @@ pub const Interpreter = struct {
         if (loc.@"type") |tnode| {
           const expr = (try self.associate(
             tnode, .{.intrinsic = .@"type"}, .{.kind = .assumed})).?;
-          if (expr.data.literal.value.data == .poison) return;
+          if (expr.data.value.data == .poison) return;
         } else if ((try self.probeType(
             loc.default.?, .{.kind = .assumed})).?.is(.poison)) return;
         try collector.append(.{.node = loc});
@@ -572,7 +521,7 @@ pub const Interpreter = struct {
           .data = .{
             .variable = .{
               .t = if (nl.@"type") |lt|
-                lt.data.expression.data.literal.value.data.@"type".t
+                lt.data.expression.data.value.data.@"type".t
               else (try self.probeType(nl.default.?, stage)).?,
             },
           },
@@ -706,11 +655,8 @@ pub const Interpreter = struct {
         return try self.tryInterpret(input, stage);
       },
       .unknown => return null,
-      .poison => {
-        const expr = try self.allocator().create(model.Expression);
-        expr.fillPoison(uc.node().pos);
-        return expr;
-      }
+      .poison => return try self.ctx.createValueExpr(
+        try self.ctx.values.poison(uc.node().pos)),
     }
   }
   fn tryInterpretURef(self: *Interpreter, us: *model.Node.UnresolvedSymref,
@@ -753,45 +699,30 @@ pub const Interpreter = struct {
       .funcgen => |*func| blk: {
         const val = (try self.tryInterpretFunc(func, stage))
           orelse break :blk null;
-        break :blk try self.ctx.createValueExpr(input.pos, .{
-          .funcref = .{.func = val},
-        });
+        break :blk try self.ctx.createValueExpr(
+          (try self.ctx.values.funcRef(input.pos, val)).value());
       },
-      .literal => |lit| try self.ctx.createValueExpr(input.pos, .{
-        .text = .{
-          .t = model.Type{
-            .intrinsic = if (lit.kind == .space) .space else .literal},
-          .content = try self.ctx.global().dupe(u8, lit.content),
-        },
-      }),
+      .literal => |lit| try self.ctx.createValueExpr(
+        (try self.ctx.values.textScalar(input.pos,
+          .{.intrinsic = if (lit.kind == .space) .space else .literal},
+          try self.ctx.global().dupe(u8, lit.content))).value()),
       .location => |*loc| self.tryInterpretLoc(loc, stage),
       .resolved_symref => |*ref| self.tryInterpretSymref(ref),
       .resolved_call => |*rc| self.tryInterpretCall(rc, stage),
       .typegen => unreachable, // TODO
       .unresolved_call => |*uc| self.tryInterpretUCall(uc, stage),
       .unresolved_symref => |*us| self.tryInterpretURef(us, stage),
-      .void => blk: {
-        const expr = try self.allocator().create(model.Expression);
-        expr.fillVoid(input.pos);
-        break :blk expr;
-      },
-      .poison => blk: {
-        const expr = try self.allocator().create(model.Expression);
-        expr.fillPoison(input.pos);
-        break :blk expr;
-      },
+      .void =>
+        try self.ctx.createValueExpr(try self.ctx.values.void(input.pos)),
+      .poison =>
+        try self.ctx.createValueExpr(try self.ctx.values.poison(input.pos)),
     };
   }
 
   pub fn interpret(self: *Interpreter, input: *model.Node)
       nyarna.Error!*model.Expression {
-    if (try self.tryInterpret(input, .{.kind = .final})) |expr|
-      return expr
-    else {
-      const ret = try self.createPublic(model.Expression);
-      ret.fillPoison(input.pos);
-      return ret;
-    }
+    return if (try self.tryInterpret(input, .{.kind = .final})) |expr| expr
+    else try self.ctx.createValueExpr(try self.ctx.values.poison(input.pos));
   }
 
   pub fn resolveSymbol(self: *Interpreter, pos: model.Position, ns: u15,
@@ -1083,70 +1014,46 @@ pub const Interpreter = struct {
     }
   }
 
-  pub inline fn genValueNode(self: *Interpreter, pos: model.Position,
-                             content: model.Value.Data) !*model.Node {
-    const expr = try self.ctx.createValueExpr(pos, content);
-    var ret = try self.allocator().create(model.Node);
-    ret.* = .{
-      .pos = pos,
-      .data = .{
-        .expression = expr,
-      },
-    };
-    return ret;
+  pub inline fn genValueNode(self: *Interpreter, content: *model.Value)
+      !*model.Node {
+    return try self.node_gen.expression(try self.ctx.createValueExpr(content));
   }
 
   fn createTextLiteral(self: *Interpreter, l: *model.Node.Literal,
-                       t: model.Type, e: *model.Expression) nyarna.Error!void {
+                       t: model.Type) nyarna.Error!*model.Value {
     switch (t) {
       .intrinsic => |it| switch (it) {
-        .space => if (l.kind == .space)
-          self.ctx.assignValue(e, l.node().pos, .{
-            .text = .{
-              .t = t,
-              .content =
-                try self.ctx.global().dupe(u8, l.content),
-            },
-          }) else {
-            self.ctx.logger.ExpectedExprOfTypeXGotY(
-              l.node().pos, &[_]model.Type{t, .{.intrinsic = .literal}});
-            e.fillPoison(l.node().pos);
-          },
-        .literal, .raw =>
-          self.ctx.assignValue(e, l.node().pos, .{
-            .text = .{
-              .t = t,
-              .content =
-                try self.ctx.global().dupe(u8, l.content),
-            },
-          }),
-        else =>
-          self.ctx.assignValue(e, l.node().pos, .{
-          .text = .{
-            .t = .{.intrinsic = if (l.kind == .text) .literal else .space},
-            .content =
-              try self.ctx.global().dupe(u8, l.content),
-          },
-        }),
-      },
-      .structural => |struc| switch (struc.*) {
-        .optional => |*op| try self.createTextLiteral(l, op.inner, e),
-        .concat => |*con| try self.createTextLiteral(l, con.inner, e),
-        .paragraphs => unreachable,
-        .list => |*list| try self.createTextLiteral(l, list.inner, e), // TODO
-        .map, .callable => {
+        .space => if (l.kind == .space) return (try self.ctx.values.textScalar(
+          l.node().pos, t, try self.ctx.global().dupe(u8, l.content))).value()
+        else {
           self.ctx.logger.ExpectedExprOfTypeXGotY(
             l.node().pos, &[_]model.Type{t, .{.intrinsic = .literal}});
-          e.fillPoison(l.node().pos);
+          return self.ctx.values.poison(l.node().pos);
         },
-        .intersection => |*inter|
-          if (inter.scalar) |scalar| {
-            try self.createTextLiteral(l, scalar, e);
-          } else {
-            self.ctx.logger.ExpectedExprOfTypeXGotY(
-              l.node().pos, &[_]model.Type{t, .{.intrinsic = .literal}});
-            e.fillPoison(l.node().pos);
-          }
+        .literal, .raw => return (try self.ctx.values.textScalar(
+          l.node().pos, t, try self.ctx.global().dupe(u8, l.content))).value(),
+        else => return (try self.ctx.values.textScalar(
+          l.node().pos,
+          .{.intrinsic = if (l.kind == .text) .literal else .space},
+          try self.ctx.global().dupe(u8, l.content))).value(),
+      },
+      .structural => |struc| return switch (struc.*) {
+        .optional => |*op| try self.createTextLiteral(l, op.inner),
+        .concat => |*con| try self.createTextLiteral(l, con.inner),
+        .paragraphs => unreachable,
+        .list => |*list| try self.createTextLiteral(l, list.inner), // TODO
+        .map, .callable => blk: {
+          self.ctx.logger.ExpectedExprOfTypeXGotY(
+            l.node().pos, &[_]model.Type{t, .{.intrinsic = .literal}});
+          break :blk try self.ctx.values.poison(l.node().pos);
+        },
+        .intersection => |*inter| if (inter.scalar) |scalar| {
+          return try self.createTextLiteral(l, scalar);
+        } else {
+          self.ctx.logger.ExpectedExprOfTypeXGotY(
+            l.node().pos, &[_]model.Type{t, .{.intrinsic = .literal}});
+          return try self.ctx.values.poison(l.node().pos);
+        }
       },
       .instantiated => |ti| switch (ti.data) {
         .textual => unreachable, // TODO
@@ -1158,14 +1065,14 @@ pub const Interpreter = struct {
             &[_]model.Type{
               t, .{.intrinsic = if (l.kind == .text) .literal else .space},
             });
-          e.fillPoison(l.node().pos);
+          return self.ctx.values.poison(l.node().pos);
         },
       },
     }
   }
 
   fn probeCheckOrPoison(self: *Interpreter, input: *model.Node, t: model.Type,
-                        stage: Stage) nyarna.Error!?*model.Expressio {
+                        stage: Stage) nyarna.Error!?*model.Expression {
     var actual_type = (try self.probeType(input, stage)) orelse return null;
     if (!actual_type.is(.poison) and
         !self.ctx.types().lesserEqual(actual_type, t)) {
@@ -1173,12 +1080,9 @@ pub const Interpreter = struct {
       self.ctx.logger.ExpectedExprOfTypeXGotY(
         input.pos, &[_]model.Type{t, actual_type});
     }
-    if (actual_type.is(.poison)) {
-      const expr = try self.createPublic(model.Expression);
-      expr.fillPoison(input.pos);
-      return expr;
-    }
-    return null;
+    return if (actual_type.is(.poison))
+      try self.ctx.createValueExpr(try self.ctx.values.poison(input.pos))
+    else null;
   }
 
   fn poisonIfNotCompat(
@@ -1190,9 +1094,7 @@ pub const Interpreter = struct {
         if (self.ctx.types().lesserEqual(contained, scalar)) return null;
       } else return null;
     }
-    const expr = try self.ctx.global().create(model.Expression);
-    expr.fillPoison(pos);
-    return expr;
+    return try self.ctx.createValueExpr(try self.ctx.values.poison(pos));
   }
 
   /// Same as tryInterpret, but takes a target type that may be used to generate
@@ -1217,7 +1119,7 @@ pub const Interpreter = struct {
             // TODO: conversion
             self.ctx.logger.ScalarTypesMismatch(
               input.pos, &[_]model.Type{t, scalar_type});
-            expr.fillPoison(input.pos);
+            expr.data = .{.value = try self.ctx.values.poison(input.pos)};
           }
           return expr;
         }
@@ -1241,7 +1143,7 @@ pub const Interpreter = struct {
         for (br.branches) |item, i| {
           exprs[i] = (try self.interpretWithTargetScalar(item, t, stage)).?;
         }
-        const expr = try self.createPublic(model.Expression);
+        const expr = try self.ctx.global().create(model.Expression);
         expr.* = .{
           .pos = input.pos,
           .data = .{.branches = .{.condition = condition, .branches = exprs}},
@@ -1261,7 +1163,7 @@ pub const Interpreter = struct {
         for (con.items) |item, i| {
           exprs[i] = (try self.interpretWithTargetScalar(item, t, stage)).?;
         }
-        const expr = try self.createPublic(model.Expression);
+        const expr = try self.ctx.global().create(model.Expression);
         expr.* = .{
           .pos = input.pos,
           .data = .{.concatenation = exprs},
@@ -1273,8 +1175,9 @@ pub const Interpreter = struct {
       .unresolved_call, .unresolved_symref => return null,
       // for text literals, do compile-time type conversions if possible
       .literal => |*l| {
-        const expr = try self.createPublic(model.Expression);
-        try self.createTextLiteral(l, t, expr);
+        const expr = try self.ctx.global().create(model.Expression);
+        expr.pos = input.pos;
+        expr.data = .{.value = try self.createTextLiteral(l, t)};
         expr.expected_type = t;
         return expr;
       },
@@ -1292,7 +1195,7 @@ pub const Interpreter = struct {
             .lf_after = item.lf_after,
           };
         }
-        const expr = try self.createPublic(model.Expression);
+        const expr = try self.ctx.global().create(model.Expression);
         expr.* = .{
           .pos = input.pos,
           .data = .{.paragraphs = res},
@@ -1300,16 +1203,10 @@ pub const Interpreter = struct {
         };
         return expr;
       },
-      .void => {
-        const expr = try self.createPublic(model.Expression);
-        expr.fillVoid(input.pos);
-        return expr;
-      },
-      .poison => {
-        const expr = try self.createPublic(model.Expression);
-        expr.fillPoison(input.pos);
-        return expr;
-      }
+      .void => return try self.ctx.createValueExpr(
+        try self.ctx.values.void(input.pos)),
+      .poison => return try self.ctx.createValueExpr(
+        try self.ctx.values.poison(input.pos)),
     }
   }
 
@@ -1339,7 +1236,7 @@ pub const Interpreter = struct {
       // TODO: semantic conversions here
       self.ctx.logger.ExpectedExprOfTypeXGotY(
         node.pos, &[_]model.Type{t, expr.expected_type});
-      expr.fillPoison(node.pos);
+      expr.data = .{.value = try self.ctx.values.poison(expr.pos)};
       break :blk expr;
     } else null;
   }
@@ -1362,7 +1259,7 @@ pub const Interpreter = struct {
       },
       .func_ref => |fr| {
         const target_expr = try self.ctx.createValueExpr(
-          pos, .{.funcref = .{.func = fr.target}});
+          (try self.ctx.values.funcRef(pos, fr.target)).value());
         return CallContext{
           .known = .{
             .target = target_expr,
@@ -1411,7 +1308,7 @@ pub const Interpreter = struct {
       },
       .proto_ref => |pref| {
         const target_expr = try self.ctx.createValueExpr(
-          pos, .{.prototype = .{.pt = pref.*}});
+          (try self.ctx.values.prototype(pos, pref.*)).value());
         return CallContext{
           .known = .{
             .target = target_expr,

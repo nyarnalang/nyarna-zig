@@ -167,10 +167,8 @@ pub const SignatureMapper = struct {
       .varargs => unreachable,
       else => param.ptype,
     };
-    const arg = if (target_type.is(.ast_node))
-      try self.intpr.genValueNode(content.pos, .{
-        .ast = .{.root = content},
-      })
+    const arg = if (target_type.is(.ast_node)) try self.intpr.genValueNode(
+      (try self.intpr.ctx.values.ast(content)).value())
     else blk: {
       if (try self.intpr.associate(content, param.ptype, .{.kind = .initial}))
           |expr| content.data = .{.expression = expr};
@@ -200,9 +198,9 @@ pub const SignatureMapper = struct {
           .intrinsic => |intr| switch (intr) {
             .void => try self.intpr.node_gen.@"void"(pos),
             .ast_node => blk: {
-              break :blk try self.intpr.genValueNode(pos, .{
-                .ast = .{.root = try self.intpr.node_gen.@"void"(pos)},
-              });
+              break :blk try self.intpr.genValueNode(
+                (try self.intpr.ctx.values.ast(
+                  try self.intpr.node_gen.@"void"(pos))).value());
             },
             else => null,
           },

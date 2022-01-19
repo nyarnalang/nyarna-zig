@@ -51,7 +51,7 @@ pub const ModuleLoader = struct {
 
   pub fn load(self: *ModuleLoader, fullast: bool) !*model.Module {
     var root = try self.interpreter.interpret(try self.loadAsNode(fullast));
-    var ret = try self.interpreter.createPublic(model.Module);
+    var ret = try self.interpreter.ctx.global().create(model.Module);
     ret.* = .{
       .symbols = self.public_syms.items,
       .root = root,

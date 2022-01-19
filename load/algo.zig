@@ -166,7 +166,7 @@ pub const DeclareResolution = struct {
         switch (def.content.data) {
           .resolved_call => |*rcall| {
             const t = self.pregenType(rcall) orelse continue;
-            const sym = try self.intpr.createPublic(model.Symbol);
+            const sym = try self.intpr.ctx.global().create(model.Symbol);
             sym.* = .{
               .defined_at = def.name.node().pos,
               .name = def.name.content,

@@ -171,17 +171,32 @@ pub const Intrinsics = Provider.Wrapper(struct {
       nyarna.Error!*model.Node {
     var def_count: usize = 0;
     for ([_]*model.Node{public, private}) |node| switch (node.data) {
-      .void => {},
+      .void, .poison => {},
       .definition => def_count += 1,
       .concat => |*con| def_count += con.items.len,
-      else => unreachable, // TODO: error msg
+      else => {
+        const expr = (try intpr.associate(
+          node, (try intpr.ctx.types().concat(
+            model.Type{.intrinsic = .definition})).?, .{.kind = .keyword}))
+          orelse {
+            node.data = .void;
+            continue;
+          };
+        const value = try intpr.ctx.evaluator().evaluate(expr);
+        if (value.data == .poison) {
+          node.data = .poison;
+          continue;
+        }
+        def_count += value.data.concat.content.items.len;
+        expr.data = .{.value = value};
+      }
     };
 
     var defs = try intpr.allocator().alloc(*model.Node.Definition,
       def_count);
     def_count = 0;
     for ([_]*model.Node{public, private}) |node| switch (node.data) {
-      .void => {},
+      .void, .poison => {},
       .definition => |*def| {
         defs[def_count] = def;
         def_count += 1;
@@ -309,7 +324,7 @@ pub const Intrinsics = Provider.Wrapper(struct {
 
   fn @"Record"(intpr: *Interpreter, pos: model.Position,
             fields: *model.Value.Concat) nyarna.Error!*model.Node {
-    var res = try intpr.createPublic(model.Type.Instantiated);
+    var res = try intpr.ctx.global().create(model.Type.Instantiated);
     res.* = .{
       .at = pos,
       .name = null,
@@ -333,11 +348,8 @@ pub const Intrinsics = Provider.Wrapper(struct {
       .constructor =
         try builder_res.createCallable(intpr.ctx.global(), .@"type"),
     };
-    return try intpr.genValueNode(pos, .{
-      .@"type" = .{
-        .t = res_type
-      },
-    });
+    return try intpr.genValueNode(
+      (try intpr.ctx.values.@"type"(pos, res_type)).value());
   }
 
   fn @"Intersection"(intpr: *Interpreter, pos: model.Position,
@@ -435,18 +447,14 @@ pub const Intrinsics = Provider.Wrapper(struct {
       return intpr.node_gen.poison(pos);
     };
 
-    return intpr.genValueNode(pos, .{
-      .location = .{
-        .name = name,
-        .tloc = ltype,
-        .default = expr,
-        .primary = if (primary.index == 1) primary.value().origin else null,
-        .varargs = if (varargs.index == 1) varargs.value().origin else null,
-        .varmap  = if (varmap.index  == 1)  varmap.value().origin else null,
-        .mutable = if (mutable.index == 1) mutable.value().origin else null,
-        .header = header,
-      },
-    });
+    const loc_val = try intpr.ctx.values.location(pos, name, ltype);
+    loc_val.default = expr;
+    loc_val.primary = if (primary.index == 1) primary.value().origin else null;
+    loc_val.varargs = if (varargs.index == 1) varargs.value().origin else null;
+    loc_val.varmap  = if (varmap.index  == 1)  varmap.value().origin else null;
+    loc_val.mutable = if (mutable.index == 1) mutable.value().origin else null;
+    loc_val.header = header;
+    return intpr.genValueNode(loc_val.value());
   }
 
   fn constrDefinition(
@@ -454,17 +462,15 @@ pub const Intrinsics = Provider.Wrapper(struct {
       root: *model.Value.Enum, node: *model.Value.Ast)
       nyarna.Error!*model.Node {
     const expr = try intpr.interpret(node.root);
-    if (expr.expected_type.is(.poison)) return intpr.genValueNode(pos, .poison);
+    if (expr.expected_type.is(.poison)) {
+      return intpr.genValueNode(try intpr.ctx.values.poison(pos));
+    }
     var eval = intpr.ctx.evaluator();
     var val = try eval.evaluate(expr);
     std.debug.assert(val.data == .@"type" or val.data == .funcref); // TODO
-    return intpr.genValueNode(pos, .{
-      .definition = .{
-        .name = name,
-        .content = val,
-        .root = if (root.index == 1) root.value().origin else null,
-      },
-    });
+    const def_val = try intpr.ctx.values.definition(pos, name, val);
+    def_val.root = if (root.index == 1) root.value().origin else null;
+    return intpr.genValueNode(def_val.value());
   }
 
   fn constrTextual(eval: *Evaluator, pos: model.Position,
@@ -586,7 +592,8 @@ fn prototypeConstructor(ctx: Context, p: *Provider, name: []const u8,
 
 pub fn intrinsicModule(ctx: Context) !*model.Module {
   var ret = try ctx.global().create(model.Module);
-  ret.root = try ctx.createValueExpr(model.Position.intrinsic(), .void);
+  ret.root = try ctx.createValueExpr(
+    try ctx.values.void(model.Position.intrinsic()));
   ret.symbols = try ctx.global().alloc(*model.Symbol, 17);
   var index: usize = 0;
 

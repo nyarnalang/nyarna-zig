@@ -128,23 +128,14 @@ pub const Context = struct {
     return &self.data.types;
   }
 
-  pub fn assignValue(
-      self: *const Context, e: *model.Expression, at: model.Position,
-      content: model.Value.Data) void {
-    e.* = .{
-      .pos = at,
-      .data = .{
-        .literal = .{.value = .{.origin = at, .data = content}},
-      },
-      .expected_type = undefined,
-    };
-    e.expected_type = self.types().valueType(&e.data.literal.value);
-  }
-
-  pub inline fn createValueExpr(self: *const Context, at: model.Position,
-                                content: model.Value.Data) !*model.Expression {
+  pub inline fn createValueExpr(
+      self: *const Context, content: *model.Value) !*model.Expression {
     const e = try self.global().create(model.Expression);
-    self.assignValue(e, at, content);
+    e.* = .{
+      .pos = content.origin,
+      .data = .{.value = content},
+      .expected_type = self.types().valueType(content),
+    };
     return e;
   }
 

@@ -616,11 +616,8 @@ pub const SymbolDefs = struct {
 
   fn boolFrom(self: *SymbolDefs, pos: ?model.Position, at: model.Position)
       !*model.Node {
-    return self.intpr.genValueNode(pos orelse at, .{
-      .enumval = .{
-        .t = self.intpr.types().getBoolean(),
-        .index = if (pos) |_| 1 else 0,
-      }
-    });
+    return self.intpr.genValueNode(self.intpr.ctx.values.@"enum"(
+      pos orelse at, self.intpr.types().getBoolean(),
+      if (pos == null) 0 else 1));
   }
 };
