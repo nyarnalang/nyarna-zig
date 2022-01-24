@@ -18,9 +18,9 @@ pub const Errors = error {
 /// Describes the current stage when trying to interpret nodes.
 pub const Stage = struct {
   kind: enum {
-    /// in the initial stage, symbol resolutions are allowed to fail and won't
+    /// in intermediate stage, symbol resolutions are allowed to fail and won't
     /// generate error messages. This allows forward references e.g. in \declare
-    initial,
+    intermediate,
     /// keyword stage is used for interpreting value (non-AST) arguments of
     /// keywords. Failed symbol resolution will issue an error saying that the
     /// symbol cannot be resolved *immediately* (telling the user that forward
@@ -82,10 +82,6 @@ pub const Interpreter = struct {
   /// Array of alternative syntaxes known to the interpreter (7.12).
   /// TODO: make this user-extensible
   syntax_registry: [2]syntaxes.SpecialSyntax,
-  /// The type that is currently assembled during inference on type definitions
-  /// inside \declare. If set, prototype invocations may create incomplete types
-  /// as long as they can push the incomplete parts here.
-  currently_built_type: ?*algo.DeclaredType = null,
   /// convenience object to generate nodes using the interpreter's storage.
   node_gen: model.NodeGenerator,
 
@@ -624,7 +620,7 @@ pub const Interpreter = struct {
 
   fn tryInterpretUCall(self: *Interpreter, uc: *model.Node.UnresolvedCall,
                        stage: Stage) nyarna.Error!?*model.Expression {
-    if (stage.kind == .initial) return null;
+    if (stage.kind == .intermediate) return null;
     const call_ctx = try self.chainResToContext(uc.target.pos,
       try self.resolveChain(uc.target, stage));
     switch (call_ctx) {
@@ -661,7 +657,6 @@ pub const Interpreter = struct {
   }
   fn tryInterpretURef(self: *Interpreter, us: *model.Node.UnresolvedSymref,
                       stage: Stage) nyarna.Error!?*model.Expression {
-    if (stage.kind == .initial) return null;
     const ns = us.ns;
     const syms = &self.namespaces.items[ns];
     if (syms.get(us.name)) |sym| {
@@ -669,11 +664,214 @@ pub const Interpreter = struct {
       input.data = .{.resolved_symref = .{.ns = ns, .sym = sym}};
       return self.tryInterpret(input, stage);
     } else switch (stage.kind) {
-      .initial, .assumed => unreachable,
+      .intermediate => {},
+      .assumed => unreachable,
       .keyword => self.ctx.logger.CannotResolveImmediately(us.node().pos),
       .final => self.ctx.logger.UnknownSymbol(us.node().pos),
     }
     return null;
+  }
+
+  const TypeResult = union(enum) {
+    finished: model.Type,
+    unfinished: model.Type,
+    unavailable, failed,
+  };
+
+  fn tryGetType(self: *Interpreter, node: *model.Node, stage: Stage)
+      !TypeResult {
+    const val = while (true) switch (node.data) {
+      .unresolved_symref => |*usym| {
+        var expr = (try self.tryInterpretURef(usym, stage))
+          orelse if (stage.resolve) |r|
+            switch (try r.probeSibling(self.allocator(), node)) {
+              .unfinished_function => {
+                self.ctx.logger.CantCallUnfinished(node.pos);
+                return TypeResult.failed;
+              },
+              .unfinished_type => |t| return TypeResult{.unfinished = t},
+              .known => return TypeResult.unavailable,
+              .failed => {
+                self.ctx.logger.UnknownSymbol(node.pos);
+                return TypeResult.failed;
+              },
+              .resolved => continue, // with resolved node
+            } else return TypeResult.unavailable;
+        break try self.ctx.evaluator().evaluate(expr);
+      },
+      .expression => |expr| break try self.ctx.evaluator().evaluate(expr),
+      else => {
+        const expr = (try self.tryInterpret(node, stage)) orelse
+          return TypeResult.unavailable;
+        break try self.ctx.evaluator().evaluate(expr);
+      },
+    } else unreachable;
+    return if (val.data == .poison) TypeResult.failed else
+      TypeResult{.finished = val.data.@"type".t};
+  }
+
+  fn tryGenUnary(self: *Interpreter, comptime name: []const u8,
+                 comptime register_name: []const u8,
+                 comptime error_name: []const u8, input: anytype, stage: Stage)
+      nyarna.Error!?*model.Expression {
+    const inner = switch (try self.tryGetType(input.inner, stage)) {
+      .finished => |t| t,
+      .unfinished => |t| t,
+      .unavailable => return null,
+      .failed => return try self.ctx.createValueExpr(
+        try self.ctx.values.poison(input.node().pos)),
+    };
+    const ret: ?model.Type = if (input.generated) |target| blk: {
+      target.* = @unionInit(model.Type.Structural, name, .{.inner = inner});
+      if (try @field(self.ctx.types(), register_name)(
+          &@field(target.*, name))) {
+        break :blk .{.structural = target};
+      } else {
+        @field(self.ctx.logger, error_name)(
+          input.inner.pos, &[_]model.Type{inner});
+        break :blk null;
+      }
+    } else blk: {
+      const t = (try self.ctx.types().concat(inner)) orelse break :blk null;
+      if (t.isStructural(@field(model.Type.Structural, name))) break :blk t
+      else {
+        @field(self.ctx.logger, error_name)(
+          input.inner.pos, &[_]model.Type{inner});
+        break :blk null;
+      }
+    };
+    return try self.ctx.createValueExpr(
+      if (ret) |t| (try self.ctx.values.@"type"(input.node().pos, t)).value()
+      else try self.ctx.values.poison(input.node().pos));
+  }
+
+  fn tryGenConcat(self: *Interpreter, gc: *model.Node.tg.Concat, stage: Stage)
+      nyarna.Error!?*model.Expression {
+    return self.tryGenUnary(
+      "concat", "registerConcat", "InvalidInnerConcatType", gc, stage);
+  }
+
+  fn tryGenEnum(self: *Interpreter, ge: *model.Node.tg.Enum, stage: Stage)
+      nyarna.Error!?*model.Expression {
+    _ = self; _ = ge; _ = stage; unreachable;
+  }
+
+  fn tryGenFloat(self: *Interpreter, gf: *model.Node.tg.Float, stage: Stage)
+      nyarna.Error!?*model.Expression {
+    _ = self; _ = gf; _ = stage; unreachable;
+  }
+
+  fn tryGenIntersection(
+      self: *Interpreter, gi: *model.Node.tg.Intersection, stage: Stage)
+      nyarna.Error!?*model.Expression {
+    var scalar: ?struct {
+      pos: model.Position,
+      t: model.Type,
+    } = null;
+    var builder = try types.IntersectionTypeBuilder.init(
+      gi.types.len + 1, self.allocator());
+    var failed_some = false;
+    var poison = false;
+    for (gi.types) |node| {
+      var unfinished_other_inter = false;
+      const inner = switch (try self.tryGetType(node, stage)) {
+        .finished => |t| t,
+        .unfinished => |t| blk: {
+          unfinished_other_inter = t.isStructural(.intersection);
+          break :blk t;
+        },
+        .unavailable => {
+          failed_some = true;
+          continue;
+        },
+        .failed => {
+          poison = true;
+          continue;
+        },
+      };
+      const Check = struct {
+        scalar: ?model.Type = null,
+        append: ?[]const model.Type = null,
+        failed: bool = false,
+      };
+      const result = switch (inner) {
+        .structural => |strct| switch (strct.*) {
+          .intersection => |*ci| Check{.scalar = ci.scalar, .append = ci.types},
+          else => Check{.failed = true},
+        },
+        .intrinsic => |i| switch (i) {
+          .space, .literal, .raw => Check{.scalar = inner},
+          else => Check{.failed = true},
+        },
+        .instantiated => |inst| switch (inst.data) {
+          .textual => Check{.scalar = inner},
+          .numeric, .float, .tenum => Check{.scalar = .{.intrinsic = .raw}},
+          .record => Check{.append = @ptrCast([*]const model.Type, &inner)[0..1]},
+        },
+      };
+      if (result.scalar) |s| {
+        if (scalar) |prev| {
+          if (!s.eql(prev.t)) {
+            self.ctx.logger.MultipleScalarTypesInIntersection(
+              "TODO", node.pos, prev.pos);
+          }
+        } else scalar = .{.pos = node.pos, .t = s};
+      }
+      if (result.append) |append| builder.push(append);
+      if (result.failed) {
+        self.ctx.logger.InvalidInnerIntersectionType(
+          node.pos, &[_]model.Type{inner});
+      }
+    }
+    if (poison) {
+      return try self.ctx.createValueExpr(
+        try self.ctx.values.poison(gi.node().pos));
+    }
+    if (failed_some) return null;
+    if (scalar) |found_scalar| {
+      builder.push(@ptrCast([*]const model.Type, &found_scalar.t)[0..1]);
+    }
+    const t = try builder.finish(self.ctx.types());
+    return try self.ctx.createValueExpr(
+      (try self.ctx.values.@"type"(gi.node().pos, t)).value());
+  }
+
+  fn tryGenList(self: *Interpreter, gl: *model.Node.tg.List, stage: Stage)
+      nyarna.Error!?*model.Expression {
+    _ = self; _ = gl; _ = stage; unreachable;
+  }
+
+  fn tryGenMap(self: *Interpreter, gm: *model.Node.tg.Map, stage: Stage)
+      nyarna.Error!?*model.Expression {
+    _ = self; _ = gm; _ = stage; unreachable;
+  }
+
+  fn tryGenNumeric(self: *Interpreter, gn: *model.Node.tg.Numeric, stage: Stage)
+      nyarna.Error!?*model.Expression {
+    _ = self; _ = gn; _ = stage; unreachable;
+  }
+
+  fn tryGenOptional(
+      self: *Interpreter, go: *model.Node.tg.Optional, stage: Stage)
+      nyarna.Error!?*model.Expression {
+    return self.tryGenUnary(
+      "optional", "registerOptional", "InvalidInnerOptionalType", go, stage);
+  }
+
+  fn tryGenParagraphs(
+      self: *Interpreter, gp: *model.Node.tg.Paragraphs, stage: Stage)
+      nyarna.Error!?*model.Expression {
+    _ = self; _ = gp; _ = stage; unreachable;
+  }
+
+  fn tryGenRecord(self: *Interpreter, gr: *model.Node.tg.Record, stage: Stage)
+      nyarna.Error!?*model.Expression {
+    _ = self; _ = gr; _ = stage; unreachable;
+  }
+
+  fn tryGenTextual(self: *Interpreter, gt: *model.Node.tg.Textual, stage: Stage)
+      nyarna.Error!?*model.Expression {
+    _ = self; _ = gt; _ = stage; unreachable;
   }
 
   /// Tries to interpret the given node. Consumes the `input` node.
@@ -709,7 +907,17 @@ pub const Interpreter = struct {
       .location => |*loc| self.tryInterpretLoc(loc, stage),
       .resolved_symref => |*ref| self.tryInterpretSymref(ref),
       .resolved_call => |*rc| self.tryInterpretCall(rc, stage),
-      .typegen => unreachable, // TODO
+      .gen_concat => |*gc| self.tryGenConcat(gc, stage),
+      .gen_enum => |*ge| self.tryGenEnum(ge, stage),
+      .gen_float => |*gf| self.tryGenFloat(gf, stage),
+      .gen_intersection => |*gi| self.tryGenIntersection(gi, stage),
+      .gen_list => |*gl| self.tryGenList(gl, stage),
+      .gen_map => |*gm| self.tryGenMap(gm, stage),
+      .gen_numeric => |*gn| self.tryGenNumeric(gn, stage),
+      .gen_optional => |*go| self.tryGenOptional(go, stage),
+      .gen_paragraphs => |*gp| self.tryGenParagraphs(gp, stage),
+      .gen_record => |*gr| self.tryGenRecord(gr, stage),
+      .gen_textual => |*gt| self.tryGenTextual(gt, stage),
       .unresolved_call => |*uc| self.tryInterpretUCall(uc, stage),
       .unresolved_symref => |*us| self.tryInterpretURef(us, stage),
       .void =>
@@ -789,7 +997,7 @@ pub const Interpreter = struct {
     poison,
   };
 
-  /// resolves an accessor chain of *model.Node. iff stage.kind != .initial,
+  /// resolves an accessor chain of *model.Node. if stage.kind != .intermediate,
   /// failure to resolve the base symbol will be reported as error and
   /// .poison will be returned; else .failed will be returned.
   pub fn resolveChain(self: *Interpreter, chain: *model.Node, stage: Stage)
@@ -828,7 +1036,7 @@ pub const Interpreter = struct {
           .poison => return .poison,
         }
       },
-      .resolved_symref => |rs| return switch(rs.sym.data) {
+      .resolved_symref => |rs| return switch (rs.sym.data) {
         .func => |func| ChainResolution{
           .func_ref = .{
             .ns = rs.ns,
@@ -852,8 +1060,8 @@ pub const Interpreter = struct {
             .expr = expr,
             .t = expr.expected_type,
           },
-        } else
-          @as(ChainResolution, if (stage.kind != .initial) .poison else .failed)
+        } else @as(ChainResolution,
+          if (stage.kind != .intermediate) .poison else .failed)
     }
   }
 
@@ -914,11 +1122,13 @@ pub const Interpreter = struct {
   /// transitively.
   ///
   /// Semantic errors that are discovered during probing will be logged and lead
-  /// to poison being returned if stage.kind != .initial.
+  /// to poison being returned if stage.kind != .intermediate.
   pub fn probeType(self: *Interpreter, node: *model.Node, stage: Stage)
       nyarna.Error!?model.Type {
     switch (node.data) {
-      .access, .assign, .funcgen, .typegen => {
+      .access, .assign, .funcgen, .gen_concat, .gen_enum, .gen_float,
+      .gen_intersection, .gen_list, .gen_map, .gen_numeric, .gen_optional,
+      .gen_paragraphs, .gen_record, .gen_textual => {
         if (try self.tryInterpret(node, stage)) |expr| {
           node.data = .{.expression = expr};
           return expr.expected_type;
@@ -1003,7 +1213,7 @@ pub const Interpreter = struct {
         return callable.typedef();
       },
       .unresolved_call, .unresolved_symref => {
-        if (stage.kind == .initial) return null;
+        if (stage.kind == .intermediate) return null;
         if (try self.tryInterpret(node, stage)) |expr| {
           node.data = .{.expression = expr};
           return expr.expected_type;
@@ -1112,7 +1322,9 @@ pub const Interpreter = struct {
     });
     switch (input.data) {
       .access, .assign, .definition, .funcgen, .location, .resolved_symref,
-      .resolved_call, .typegen => {
+      .resolved_call, .gen_concat, .gen_enum, .gen_float, .gen_intersection,
+      .gen_list, .gen_map, .gen_numeric, .gen_optional, .gen_paragraphs,
+      .gen_record, .gen_textual => {
         if (try self.tryInterpret(input, stage)) |expr| {
           if (types.containedScalar(expr.expected_type)) |scalar_type| {
             if (self.ctx.types().lesserEqual(scalar_type, t)) return expr;

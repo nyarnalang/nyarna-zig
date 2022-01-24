@@ -170,8 +170,10 @@ pub const SignatureMapper = struct {
     const arg = if (target_type.is(.ast_node)) try self.intpr.genValueNode(
       (try self.intpr.ctx.values.ast(content)).value())
     else blk: {
-      if (try self.intpr.associate(content, param.ptype, .{.kind = .initial}))
-          |expr| content.data = .{.expression = expr};
+      if (try self.intpr.associate(
+          content, param.ptype, .{.kind = .intermediate})) |expr| {
+        content.data = .{.expression = expr};
+      }
       break :blk content;
     };
     if (self.varmapAt(at.param.index)) unreachable

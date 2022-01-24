@@ -127,7 +127,7 @@ pub const SymbolDefs = struct {
     const self = @fieldParentPtr(SymbolDefs, "proc", p);
     self.state = while (true) {
       switch (self.state) {
-        .initial => switch(item) {
+        .initial => switch (item) {
           .space, .newlines => return .none,
           else => {
             self.start = pos.start;
@@ -229,7 +229,7 @@ pub const SymbolDefs = struct {
           .newlines => self.state = .at_end,
           .block_header => unreachable,
         },
-        .ltype => switch(item) {
+        .ltype => switch (item) {
           .space => return .none,
           .literal => {
             self.logger().IllegalItem(pos,
@@ -368,7 +368,7 @@ pub const SymbolDefs = struct {
           },
           .block_header => unreachable,
         },
-        .after_flag => switch(item) {
+        .after_flag => switch (item) {
           .space => return .none,
           .literal => {
             self.logger().IllegalItem(pos, &[_]errors.WrongItemError.ItemDescr{
@@ -455,7 +455,7 @@ pub const SymbolDefs = struct {
           } else self.header = item.block_header;
           break .after_flags;
         },
-        .expr => switch(item) {
+        .expr => switch (item) {
           .space => return .none,
           .literal => {
             self.logger().IllegalItem(

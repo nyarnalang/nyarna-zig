@@ -438,65 +438,77 @@ pub const Node = struct {
       return Node.parent(self);
     }
   };
-  /// Typegen nodes are nodes that generate types. They are created by prototype
+
+  /// Nodes in here are type generator nodes. They are created by prototype
   /// functions (e.g. \List, \Concat, \Textual etc). They may need multiple
   /// passes for interpretation since they can refer to each other (e.g. inside
   /// of a \declare command).
-  pub const Typegen = struct {
-    pub const Content = union(enum) {
-      optional: struct {
-        inner: *Node,
-      },
-      concat: struct {
-        inner: *Node,
-      },
-      list: struct {
-        inner: *Node,
-      },
-      paragraphs: struct {
-        inners: []*Node,
-        auto: ?*Node,
-      },
-      map: struct {
-        key: *Node,
-        value: *Node,
-      },
-      record: struct {
-        fields: []*Location,
-      },
-      intersection: struct {
-        types: []*Node,
-      },
-      textual: struct {
-        categories: []*Node,
-        include_chars: *Node,
-        exclude_chars: *Node,
-      },
-      numeric: struct {
-        min: ?*Node,
-        max: ?*Node,
-        decimals: ?*Node,
-      },
-      float: struct {
-        precision: *Node,
-      },
-      @"enum": struct {
-        values: []*Node,
-      },
+  ///
+  /// Each generator that can refer to other types holds a `generated` value
+  /// that is set when the type has been created, but not yet finished, during
+  /// \declare resolution.
+  pub const tg = struct {
+    pub const Concat = struct {
+      inner: *Node,
+      generated: ?*Type.Structural = null,
+      pub inline fn node(self: *@This()) *Node {return Node.parent(self);}
     };
-    /// this holds the (possibly unfinished) type and can also be undefined,
-    /// depending on the current pass.
-    generated: Type = undefined,
-    /// defines which prototype is instaniated and which arguments have been
-    /// given.
-    content: Content,
-
-    pub inline fn node(self: *@This()) *Node {
-      return Node.parent(self);
-    }
+    pub const Enum = struct {
+      values: []*Node,
+      pub inline fn node(self: *@This()) *Node {return Node.parent(self);}
+    };
+    pub const Float = struct {
+      precision: *Node,
+      pub inline fn node(self: *@This()) *Node {return Node.parent(self);}
+    };
+    pub const Intersection = struct {
+      types: []*Node,
+      generated: ?*Type.Structural = null,
+      pub inline fn node(self: *@This()) *Node {return Node.parent(self);}
+    };
+    pub const List = struct {
+      inner: *Node,
+      generated: ?*Type.Structural = null,
+      pub inline fn node(self: *@This()) *Node {return Node.parent(self);}
+    };
+    pub const Map = struct {
+      key: *Node,
+      value: *Node,
+      generated: ?*Type.Structural = null,
+      pub inline fn node(self: *@This()) *Node {return Node.parent(self);}
+    };
+    pub const Numeric = struct {
+      min: ?*Node,
+      max: ?*Node,
+      decimals: ?*Node,
+      pub inline fn node(self: *@This()) *Node {return Node.parent(self);}
+    };
+    pub const Optional = struct {
+      inner: *Node,
+      generated: ?*Type.Structural = null,
+      pub inline fn node(self: *@This()) *Node {return Node.parent(self);}
+    };
+    pub const Paragraphs = struct {
+      inners: []*Node,
+      auto: ?*Node,
+      generated: ?*Type.Structural = null,
+      pub inline fn node(self: *@This()) *Node {return Node.parent(self);}
+    };
+    pub const Record = struct {
+      fields: []*Location,
+      generated: ?*Type.Instantiated = null,
+      pub inline fn node(self: *@This()) *Node {return Node.parent(self);}
+    };
+    pub const Textual = struct {
+      categories: []*Node,
+      include_chars: *Node,
+      exclude_chars: *Node,
+      pub inline fn node(self: *@This()) *Node {return Node.parent(self);}
+    };
   };
-  /// Funcgen nodes define functions. Just like Typegen nodes, they may need
-  /// multiple passes to be processed.
+
+  /// Funcgen nodes define functions. Just like type generator nodes, they may
+  /// need multiple passes to be processed.
   pub const Funcgen = struct {
     pub const LocRef = union(enum) {
       node: *Location,
@@ -539,12 +551,22 @@ pub const Node = struct {
     definition: Definition,
     expression: *Expression,
     funcgen: Funcgen,
+    gen_concat: tg.Concat,
+    gen_enum: tg.Enum,
+    gen_float: tg.Float,
+    gen_intersection: tg.Intersection,
+    gen_list: tg.List,
+    gen_map: tg.Map,
+    gen_numeric: tg.Numeric,
+    gen_optional: tg.Optional,
+    gen_paragraphs: tg.Paragraphs,
+    gen_record: tg.Record,
+    gen_textual: tg.Textual,
     literal: Literal,
     location: Location,
     paras: Paras,
     resolved_call: ResolvedCall,
     resolved_symref: ResolvedSymref,
-    typegen: Typegen,
     unresolved_call: UnresolvedCall,
     unresolved_symref: UnresolvedSymref,
     poison,
@@ -556,21 +578,31 @@ pub const Node = struct {
 
   fn parent(it: anytype) *Node {
     const t = @typeInfo(@TypeOf(it)).Pointer.child;
-    const addr = @ptrToInt(it) - switch(t) {
-      Access =>  offset(Data, "access"),
-      Assign => offset(Data, "assign"),
-      Branches => offset(Data, "branches"),
-      Concat => offset(Data, "concat"),
-      Definition => offset(Data, "definition"),
-      *Expression => offset(Data, "expression"),
-      Funcgen => offset(Data, "funcgen"),
-      Literal => offset(Data, "literal"),
-      Location => offset(Data, "location"),
-      Paras => offset(Data, "paras"),
-      ResolvedCall => offset(Data, "resolved_call"),
-      ResolvedSymref => offset(Data, "resolved_symref"),
-      Typegen => offset(Data, "typegen"),
-      UnresolvedCall => offset(Data, "unresolved_call"),
+    const addr = @ptrToInt(it) - switch (t) {
+      Access           => offset(Data, "access"),
+      Assign           => offset(Data, "assign"),
+      Branches         => offset(Data, "branches"),
+      Concat           => offset(Data, "concat"),
+      Definition       => offset(Data, "definition"),
+      *Expression      => offset(Data, "expression"),
+      Funcgen          => offset(Data, "funcgen"),
+      Literal          => offset(Data, "literal"),
+      Location         => offset(Data, "location"),
+      Paras            => offset(Data, "paras"),
+      ResolvedCall     => offset(Data, "resolved_call"),
+      ResolvedSymref   => offset(Data, "resolved_symref"),
+      tg.Concat        => offset(Data, "gen_concat"),
+      tg.Enum          => offset(Data, "gen_enum"),
+      tg.Float         => offset(Data, "gen_float"),
+      tg.Intersection  => offset(Data, "gen_intersection"),
+      tg.List          => offset(Data, "gen_list"),
+      tg.Map           => offset(Data, "gen_map"),
+      tg.Numeric       => offset(Data, "gen_numeric"),
+      tg.Optional      => offset(Data, "gen_optional"),
+      tg.Paragraphs    => offset(Data, "gen_paragraphs"),
+      tg.Record        => offset(Data, "gen_record"),
+      tg.Textual       => offset(Data, "gen_textual"),
+      UnresolvedCall   => offset(Data, "unresolved_call"),
       UnresolvedSymref => offset(Data, "unresolved_symref"),
       else => unreachable
     };
@@ -644,7 +676,7 @@ pub const Symbol = struct {
 
   fn parent(it: anytype) *Symbol {
     const t = @typeInfo(@TypeOf(it)).Pointer.child;
-    const addr = @ptrToInt(it) - switch(t) {
+    const addr = @ptrToInt(it) - switch (t) {
       *Function => offset(Data, "func"),
       Variable => offset(Data, "variable"),
       Type => offset(Data, "type"),
@@ -809,7 +841,7 @@ pub const Type = union(enum) {
 
     fn parent(it: anytype) *Structural {
       const t = @typeInfo(@TypeOf(it)).Pointer.child;
-      const addr = @ptrToInt(it) - switch(t) {
+      const addr = @ptrToInt(it) - switch (t) {
         Optional => offset(Structural, "optional"),
         Concat => offset(Structural, "concat"),
         Paragraphs => offset(Structural, "paragraphs"),
@@ -941,7 +973,7 @@ pub const Type = union(enum) {
 
     fn parent(it: anytype) *Instantiated {
       const t = @typeInfo(@TypeOf(it)).Pointer.child;
-      const addr = @ptrToInt(it) - switch(t) {
+      const addr = @ptrToInt(it) - switch (t) {
         Textual =>  offset(Data, "textual"),
         Numeric => offset(Data, "numeric"),
         Float => offset(Data, "float"),
@@ -1008,6 +1040,13 @@ pub const Type = union(enum) {
   pub inline fn isStructural(t: Type, comptime expected: anytype) bool {
     return switch (t) {
       .structural => |strct| strct.* == expected,
+      else => false,
+    };
+  }
+
+  pub inline fn isInstantiated(t: Type, comptime expected: anytype) bool {
+    return switch (t) {
+      .instantiated => |inst| inst.data == expected,
       else => false,
     };
   }
@@ -1183,7 +1222,7 @@ pub const Expression = struct {
 
   fn parent(it: anytype) *Expression {
     const t = @typeInfo(@TypeOf(it)).Pointer.child;
-    const addr = @ptrToInt(it) - switch(t) {
+    const addr = @ptrToInt(it) - switch (t) {
       Call => offset(Data, "call"),
       Assignment => offset(Data, "assignment"),
       Access => offset(Data, "access"),
@@ -1462,7 +1501,7 @@ pub const Value = struct {
 
   fn parent(it: anytype) *Value {
     const t = @typeInfo(@TypeOf(it)).Pointer.child;
-    const addr = @ptrToInt(it) - switch(t) {
+    const addr = @ptrToInt(it) - switch (t) {
       TextScalar   => offset(Data, "text"),
       Number       => offset(Data, "number"),
       FloatNumber  => offset(Data, "float"),
@@ -1536,7 +1575,7 @@ pub const NodeGenerator = struct {
   }
 
   pub inline fn definition(self: *Self, pos: Position,
-                            content: Node.Definition) !*Node.Definition {
+                           content: Node.Definition) !*Node.Definition {
     return &(try self.node(pos, .{.definition = content})).data.definition;
   }
 
@@ -1610,11 +1649,77 @@ pub const NodeGenerator = struct {
       pos, .{.resolved_symref = content})).data.resolved_symref;
   }
 
-  pub inline fn typegen(
-      self: *Self, pos: Position, content: Node.Typegen.Content)
-      !*Node.Typegen {
+  pub inline fn tgConcat(self: *Self, pos: Position, inner: *Node)
+      !*Node.tg.Concat {
     return &(try self.node(
-      pos, .{.typegen = .{.content = content}})).data.typegen;
+      pos, .{.gen_concat = .{.inner = inner}})).data.gen_concat;
+  }
+
+  pub inline fn tgEnum(self: *Self, pos: Position, values: []*Node)
+      !*Node.tg.Enum {
+    return &(try self.node(
+      pos, .{.gen_enum = .{.values = values}})).data.gen_enum;
+  }
+
+  pub inline fn tgFloat(self: *Self, pos: Position, precision: *Node)
+      !*Node.tg.Float {
+    return &(try self.node(
+      pos, .{.gen_float = .{.precision = precision}})).data.gen_float;
+  }
+
+  pub inline fn tgIntersection(self: *Self, pos: Position, types: []*Node)
+      !*Node.tg.Intersection {
+    return &(try self.node(
+      pos, .{.gen_intersection = .{.types = types}})).data.gen_intersection;
+  }
+
+  pub inline fn tgList(self: *Self, pos: Position, inner: *Node)
+      !*Node.tg.List {
+    return &(try self.node(
+      pos, .{.gen_list = .{.inner = inner}})).data.gen_list;
+  }
+
+  pub inline fn tgMap(self: *Self, pos: Position, key: *Node, value: *Node)
+      !*Node.tg.Map {
+    return &(try self.node(
+      pos, .{.gen_map = .{.key = key, .value = value}})).data.gen_map;
+  }
+
+  pub inline fn tgNumeric(self: *Self, pos: Position, min: *Node, max: *Node,
+                          decimals: *Node) !*Node.tg.Numeric {
+    return &(try self.node(
+      pos, .{.gen_numeric = .{.min = min, .max = max, .decimals = decimals}}
+    )).data.gen_numeric;
+  }
+
+  pub inline fn tgOptional(self: *Self, pos: Position, inner: *Node)
+      !*Node.tg.Optional {
+    return &(try self.node(
+      pos, .{.gen_optional = .{.inner = inner}})).data.gen_optional;
+  }
+
+  pub inline fn tgParagraphs(self: *Self, pos: Position, inners: []*Node,
+                             auto: ?*Node) !*Node.tg.Paragraphs {
+    return &(try self.node(
+      pos, .{.gen_paragraphs = .{.inners = inners, .auto = auto}}
+    )).data.gen_paragraphs;
+  }
+
+  pub inline fn tgRecord(self: *Self, pos: Position, fields: []*Value.Location)
+      !*Node.tg.Record {
+    return &(try self.node(
+      pos, .{.gen_record = .{.fields = fields}})).data.gen_record;
+  }
+
+  pub inline fn tgTextual(self: *Self, pos: Position, categories: []*Node,
+                          include_chars: *Node, exclude_chars: *Node)
+      !*Node.tg.Textual {
+    return &(try self.node(
+      pos, .{.gen_textual = .{
+        .categories = categories,
+        .include_chars = include_chars,
+        .exclude_chars = exclude_chars,
+      }})).data.gen_textual;
   }
 
   pub inline fn ucall(self: *Self, pos: Position,

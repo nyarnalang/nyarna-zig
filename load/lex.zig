@@ -856,7 +856,7 @@ pub const Lexer = struct {
       }
     }
     return ContentResult{.token =
-      switch(ctx) {
+      switch (ctx) {
         .block_name => blk: {
           if (l.readIdentifier(cur)) break :blk .identifier;
           while (true) {
@@ -904,7 +904,7 @@ pub const Lexer = struct {
         0...32 => break,
         '#' => if (l.comments_disabled_at == null) break,
         '>' => if (ctx == .config) break,
-        ':' => switch(ctx) {
+        ':' => switch (ctx) {
           .block_name => break,
           .args => {
             l.walker.mark();
@@ -1134,7 +1134,7 @@ pub const Lexer = struct {
   }
 
   fn exprContinuation(l: *Lexer, cur: *u21, after_arglist: bool) !?Token {
-    switch(cur.*) {
+    switch (cur.*) {
       '(' => {
         if (after_arglist) {
           l.level = .{
@@ -1163,7 +1163,7 @@ pub const Lexer = struct {
             return .illegal_blocks_start_in_args;
           }
         };
-        switch(cur.*) {
+        switch (cur.*) {
           ':' => {
             l.cur_stored = l.walker.nextInline();
             l.state = .after_access_colons;

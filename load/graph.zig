@@ -8,13 +8,15 @@ const model = nyarna.model;
 /// calls and symbol references.
 pub const ResolutionContext = struct {
   pub const Result = union(enum) {
-    preliminary_type: model.Type,
+    unfinished_function: model.Type,
+    unfinished_type: model.Type,
     known: ?u21,
-    unfinished_type, resolved, failed,
+    resolved, failed,
   };
   pub const StrippedResult = union(enum) {
-    preliminary_type: model.Type,
-    known, unknown, unfinished_type, resolved, failed,
+    unfinished_function: model.Type,
+    unfinished_type: model.Type,
+    known, resolved, failed,
   };
 
   /// must only be called on unresolved calls or symbol references. returns
@@ -22,16 +24,16 @@ pub const ResolutionContext = struct {
   ///     if the item has been modified (e.g. resolved to a symbol). The
   ///     modified item is guaranteed to be of a kind for which a type can be
   ///     calculated.
-  ///   .preliminary_type
+  ///   .unfinished_function
   ///     during type inference for calls that form cycles back to the currently
   ///     processed function body. Implies that the returned type should be used
   ///     to calculate the containing entity's type. The returned index is the
   ///     index of the called entity, used for building the dependency graph.
   ///   .unfinished_type
   ///     if the node has been resolved to a type which has not yet been
-  ///     finalized. The node now contains a type literal. The type may be used
-  ///     as inner type to construct another type, but must not be used for
-  ///     anything else since it is unfinished.
+  ///     finalized. The returned type may be used as inner type to construct
+  ///     another type, but must not be used for anything else since it is
+  ///     unfinished.
   ///   .known
   ///     if the reference's name can be resolved to a sibling symbol but no
   ///     type information is currently available. The value is the index of the
@@ -50,21 +52,23 @@ pub const ResolutionContext = struct {
   /// the namespace in which all symbols declared via this context reside.
   ns: u15,
 
-  fn addDep(ctx: *ResolutionContext, index: usize) !void {
+  fn addDep(ctx: *ResolutionContext, local: std.mem.Allocator,
+            index: usize) !void {
     for (ctx.dependencies.items) |item| if (item == index) return;
-    try ctx.dependencies.append(index);
+    try ctx.dependencies.append(local, index);
   }
 
-  pub fn probeSibling(ctx: *ResolutionContext, item: *model.Node)
+  pub fn probeSibling(ctx: *ResolutionContext, local: std.mem.Allocator,
+                      item: *model.Node)
       !StrippedResult {
     const res = try ctx.resolveInSiblingDefinitions(ctx, item);
     return switch (res) {
-      .preliminary_type => |t| StrippedResult{.preliminary_type = t},
+      .unfinished_function => |t| StrippedResult{.unfinished_function = t},
+      .unfinished_type => |t| StrippedResult{.unfinished_type = t},
       .known => |value| blk: {
-        if (value) |index| try addDep(index);
+        if (value) |index| try ctx.addDep(local, index);
         break :blk .known;
       },
-      .unfinished_type => .unfinished_type,
       .failed => .failed,
       .resolved => .resolved,
     };

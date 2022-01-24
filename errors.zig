@@ -16,7 +16,8 @@ pub const GenericParserError = enum {
   PrefixedFunctionMustBeCalled, AstNodeInNonKeyword, CannotResolveImmediately,
   InvalidLvalue, UnknownParameter, TooManyArguments, UnexpectedPrimaryBlock,
   InvalidPositionalArgument, UnknownSymbol, UnknownEnumValue, BlockNeedsConfig,
-  CantBeCalled, InvalidNamedArgInAssign,
+  CantBeCalled, InvalidNamedArgInAssign, UnfinishedCallAsTypeArg, NotAType,
+  CantCallUnfinished,
 };
 
 pub const WrongItemError = enum {
@@ -44,6 +45,7 @@ pub const PreviousOccurenceError = enum {
   IsNotANamespaceCharacter, AlreadyANamespaceCharacter, DuplicateFlag,
   DuplicateBlockHeader, IncompatibleFlag, DuplicateAutoSwallow,
   DuplicateParameterArgument, MissingParameterArgument, DuplicateSymbolName,
+  MultipleScalarTypesInIntersection,
 
   fn errorMsg(e: PreviousOccurenceError) []const u8 {
     return switch (e) {
@@ -59,6 +61,8 @@ pub const PreviousOccurenceError = enum {
       .MissingParameterArgument =>
         " has not been given an argument",
       .DuplicateSymbolName => " hides existing symbol",
+      .MultipleScalarTypesInIntersection =>
+        " conflicts with another scalar type",
     };
   }
 
@@ -70,6 +74,7 @@ pub const PreviousOccurenceError = enum {
       .DuplicateAutoSwallow => "swallow def",
       .DuplicateParameterArgument, .MissingParameterArgument => "argument",
       .DuplicateSymbolName => "symbol",
+      .MultipleScalarTypesInIntersection => "type",
     };
   }
 
@@ -81,6 +86,7 @@ pub const PreviousOccurenceError = enum {
       .DuplicateParameterArgument => "previous argument",
       .MissingParameterArgument => "parameter definition",
       .DuplicateSymbolName => "symbol definition",
+      .MultipleScalarTypesInIntersection => "previous type",
     };
   }
 };
@@ -95,7 +101,11 @@ pub const WrongTypeError = enum {
    IncompatibleTypes,
    /// gives one type.
    InvalidInnerConcatType,
-   /// gives one type
+   /// gives one type.
+   InvalidInnerOptionalType,
+   /// gives one type.
+   InvalidInnerIntersectionType,
+   /// gives one type.
    InvalidDefinitionValue,
 };
 
@@ -298,9 +308,15 @@ pub const CmdLineReporter = struct {
       },
       .InvalidInnerConcatType => {
         const t_fmt = types[0].formatter();
-        self.renderError(
-          "given expressions' types' intersection is '{}' " ++
-          "which is not concatenable", .{t_fmt});
+        self.renderError("invalid inner type for Concat: '{}'", .{t_fmt});
+      },
+      .InvalidInnerOptionalType => {
+        const t_fmt = types[0].formatter();
+        self.renderError("invalid inner type for Optional: '{}'", .{t_fmt});
+      },
+      .InvalidInnerIntersectionType => {
+        const t_fmt = types[0].formatter();
+        self.renderError("invalid inner type for Intersection: '{}'", .{t_fmt});
       },
       .InvalidDefinitionValue => {
         const t_fmt = types[0].formatter();

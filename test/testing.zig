@@ -310,52 +310,81 @@ fn AstEmitter(Handler: anytype) type {
         .resolved_symref => |res|
           try self.emitLine("=SYMREF {s}.{s}",
             .{res.sym.defined_at.source.name, res.sym.name}),
-        .typegen => |tg| {
-          const tgen =
-            try self.pushWithKey("TYPEGEN", @tagName(tg.content), null);
-          switch (tg.content) {
-            .optional => |opt| try self.process(opt.inner),
-            .concat => |con| try self.process(con.inner),
-            .list => |lst| try self.process(lst.inner),
-            .paragraphs => |para| {
-              if (para.auto) |a| {
-                const auto = try self.push("AUTO");
-                try self.process(a);
-                try auto.pop();
-              }
-              for (para.inners) |inner| try self.process(inner);
-            },
-            .map => |map| {
-              try self.process(map.key);
-              try self.process(map.value);
-            },
-            .record => |rec|
-              for (rec.fields) |field| try self.process(field.node()),
-            .intersection => |inter| {
-              for (inter.types) |t| try self.process(t);
-            },
-            .textual => unreachable, // TODO
-            .numeric => |num| {
-              if (num.min) |min| {
-                const m = try self.push("MIN");
-                try self.process(min);
-                try m.pop();
-              }
-              if (num.max) |max| {
-                const m = try self.push("MAX");
-                try self.process(max);
-                try m.pop();
-              }
-              if (num.decimals) |dec| {
-                const l = try self.push("DECIMALS");
-                try self.process(dec);
-                try l.pop();
-              }
-            },
-            .float => |fl| try self.process(fl.precision),
-            .@"enum" => |en| for (en.values) |v| try self.process(v),
+        .gen_concat => |gc| {
+          const gen = try self.pushWithKey("TGEN", "Concat", null);
+          try self.process(gc.inner);
+          try gen.pop();
+        },
+        .gen_enum => |ge| {
+          const gen = try self.pushWithKey("TGEN", "Enum", null);
+          for (ge.values) |value| try self.process(value);
+          try gen.pop();
+        },
+        .gen_float => |gf| {
+          const gen = try self.pushWithKey("TGEN", "Float", null);
+          try self.process(gf.precision);
+          try gen.pop();
+        },
+        .gen_intersection => |gi| {
+          const gen = try self.pushWithKey("TGEN", "Intersection", null);
+          for (gi.types) |item| try self.process(item);
+          try gen.pop();
+        },
+        .gen_list => |gl| {
+          const gen = try self.pushWithKey("TGEN", "List", null);
+          try self.process(gl.inner);
+          try gen.pop();
+        },
+        .gen_map => |gm| {
+          const gen = try self.pushWithKey("TGEN", "Map", null);
+          try self.process(gm.key);
+          try self.process(gm.value);
+          try gen.pop();
+        },
+        .gen_numeric => |gn| {
+          const gen = try self.pushWithKey("TGEN", "Numeric", null);
+          if (gn.min) |min| {
+            try self.emitLine(">MIN", .{});
+            try self.process(min);
           }
-          try tgen.pop();
+          if (gn.max) |max| {
+            try self.emitLine(">MAX", .{});
+            try self.process(max);
+          }
+          if (gn.decimals) |decimals| {
+            try self.emitLine(">DECIMALS", .{});
+            try self.process(decimals);
+          }
+          try gen.pop();
+        },
+        .gen_optional => |go| {
+          const gen = try self.pushWithKey("TGEN", "Optional", null);
+          try self.process(go.inner);
+          try gen.pop();
+        },
+        .gen_paragraphs => |gp| {
+          const gen = try self.pushWithKey("TGEN", "Paragraphs", null);
+          for (gp.inners) |inner| try self.process(inner);
+          if (gp.auto) |auto| {
+            try self.emitLine(">AUTO", .{});
+            try self.process(auto);
+          }
+          try gen.pop();
+        },
+        .gen_record => |gr| {
+          const gen = try self.pushWithKey("TGEN", "Record", null);
+          for (gr.fields) |field| try self.process(field.node());
+          try gen.pop();
+        },
+        .gen_textual => |gt| {
+          const gen = try self.pushWithKey("TGEN", "Textual", null);
+          try self.emitLine(">CATEGORIES", .{});
+          for (gt.categories) |cat| try self.process(cat);
+          try self.emitLine(">INCLUDE", .{});
+          try self.process(gt.include_chars);
+          try self.emitLine(">EXCLUDE", .{});
+          try self.process(gt.exclude_chars);
+          try gen.pop();
         },
         .unresolved_call => |uc| {
           const ucall = try self.push("UCALL");

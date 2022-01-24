@@ -12,6 +12,84 @@ pub const Constructor = struct {
   impl_index: usize,
 };
 
+/// calculates what to do with inner types for various structural types.
+const InnerIntend = enum {
+  /// the given type is allowed as inner type
+  allowed,
+  /// trying to build the outer type will collapse into the given inner type
+  collapse,
+  /// type-specific exaltation must take place:
+  ///  * when given an Optional type and the outer type is Concat, the outer
+  ///    type must use the Optional's inner type.
+  ///  * when given .every and the outer type is Optional, .void is the result.
+  exalt,
+  /// the given type is outright forbidden as inner type.
+  forbidden,
+
+  fn concat(t: model.Type) InnerIntend {
+    return switch (t) {
+      .intrinsic => |i| switch (i) {
+        .void, .prototype, .schema, .extension, .ast_node =>
+          InnerIntend.forbidden,
+        .space, .literal, .raw, .poison => InnerIntend.collapse,
+        else => InnerIntend.allowed,
+      },
+      .structural => |s| switch (s.*) {
+        .optional => InnerIntend.exalt,
+        .concat => InnerIntend.collapse,
+        .paragraphs => InnerIntend.forbidden,
+        else => InnerIntend.allowed,
+      },
+      .instantiated => |ins| switch (ins.data) {
+        .textual => InnerIntend.collapse,
+        .record => InnerIntend.allowed,
+        else => InnerIntend.forbidden,
+      },
+    };
+  }
+
+  fn optional(t: model.Type) InnerIntend {
+    return switch (t) {
+      .intrinsic => |i| switch (i) {
+        .every => InnerIntend.exalt,
+        .void => InnerIntend.collapse,
+        .prototype, .schema, .extension => InnerIntend.forbidden,
+        else => InnerIntend.allowed,
+      },
+      .structural => |s| switch (s.*) {
+        .optional, .concat, .paragraphs => InnerIntend.collapse,
+        else => InnerIntend.allowed,
+      },
+      .instantiated => InnerIntend.allowed,
+    };
+  }
+};
+
+/// this function implements the artificial total order. The total order's
+/// constraint is satisfied by ordering all intrinsic types (which do not have
+/// allocated information) before all other types, and ordering the other
+/// types according to the pointers to their allocated memory.
+///
+/// The first argument exists so that this fn can be used for std.sort.sort.
+fn total_order_less(_: void, a: model.Type, b: model.Type) bool {
+  const a_int = switch (a) {
+    .intrinsic => |ia| {
+      return switch (b) {
+        .intrinsic => |ib| @enumToInt(ia) < @enumToInt(ib),
+        else => true,
+      };
+    },
+    .structural => |sa| @ptrToInt(sa),
+    .instantiated => |ia| @ptrToInt(ia),
+  };
+  const b_int = switch (b) {
+    .intrinsic => return false,
+    .structural => |sb| @ptrToInt(sb),
+    .instantiated => |ib| @ptrToInt(ib),
+  };
+  return a_int < b_int;
+}
+
 /// This is Nyarna's type lattice. It calculates type intersections, checks type
 /// compatibility, and owns all data of structural types.
 ///
@@ -293,31 +371,6 @@ pub const Lattice = struct {
     };
   }
 
-  /// this function implements the artificial total order. The total order's
-  /// constraint is satisfied by ordering all intrinsic types (which do not have
-  /// allocated information) before all other types, and ordering the other
-  /// types according to the pointers to their allocated memory.
-  ///
-  /// The first argument exists so that this fn can be used for std.sort.sort.
-  fn total_order_less(_: void, a: model.Type, b: model.Type) bool {
-    const a_int = switch (a) {
-      .intrinsic => |ia| {
-        return switch (b) {
-          .intrinsic => |ib| @enumToInt(ia) < @enumToInt(ib),
-          else => true,
-        };
-      },
-      .structural => |sa| @ptrToInt(sa),
-      .instantiated => |ia| @ptrToInt(ia),
-    };
-    const b_int = switch (b) {
-      .intrinsic => return false,
-      .structural => |sb| @ptrToInt(sb),
-      .instantiated => |ib| @ptrToInt(ib),
-    };
-    return a_int < b_int;
-  }
-
   pub fn greaterEqual(self: *Self, left: model.Type, right: model.Type) bool {
     return left.eql(self.sup(left, right) catch return false);
   }
@@ -352,8 +405,7 @@ pub const Lattice = struct {
     const inst_types =
       [_]*model.Type.Instantiated{t1.instantiated, t2.instantiated};
     for (inst_types) |t| switch (t.data) {
-      .record =>
-        return self.calcIntersection(.{&[_]model.Type{t1}, &[_]model.Type{t2}}),
+      .record => return try IntersectionTypeBuilder.calcFrom(self, .{&t1, &t2}),
       else => {},
     };
     for (inst_types) |t, i| switch (t.data) {
@@ -390,84 +442,6 @@ pub const Lattice = struct {
     return model.Type{.intrinsic = .raw};
   }
 
-  /// input is to be a tuple of []model.Type.
-  /// precondition is that each type in input is either a scalar or a record
-  /// type.
-  fn calcIntersection(self: *Self, input: anytype) !model.Type {
-    var iter = TreeNode(void).Iter{
-      .cur = &self.prefix_trees.intersection, .lattice = self,
-    };
-    var tcount = @as(usize, 0);
-    var indexes: [input.len]usize = undefined;
-    for (indexes) |*ptr| ptr.* = 0;
-    const fields = std.meta.fields(@TypeOf(input));
-    var scalar: ?model.Type = null;
-    while (true) {
-      var cur_type: ?model.Type = null;
-      inline for (fields) |field, index| {
-        const vals = @field(input, field.name);
-        if (indexes[index] < vals.len) {
-          const next_in_list = vals[indexes[index]];
-          if (cur_type) |previous| {
-            if (total_order_less(undefined, next_in_list, previous))
-              cur_type = next_in_list;
-          } else cur_type = next_in_list;
-        }
-      }
-      if (cur_type) |next_type| {
-        inline for (fields) |field, index| {
-          const vals = @field(input, field.name);
-          if (vals[indexes[index]].eql(next_type)) indexes[index] += 1;
-        }
-        try iter.descend(next_type, {});
-        if (next_type.isScalar()) {
-          std.debug.assert(scalar == null);
-          scalar = next_type;
-        } else tcount += 1;
-      } else break;
-    }
-    return model.Type{.structural = iter.cur.value orelse blk: {
-      var new = try self.allocator.create(model.Type.Structural);
-      new.* = .{
-        .intersection = undefined
-      };
-      const new_in = &new.intersection;
-      new_in.* = .{
-        .scalar = scalar,
-        .types = try self.allocator.alloc(model.Type, tcount),
-      };
-      var target_index = @as(usize, 0);
-      for (indexes) |*ptr| ptr.* = 0;
-      while (true) {
-        var cur_type: ?model.Type = null;
-        inline for (fields) |field, index| {
-          const vals = @field(input, field.name);
-          if (indexes[index] < vals.len) {
-            const next_in_list = vals[indexes[index]];
-            if (cur_type) |previous| {
-              if (total_order_less(undefined, next_in_list, previous))
-                cur_type = next_in_list;
-            } else cur_type = next_in_list;
-          }
-        }
-        if (cur_type) |next_type| {
-          inline for (fields) |field, index| {
-            const vals = @field(input, field.name);
-            if (vals[indexes[index]].eql(next_type)) indexes[index] += 1;
-          }
-          if (next_type.isScalar()) {
-            new_in.scalar = next_type;
-          } else {
-            new_in.types[target_index] = next_type;
-            target_index += 1;
-          }
-        } else break;
-      }
-      iter.cur.value = new;
-      break :blk new;
-    }};
-  }
-
   fn calcParagraphs(self: *Self, inner: []model.Type) !model.Type {
     std.sort.sort(model.Type, inner, {}, total_order_less);
     var iter = TreeNode(void).Iter{
@@ -485,6 +459,13 @@ pub const Lattice = struct {
       iter.cur.value = new;
       break :blk new;
     }};
+  }
+
+  fn concatFromParagraphs(self: *Self, p: *model.Type.Structural.Paragraphs)
+      !model.Type {
+    var res = model.Type{.intrinsic = .space};
+    for (p.inner) |t| res = try self.sup(res, t);
+    return res;
   }
 
   fn supWithStructure(
@@ -535,10 +516,10 @@ pub const Lattice = struct {
               else inter_scalar
             else other_inter.scalar;
 
-            return if (scalar_type) |st|
-              self.calcIntersection(.{&[1]model.Type{st}, inter.types,
-                other_inter.types})
-            else self.calcIntersection(.{inter.types, other_inter.types});
+            return if (scalar_type) |st| IntersectionTypeBuilder.calcFrom(
+              self, .{&st, inter.types, other_inter.types})
+            else IntersectionTypeBuilder.calcFrom(
+              self, .{inter.types, other_inter.types});
           },
           else => {},
         },
@@ -569,15 +550,14 @@ pub const Lattice = struct {
         if (other.isScalar()) {
           const scalar_type = if (inter.scalar) |inter_scalar|
             try self.sup(other, inter_scalar) else other;
-          break :blk try self.calcIntersection(
-            .{&[_]model.Type{scalar_type}, inter.types});
+          break :blk try IntersectionTypeBuilder.calcFrom(
+            self, .{&scalar_type, inter.types});
         } else switch (other) {
           .instantiated => |other_inst| if (other_inst.data == .record) {
             break :blk try if (inter.scalar) |inter_scalar|
-              self.calcIntersection(
-                .{&[_]model.Type{inter_scalar}, &[_]model.Type{other},
-                inter.types})
-            else self.calcIntersection(.{&[_]model.Type{other}, inter.types});
+              IntersectionTypeBuilder.calcFrom(
+                self, .{&inter_scalar, &other, inter.types})
+            else IntersectionTypeBuilder.calcFrom(self, .{&other, inter.types});
           },
           else => {},
         }
@@ -589,7 +569,7 @@ pub const Lattice = struct {
   fn supWithIntrinsic(
       self: *Self, intr: @typeInfo(model.Type).Union.fields[0].field_type,
       other: model.Type) !model.Type {
-    return switch(intr) {
+    return switch (intr) {
       .void =>
         (try self.optional(other)) orelse model.Type{.intrinsic = .poison},
       .prototype, .schema, .extension, .ast_node => .{.intrinsic = .poison},
@@ -632,19 +612,13 @@ pub const Lattice = struct {
   }
 
   pub fn optional(self: *Self, t: model.Type) !?model.Type {
-    switch (t) {
-      .intrinsic => |i| switch (i) {
-        .void, .every => return model.Type{.intrinsic = .void},
-        .prototype, .schema, .extension => return null,
-        else => {},
-      },
-      .structural => |s| switch (s.*) {
-        .optional, .concat => return t,
-        .paragraphs => return null, // TODO
-        else => {},
-      },
-      .instantiated => {},
+    switch (InnerIntend.optional(t)) {
+      .forbidden => return null,
+      .exalt => return model.Type{.intrinsic = .void},
+      .collapse => return t,
+      .allowed => {},
     }
+
     const res = try self.optionals.getOrPut(self.allocator, t);
     if (!res.found_existing) {
       res.value_ptr.* = try self.allocator.create(model.Type.Structural);
@@ -657,36 +631,36 @@ pub const Lattice = struct {
     return model.Type{.structural = res.value_ptr.*};
   }
 
+  pub fn registerOptional(self: *Self, t: *model.Type.Optional) !bool {
+    if (InnerIntend.optional(t.inner) != .allowed) return false;
+    const res = try self.optionals.getOrPut(self.allocator, t.inner);
+    std.debug.assert(!res.found_existing);
+    res.value_ptr.* = t.typedef().structural;
+    return true;
+  }
+
   pub fn concat(self: *Self, t: model.Type)
       std.mem.Allocator.Error!?model.Type {
-    switch (t) {
-      .intrinsic => |i| switch (i) {
-        .void, .prototype, .schema, .extension, .ast_node => return null,
-        .space, .literal, .raw, .poison => return t,
-        else => {},
-      },
-      .structural => |s| switch (s.*) {
-        .optional => |opt| return try self.concat(opt.inner),
-        .concat => return t,
-        .paragraphs => return null,
-        else => {},
-      },
-      .instantiated => |ins| switch (ins.data) {
-        .textual => return t,
-        .record => {},
-        else => return null,
-      },
+    switch (InnerIntend.concat(t)) {
+      .forbidden => return null,
+      .exalt => return try self.concat(t.structural.optional.inner),
+      .collapse => return t,
+      .allowed => {},
     }
     const res = try self.concats.getOrPut(self.allocator, t);
     if (!res.found_existing) {
       res.value_ptr.* = try self.allocator.create(model.Type.Structural);
-      res.value_ptr.*.* = .{
-        .concat = .{
-          .inner = t
-        }
-      };
+      res.value_ptr.*.* = .{.concat = .{.inner = t}};
     }
     return model.Type{.structural = res.value_ptr.*};
+  }
+
+  pub fn registerConcat(self: *Self, t: *model.Type.Concat) !bool {
+    if (InnerIntend.concat(t.inner) != .allowed) return false;
+    const res = try self.concats.getOrPut(self.allocator, t.inner);
+    std.debug.assert(!res.found_existing);
+    res.value_ptr.* = t.typedef().structural;
+    return true;
   }
 
   pub fn list(self: *Self, t: model.Type) std.mem.Allocator.Error!?model.Type {
@@ -808,6 +782,14 @@ pub fn containedScalar(t: model.Type) ?model.Type {
       else => null
     }
   };
+}
+
+pub inline fn allowedAsConcatInner(t: model.Type) bool {
+  return InnerIntend.concat(t) == .allowed;
+}
+
+pub inline fn allowedAsOptionalInner(t: model.Type) bool {
+  return InnerIntend.optional(t) == .allowed;
 }
 
 pub const SigBuilderResult = struct {
@@ -1087,5 +1069,157 @@ pub const EnumTypeBuilder = struct {
     self.ret.constructor =
       try sb.finish().createCallable(self.ctx.global(), .type);
     return self.ret;
+  }
+};
+
+/// Offers facilities to generate Intersection types. Assumes all given types
+/// are either Record or Scalar types, and at most one Scalar type is given.
+///
+/// Types are to be given as list of `[]const model.Type`, where the types in
+/// each slices are ordered according to the artificial type order. This API is
+/// designed so that Record and Scalar types can be put in as single-value
+/// slice, while referred Intersections will get the scalar part figured out
+/// externally while the non-scalar part is a slice that fulfills our
+/// precondition and can therefore be put in directly.
+pub const IntersectionTypeBuilder = struct {
+  const Self = @This();
+
+  fn Static(comptime size: usize) type {
+    return struct {
+      sources: [size][]const model.Type,
+      indexes: [size]usize,
+
+      pub fn init(sources: anytype) @This() {
+        var ret: @This() = undefined;
+        inline for (std.meta.fields(@TypeOf(sources))) |field, index| {
+          const value = @field(sources, field.name);
+          switch (@typeInfo(@TypeOf(value)).Pointer.size) {
+            .One =>
+              ret.sources[index] = @ptrCast([*]const model.Type, value)[0..1],
+            .Slice => ret.sources[index] = value,
+            else => unreachable,
+          }
+          ret.indexes[index] = 0;
+        }
+        return ret;
+      }
+    };
+  }
+
+  pub inline fn staticSources(sources: anytype) Static(sources.len) {
+    return Static(sources.len).init(sources);
+  }
+
+  sources: [][]const model.Type,
+  indexes: []usize,
+  filled: usize,
+  allocator: ?std.mem.Allocator,
+
+  pub fn init(max_sources: usize, allocator: std.mem.Allocator)
+      !IntersectionTypeBuilder {
+    return IntersectionTypeBuilder{
+      .sources = try allocator.alloc([]const model.Type, max_sources),
+      .indexes = try allocator.alloc(usize, max_sources),
+      .filled = 0,
+      .allocator = allocator,
+    };
+  }
+
+  pub fn calcFrom(lattice: *Lattice, input: anytype) !model.Type {
+    var static = Static(input.len).init(input);
+    var self = IntersectionTypeBuilder.initStatic(&static);
+    return self.finish(lattice);
+  }
+
+  fn initStatic(static: anytype) IntersectionTypeBuilder {
+    return IntersectionTypeBuilder{
+      .sources = &static.sources,
+      .indexes = &static.indexes,
+      .filled = static.sources.len,
+      .allocator = null,
+    };
+  }
+
+  pub fn push(self: *Self, item: []const model.Type) void {
+    for (item) |t| std.debug.assert(t.isScalar() or t.isInstantiated(.record));
+    self.sources[self.filled] = item;
+    self.indexes[self.filled] = 0;
+    self.filled += 1;
+  }
+
+  pub fn finish(self: *Self, lattice: *Lattice) !model.Type {
+    var iter = Lattice.TreeNode(void).Iter{
+      .cur = &lattice.prefix_trees.intersection, .lattice = lattice,
+    };
+    var tcount = @as(usize, 0);
+    var scalar: ?model.Type = null;
+    var input = self.sources[0..self.filled];
+    while (true) {
+      var cur_type: ?model.Type = null;
+      for (input) |list| {
+        if (list.len > 0) {
+          const next = list[0];
+          if (cur_type) |previous| {
+            if (total_order_less(undefined, next, previous)) cur_type = next;
+          } else cur_type = next;
+        }
+      }
+      if (cur_type) |next_type| {
+        for (input) |list, index| {
+          const list_index = self.indexes[index];
+          if (list_index < list.len and list[list_index].eql(next_type)) {
+            self.indexes[index] += 1;
+          }
+        }
+        try iter.descend(next_type, {});
+        if (next_type.isScalar()) {
+          std.debug.assert(scalar == null);
+          scalar = next_type;
+        } else tcount += 1;
+      } else break;
+    }
+
+    defer if (self.allocator) |allocator| {
+      allocator.free(self.sources);
+      allocator.free(self.indexes);
+    };
+
+    return model.Type{.structural = iter.cur.value orelse blk: {
+      var new = try lattice.allocator.create(model.Type.Structural);
+      new.* = .{.intersection = undefined};
+      const new_in = &new.intersection;
+      new_in.* = .{
+        .scalar = scalar,
+        .types = try lattice.allocator.alloc(model.Type, tcount),
+      };
+      var target_index = @as(usize, 0);
+      while (true) {
+        var cur_type: ?model.Type = null;
+        for (input) |vals, index| {
+          if (self.indexes[index] < vals.len) {
+            const next_in_list = vals[self.indexes[index]];
+            if (cur_type) |previous| {
+              if (total_order_less(undefined, next_in_list, previous))
+                cur_type = next_in_list;
+            } else cur_type = next_in_list;
+          }
+        }
+        if (cur_type) |next_type| {
+          for (self.sources) |vals, index| {
+            if (vals[self.indexes[index]].eql(next_type)) {
+              self.indexes[index] += 1;
+            }
+          }
+          if (next_type.isScalar()) {
+            new_in.scalar = next_type;
+          } else {
+            new_in.types[target_index] = next_type;
+            target_index += 1;
+          }
+        } else break;
+      }
+      iter.cur.value = new;
+      break :blk new;
+    }};
   }
 };

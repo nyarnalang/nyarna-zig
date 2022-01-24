@@ -146,15 +146,16 @@ pub const Parser = struct {
         const res = if (level.fullast) item else switch (item.data) {
           .literal, .unresolved_call, .unresolved_symref, .expression,
           .void => item,
-          else => if (try ip.tryInterpret(item, .{.kind = .initial})) |expr|
-            try ip.node_gen.expression(expr) else item,
+          else =>
+            if (try ip.tryInterpret(item, .{.kind = .intermediate})) |expr|
+              try ip.node_gen.expression(expr) else item,
         };
         try level.nodes.append(ip.allocator(), res);
       }
     }
 
     fn finalizeParagraph(level: *ContentLevel, ip: *Interpreter) !*model.Node {
-      return switch(level.nodes.items.len) {
+      return switch (level.nodes.items.len) {
         0 => ip.node_gen.void(ip.input.at(level.start)),
         1 => level.nodes.items[0],
         else => (try ip.node_gen.concat(
@@ -619,7 +620,7 @@ pub const Parser = struct {
             }
           }
           const lvl = self.curLevel();
-          const pos = switch(self.cur) {
+          const pos = switch (self.cur) {
             .block_end_open, .block_name_sep, .comma, .name_sep, .list_end,
             .end_source => blk: {
               content.shrinkAndFree(self.allocator(), non_space_len);
@@ -659,7 +660,7 @@ pub const Parser = struct {
         },
         .command => {
           var lvl = self.curLevel();
-          switch(self.cur) {
+          switch (self.cur) {
             .access => {
               self.advance();
               if (self.cur != .identifier) unreachable; // TODO: recover
@@ -687,8 +688,8 @@ pub const Parser = struct {
             },
             .list_start, .blocks_sep => {
               const target = lvl.command.info.unknown;
-              const ctx = try self.intpr().chainResToContext(target.pos,
-                try self.intpr().resolveChain(target, .{.kind = .initial}));
+              const ctx = try self.intpr().chainResToContext(target.pos, try
+                self.intpr().resolveChain(target, .{.kind = .intermediate}));
               switch (ctx) {
                 .known => |call_context| {
                   std.debug.print("calling something!\n", .{});

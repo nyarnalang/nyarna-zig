@@ -189,6 +189,7 @@ pub const Intrinsics = Provider.Wrapper(struct {
         }
         def_count += value.data.concat.content.items.len;
         expr.data = .{.value = value};
+        node.data = .{.expression = expr};
       }
     };
 
@@ -204,6 +205,20 @@ pub const Intrinsics = Provider.Wrapper(struct {
       .concat => |*con| for (con.items) |item| {
         defs[def_count] = &item.data.definition; // TODO: check for definition
         def_count += 1;
+      },
+      .expression => |expr| {
+        for (expr.data.value.data.concat.content.items) |item| {
+          const def = &item.data.definition;
+          defs[def_count] = try intpr.node_gen.definition(item.origin, .{
+            .name = try intpr.node_gen.literal(def.name.value().origin, .{
+              .kind = .text, .content = def.name.content,
+            }),
+            .root = def.root,
+            .content = try intpr.node_gen.expression(
+              try intpr.ctx.createValueExpr(def.content)),
+          });
+          def_count += 1;
+        }
       },
       else => unreachable,
     };
@@ -257,8 +272,8 @@ pub const Intrinsics = Provider.Wrapper(struct {
       },
       .poison => true,
       else => false
-    }) intpr.node_gen.poison(pos) else (
-      try intpr.node_gen.typegen(pos, .{.optional = .{.inner = inner}})).node();
+    }) intpr.node_gen.poison(pos) else
+      (try intpr.node_gen.tgOptional(pos, inner)).node();
   }
 
   fn @"Concat"(intpr: *Interpreter, pos: model.Position,
@@ -271,8 +286,8 @@ pub const Intrinsics = Provider.Wrapper(struct {
       },
       .poison => true,
       else => false,
-    }) intpr.node_gen.poison(pos) else (
-      try intpr.node_gen.typegen(pos, .{.concat = .{.inner = inner}})).node();
+    }) intpr.node_gen.poison(pos) else
+      (try intpr.node_gen.tgConcat(pos, inner)).node();
   }
 
   fn @"List"(intpr: *Interpreter, pos: model.Position,
@@ -286,14 +301,13 @@ pub const Intrinsics = Provider.Wrapper(struct {
       .poison => true,
       else => false,
     }) intpr.node_gen.poison(pos) else (
-      try intpr.node_gen.typegen(pos, .{.list = .{.inner = inner}})).node();
+      try intpr.node_gen.tgList(pos, inner)).node();
   }
 
   fn @"Paragraphs"(intpr: *Interpreter, pos: model.Position,
                    inners: []*model.Node, auto: ?*model.Node)
       nyarna.Error!*model.Node {
-    return (try intpr.node_gen.typegen(pos, .{.paragraphs = .{
-      .inners = inners, .auto = auto}})).node();
+    return (try intpr.node_gen.tgParagraphs(pos, inners, auto)).node();
   }
 
   fn @"Map"(intpr: *Interpreter, pos: model.Position,
@@ -317,9 +331,7 @@ pub const Intrinsics = Provider.Wrapper(struct {
       else => {}
     }
     return if (invalid) intpr.node_gen.poison(pos)
-    else (try intpr.node_gen.typegen(pos, .{
-      .map = .{.key = key, .value = value}
-    })).node();
+    else (try intpr.node_gen.tgMap(pos, key,value)).node();
   }
 
   fn @"Record"(intpr: *Interpreter, pos: model.Position,
@@ -354,43 +366,29 @@ pub const Intrinsics = Provider.Wrapper(struct {
 
   fn @"Intersection"(intpr: *Interpreter, pos: model.Position,
                      input_types: []*model.Node) nyarna.Error!*model.Node {
-    return (try intpr.node_gen.typegen(pos, .{
-      .intersection = .{.types = input_types},
-    })).node();
+    return (try intpr.node_gen.tgIntersection(pos, input_types)).node();
   }
 
   fn @"Textual"(intpr: *Interpreter, pos: model.Position,
                 cats: []*model.Node, include: *model.Node,
                 exclude: *model.Node) nyarna.Error!*model.Node {
-    return (try intpr.node_gen.typegen(pos, .{
-      .textual = .{
-        .categories = cats,
-        .include_chars = include,
-        .exclude_chars = exclude,
-      },
-    })).node();
+    return (try intpr.node_gen.tgTextual(pos, cats, include, exclude)).node();
   }
 
   fn @"Numeric"(intpr: *Interpreter, pos: model.Position, min: *model.Node,
                 max: *model.Node, decimals: *model.Node)
       nyarna.Error!*model.Node {
-    return (try intpr.node_gen.typegen(pos, .{
-      .numeric = .{.min = min, .max = max, .decimals = decimals},
-    })).node();
+    return (try intpr.node_gen.tgNumeric(pos, min, max, decimals)).node();
   }
 
   fn @"Float"(intpr: *Interpreter, pos: model.Position, precision: *model.Node)
       nyarna.Error!*model.Node {
-    return (try intpr.node_gen.typegen(pos, .{
-      .float = .{.precision = precision},
-    })).node();
+    return (try intpr.node_gen.tgFloat(pos, precision)).node();
   }
 
   fn @"Enum"(intpr: *Interpreter, pos: model.Position, values: []*model.Node)
       nyarna.Error!*model.Node {
-    return (try intpr.node_gen.typegen(pos, .{
-      .@"enum" = .{.values = values},
-    })).node();
+    return (try intpr.node_gen.tgEnum(pos, values)).node();
   }
 
   //------------------
