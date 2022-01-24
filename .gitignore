@@ -4,3 +4,8 @@
 zig-cache
 testgen
 errors_generated.zig
+parse_test
+parse_test_orig
+lex_test
+type_test
+interpret_test
