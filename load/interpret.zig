@@ -10,6 +10,7 @@ const syntaxes = @import("syntaxes.zig");
 const graph = @import("graph.zig");
 const algo = @import("algo.zig");
 const mapper = @import("mapper.zig");
+const chains = @import("chains.zig");
 
 pub const Errors = error {
   referred_source_unavailable,
@@ -175,7 +176,7 @@ pub const Interpreter = struct {
 
   fn tryInterpretAccess(self: *Interpreter, input: *model.Node, stage: Stage)
       nyarna.Error!?*model.Expression {
-    switch (try self.resolveChain(input, stage)) {
+    switch (try chains.Resolver.init(self, stage).resolve(input)) {
       .var_chain => |vc| {
         const retr = try self.ctx.global().create(model.Expression);
         retr.* = .{
@@ -226,7 +227,7 @@ pub const Interpreter = struct {
     const target = switch (ass.target) {
       .resolved => |*val| val,
       .unresolved => |node| innerblk: {
-        switch (try self.resolveChain(node, stage)) {
+        switch (try chains.Resolver.init(self, stage).resolve(node)) {
           .var_chain => |*vc| {
             ass.target = .{
               .resolved = .{
@@ -638,8 +639,8 @@ pub const Interpreter = struct {
   fn tryInterpretUCall(self: *Interpreter, uc: *model.Node.UnresolvedCall,
                        stage: Stage) nyarna.Error!?*model.Expression {
     if (stage.kind == .intermediate) return null;
-    const call_ctx = try self.chainResToContext(uc.target.pos,
-      try self.resolveChain(uc.target, stage));
+    const call_ctx = try chains.CallContext.fromChain(self, uc.target.pos,
+      try chains.Resolver.init(self, stage).resolve(uc.target));
     switch (call_ctx) {
       .known => |k| {
         var sm = try mapper.SignatureMapper.init(
@@ -967,118 +968,6 @@ pub const Interpreter = struct {
       },
     };
     return ret;
-  }
-
-  /// Result of resolving an accessor chain.
-  pub const ChainResolution = union(enum) {
-    /// chain starts at a variable reference and descends into its fields.
-    var_chain: struct {
-      /// the target variable that is to be indexed.
-      target: struct {
-        variable: *model.Symbol.Variable,
-        pos: model.Position,
-      },
-      /// chain into the fields of a variable. Each item is the index of a
-      /// nested field.
-      field_chain: std.ArrayListUnmanaged(usize) = .{},
-      t: model.Type,
-    },
-    /// last chain item was resolved to a function.
-    func_ref: struct {
-      ns: u15,
-      target: *model.Function,
-      /// set if target is a function reference in the namespace of a type,
-      /// which has been accessed via an expression of that type. That is only
-      /// allowed in the context of a call. The caller of resolveChain is to
-      /// enforce this.
-      prefix: ?*model.Expression = null,
-    },
-    /// last chain item was resolved to a type. Value is a pointer into a
-    /// model.Symbol.
-    type_ref: *model.Type,
-    /// last chain item was resolved to a prototype. Value is a pointer into a
-    /// model.Symbol.
-    proto_ref: *model.Prototype,
-    /// chain starts at an expression and descends into the returned value.
-    expr_chain: struct {
-      expr: *model.Expression,
-      field_chain: std.ArrayListUnmanaged(usize) = .{},
-      t: model.Type,
-    },
-    /// the resolution failed because an identifier in the chain could not be
-    /// resolved – this is not necessarily an error since the chain may be
-    /// successfully resolved later.
-    failed,
-    /// this will be set if the chain is guaranteed to be faulty.
-    poison,
-  };
-
-  /// resolves an accessor chain of *model.Node. if stage.kind != .intermediate,
-  /// failure to resolve the base symbol will be reported as error and
-  /// .poison will be returned; else .failed will be returned.
-  pub fn resolveChain(self: *Interpreter, chain: *model.Node, stage: Stage)
-      nyarna.Error!ChainResolution {
-    switch (chain.data) {
-      .access => |value| {
-        const inner = try self.resolveChain(value.subject, stage);
-        switch (inner) {
-          .var_chain => |_| {
-            // TODO: find field in value's type, update value's type and the
-            // field_chain, return it.
-            unreachable;
-          },
-          .func_ref => |ref| {
-            if (ref.prefix != null) {
-              self.ctx.logger.PrefixedFunctionMustBeCalled(value.subject.pos);
-              return .poison;
-            }
-            // TODO: transform function reference to variable ref, then search
-            // in that expression's type for the symbol.
-            unreachable;
-          },
-          .type_ref => |_| {
-            // TODO: search in the namespace of the type for the given name.
-            unreachable;
-          },
-          .proto_ref => |_| {
-            // TODO: decide whether prototypes have a namespace
-            unreachable;
-          },
-          .expr_chain => |_| {
-            // TODO: same as var_chain basically
-            unreachable;
-          },
-          .failed => return .failed,
-          .poison => return .poison,
-        }
-      },
-      .resolved_symref => |rs| return switch (rs.sym.data) {
-        .func => |func| ChainResolution{
-          .func_ref = .{
-            .ns = rs.ns,
-            .target = func,
-            .prefix = null,
-          },
-        },
-        .@"type" => |*t| ChainResolution{.type_ref = t},
-        .prototype => |*pv| ChainResolution{.proto_ref = pv},
-        .variable => |*v| ChainResolution{
-          .var_chain = .{
-            .target = .{.variable = v, .pos = chain.pos},
-            .field_chain = .{},
-            .t = v.t,
-          },
-        },
-      },
-      else =>
-        return if (try self.tryInterpret(chain, stage)) |expr| ChainResolution{
-          .expr_chain = .{
-            .expr = expr,
-            .t = expr.expected_type,
-          },
-        } else @as(ChainResolution,
-          if (stage.kind != .intermediate) .poison else .failed)
-    }
   }
 
   /// Calculate the supremum of the given nodes' types and return it.
@@ -1467,88 +1356,5 @@ pub const Interpreter = struct {
       expr.data = .{.value = try self.ctx.values.poison(expr.pos)};
       break :blk expr;
     } else null;
-  }
-
-  pub const CallContext = union(enum) {
-    known: struct {
-      target: *model.Expression,
-      ns: u15,
-      signature: *const model.Type.Signature,
-      first_arg: ?*model.Node,
-    },
-    unknown, poison,
-  };
-
-  pub fn chainResToContext(self: *Interpreter, pos: model.Position,
-                           res: ChainResolution) !CallContext {
-    switch (res) {
-      .var_chain => |_| {
-        unreachable; // TODO
-      },
-      .func_ref => |fr| {
-        const target_expr = try self.ctx.createValueExpr(
-          (try self.ctx.values.funcRef(pos, fr.target)).value());
-        return CallContext{
-          .known = .{
-            .target = target_expr,
-            .ns = fr.ns,
-            .signature = fr.target.sig(),
-            .first_arg = if (fr.prefix) |prefix|
-              try self.node_gen.expression(prefix) else null,
-          },
-        };
-      },
-      .expr_chain => |ec| {
-        const target_expr = if (ec.field_chain.items.len == 0)
-          ec.expr
-        else blk: {
-          const acc = try self.ctx.global().create(model.Expression);
-          acc.* = .{
-            .pos = pos,
-            .data = .{
-              .access = .{.subject = ec.expr, .path = ec.field_chain.items},
-            },
-            .expected_type = ec.t,
-          };
-          break :blk acc;
-        };
-        const sig = switch (target_expr.expected_type) {
-          .structural => |strct| switch (strct.*) {
-            .callable => |callable| @as(?*model.Type.Signature, callable.sig),
-            else => null
-          },
-          else => null
-        } orelse {
-          self.ctx.logger.CantBeCalled(pos);
-          return .poison;
-        };
-        return CallContext{
-          .known = .{
-            .target = target_expr,
-            .ns = undefined, // cannot be a function depending on this
-            .signature = sig,
-            .first_arg = null,
-          },
-        };
-      },
-      .type_ref => |_| {
-        unreachable; // TODO
-      },
-      .proto_ref => |pref| {
-        const target_expr = try self.ctx.createValueExpr(
-          (try self.ctx.values.prototype(pos, pref.*)).value());
-        return CallContext{
-          .known = .{
-            .target = target_expr,
-            .ns = undefined,
-            .signature = self.ctx.types().prototypeConstructor(
-              pref.*).callable.sig,
-            .first_arg = null,
-          },
-        };
-      },
-      .failed => return .unknown,
-      .poison => return .poison,
-    }
   }
 };

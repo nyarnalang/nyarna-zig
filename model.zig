@@ -1169,7 +1169,7 @@ pub const Expression = struct {
     target: *Symbol.Variable,
     /// list of indexes that identify which part of the variable is to be
     /// assigned.
-    path: []usize,
+    path: []const usize,
     expr: *Expression,
   };
   /// retrieval of the value of a substructure
@@ -1177,7 +1177,7 @@ pub const Expression = struct {
     subject: *Expression,
     /// list of indexes that identify which part of the value is to be
     /// retrieved.
-    path: []usize,
+    path: []const usize,
   };
   /// retrieval of a variable's value
   pub const VarRetrieval = struct {

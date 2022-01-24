@@ -9,6 +9,7 @@ const lex = @import("lex.zig");
 const mapper = @import("mapper.zig");
 const unicode = @import("unicode.zig");
 const syntaxes = @import("syntaxes.zig");
+const chains = @import("chains.zig");
 
 const last = @import("../helpers.zig").last;
 
@@ -646,8 +647,9 @@ pub const Parser = struct {
             },
             .list_start, .blocks_sep => {
               const target = lvl.command.info.unknown;
-              const ctx = try self.intpr().chainResToContext(target.pos, try
-                self.intpr().resolveChain(target, .{.kind = .intermediate}));
+              const ctx = try chains.CallContext.fromChain(
+                self.intpr(), target.pos, try chains.Resolver.init(
+                  self.intpr(), .{.kind = .intermediate}).resolve(target));
               switch (ctx) {
                 .known => |call_context| {
                   try lvl.command.startResolvedCall(self.intpr(),
