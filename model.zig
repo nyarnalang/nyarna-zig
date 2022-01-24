@@ -823,7 +823,6 @@ pub const Type = union(enum) {
     repr: *Callable,
 
     pub inline fn typedef(self: *const @This()) Type {
-      std.debug.print("Callable.typedef({s})\n", .{@tagName(self.kind)});
       return Structural.typedef(self);
     }
   };

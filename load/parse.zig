@@ -138,8 +138,6 @@ pub const Parser = struct {
         std.debug.assert(res == .none);
       } else {
         if (level.dangling_space) |space_node| {
-          std.debug.print("appending dangling space (kind={s})\n",
-            .{@tagName(space_node.data.literal.kind)});
           try level.nodes.append(ip.allocator(), space_node);
           level.dangling_space = null;
         }
@@ -385,15 +383,6 @@ pub const Parser = struct {
         }
       })(self.logger(), self.lexer.walker.posFrom(self.cur_start));
     }
-    if (builtin.mode == .Debug) {
-      if (@enumToInt(self.cur) >= @enumToInt(model.Token.skipping_call_id)) {
-        std.debug.print("  << skipping_call_id({})\n", .{
-            @enumToInt(self.cur) - @enumToInt(model.Token.skipping_call_id) + 1,
-          });
-      } else {
-        std.debug.print("  << {s}\n", .{@tagName(self.cur)});
-      }
-    }
   }
 
   /// retrieves the next token from the lexer. true iff that token is valid.
@@ -421,9 +410,6 @@ pub const Parser = struct {
         if (@enumToInt(t) > @enumToInt(model.Token.skipping_call_id))
           unreachable;
         self.cur = t;
-        if (builtin.mode == .Debug) {
-          std.debug.print("  << {s}\n", .{@tagName(self.cur)});
-        }
         return true;
       }
     })(self.logger(), self.lexer.walker.posFrom(self.cur_start));
@@ -434,20 +420,6 @@ pub const Parser = struct {
     var lvl = self.curLevel();
     var parent = &self.levels.items[self.levels.items.len - 2];
     const lvl_node = try lvl.finalize(self);
-    if (builtin.mode == .Debug) {
-      if (@enumToInt(self.cur) >= @enumToInt(model.Token.skipping_call_id)) {
-        std.debug.print("skipping_call_id({}): pushing {s} into command {s}\n",
-          .{
-            @enumToInt(self.cur) - @enumToInt(model.Token.skipping_call_id) + 1,
-            @tagName(lvl_node.data), @tagName(parent.command.info),
-          });
-      } else {
-        std.debug.print("{s}: pushing {s} into command {s}\n", .{
-            @tagName(self.cur), @tagName(lvl_node.data),
-            @tagName(parent.command.info),
-          });
-      }
-    }
     try parent.command.pushArg(lvl_node);
     _ = self.levels.pop();
   }
@@ -458,13 +430,6 @@ pub const Parser = struct {
 
   fn doParse(self: *Parser, implicit_fullast: bool) !*model.Node {
     while (true) {
-      std.debug.print("parse step. state={s}, level stack =\n",
-        .{@tagName(self.state)});
-      for (self.levels.items) |lvl| {
-        std.debug.print("  level(command = {s}, special = {})\n",
-          .{@tagName(lvl.command.info), lvl.syntax_proc != null});
-      }
-
       switch (self.state) {
         .start => {
           while (self.cur == .space or self.cur == .indent) self.advance();
@@ -570,11 +535,8 @@ pub const Parser = struct {
               try self.curLevel().command.shift(
                 self.intpr(), self.cur_start);
             },
-            else => {
-              std.debug.print(
-                "unexpected token in default: {s}\n", .{@tagName(self.cur)});
-              unreachable;
-            }
+            else => std.debug.panic(
+                "unexpected token in default: {s}\n", .{@tagName(self.cur)}),
           }
         },
         .textual => {
@@ -642,14 +604,10 @@ pub const Parser = struct {
                 if (self.cur != .space) break;
               }
             } else {
-              var node = (try self.intpr().node_gen.literal(pos, .{
+              const node = (try self.intpr().node_gen.literal(pos, .{
                 .kind = if (non_space_len > 0) .text else .space,
                 .content = content.items
               })).node();
-              std.debug.print("  push literal (kind={s}): \"{}\"\n", .{
-                  @tagName(node.data.literal.kind),
-                  std.zig.fmtEscapes(content.items),
-                });
               // dangling space will be postponed for the case of a following,
               // swallowing command that ends the current level.
               if (non_space_len > 0) try lvl.append(self.intpr(), node)
@@ -692,7 +650,6 @@ pub const Parser = struct {
                 self.intpr().resolveChain(target, .{.kind = .intermediate}));
               switch (ctx) {
                 .known => |call_context| {
-                  std.debug.print("calling something!\n", .{});
                   try lvl.command.startResolvedCall(self.intpr(),
                     call_context.target, call_context.ns,
                     call_context.signature);
@@ -721,8 +678,6 @@ pub const Parser = struct {
               try lvl.append(self.intpr(), lvl.command.info.unknown);
               self.state = if (self.curLevel().syntax_proc != null) .special
                            else .default;
-              std.debug.print("state reset after command, now {s}\n",
-                .{@tagName(self.state)});
             }
           }
         },
@@ -740,15 +695,12 @@ pub const Parser = struct {
         },
         .after_blocks_start => {
           var pb_exists = PrimaryBlockExists.unknown;
-          std.debug.print("after_blocks_start: processing header…\n", .{});
           if (try self.processBlockHeader(&pb_exists)) {
-            std.debug.print("  … swallowing.\n", .{});
             self.state =
               if (self.curLevel().syntax_proc != null) .special else .default;
           } else {
             while (self.cur == .space or self.cur == .indent) self.advance();
             if (self.cur == .block_name_sep) {
-              std.debug.print("  … no primary block.\n", .{});
               switch (pb_exists) {
                 .unknown => {},
                 .maybe => {
@@ -759,7 +711,6 @@ pub const Parser = struct {
               }
               self.state = .block_name;
             } else {
-              std.debug.print("  … primary block.\n", .{});
               if (pb_exists == .unknown) {
                 const lvl = self.curLevel();
                 // neither explicit nor implicit block config. fullast is thus
@@ -771,10 +722,8 @@ pub const Parser = struct {
                            else .default;
             }
           }
-          std.debug.print("  … state is now {s}\n", .{@tagName(self.state)});
         },
         .block_name => {
-          std.debug.assert(self.cur == .block_name_sep);
           while (true) {
             self.advance();
             if (self.cur != .space) break;
@@ -855,11 +804,8 @@ pub const Parser = struct {
               self.state = .default;
               continue;
             },
-            else => {
-              std.debug.print("unexpected token in special: {s}\n",
-                .{@tagName(self.cur)});
-              unreachable;
-            }
+            else => std.debug.panic("unexpected token in special: {s}\n",
+                .{@tagName(self.cur)}),
           };
           switch (result) {
             .none => self.advance(),
@@ -1088,8 +1034,6 @@ pub const Parser = struct {
     const parent = self.curLevel();
     const check_swallow = if (self.cur == .diamond_open) blk: {
       try self.readBlockConfig(&self.config_buffer, self.allocator());
-      std.debug.print("block header has map length of {}\n",
-        .{self.config_buffer.map.len});
       const pos = self.intpr().input.at(self.cur_start);
       if (pb_exists) |ind| {
         parent.command.pushPrimary(pos, true);

@@ -1228,8 +1228,6 @@ pub const Lexer = struct {
   }
 
   pub fn enableSpecialSyntax(l: *Lexer, comments_include_newline: bool) void {
-    std.debug.print(
-      "  lex: enabling special syntax at state {s}\n", .{@tagName(l.state)});
     l.level.special = if (comments_include_newline) .standard_comments
                       else .comments_without_newline;
     std.debug.assert(l.state == .check_indent);

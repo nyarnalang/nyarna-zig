@@ -6,15 +6,16 @@
   "configurations": [
     {
       "name": "(lldb) Launch",
-      "type": "cppdbg",
+      "type": "lldb",
       "request": "launch",
-      "program": "${workspaceFolder}/lex_test",
-      "args": ["/Users/flyx/.local/zig/zig"],
+      "program": "${workspaceFolder}/interpret_test",
+      "args": ["/Users/flyx/.nix-profile/bin/zig"],
       "stopAtEntry": false,
       "cwd": "${workspaceFolder}",
       "environment": [],
       "externalConsole": false,
-      "MIMode": "lldb"
+      "MIMode": "lldb",
+      "targetArchitecture": "aarch64"
     }
   ]
 }

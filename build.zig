@@ -1,12 +1,20 @@
 const std = @import("std");
 const Builder = std.build.Builder;
 
+fn testEmitOption(emit_bin: bool, name: []const u8)
+    std.build.LibExeObjStep.EmitOption {
+  return if (!emit_bin) std.build.LibExeObjStep.EmitOption.default else
+    std.build.LibExeObjStep.EmitOption{.emit_to = name};
+}
+
 pub fn build(b: *Builder) !void {
   // TODO: use these constants
   //const mode = b.standardReleaseOptions();
   //const target = b.standardTargetOptions(.{});
   const test_filter =
     b.option([]const u8, "test-filter", "filters tests when testing");
+  const emit_bin = b.option(bool, "emit_bin", "emit binaries for tests")
+    orelse false;
 
   var ehgen_exe = b.addExecutable("ehgen", "build/gen_errorhandler.zig");
   ehgen_exe.main_pkg_path = ".";
@@ -46,6 +54,7 @@ pub fn build(b: *Builder) !void {
   lex_test.addPackage(nyarna_pkg);
   lex_test.addPackage(testing_pkg);
   lex_test.setFilter(test_filter);
+  lex_test.emit_bin = testEmitOption(emit_bin, "lex_test");
 
   var lex_test_step = b.step("lexTest", "Run lexer tests");
   lex_test_step.dependOn(&lex_test.step);
@@ -55,6 +64,7 @@ pub fn build(b: *Builder) !void {
   parse_test.step.dependOn(&ehgen_cmd.step);
   parse_test.addPackage(testing_pkg);
   parse_test.setFilter(test_filter);
+  parse_test.emit_bin = testEmitOption(emit_bin, "parse_test");
 
   var parse_test_step = b.step("parseTest", "Run parser tests");
   parse_test_step.dependOn(&parse_test.step);
@@ -64,6 +74,7 @@ pub fn build(b: *Builder) !void {
   interpret_test.step.dependOn(&ehgen_cmd.step);
   interpret_test.addPackage(testing_pkg);
   interpret_test.setFilter(test_filter);
+  interpret_test.emit_bin = testEmitOption(emit_bin, "interpret_test");
 
   var interpret_test_step = b.step("interpretTest", "Run interpreter tests");
   interpret_test_step.dependOn(&interpret_test.step);
@@ -72,6 +83,7 @@ pub fn build(b: *Builder) !void {
   type_test.step.dependOn(&ehgen_cmd.step);
   type_test.addPackage(nyarna_pkg);
   type_test.setFilter(test_filter);
+  type_test.emit_bin = testEmitOption(emit_bin, "type_test");
 
   var type_test_step = b.step("typeTest", "Run type tests");
   type_test_step.dependOn(&type_test.step);
@@ -82,6 +94,7 @@ pub fn build(b: *Builder) !void {
   parse_test_orig.addPackage(nyarna_pkg);
   parse_test_orig.addPackage(errors_pkg);
   parse_test_orig.setFilter(test_filter);
+  parse_test_orig.emit_bin = testEmitOption(emit_bin, "parse_test_orig");
 
   var parse_test_orig_step =
     b.step("parseTestOrig", "Run original parser tests");

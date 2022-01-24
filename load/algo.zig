@@ -130,7 +130,8 @@ pub const DeclareResolution = struct {
           .gen_paragraphs => |*gp| try self.createStructural(gp),
           .gen_record => |*gr| try self.createInstantiated(gr),
           .gen_textual => unreachable,
-          else => {}
+          .funcgen => {},
+          else => {},
         }
       }
 
@@ -158,6 +159,7 @@ pub const DeclareResolution = struct {
       // function definitions. TODO.
 
       // finally, generate symbols for all entities
+      const ns_data = self.intpr.namespace(self.ns);
       for (defs) |def| {
         const expr = try self.intpr.interpret(def.content);
         const value = try self.intpr.ctx.evaluator().evaluate(expr);
@@ -172,7 +174,7 @@ pub const DeclareResolution = struct {
             else => unreachable,
           }
         };
-        // TODO: register sym
+        _ = try ns_data.tryRegister(self.intpr, sym);
       }
     }
   }

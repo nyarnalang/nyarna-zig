@@ -41,6 +41,33 @@ pub const Stage = struct {
   resolve: ?*graph.ResolutionContext = null,
 };
 
+pub const Namespace = struct {
+  pub const Mark = usize;
+
+  data: std.StringArrayHashMapUnmanaged(*model.Symbol) = .{},
+
+  pub fn tryRegister(self: *Namespace, intpr: *Interpreter, sym: *model.Symbol)
+      !bool {
+    const res = try self.data.getOrPut(intpr.allocator(), sym.name);
+    if (res.found_existing) {
+      intpr.ctx.logger.DuplicateSymbolName(
+        sym.name, sym.defined_at, res.value_ptr.*.defined_at);
+      return false;
+    } else {
+      res.value_ptr.* = sym;
+      return true;
+    }
+  }
+
+  pub fn mark(self: *Namespace) Mark {
+    return self.data.count();
+  }
+
+  pub fn reset(self: *Namespace, state: Mark) void {
+    self.data.shrinkRetainingCapacity(state);
+  }
+};
+
 /// The Interpreter is part of the process to read in a single file or stream.
 /// It provides both the functionality of interpretation, i.e. transformation
 /// of AST nodes to expressions, and context data for the lexer and parser.
@@ -69,8 +96,7 @@ pub const Interpreter = struct {
   /// with namespace index and target name. Since namespaces are never deleted,
   // it will still try to find its target symbol in the same namespace when
   /// delayed resolution is triggered.
-  namespaces:
-    std.ArrayListUnmanaged(std.StringArrayHashMapUnmanaged(*model.Symbol)),
+  namespaces: std.ArrayListUnmanaged(Namespace),
   /// The local storage of the interpreter where all data will be allocated that
   /// will be discarded when the interpreter finishes. This includes primarily
   /// the AST nodes which will be interpreted into expressions during
@@ -127,18 +153,18 @@ pub const Interpreter = struct {
     try self.command_characters.put(
       self.allocator(), character, @intCast(u15, index));
     try self.namespaces.append(self.allocator(), .{});
-    //const ns = &self.namespaces.items[index]; TODO: do we need this?
     // intrinsic symbols of every namespace.
-    try self.importModuleSyms(self.ctx.data.intrinsics, index);
+    try self.importModuleSyms(self.ctx.data.intrinsics, @intCast(u15, index));
+  }
+
+  pub inline fn namespace(self: *Interpreter, ns: u15) *Namespace {
+    return &self.namespaces.items[ns];
   }
 
   pub fn importModuleSyms(self: *Interpreter, module: *const model.Module,
-                          ns_index: usize) !void {
-    const ns = &self.namespaces.items[ns_index];
-    for (module.symbols) |sym| {
-      const name = sym.name;
-      try ns.put(self.allocator(), name, sym);
-    }
+                          ns_index: u15) !void {
+    const ns = self.namespace(ns_index);
+    for (module.symbols) |sym| _ = try ns.tryRegister(self, sym);
   }
 
   pub fn removeNamespace(self: *Interpreter, character: u21) void {
@@ -572,20 +598,11 @@ pub const Interpreter = struct {
       index += 1;
     }
 
-    var num_added_symbols: usize = 0;
     const ns = &self.namespaces.items[func.params_ns];
-    for (params.variables) |v| {
-      const res = try ns.getOrPut(self.allocator(), v.sym().name);
-      if (res.found_existing) {
-        self.ctx.logger.DuplicateSymbolName(
-          v.sym().name, v.sym().defined_at, res.value_ptr.*.defined_at);
-      } else {
-        res.value_ptr.* = v.sym();
-        num_added_symbols += 1;
-      }
-    }
-    defer ns.shrinkRetainingCapacity(ns.count() - num_added_symbols);
+    const mark = ns.mark();
+    defer ns.reset(mark);
 
+    for (params.variables) |v| _ = try ns.tryRegister(self, v.sym());
     const body_expr =
       (try self.tryInterpret(func.body, stage)) orelse return null;
     const ret_type = if (func.returns) |rnode| blk: {
@@ -657,11 +674,10 @@ pub const Interpreter = struct {
   }
   fn tryInterpretURef(self: *Interpreter, us: *model.Node.UnresolvedSymref,
                       stage: Stage) nyarna.Error!?*model.Expression {
-    const ns = us.ns;
-    const syms = &self.namespaces.items[ns];
-    if (syms.get(us.name)) |sym| {
+    const ns = self.namespace(us.ns);
+    if (ns.data.get(us.name)) |sym| {
       const input = us.node();
-      input.data = .{.resolved_symref = .{.ns = ns, .sym = sym}};
+      input.data = .{.resolved_symref = .{.ns = us.ns, .sym = sym}};
       return self.tryInterpret(input, stage);
     } else switch (stage.kind) {
       .intermediate => {},
@@ -935,7 +951,7 @@ pub const Interpreter = struct {
 
   pub fn resolveSymbol(self: *Interpreter, pos: model.Position, ns: u15,
                        name: []const u8) !*model.Node {
-    var syms = &self.namespaces.items[ns];
+    var syms = &self.namespaces.items[ns].data;
     var ret = try self.allocator().create(model.Node);
     ret.* = .{
       .pos = pos,

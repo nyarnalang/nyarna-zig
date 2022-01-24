@@ -173,6 +173,7 @@ pub fn GraphProcessor(comptime Graph: type) type {
         }
 
         if (v.lowlink == v.assigned_index.?) {
+          const start_index = self.first_unsorted;
           while (true) {
             const w = self.stack[self.stack_top - 1];
             self.stack_top -= 1;
@@ -187,7 +188,7 @@ pub fn GraphProcessor(comptime Graph: type) type {
             self.first_unsorted += 1;
             if (w == v) break;
           }
-          try self.components.append(self.first_unsorted);
+          try self.components.append(start_index);
         }
       }
     };

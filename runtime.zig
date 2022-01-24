@@ -113,7 +113,6 @@ pub const Evaluator = struct {
     const target = try self.evaluate(call.target);
     switch (target.data) {
       .funcref => |fr| {
-        std.debug.print("evaluateCall => {s}\n", .{fr.func.name});
         switch (fr.func.data) {
           .ext => |*ef| {
             const target_impl =
