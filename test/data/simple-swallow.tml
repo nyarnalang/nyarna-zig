@@ -2,29 +2,29 @@
 --- input
 \if(true):>
 foo
---- ast
-+ROOT "standalone"
-  >CONTENT
-  +CONVERT
-    =TYPE Raw
-    >CONTENT
-    +CALL
-      +TARGET
-        +FUNC
-          =NAME "if"
-        -FUNC
-      -TARGET
-      +PROTO "condition"
-        =ENUM Boolean "true"
-      -PROTO
-      +PROTO "then"
-        =RAW Raw "foo"
-      -PROTO
-      +PROTO "else"
-        =NONE
-      -PROTO
-    -CALL
-  -CONVERT
--ROOT
+--- rawast
++RCALL
+  =FUNCREF .std.intrinsic.if
+  >ARG condition
+  +AST
+    =LIT text "true"
+  -AST
+  >ARG then
+  +AST
+    =LIT text "foo"
+  -AST
+  >ARG else
+  +AST
+    =VOID
+  -AST
+-RCALL
+--- expr
++BRANCHES
+  =TEXT literal "true"
+  >BRANCH 0
+  =VOID
+  >BRANCH 1
+  =TEXT literal "foo"
+-BRANCHES
 --- document
 =RAW Raw "foo"

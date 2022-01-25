@@ -24,7 +24,6 @@ fn genTests(dir: *std.fs.Dir, sets: []TestSet) !void {
     "auto-paragraphs.tml", // missing: intrinsic funcs
     "delayed-method-resolution.tml", // missing: intrinsic funcs
     "doc-param.tml", // missing: document parameters
-    "simple-swallow.tml", // missing: if expression
     "indirect-recursion.tml", // missing: declare
     "integer-fragment.tml", // missing: intrinsic funcs, module kinds
     "simple-variables.tml", // missing: variable decls
