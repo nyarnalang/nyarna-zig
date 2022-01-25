@@ -261,9 +261,9 @@ pub const Locator = struct {
 };
 
 pub const BlockConfig = struct {
-  /// Describes changes in command characters. either .from or .to may be 0,
-  /// but not both. If .from is 0, .to gets to be a new command character
-  /// with an empty namespace.
+  /// Describes changes in command characters. Each .from and .to may be 0.
+  /// If both are 0, all command characters will be disabled.
+  /// If .from is 0, .to gets to be a new command character with an empty ns.
   /// If .to is 0, .from is to be a command character that gets disabled.
   /// If neither is 0, the command character .from will be disabled and .to
   /// will take its place, referring to .from's namespace.

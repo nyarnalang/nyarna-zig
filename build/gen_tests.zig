@@ -26,7 +26,6 @@ fn genTests(dir: *std.fs.Dir, sets: []TestSet) !void {
     "doc-param.tml", // missing: document parameters
     "hello-world.tml", // missing: intrinsic funcs
     "simple-swallow.tml", // missing: if expression
-    "parameter-block-config.tml", // missing: default block config for params
     "indirect-recursion.tml", // missing: declare
     "integer-fragment.tml", // missing: intrinsic funcs, module kinds
     "simple-variables.tml", // missing: variable decls

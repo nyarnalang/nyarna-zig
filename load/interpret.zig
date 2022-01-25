@@ -90,6 +90,9 @@ pub const Interpreter = struct {
   /// character; the namespace mapping is relevant later for the interpreter.
   /// The values are indexes into the namespaces field.
   command_characters: std.hash_map.AutoHashMapUnmanaged(u21, u15),
+  /// Used when disabling all command characters. Will be swapped with
+  /// command_characters until the block disabling the command characters ends.
+  stored_command_characters: std.hash_map.AutoHashMapUnmanaged(u21, u15) = .{},
   /// Internal namespaces in the source file (see 6.1).
   /// A namespace will not be deleted when it goes out of scope, so that we do
   /// not need to apply special care for delayed resolution of symrefs:
@@ -1286,12 +1289,17 @@ pub const Interpreter = struct {
         if (try self.poisonIfNotCompat(input.pos, actual_type, t)) |expr| {
           return expr;
         }
+        // TODO: properly handle paragraph types
+        var failed_some = false;
+        for (con.items) |item| {
+          if (try self.interpretWithTargetScalar(item, t, stage)) |expr| {
+            item.data = .{.expression = expr};
+          } else failed_some = true;
+        }
+        if (failed_some) return null;
         const exprs = try self.ctx.global().alloc(
           *model.Expression, con.items.len);
-        // TODO: properly handle paragraph types
-        for (con.items) |item, i| {
-          exprs[i] = (try self.interpretWithTargetScalar(item, t, stage)).?;
-        }
+        for (con.items) |item, i| exprs[i] = item.data.expression;
         const expr = try self.ctx.global().create(model.Expression);
         expr.* = .{
           .pos = input.pos,

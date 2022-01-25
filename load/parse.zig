@@ -867,6 +867,7 @@ pub const Parser = struct {
       .map = undefined,
     };
     var first = true;
+    var recover = false;
     while (self.cur != .diamond_close and self.cur != .end_source) {
       while (true) {
         self.advance();
@@ -897,7 +898,7 @@ pub const Parser = struct {
           break :blk .unknown;
         },
       };
-      var recover = while (self.getNext()) {
+      recover = while (self.getNext()) {
         if (self.cur != .space) break false;
       } else true;
       if (!recover) consume_next: {
@@ -974,6 +975,15 @@ pub const Parser = struct {
                     .pos = self.lexer.walker.posFrom(start),
                     .from = self.lexer.code_point, .to = 0,
                   }),
+              .diamond_close, .comma => {
+                into.off_comment = self.lexer.walker.posFrom(start);
+                into.off_colon = self.lexer.walker.posFrom(start);
+                try map_list.append(.{
+                  .pos = self.lexer.walker.posFrom(start),
+                  .from = 0, .to = 0,
+                });
+                break :consume_next;
+              },
               else => {
                 self.logger().ExpectedXGotY(
                   self.lexer.walker.posFrom(self.cur_start),
@@ -1001,20 +1011,22 @@ pub const Parser = struct {
         }
         while (!self.getNext()) {}
       }
-      while (self.cur != .comma and self.cur != .diamond_close and
-             self.cur != .end_source) : (while (!self.getNext()) {}) {
-        if (self.cur != .space and !recover) {
+      if (!recover) while (self.cur != .comma and self.cur != .diamond_close and
+          self.cur != .end_source) : (while (!self.getNext()) {}) {
+        if (self.cur != .space) {
           self.logger().ExpectedXGotY(self.lexer.walker.posFrom(self.cur_start),
               &[_]errors.WrongItemError.ItemDescr{
                 .{.character = ','}, .{.character = '>'}
               }, .{.token = self.cur});
           recover = true;
+          break;
         }
-      }
+      };
+      if (recover) break;
     }
     if (self.cur == .diamond_close) {
       self.advance();
-    } else {
+    } else if (!recover) {
       self.logger().ExpectedXGotY(self.lexer.walker.posFrom(self.cur_start),
         &[_]errors.WrongItemError.ItemDescr{.{.token = .diamond_close}},
         .{.token = self.cur});
@@ -1251,15 +1263,22 @@ pub const Parser = struct {
       // establish all new namespaces
       for (config.map) |mapping, i| {
         if (resolved_indexes[i] == ns_mapping_no_from) {
-          std.debug.assert(mapping.to != 0);
-          if (self.intpr().command_characters.get(mapping.to)) |_| {
+          if (mapping.to == 0) {
+            std.mem.swap(std.hash_map.AutoHashMapUnmanaged(u21, u15),
+              &self.intpr().command_characters,
+              &self.intpr().stored_command_characters);
+            try self.ns_mapping_stack.append(
+              self.allocator(), ns_mapping_succeeded);
+          } else if (self.intpr().command_characters.get(mapping.to)) |_| {
             // this is not an error, but we still record it as 'failed' so
             // that we know when reversing this block config, nothing needs to
             // be done.
-            try self.ns_mapping_stack.append(self.allocator(), ns_mapping_failed);
+            try self.ns_mapping_stack.append(
+              self.allocator(), ns_mapping_failed);
           } else {
             try self.intpr().addNamespace(mapping.to);
-            try self.ns_mapping_stack.append(self.allocator(), ns_mapping_succeeded);
+            try self.ns_mapping_stack.append(
+              self.allocator(), ns_mapping_succeeded);
           }
         }
       }
@@ -1289,7 +1308,7 @@ pub const Parser = struct {
       var i = config.map.len - 1;
       while (true) : (i = i - 1) {
         const mapping = &config.map[i];
-        if (mapping.from == 0) {
+        if (mapping.from == 0 and mapping.to != 0) {
           if (self.ns_mapping_stack.pop() == ns_mapping_succeeded) {
             self.intpr().removeNamespace(mapping.to);
           }
@@ -1334,6 +1353,12 @@ pub const Parser = struct {
                 self.allocator(), mapping.from, @intCast(u15, ns_index))
                 catch unreachable;
             }
+          }
+        } else if (mapping.to == 0) {
+          if (self.ns_mapping_stack.pop() == ns_mapping_succeeded) {
+            std.mem.swap(std.hash_map.AutoHashMapUnmanaged(u21, u15),
+              &self.intpr().command_characters,
+              &self.intpr().stored_command_characters);
           }
         }
         if (i == 0) break;
