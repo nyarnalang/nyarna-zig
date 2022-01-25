@@ -2,20 +2,18 @@
 --- input
 \declare:
   hello = \func:
-    who : \Raw;
+    who : \Raw
   :body:
     Hello, \who!
   \end(func)
 \end(declare)
+
 \hello(World)
---- ast
+--- expr
 +CALL
-  +TARGET
-    =SYMREF .doc.hello
-  -TARGET
-  +PROTO "who"
-    =LIT TEXT "World"
-  -PROTO
+  =FUNCREF .doc.document.hello
+  >ARG who
+  =TEXT raw "World"
 -CALL
 --- document
 =RAW Raw "Hello, World!"

@@ -143,12 +143,17 @@ pub const Parser = struct {
           level.dangling_space = null;
         }
         const res = if (level.fullast) item else switch (item.data) {
-          .literal, .unresolved_call, .unresolved_symref, .expression,
-          .void => item,
+          .literal, .unresolved_call, .unresolved_symref, .expression, .void =>
+            item,
           else =>
             if (try ip.tryInterpret(item, .{.kind = .intermediate})) |expr|
               try ip.node_gen.expression(expr) else item,
         };
+        switch (res.data) {
+          .void => return,
+          .expression => |expr| if (expr.data == .void) return,
+          else => {}
+        }
         try level.nodes.append(ip.allocator(), res);
       }
     }
