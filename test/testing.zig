@@ -457,15 +457,15 @@ fn AstEmitter(Handler: anytype) type {
       }
     }
 
-    fn processType(self: *Self, t: model.Type) !void {
+    fn processType(self: *Self, t: model.Type) anyerror!void {
       switch (t) {
         .intrinsic => |i| try self.emitLine("=TYPE {s}", .{@tagName(i)}),
         .structural => unreachable,
         .instantiated => |i| {
-          if (i.name) |sym| try self.emitLine("=TYPE {s} \"{s}\"",
-            .{@tagName(i.data), sym.name})
+          if (i.name) |sym| try self.emitLine("=TYPE {s} {s}.{s}",
+            .{@tagName(i.data), sym.defined_at.source.locator, sym.name})
           else {
-            const tc = try self.pushWithKey("TYPE", "", @tagName(i.data));
+            const tc = try self.pushWithKey("TYPE", @tagName(i.data), null);
             switch (i.data) {
               .textual => |_| unreachable,
               .numeric => |_| unreachable,
@@ -475,7 +475,15 @@ fn AstEmitter(Handler: anytype) type {
                   try self.emitLine("=ITEM {s}", .{key});
                 }
               },
-              .record => |_| unreachable,
+              .record => |*rec| {
+                for (rec.constructor.sig.parameters) |*param| {
+                  const p = try self.pushWithKey("PARAM", param.name, null);
+                  try self.emitLine("=PARAM {s}", .{param.name});
+                  try self.processType(param.ptype);
+                  if (param.default) |default| try self.processExpr(default);
+                  try p.pop();
+                }
+              },
             }
             try tc.pop();
           }

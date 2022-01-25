@@ -233,8 +233,26 @@ pub const CallContext = union(enum) {
         return try chainIntoExpr(intpr, pos, ec.expr, ec.t, undefined,
           ec.field_chain.items);
       },
-      .type_ref => |_| {
-        unreachable; // TODO
+      .type_ref => |tref| {
+        const target_expr = try intpr.ctx.createValueExpr(
+          (try intpr.ctx.values.@"type"(pos, tref.*)).value());
+        switch (target_expr.expected_type) {
+          .intrinsic => {},
+          .structural => |strct| switch (strct.*) {
+            .callable => |*callable| return CallContext{
+              .known = .{
+                .target = target_expr,
+                .ns = undefined,
+                .signature = callable.sig,
+                .first_arg = null,
+              },
+            },
+            else => {},
+          },
+          .instantiated => {},
+        }
+        intpr.ctx.logger.CantBeCalled(target_expr.pos);
+        return CallContext.poison;
       },
       .proto_ref => |pref| {
         const target_expr = try intpr.ctx.createValueExpr(

@@ -167,13 +167,23 @@ pub const DeclareResolution = struct {
         sym.* = .{
           .defined_at = def.name.node().pos,
           .name = def.name.content,
-          .data = switch (value.data) {
-            .@"type" => |t| .{.@"type" = t.t},
-            .@"funcref" => unreachable,
-            .poison => unreachable,
-            else => unreachable,
-          }
+          .data = undefined,
         };
+        switch (value.data) {
+          .@"type" => |t| {
+            sym.data = .{.@"type" = t.t};
+            switch (t.t) {
+              .instantiated => |inst| inst.name = sym,
+              else => {},
+            }
+          },
+          .@"funcref" => |f| {
+            sym.data = .{.func = f.func};
+            f.func.name = sym;
+          },
+          .poison => unreachable,
+          else => unreachable,
+        }
         _ = try ns_data.tryRegister(self.intpr, sym);
       }
     }

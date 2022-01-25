@@ -153,10 +153,17 @@ pub const Parser = struct {
       }
     }
 
-    fn finalizeParagraph(level: *ContentLevel, ip: *Interpreter) !*model.Node {
+    fn finalizeParagraph(level: *ContentLevel, ip: *Interpreter) !?*model.Node {
       return switch (level.nodes.items.len) {
-        0 => ip.node_gen.void(ip.input.at(level.start)),
-        1 => level.nodes.items[0],
+        0 => null,
+        1 => blk: {
+          const node = level.nodes.items[0];
+          break :blk switch (node.data) {
+            .void => null,
+            .expression => |expr| if (expr.data == .void) null else node,
+            else => node,
+          };
+        },
         else => (try ip.node_gen.concat(
           level.nodes.items[0].pos.span(last(level.nodes.items).*.pos),
           .{.items = level.nodes.items})).node(),
@@ -179,13 +186,16 @@ pub const Parser = struct {
         return try proc.finish(
           proc, p.intpr().input.between(level.start, p.cur_start));
       } else if (level.paragraphs.items.len == 0) {
-        return level.finalizeParagraph(p.intpr());
+        return (try level.finalizeParagraph(p.intpr())) orelse
+          try p.intpr().node_gen.void(p.intpr().input.at(level.start));
       } else {
         if (level.nodes.items.len > 0) {
-          try level.paragraphs.append(alloc, .{
-            .content = try level.finalizeParagraph(p.intpr()),
-            .lf_after = 0,
-          });
+          if (try level.finalizeParagraph(p.intpr())) |content| {
+            try level.paragraphs.append(alloc, .{
+              .content = content,
+              .lf_after = 0,
+            });
+          }
         }
         return (try p.intpr().node_gen.paras(
           level.paragraphs.items[0].content.pos.span(
@@ -197,10 +207,12 @@ pub const Parser = struct {
     fn pushParagraph(level: *ContentLevel, ip: *Interpreter, lf_after: usize)
         !void {
       if (level.nodes.items.len > 0) {
-        try level.paragraphs.append(ip.allocator(), .{
-          .content = try level.finalizeParagraph(ip),
-          .lf_after = lf_after
-        });
+        if (try level.finalizeParagraph(ip)) |content| {
+          try level.paragraphs.append(ip.allocator(), .{
+            .content = content,
+            .lf_after = lf_after
+          });
+        }
         level.nodes = .{};
       }
     }

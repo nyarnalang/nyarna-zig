@@ -113,22 +113,15 @@
 -PARA
 --- expr
 +CALL
-  +TARGET
-    =SYMREF .doc.foo
-  -TARGET
-  +PROTO "data"
-    +CALL
-      +TARGET
-        =SYMREF .doc.Data
-      -TARGET
-      +PROTO "a"
-        =LIT TEXT "x"
-      -PROTO
-      +PROTO "b"
-        =LIT TEXT "y"
-      -PROTO
-    -CALL
-  -PROTO
+  =FUNCREF .doc.document.foo
+  >ARG data
+  +CALL
+    =TYPE record .doc.document.Data
+    >ARG a
+    =TEXT raw "x"
+    >ARG b
+    =TEXT raw "y"
+  -CALL
 -CALL
 --- document
 =RAW Raw "(x, y)"

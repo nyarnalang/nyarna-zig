@@ -193,8 +193,7 @@ pub const Intrinsics = Provider.Wrapper(struct {
       }
     };
 
-    var defs = try intpr.allocator().alloc(*model.Node.Definition,
-      def_count);
+    var defs = try intpr.allocator().alloc(*model.Node.Definition, def_count);
     def_count = 0;
     for ([_]*model.Node{public, private}) |node| switch (node.data) {
       .void, .poison => {},

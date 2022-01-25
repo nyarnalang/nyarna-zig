@@ -937,10 +937,17 @@ pub const Interpreter = struct {
       .gen_textual => |*gt| self.tryGenTextual(gt, stage),
       .unresolved_call => |*uc| self.tryInterpretUCall(uc, stage),
       .unresolved_symref => |*us| self.tryInterpretURef(us, stage),
-      .void =>
-        try self.ctx.createValueExpr(try self.ctx.values.void(input.pos)),
-      .poison =>
-        try self.ctx.createValueExpr(try self.ctx.values.poison(input.pos)),
+      .void, .poison => {
+        const expr = try self.ctx.global().create(model.Expression);
+        expr.* = .{
+          .pos = input.pos,
+          .data = if (input.data == .void) .void else .poison,
+          .expected_type = .{
+            .intrinsic = if (input.data == .void) .void else .poison,
+          },
+        };
+        return expr;
+      },
     };
   }
 
