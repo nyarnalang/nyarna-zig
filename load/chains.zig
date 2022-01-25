@@ -150,6 +150,7 @@ pub const Resolver = struct {
             .t = v.t,
           },
         },
+        .poison => Resolution.poison,
       },
       else =>
         return if (try self.intpr.tryInterpret(chain, self.stage)) |expr|
@@ -177,7 +178,8 @@ pub const CallContext = union(enum) {
         .callable => |*callable| callable,
         else => null,
       },
-      .intrinsic, .instantiated => null,
+      .intrinsic => |intr| if (intr == .poison) return .poison else null,
+      .instantiated => null,
     } orelse {
       intpr.ctx.logger.CantBeCalled(start.pos);
       return .poison;
@@ -237,7 +239,7 @@ pub const CallContext = union(enum) {
         const target_expr = try intpr.ctx.createValueExpr(
           (try intpr.ctx.values.@"type"(pos, tref.*)).value());
         switch (target_expr.expected_type) {
-          .intrinsic => {},
+          .intrinsic => |intr| if (intr == .poison) return CallContext.poison,
           .structural => |strct| switch (strct.*) {
             .callable => |*callable| return CallContext{
               .known = .{

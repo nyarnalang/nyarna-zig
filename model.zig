@@ -668,6 +668,7 @@ pub const Symbol = struct {
     variable: Variable,
     @"type": Type,
     prototype: Prototype,
+    poison,
   };
 
   defined_at: Position,

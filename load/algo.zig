@@ -143,7 +143,8 @@ pub const DeclareResolution = struct {
         for (defs) |def| {
           switch (def.content.data) {
             .gen_concat, .gen_intersection, .gen_list, .gen_map, .gen_optional,
-            .gen_paragraphs, .gen_record => try tr.process(def.content),
+            .gen_paragraphs, .gen_record, .funcgen =>
+              try tr.process(def.content),
             else => {},
           }
         }
@@ -181,7 +182,7 @@ pub const DeclareResolution = struct {
             sym.data = .{.func = f.func};
             f.func.name = sym;
           },
-          .poison => unreachable,
+          .poison => sym.data = .poison,
           else => unreachable,
         }
         _ = try ns_data.tryRegister(self.intpr, sym);

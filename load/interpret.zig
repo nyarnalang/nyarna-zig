@@ -299,6 +299,8 @@ pub const Interpreter = struct {
         (try self.ctx.values.@"type"(ref.node().pos, t)).value()),
       .prototype => |pt| return self.ctx.createValueExpr(
         (try self.ctx.values.prototype(ref.node().pos, pt)).value()),
+      .poison => return self.ctx.createValueExpr(
+        try self.ctx.values.poison(ref.node().pos)),
     }
   }
 
@@ -1078,21 +1080,23 @@ pub const Interpreter = struct {
         return if (seen_unfinished) null else
           (try builder.finish()).resulting_type;
       },
-      .resolved_call => |rc| {
+      .resolved_call => |*rc| {
         if (rc.target.expected_type.structural.callable.sig.returns.is(
             .ast_node)) {
-          // call to keywords must be interpretable at this point.
-          if (try self.tryInterpret(
-              node, .{.kind = .keyword, .resolve = stage.resolve})) |expr| {
+          // this is a keyword call. tryInterpretCall will attempt to
+          // execute it.
+          if (try self.tryInterpretCall(rc, stage)) |expr| {
             node.data = .{.expression = expr};
             return expr.expected_type;
-          } else {
-            node.data = .poison;
-            return model.Type{.intrinsic = .poison};
           }
+          // tryInterpretCall *will* have either called the keyword or
+          // generated poison. The keyword may have returned an unresolvable
+          // node, on which we recurse.
+          std.debug.assert(node.data != .resolved_call);
+          return try self.probeType(node, stage);
         } else return rc.target.expected_type.structural.callable.sig.returns;
       },
-      .resolved_symref => |ref| {
+      .resolved_symref => |*ref| {
         const callable = switch (ref.sym.data) {
           .func => |f| f.callable,
           .variable => |v| return v.t,
@@ -1119,6 +1123,7 @@ pub const Interpreter = struct {
               self.ctx.types().constructors.prototypes.list.callable.typedef(),
             else => model.Type{.intrinsic = .prototype},
           }),
+          .poison => return model.Type{.intrinsic = .poison},
         };
         // references to keywords must not be used as standalone values.
         std.debug.assert(!callable.sig.returns.is(.ast_node));

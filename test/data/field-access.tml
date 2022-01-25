@@ -4,9 +4,7 @@
   Data = \Record:
     a, b : \Raw;
   \end(Record)
-\end(declare)
 
-\declare:
   foo = \func:
     data : \Data;
   :body:
@@ -35,20 +33,6 @@
           -LOC
         -RCALL
       -DEF
-    -AST
-    >ARG private
-    +AST
-      =VOID
-    -AST
-  -RCALL
--PARA
-+PARA
-  +RCALL
-    =FUNCREF .std.intrinsic.declare
-    >ARG namespace
-    =VOID
-    >ARG public
-    +AST
       +DEF foo
         +RCALL
           =FUNCREF .std.intrinsic.func
