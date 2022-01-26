@@ -56,7 +56,7 @@ const TypeResolver = struct {
             }
           }
         }
-        unreachable;
+        return graph.ResolutionContext.Result{.known = null};
       },
       else => unreachable,
     }
@@ -66,6 +66,103 @@ const TypeResolver = struct {
     const expr = (try self.dres.intpr.tryInterpret(node,
       .{.kind = .intermediate, .resolve = &self.ctx})) orelse return;
     node.data = .{.expression = expr};
+  }
+};
+
+const VariableContext = struct {
+  dres: *DeclareResolution,
+  ctx: graph.ResolutionContext,
+  vars: model.VariableContainer,
+
+  fn init(dres: *DeclareResolution, vars: model.VariableContainer)
+      VariableContext {
+    return .{
+      .dres = dres,
+      .vars = vars,
+      .ctx = .{
+        .resolveInSiblingDefinitions = resolveVar,
+        .ns = dres.ns,
+      },
+    };
+  }
+
+  fn resolveVar(ctx: *graph.ResolutionContext, item: *model.Node)
+      nyarna.Error!graph.ResolutionContext.Result {
+    const self = @fieldParentPtr(VariableContext, "ctx", ctx);
+    switch (item.data) {
+      .unresolved_symref => |*usym| {
+        for (self.vars) |v| {
+          if (std.mem.eql(u8, v.sym().name, usym.name)) {
+            return graph.ResolutionContext.Result{.variable = v};
+          }
+        }
+        return graph.ResolutionContext.Result{.known = null};
+      },
+      else => unreachable,
+    }
+  }
+};
+
+const FixpointContext = struct {
+  ctx: graph.ResolutionContext,
+  dres: *DeclareResolution,
+
+  fn init(dres: *DeclareResolution) FixpointContext {
+    return .{
+      .dres = dres,
+      .ctx = .{
+        .resolveInSiblingDefinitions = funcReturns,
+        .ns = dres.ns,
+      },
+    };
+  }
+
+  fn funcReturns(ctx: *graph.ResolutionContext, item: *model.Node)
+      nyarna.Error!graph.ResolutionContext.Result {
+    const self = @fieldParentPtr(TypeResolver, "ctx", ctx);
+    switch (item.data) {
+      .unresolved_call => |*ucall| {
+        const uref = &ucall.target.data.unresolved_symref; // TODO
+        for (self.dres.defs) |def| {
+          if (std.mem.eql(u8, def.name.content, uref.name)) {
+            switch (def.content.data) {
+              .gen_record => |*gr| return graph.ResolutionContext.Result{
+                .unfinished_function = .{.instantiated = gr.generated.?},
+              },
+              .funcgen => |*fgen| {
+                return graph.ResolutionContext.Result{
+                  .unfinished_function = fgen.cur_returns,
+                };
+              },
+              // types other than gen_record are guaranteed to have been
+              // constructed at this point since they can't contain default
+              // expressions which would reference sibling functions.
+              else => unreachable,
+            }
+          }
+        }
+        unreachable;
+      },
+      else => unreachable,
+    }
+  }
+
+  fn probe(fc: *FixpointContext, fgen: *model.Node.Funcgen) !bool {
+    const new_type = if (fgen.returns) |returns| blk: {
+      const expr = try fc.dres.intpr.interpret(returns);
+      const val = try fc.dres.intpr.ctx.evaluator().evaluate(expr);
+      switch (val.data) {
+        .poison => break :blk model.Type{.intrinsic = .poison},
+        .@"type" => |*tval| break :blk tval.t,
+        else => unreachable,
+      }
+    } else (try fc.dres.intpr.probeType(
+        fgen.body, .{.kind = .intermediate, .resolve = &fc.ctx})).?;
+    if (new_type.eql(fgen.cur_returns)) return false
+    else {
+      fgen.cur_returns = new_type;
+      return true;
+    }
   }
 };
 
@@ -101,6 +198,38 @@ pub const DeclareResolution = struct {
 
   inline fn createInstantiated(self: *DeclareResolution, gen: anytype) !void {
     gen.generated = try self.intpr.ctx.global().create(model.Type.Instantiated);
+  }
+
+  inline fn genSym(self: *DeclareResolution, name: *model.Node.Literal,
+            content: model.Symbol.Data) !*model.Symbol {
+    const sym = try self.intpr.ctx.global().create(model.Symbol);
+    sym.* = .{
+      .defined_at = name.node().pos,
+      .name = try self.intpr.ctx.global().dupe(u8, name.content),
+      .data = content,
+    };
+    return sym;
+  }
+
+  fn genSymFromValue(self: *DeclareResolution, name: *model.Node.Literal,
+                     value: *model.Value) !*model.Symbol {
+    switch (value.data) {
+      .@"type" => |tref| {
+        const sym = try self.genSym(name, .{.@"type" = tref.t});
+        switch (tref.t) {
+          .instantiated => |inst| inst.name = sym,
+          else => {},
+        }
+        return sym;
+      },
+      .funcref => |fref| {
+        const sym = try self.genSym(name, .{.func = fref.func});
+        fref.func.name = sym;
+        return sym;
+      },
+      .poison => return try self.genSym(name, .poison),
+      else => unreachable,
+    }
   }
 
   pub fn execute(self: *DeclareResolution) !void {
@@ -150,42 +279,122 @@ pub const DeclareResolution = struct {
         }
       }
 
-      // our types are now usable. based on those, do a fixpoint iteration to
-      // calculate the return types of all functions.
-      // TODO.
+      // our types are now usable. Now interpret function parameters and resolve
+      // symrefs to those parameters.
+      {
+        for (defs) |def| {
+          switch (def.content.data) {
+            .funcgen => |*fgen| {
+              if (fgen.params == .unresolved) {
+                if (!try self.intpr.tryInterpretFuncParams(
+                    fgen, .{.kind = .final})) {
+                  def.content.data = .poison;
+                  continue;
+                }
+              }
+              const vars = fgen.params.resolved.variables;
+              var vc = VariableContext.init(self, vars);
+              _ = try self.intpr.tryInterpretFuncBody(
+                fgen, vars, null,
+                .{.kind = .intermediate, .resolve = &vc.ctx});
+            },
+            else => {},
+          }
+        }
+      }
 
-      // establish model.Function values with fully resolved signatures. TODO.
+      // do a fixpoint iteration to calculate the return types of all functions.
+      // the cur_returns value of each Funcgen node is initially .every which
+      // is the starting point for the iteration.
+      {
+        var fc = FixpointContext.init(self);
 
-      // interpret function bodies and default expressions using the established
-      // function definitions. TODO.
-
-      // finally, generate symbols for all entities
-      const ns_data = self.intpr.namespace(self.ns);
-      for (defs) |def| {
-        const expr = try self.intpr.interpret(def.content);
-        const value = try self.intpr.ctx.evaluator().evaluate(expr);
-        const sym = try self.intpr.ctx.global().create(model.Symbol);
-        sym.* = .{
-          .defined_at = def.name.node().pos,
-          .name = def.name.content,
-          .data = undefined,
-        };
-        switch (value.data) {
-          .@"type" => |t| {
-            sym.data = .{.@"type" = t.t};
-            switch (t.t) {
-              .instantiated => |inst| inst.name = sym,
+        var changed = true;
+        // a maximum of 3 iterations is attempted:
+        //  * first one establishes return types based on resolvable content in
+        //    body.
+        //  * second one re-calculates base on the return types of other
+        //    functions.
+        //  * third one re-calculates again to propagate changes in return types
+        //    from single value to concat.
+        //  * there can't be any change afterwards since there is no change that
+        //    still has a fixpoint apart from transition from single-value to
+        //    concat.
+        // the typical worst-case – iterating against call graph order – is
+        // avoided since Tarjan ordered the component contents in order.
+        var iteration: u8 = 0;
+        while (changed and iteration <= 2) : (iteration += 1) {
+          changed = false;
+          for (defs) |def| {
+            switch (def.content.data) {
+              .funcgen => |*fgen| if (try fc.probe(fgen)) {
+                changed = true;
+              },
               else => {},
             }
-          },
-          .@"funcref" => |f| {
-            sym.data = .{.func = f.func};
-            f.func.name = sym;
-          },
-          .poison => sym.data = .poison,
-          else => unreachable,
+          }
         }
+        // check if anything changes, which is then an error
+        if (changed) for (defs) |def| {
+          switch (def.content.data) {
+            .funcgen => |*fgen| if (try fc.probe(fgen)) {
+              self.intpr.ctx.logger.FailedToCalculateReturnType(
+                def.content.pos);
+              def.content.data = .poison;
+            },
+            else => {},
+          }
+        };
+      }
+
+      // establish model.Function symbols with fully resolved signatures, and
+      // all other symbols that can be constructed by now.
+      const ns_data = self.intpr.namespace(self.ns);
+      for (defs) |def| {
+        switch (def.content.data) {
+          .funcgen => |*fgen| blk: {
+            const func = (try self.intpr.tryPregenFunc(
+              fgen, fgen.cur_returns, .{.kind = .final})) orelse {
+                def.content.data = .poison;
+                break :blk;
+              };
+            func.callable.sig.returns = fgen.cur_returns;
+            const sym = try self.genSym(def.name, .{.func = func});
+            func.name = sym;
+            _ = try ns_data.tryRegister(self.intpr, sym);
+            continue;
+          },
+          .poison => {},
+          .expression => |expr| {
+            const value = try self.intpr.ctx.evaluator().evaluate(expr);
+            _ = try ns_data.tryRegister(
+              self.intpr, try self.genSymFromValue(def.name, value));
+            continue;
+          },
+          else => continue,
+        }
+        // also establish poison symbols
+        const sym = try self.genSym(def.name, .poison);
         _ = try ns_data.tryRegister(self.intpr, sym);
+        def.content.data = .poison;
+      }
+
+      // interpret function bodies and generate symbols for records
+      for (defs) |def| {
+        switch (def.content.data) {
+          .gen_record => {
+            const expr = try self.intpr.interpret(def.content);
+            const value = try self.intpr.ctx.evaluator().evaluate(expr);
+            _ = try ns_data.tryRegister(self.intpr,
+              try self.genSymFromValue(def.name, value));
+          },
+          .funcgen => |*fgen| {
+            const func = &fgen.params.pregen.data.ny;
+            func.body = (try self.intpr.tryInterpretFuncBody(
+              fgen, func.variables, fgen.cur_returns, .{.kind = .final})).?;
+          },
+          else => {}
+        }
       }
     }
   }

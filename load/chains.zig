@@ -133,7 +133,7 @@ pub const Resolver = struct {
           .poison => return .poison,
         }
       },
-      .resolved_symref => |rs| return switch (rs.sym.data) {
+      .resolved_symref => |*rs| return switch (rs.sym.data) {
         .func => |func| Resolution{
           .func_ref = .{
             .ns = rs.ns,
@@ -152,12 +152,34 @@ pub const Resolver = struct {
         },
         .poison => Resolution.poison,
       },
-      else =>
-        return if (try self.intpr.tryInterpret(chain, self.stage)) |expr|
-          Resolution{.expr_chain = .{.expr = expr, .t = expr.expected_type}}
-        else @as(Resolution, if (self.stage.kind != .intermediate)
-          .poison else .failed),
+      .unresolved_symref => |*usym| {
+        if (self.stage.resolve) |r| {
+          switch (try r.probeSibling(self.intpr.allocator(), chain)) {
+            .variable => |v| {
+              chain.data = .{.resolved_symref = .{
+                .sym = v.sym(),
+                .ns = usym.ns,
+              }};
+              return Resolution{
+                .var_chain = .{
+                  .target = .{.variable = v, .pos = chain.pos, .ns = usym.ns},
+                  .field_chain = .{},
+                  .t = v.t,
+                },
+              };
+            },
+            .failed => return Resolution.poison,
+            else => return Resolution.failed,
+              // TODO: support chains for partially resolvable things.
+          }
+        }
+      },
+      else => {}
     }
+    return if (try self.intpr.tryInterpret(chain, self.stage)) |expr|
+      Resolution{.expr_chain = .{.expr = expr, .t = expr.expected_type}}
+    else @as(Resolution, if (self.stage.kind != .intermediate)
+      .poison else .failed);
   }
 };
 

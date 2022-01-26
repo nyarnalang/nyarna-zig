@@ -10,20 +10,18 @@ pub const ResolutionContext = struct {
   pub const Result = union(enum) {
     unfinished_function: model.Type,
     unfinished_type: model.Type,
+    variable: *model.Symbol.Variable,
     known: ?u21,
-    resolved, failed,
+    failed,
   };
   pub const StrippedResult = union(enum) {
     unfinished_function: model.Type,
     unfinished_type: model.Type,
-    known, resolved, failed,
+    variable: *model.Symbol.Variable,
+    known, failed,
   };
 
   /// must only be called on unresolved calls or symbol references. returns
-  ///   .resolved
-  ///     if the item has been modified (e.g. resolved to a symbol). The
-  ///     modified item is guaranteed to be of a kind for which a type can be
-  ///     calculated.
   ///   .unfinished_function
   ///     during type inference for calls that form cycles back to the currently
   ///     processed function body. Implies that the returned type should be used
@@ -41,6 +39,8 @@ pub const ResolutionContext = struct {
   ///     when building up a dependency graph between items in a \declare
   ///     command, it creates a dependency edge between the current node and the
   ///     node at the given index.
+  ///   .variable
+  ///     if the reference's name has been resolved to a variable.
   ///   .failed
   ///     when the referenced symbol is unknown altogether and the caller must
   ///     assume this reference cannot be resolved in future steps.
@@ -65,12 +65,12 @@ pub const ResolutionContext = struct {
     return switch (res) {
       .unfinished_function => |t| StrippedResult{.unfinished_function = t},
       .unfinished_type => |t| StrippedResult{.unfinished_type = t},
+      .variable => |v| StrippedResult{.variable = v},
       .known => |value| blk: {
         if (value) |index| try ctx.addDep(local, index);
         break :blk .known;
       },
       .failed => .failed,
-      .resolved => .resolved,
     };
   }
 };

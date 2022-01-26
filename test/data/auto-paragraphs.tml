@@ -7,7 +7,7 @@
 
   Section = \record:
     title: \Text
-    content: \paragraphs(\Paragraph, auto=true) {primary}:>
+    content: \paragraphs(auto=\Paragraph) {primary}:>
   \end(record)
 \end(declare)
 

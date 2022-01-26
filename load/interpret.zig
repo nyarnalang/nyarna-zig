@@ -571,12 +571,15 @@ pub const Interpreter = struct {
     return true;
   }
 
-  pub fn tryInterpretFunc(
-      self: *Interpreter, func: *model.Node.Funcgen, stage: Stage)
-      nyarna.Error!?*model.Function {
-    if (func.params == .unresolved)
-      if (!try self.tryInterpretFuncParams(func, stage))
-        return null;
+  pub fn tryPregenFunc(
+      self: *Interpreter, func: *model.Node.Funcgen, ret_type: model.Type,
+      stage: Stage) nyarna.Error!?*model.Function {
+    switch (func.params) {
+      .unresolved => if (!try self.tryInterpretFuncParams(func, stage))
+        return null,
+      .resolved => {},
+      .pregen => |pregen| return pregen,
+    }
     const params = &func.params.resolved;
 
     var finder = types.CallableReprFinder.init(self.ctx.types());
@@ -604,23 +607,7 @@ pub const Interpreter = struct {
       index += 1;
     }
 
-    const ns = &self.namespaces.items[func.params_ns];
-    const mark = ns.mark();
-    defer ns.reset(mark);
-
-    for (params.variables) |v| _ = try ns.tryRegister(self, v.sym());
-    const body_expr =
-      (try self.tryInterpret(func.body, stage)) orelse return null;
-    const ret_type = if (func.returns) |rnode| blk: {
-      const ret_val = try self.ctx.evaluator().evaluate(
-        (try self.associate(rnode, .{.intrinsic = .@"type"},
-          .{.kind = .assumed, .resolve = stage.resolve})).?);
-      if (ret_val.data == .poison) break :blk model.Type{.intrinsic = .poison};
-      break :blk ret_val.data.@"type".t;
-    } else body_expr.expected_type;
-
     const finder_res = try finder.finish(ret_type, false);
-
     var b = try types.SigBuilder.init(self.ctx, params.locations.len,
       ret_type, finder_res.needs_different_repr);
     for (params.locations) |loc| try b.push(loc.value);
@@ -634,11 +621,65 @@ pub const Interpreter = struct {
       .data = .{
         .ny = .{
           .variables = func.params.resolved.variables,
-          .body = body_expr,
+          .body = undefined,
         },
       },
     };
+    func.params = .{.pregen = ret};
     return ret;
+  }
+
+  pub fn tryInterpretFuncBody(self: *Interpreter, func: *model.Node.Funcgen,
+                              vars: model.VariableContainer,
+                              expected_type: ?model.Type, stage: Stage)
+      nyarna.Error!?*model.Expression {
+    switch (func.body.data) {
+      .expression => |expr| return expr,
+      else => {},
+    }
+    const ns = &self.namespaces.items[func.params_ns];
+    const mark = ns.mark();
+    defer ns.reset(mark);
+
+    for (vars) |v| _ = try ns.tryRegister(self, v.sym());
+    const res = (if (expected_type) |t|
+      (try self.associate(func.body, t, stage))
+    else try self.tryInterpret(func.body, stage))
+    orelse return null;
+    func.body.data = .{.expression = res};
+    return res;
+  }
+
+  pub fn tryInterpretFunc(
+      self: *Interpreter, func: *model.Node.Funcgen, stage: Stage)
+      nyarna.Error!?*model.Function {
+    if (func.returns) |rnode| {
+      const ret_val = try self.ctx.evaluator().evaluate(
+        (try self.associate(rnode, .{.intrinsic = .@"type"},
+          .{.kind = .assumed, .resolve = stage.resolve})).?);
+      const returns = if (ret_val.data == .poison)
+        model.Type{.intrinsic = .poison}
+      else ret_val.data.@"type".t;
+      const ret = (try self.tryPregenFunc(func, returns, stage))
+        orelse return null;
+      const ny = &ret.data.ny;
+      ny.body = (try self.tryInterpretFuncBody(
+        func, ny.variables, returns, stage)) orelse return null;
+      return ret;
+    } else {
+      const vars = switch (func.params) {
+        .unresolved => if (!try self.tryInterpretFuncParams(func, stage))
+          return null else func.params.resolved.variables,
+        .resolved => |*res| res.variables,
+        .pregen => |pregen| pregen.data.ny.variables,
+      };
+      const body_expr = (try self.tryInterpretFuncBody(func, vars, null, stage))
+        orelse return null;
+      const ret = (try self.tryPregenFunc(
+        func, body_expr.expected_type, stage)).?;
+      ret.data.ny.body = body_expr;
+      return ret;
+    }
   }
 
   fn tryInterpretUCall(self: *Interpreter, uc: *model.Node.UnresolvedCall,
@@ -717,7 +758,7 @@ pub const Interpreter = struct {
                 self.ctx.logger.UnknownSymbol(node.pos);
                 return TypeResult.failed;
               },
-              .resolved => continue, // with resolved node
+              .variable => |v| return TypeResult{.finished = v.t},
             } else return TypeResult.unavailable;
         break try self.ctx.evaluator().evaluate(expr);
       },
@@ -1133,6 +1174,17 @@ pub const Interpreter = struct {
         return callable.typedef();
       },
       .unresolved_call, .unresolved_symref => {
+        if (stage.resolve) |r| {
+          switch (try r.probeSibling(self.allocator(), node)) {
+            .unfinished_function => |t| return t,
+            .unfinished_type, .known => return null,
+            .failed => {
+              node.data = .poison;
+              return model.Type{.intrinsic = .poison};
+            },
+            .variable => |v| return v.t,
+          }
+        }
         if (stage.kind == .intermediate) return null;
         if (try self.tryInterpret(node, stage)) |expr| {
           node.data = .{.expression = expr};
@@ -1372,7 +1424,7 @@ pub const Interpreter = struct {
       }
       // TODO: semantic conversions here
       self.ctx.logger.ExpectedExprOfTypeXGotY(
-        node.pos, &[_]model.Type{t, expr.expected_type});
+        node.pos, &[_]model.Type{expr.expected_type, t});
       expr.data = .{.value = try self.ctx.values.poison(expr.pos)};
       break :blk expr;
     } else null;

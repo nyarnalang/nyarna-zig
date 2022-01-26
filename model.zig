@@ -525,18 +525,23 @@ pub const Node = struct {
       /// step-by-step within \declare.
       unresolved: *Node,
       /// the result of associating the original node with Concat(Location).
-      /// only used during \declare processing.
+      /// used when the params are fully resolvable but the body isn't yet.
       resolved: struct {
         locations: []LocRef,
         variables: VariableContainer,
       },
+      // Function has already been constructed, but body and proper return type
+      // have not been filled / interpreted yet.
+      pregen: *Function,
     },
     params_ns: u15,
     returns: ?*Node,
     body: *Node,
-    /// used during fixpoint operation for type inference.
+    /// used during fixpoint iteration for type inference.
     /// unused if `returns` is set.
-    cur_returns: Type = undefined,
+    cur_returns: Type = .{.intrinsic = .every},
+    /// used during fixpoint iteration.
+    partial: *Function = undefined,
 
     pub inline fn node(self: *@This()) *Node {
       return Node.parent(self);
@@ -631,7 +636,7 @@ pub const Function = struct {
     ext: External,
   };
 
-  callable: *const Type.Callable,
+  callable: *Type.Callable,
   /// if the function is named, this is the reference to the symbol naming the
   /// function.
   name: ?*Symbol,
