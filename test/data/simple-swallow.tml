@@ -20,7 +20,7 @@ foo
 -RCALL
 --- expr
 +BRANCHES
-  =TEXT literal "true"
+  =ENUM Boolean "true"
   >BRANCH 0
   =VOID
   >BRANCH 1

@@ -42,7 +42,7 @@
 -RCALL
 --- expr
 +BRANCHES
-  =TEXT literal "true"
+  =ENUM Boolean "true"
   >BRANCH 0
   =VOID
   >BRANCH 1
@@ -50,7 +50,7 @@
 -BRANCHES
 =TEXT literal "\n"
 +BRANCHES
-  =TEXT literal "false"
+  =ENUM Boolean "false"
   >BRANCH 0
   =TEXT literal "baz"
   >BRANCH 1

@@ -79,7 +79,7 @@
     -LOC
     +LOC schwurbl
       +TYPE
-        =SYMREF [0]Boolean
+        =SYMREF <intrinsic>.Boolean
       -TYPE
       =FLAGS {}:<syntax locations>:3>
     -LOC

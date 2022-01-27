@@ -32,7 +32,7 @@ const TypeResolver = struct {
     const self = @fieldParentPtr(TypeResolver, "ctx", ctx);
     switch (item.data) {
       .unresolved_call => {
-        self.dres.intpr.ctx.logger.UnfinishedCallAsTypeArg(item.pos);
+        self.dres.intpr.ctx.logger.UnfinishedCallInTypeArg(item.pos);
         return .failed;
       },
       .unresolved_symref => |*uref| {
@@ -63,42 +63,11 @@ const TypeResolver = struct {
   }
 
   fn process(self: *TypeResolver, node: *model.Node) !void {
-    const expr = (try self.dres.intpr.tryInterpret(node,
-      .{.kind = .intermediate, .resolve = &self.ctx})) orelse return;
-    node.data = .{.expression = expr};
-  }
-};
-
-const VariableContext = struct {
-  dres: *DeclareResolution,
-  ctx: graph.ResolutionContext,
-  vars: model.VariableContainer,
-
-  fn init(dres: *DeclareResolution, vars: model.VariableContainer)
-      VariableContext {
-    return .{
-      .dres = dres,
-      .vars = vars,
-      .ctx = .{
-        .resolveInSiblingDefinitions = resolveVar,
-        .ns = dres.ns,
-      },
-    };
-  }
-
-  fn resolveVar(ctx: *graph.ResolutionContext, item: *model.Node)
-      nyarna.Error!graph.ResolutionContext.Result {
-    const self = @fieldParentPtr(VariableContext, "ctx", ctx);
-    switch (item.data) {
-      .unresolved_symref => |*usym| {
-        for (self.vars) |v| {
-          if (std.mem.eql(u8, v.sym().name, usym.name)) {
-            return graph.ResolutionContext.Result{.variable = v};
-          }
-        }
-        return graph.ResolutionContext.Result{.known = null};
-      },
-      else => unreachable,
+    if (try self.dres.intpr.tryInterpret(node,
+        .{.kind = .final, .resolve = &self.ctx})) |expr| {
+      node.data = .{.expression = expr};
+    } else {
+      node.data = .poison;
     }
   }
 };
@@ -122,7 +91,8 @@ const FixpointContext = struct {
     const self = @fieldParentPtr(TypeResolver, "ctx", ctx);
     switch (item.data) {
       .unresolved_call => |*ucall| {
-        const uref = &ucall.target.data.unresolved_symref; // TODO
+        // TODO: make chains support partial resolution and use that here
+        const uref = &ucall.target.data.unresolved_symref;
         for (self.dres.defs) |def| {
           if (std.mem.eql(u8, def.name.content, uref.name)) {
             switch (def.content.data) {
@@ -142,6 +112,11 @@ const FixpointContext = struct {
           }
         }
         unreachable;
+      },
+      .unresolved_symref => {
+        // TODO: function could be used as value.
+        self.dres.intpr.ctx.logger.UnknownSymbol(item.pos);
+        return graph.ResolutionContext.Result.failed;
       },
       else => unreachable,
     }
@@ -272,31 +247,21 @@ pub const DeclareResolution = struct {
         for (defs) |def| {
           switch (def.content.data) {
             .gen_concat, .gen_intersection, .gen_list, .gen_map, .gen_optional,
-            .gen_paragraphs, .gen_record, .funcgen =>
+            .gen_paragraphs =>
               try tr.process(def.content),
-            else => {},
-          }
-        }
-      }
-
-      // our types are now usable. Now interpret function parameters and resolve
-      // symrefs to those parameters.
-      {
-        for (defs) |def| {
-          switch (def.content.data) {
+            .gen_record => |*rgen| {
+              for (rgen.fields) |field| {
+                if (field.@"type") |tnode| try tr.process(tnode);
+              }
+            },
             .funcgen => |*fgen| {
               if (fgen.params == .unresolved) {
                 if (!try self.intpr.tryInterpretFuncParams(
-                    fgen, .{.kind = .final})) {
+                    fgen, .{.kind = .final, .resolve = &tr.ctx})) {
                   def.content.data = .poison;
                   continue;
                 }
               }
-              const vars = fgen.params.resolved.variables;
-              var vc = VariableContext.init(self, vars);
-              _ = try self.intpr.tryInterpretFuncBody(
-                fgen, vars, null,
-                .{.kind = .intermediate, .resolve = &vc.ctx});
             },
             else => {},
           }
@@ -391,7 +356,7 @@ pub const DeclareResolution = struct {
           .funcgen => |*fgen| {
             const func = &fgen.params.pregen.data.ny;
             func.body = (try self.intpr.tryInterpretFuncBody(
-              fgen, func.variables, fgen.cur_returns, .{.kind = .final})).?;
+              fgen, fgen.cur_returns, .{.kind = .final})).?;
           },
           else => {}
         }
@@ -433,7 +398,10 @@ pub const DeclareResolution = struct {
       .unresolved_symref => |*ur| {
         for (self.defs) |def, i| if (std.mem.eql(u8, def.name.content, ur.name))
           return graph.ResolutionContext.Result{.known = @intCast(u21, i)};
-        return graph.ResolutionContext.Result.failed;
+        // we don't know whether this is actually known but it would be a
+        // function variable, so we'll leave reporting a potential error to later
+        // steps.
+        return graph.ResolutionContext.Result{.known = null};
       },
       .unresolved_call => |*uc| {
         _ = try self.intpr.probeType(

@@ -591,7 +591,7 @@ pub fn intrinsicModule(ctx: Context) !*model.Module {
   var ret = try ctx.global().create(model.Module);
   ret.root = try ctx.createValueExpr(
     try ctx.values.void(model.Position.intrinsic()));
-  ret.symbols = try ctx.global().alloc(*model.Symbol, 17);
+  ret.symbols = try ctx.global().alloc(*model.Symbol, 18);
   var index: usize = 0;
 
   var ip = Intrinsics.init();
@@ -665,6 +665,10 @@ pub fn intrinsicModule(ctx: Context) !*model.Module {
     typeConstructor(ctx, &ip.provider, "constrDefinition", b.finish());
   ret.symbols[index] = try
     typeSymbol(ctx, "Definition", .{.intrinsic = .definition});
+  index += 1;
+
+  // Boolean
+  ret.symbols[index] = ctx.types().boolean.name.?;
   index += 1;
 
   // instantiated scalars

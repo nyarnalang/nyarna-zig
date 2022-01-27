@@ -15,7 +15,7 @@
 +CALL
   =FUNCREF .doc.document.foo
   >ARG recurse
-  =Enum Boolean "true"
+  =ENUM Boolean "true"
   >ARG before
   =TEXT raw "one"
   >ARG after

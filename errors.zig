@@ -16,7 +16,7 @@ pub const GenericParserError = enum {
   PrefixedFunctionMustBeCalled, AstNodeInNonKeyword, CannotResolveImmediately,
   InvalidLvalue, UnknownParameter, TooManyArguments, UnexpectedPrimaryBlock,
   InvalidPositionalArgument, UnknownSymbol, UnknownEnumValue, BlockNeedsConfig,
-  CantBeCalled, InvalidNamedArgInAssign, UnfinishedCallAsTypeArg, NotAType,
+  CantBeCalled, InvalidNamedArgInAssign, UnfinishedCallInTypeArg, NotAType,
   CantCallUnfinished, UnknownField, FailedToCalculateReturnType,
 };
 
