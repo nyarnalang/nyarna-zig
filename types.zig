@@ -29,9 +29,9 @@ const InnerIntend = enum {
   fn concat(t: model.Type) InnerIntend {
     return switch (t) {
       .intrinsic => |i| switch (i) {
-        .void, .prototype, .schema, .extension, .ast_node =>
+        .prototype, .schema, .extension, .ast_node =>
           InnerIntend.forbidden,
-        .space, .literal, .raw, .poison => InnerIntend.collapse,
+        .space, .literal, .raw, .void, .poison => InnerIntend.collapse,
         else => InnerIntend.allowed,
       },
       .structural => |s| switch (s.*) {
@@ -576,7 +576,7 @@ pub const Lattice = struct {
       .space, .literal, .raw => switch (other) {
         .intrinsic => |other_intr| switch (other_intr) {
           .every => model.Type{.intrinsic = intr},
-          .void => (try self.optional(other)).?,
+          .void => (try self.optional(.{.intrinsic = intr})).?,
           .space, .literal, .raw =>
             model.Type{.intrinsic = @intToEnum(@TypeOf(intr),
               std.math.max(@enumToInt(intr), @enumToInt(other_intr)))},

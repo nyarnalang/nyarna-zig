@@ -1,17 +1,17 @@
-=== Indirect Recursion (at compile time)
+=== Indirect Recursion
 --- input
 \declare:
-  foo = \func(comptime=true):
+  foo = \func:
     recurse: \Boolean;
   :body:
     foo\if(\recurse, \bar(false))
-  \end(func);
+  \end(func)
 
-  bar = \func(comptime=true):
+  bar = \func:
     recurse: \Boolean;
   :body:
     bar\if(\recurse, \foo(false))
-  \end(func);
+  \end(func)
 \end(declare)
 
 \foo(true)
@@ -34,3 +34,15 @@
     -PROTO
   -CALL
 -ROOT
+--- expr
++CALL
+  =FUNCREF .doc.document.foo
+  >ARG recurse
+  =ENUM Boolean "true"
+-CALL
+=TEXT literal "\n"
++CALL
+  =FUNCREF .doc.document.bar
+  >ARG recurse
+  =ENUM Boolean "true"
+-CALL
