@@ -54,7 +54,7 @@ pub const Mapper = struct {
 
 pub const SignatureMapper = struct {
   mapper: Mapper,
-  subject: *model.Expression,
+  subject: *model.Node,
   signature: *const Type.Signature,
   cur_pos: ?u21 = 0,
   args: []*model.Node,
@@ -62,7 +62,7 @@ pub const SignatureMapper = struct {
   intpr: *Interpreter,
   ns: u15,
 
-  pub fn init(intpr: *Interpreter, subject: *model.Expression, ns: u15,
+  pub fn init(intpr: *Interpreter, subject: *model.Node, ns: u15,
               sig: *const model.Type.Signature) !SignatureMapper {
     var res = SignatureMapper{
       .mapper = .{
@@ -225,6 +225,7 @@ pub const SignatureMapper = struct {
         .ns = self.ns,
         .target = self.subject,
         .args = self.args,
+        .sig = self.signature,
       })).node();
   }
 };

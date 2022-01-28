@@ -9,17 +9,15 @@ const interpret = @import("interpret.zig");
 
 /// Result of resolving an accessor chain.
 pub const Resolution = union(enum) {
-  /// chain starts at a variable reference and descends into its fields.
-  var_chain: struct {
-    /// the target variable that is to be indexed.
-    target: struct {
-      variable: *model.Symbol.Variable,
-      pos: model.Position,
-      ns: u15,
-    },
-    /// chain into the fields of a variable. Each item is the index of a
-    /// nested field.
-    field_chain: std.ArrayListUnmanaged(usize) = .{},
+  /// chain descends into a runtime value. The base may be either a variable or
+  /// an arbitrary expression.
+  runtime_chain: struct {
+    base: *model.Node,
+    /// command character used for the base
+    ns: u15,
+    /// list of indexes to descend into at runtime.
+    indexes: std.ArrayListUnmanaged(usize) = .{},
+    /// the current type of the accessed value.
     t: model.Type,
   },
   /// last chain item was resolved to a function.
@@ -29,7 +27,7 @@ pub const Resolution = union(enum) {
     /// set if target is a function reference in the namespace of a type,
     /// which has been accessed via an expression of that type. Such a function
     /// reference must directly be called.
-    prefix: ?*model.Expression = null,
+    prefix: ?*model.Node = null,
   },
   /// last chain item was resolved to a type. Value is a pointer into a
   /// model.Symbol.
@@ -37,12 +35,6 @@ pub const Resolution = union(enum) {
   /// last chain item was resolved to a prototype. Value is a pointer into a
   /// model.Symbol.
   proto_ref: *model.Prototype,
-  /// chain starts at an expression and descends into the returned value.
-  expr_chain: struct {
-    expr: *model.Expression,
-    field_chain: std.ArrayListUnmanaged(usize) = .{},
-    t: model.Type,
-  },
   /// the resolution failed because an identifier in the chain could not be
   /// resolved – this is not necessarily an error since the chain may be
   /// successfully resolved later.
@@ -89,13 +81,13 @@ pub const Resolver = struct {
       nyarna.Error!Resolution {
     switch (chain.data) {
       .access => |value| {
-        var inner = try self.resolve(value.subject);
-        switch (inner) {
-          .var_chain => |*vc| {
-            if (searchField(vc.t, value.id)) |field| {
-              try vc.field_chain.append(self.intpr.allocator(), field.index);
-              vc.t = field.t;
-              return inner;
+        var res = try self.resolve(value.subject);
+        switch (res) {
+          .runtime_chain => |*rc| {
+            if (searchField(rc.t, value.id)) |field| {
+              try rc.indexes.append(self.intpr.allocator(), field.index);
+              rc.t = field.t;
+              return res;
             } else if (self.stage.kind != .intermediate) {
               self.intpr.ctx.logger.UnknownField(chain.pos);
               return .poison;
@@ -119,16 +111,6 @@ pub const Resolver = struct {
             // TODO: decide whether prototypes have a namespace
             unreachable;
           },
-          .expr_chain => |*ec| {
-            if (searchField(ec.t, value.id)) |field| {
-              try ec.field_chain.append(self.intpr.allocator(), field.index);
-              ec.t = field.t;
-              return inner;
-            } else if (self.stage.kind != .intermediate) {
-              self.intpr.ctx.logger.UnknownField(chain.pos);
-              return .poison;
-            } else return .failed;
-          },
           .failed => return .failed,
           .poison => return .poison,
         }
@@ -144,9 +126,9 @@ pub const Resolver = struct {
         .@"type" => |*t| Resolution{.type_ref = t},
         .prototype => |*pv| Resolution{.proto_ref = pv},
         .variable => |*v| Resolution{
-          .var_chain = .{
-            .target = .{.variable = v, .pos = chain.pos, .ns = rs.ns},
-            .field_chain = .{},
+          .runtime_chain = .{
+            .base = chain,
+            .ns = rs.ns,
             .t = v.t,
           },
         },
@@ -161,9 +143,9 @@ pub const Resolver = struct {
                 .ns = usym.ns,
               }};
               return Resolution{
-                .var_chain = .{
-                  .target = .{.variable = v, .pos = chain.pos, .ns = usym.ns},
-                  .field_chain = .{},
+                .runtime_chain = .{
+                  .base = chain,
+                  .ns = usym.ns,
                   .t = v.t,
                 },
               };
@@ -176,25 +158,29 @@ pub const Resolver = struct {
       },
       else => {}
     }
-    return if (try self.intpr.tryInterpret(chain, self.stage)) |expr|
-      Resolution{.expr_chain = .{.expr = expr, .t = expr.expected_type}}
-    else @as(Resolution, if (self.stage.kind != .intermediate)
+    if (try self.intpr.tryInterpret(chain, self.stage)) |expr| {
+      chain.data = .{.expression = expr};
+      return Resolution{.runtime_chain = .{
+        .base = chain,
+        .ns = undefined,
+        .t = expr.expected_type,
+      }};
+    } else return @as(Resolution, if (self.stage.kind != .intermediate)
       .poison else .failed);
   }
 };
 
 pub const CallContext = union(enum) {
   known: struct {
-    target: *model.Expression,
+    target: *model.Node,
     ns: u15,
     signature: *const model.Type.Signature,
     first_arg: ?*model.Node,
   },
   unknown, poison,
 
-  fn chainIntoExpr(intpr: *interpret.Interpreter, pos: model.Position,
-                   start: *model.Expression, t: model.Type, ns: u15,
-                   field_chain: []const usize) !CallContext {
+  fn chainIntoCallCtx(intpr: *interpret.Interpreter, target: *model.Node,
+                      t: model.Type, ns: u15) !CallContext {
     const callable = switch (t) {
       .structural => |strct| switch (strct.*) {
         .callable => |*callable| callable,
@@ -203,22 +189,12 @@ pub const CallContext = union(enum) {
       .intrinsic => |intr| if (intr == .poison) return .poison else null,
       .instantiated => null,
     } orelse {
-      intpr.ctx.logger.CantBeCalled(start.pos);
+      intpr.ctx.logger.CantBeCalled(target.pos);
       return .poison;
     };
-
-    var target_expr = if (field_chain.len > 0) blk: {
-      const acc = try intpr.ctx.global().create(model.Expression);
-      acc.* = .{
-        .pos = pos,
-        .data = .{.access = .{.subject = start, .path = field_chain}},
-        .expected_type = t,
-      };
-      break :blk acc;
-    } else start;
     return CallContext{
       .known = .{
-        .target = target_expr,
+        .target = target,
         .ns = ns,
         .signature = callable.sig,
         .first_arg = null,
@@ -226,50 +202,44 @@ pub const CallContext = union(enum) {
     };
   }
 
-  pub fn fromChain(intpr: *interpret.Interpreter, pos: model.Position,
+  pub fn fromChain(intpr: *interpret.Interpreter, node: *model.Node,
                    res: Resolution) !CallContext {
     switch (res) {
-      .var_chain => |vc| {
-        const vr = try intpr.ctx.global().create(model.Expression);
-        vr.* = .{
-          .pos = vc.target.pos,
-          .data = .{.var_retrieval = .{.variable = vc.target.variable}},
-          .expected_type = vc.target.variable.t,
-        };
-        return try chainIntoExpr(
-          intpr, pos, vr, vc.t, vc.target.ns, vc.field_chain.items);
+      .runtime_chain => |rc| {
+        const subject = if (rc.indexes.items.len == 0) rc.base
+        else (try intpr.node_gen.raccess(
+          node.pos, rc.base, rc.indexes.items)).node();
+        return try chainIntoCallCtx(intpr, subject, rc.t, rc.ns);
       },
       .func_ref => |fr| {
         const target_expr = try intpr.ctx.createValueExpr(
-          (try intpr.ctx.values.funcRef(pos, fr.target)).value());
+          (try intpr.ctx.values.funcRef(node.pos, fr.target)).value());
+        node.data = .{.expression = target_expr};
         return CallContext{
           .known = .{
-            .target = target_expr,
+            .target = node,
             .ns = fr.ns,
             .signature = fr.target.sig(),
-            .first_arg = if (fr.prefix) |prefix|
-              try intpr.node_gen.expression(prefix) else null,
+            .first_arg = fr.prefix,
           },
         };
       },
-      .expr_chain => |ec| {
-        // cannot be a function depending on ns
-        return try chainIntoExpr(intpr, pos, ec.expr, ec.t, undefined,
-          ec.field_chain.items);
-      },
       .type_ref => |tref| {
         const target_expr = try intpr.ctx.createValueExpr(
-          (try intpr.ctx.values.@"type"(pos, tref.*)).value());
+          (try intpr.ctx.values.@"type"(node.pos, tref.*)).value());
         switch (target_expr.expected_type) {
           .intrinsic => |intr| if (intr == .poison) return CallContext.poison,
           .structural => |strct| switch (strct.*) {
-            .callable => |*callable| return CallContext{
-              .known = .{
-                .target = target_expr,
-                .ns = undefined,
-                .signature = callable.sig,
-                .first_arg = null,
-              },
+            .callable => |*callable| {
+              node.data = .{.expression = target_expr};
+              return CallContext{
+                .known = .{
+                  .target = node,
+                  .ns = undefined,
+                  .signature = callable.sig,
+                  .first_arg = null,
+                },
+              };
             },
             else => {},
           },
@@ -280,10 +250,11 @@ pub const CallContext = union(enum) {
       },
       .proto_ref => |pref| {
         const target_expr = try intpr.ctx.createValueExpr(
-          (try intpr.ctx.values.prototype(pos, pref.*)).value());
+          (try intpr.ctx.values.prototype(node.pos, pref.*)).value());
+        node.data = .{.expression = target_expr};
         return CallContext{
           .known = .{
-            .target = target_expr,
+            .target = node,
             .ns = undefined,
             .signature = intpr.ctx.types().prototypeConstructor(
               pref.*).callable.sig,

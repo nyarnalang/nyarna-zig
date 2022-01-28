@@ -792,6 +792,11 @@ pub inline fn allowedAsOptionalInner(t: model.Type) bool {
   return InnerIntend.optional(t) == .allowed;
 }
 
+pub fn descend(t: model.Type, index: usize) model.Type {
+  // update this if we ever allow descending into other types.
+  return t.instantiated.data.record.constructor.sig.parameters[index].ptype;
+}
+
 pub const SigBuilderResult = struct {
   /// the built signature
   sig: *model.Type.Signature,

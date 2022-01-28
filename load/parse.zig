@@ -81,7 +81,7 @@ pub const Parser = struct {
     }
 
     fn startResolvedCall(
-        c: *Command, ip: *Interpreter, target: *model.Expression,
+        c: *Command, ip: *Interpreter, target: *model.Node,
         ns: u15, sig: *const model.Type.Signature) !void {
       c.info = .{
         .resolved_call =
@@ -665,7 +665,7 @@ pub const Parser = struct {
             .list_start, .blocks_sep => {
               const target = lvl.command.info.unknown;
               const ctx = try chains.CallContext.fromChain(
-                self.intpr(), target.pos, try chains.Resolver.init(
+                self.intpr(), target, try chains.Resolver.init(
                   self.intpr(), .{.kind = .intermediate}).resolve(target));
               switch (ctx) {
                 .known => |call_context| {

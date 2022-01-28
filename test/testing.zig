@@ -287,22 +287,19 @@ fn AstEmitter(Handler: anytype) type {
             try para.pop();
           }
         },
+        .resolved_access => |ra| {
+          const racc = try self.push("RACCESS");
+          try self.process(ra.base);
+          for (ra.path) |index| {
+            try self.emitLine(">DESCEND {}", .{index});
+          }
+          try racc.pop();
+        },
         .resolved_call => |rc| {
           const rcall = try self.push("RCALL");
-          try self.processExpr(rc.target);
-          var name: []const u8 = undefined;
-          switch (rc.target.expected_type) {
-            .intrinsic => |i| name = @tagName(i),
-            .structural => |s| name = @tagName(s.*),
-            .instantiated => |inst| name = @tagName(inst.data),
-          }
-
-          const sig = switch (rc.target.expected_type.structural.*) {
-            .callable => |cl| cl.sig,
-            else => unreachable,
-          };
+          try self.process(rc.target);
           for (rc.args) |a, i| {
-            try self.emitLine(">ARG {s}", .{sig.parameters[i].name});
+            try self.emitLine(">ARG {s}", .{rc.sig.parameters[i].name});
             try self.process(a);
           }
           try rcall.pop();

@@ -187,22 +187,12 @@ pub const Interpreter = struct {
       return null;
     }
     switch (try chains.Resolver.init(self, stage).resolve(input)) {
-      .var_chain => |vc| {
-        const retr = try self.ctx.global().create(model.Expression);
-        retr.* = .{
-          .pos = vc.target.pos,
-          .data = .{.var_retrieval = .{.variable = vc.target.variable}},
-          .expected_type = vc.target.variable.t,
-        };
-        const expr = try self.ctx.global().create(model.Expression);
-        expr.* = .{
-          .pos = input.pos,
-          .data = .{
-            .access = .{.subject = retr, .path = vc.field_chain.items},
-          },
-          .expected_type = vc.t,
-        };
-        return expr;
+      .runtime_chain => |*rc| {
+        input.data = .{.resolved_access = .{
+          .base = rc.base,
+          .path = rc.indexes.items,
+        }};
+        return self.tryInterpretRAccess(&input.data.resolved_access, stage);
       },
       .func_ref => |ref| {
         return try self.ctx.createValueExpr(
@@ -215,17 +205,6 @@ pub const Interpreter = struct {
         (try self.ctx.values.@"type"(input.pos, ref.*)).value()),
       .proto_ref => |ref| return self.ctx.createValueExpr(
         (try self.ctx.values.prototype(input.pos, ref.*)).value()),
-      .expr_chain => |ec| {
-        const expr = try self.ctx.global().create(model.Expression);
-        expr.* = .{
-          .pos = input.pos,
-          .data = .{
-            .access = .{.subject = ec.expr, .path = ec.field_chain.items},
-          },
-          .expected_type = ec.t,
-        };
-        return expr;
-      },
       .failed => return null,
       .poison => return try self.ctx.createValueExpr(
         try self.ctx.values.poison(input.pos)),
@@ -246,17 +225,32 @@ pub const Interpreter = struct {
       .resolved => |*val| val,
       .unresolved => |node| innerblk: {
         switch (try chains.Resolver.init(self, stage).resolve(node)) {
-          .var_chain => |*vc| {
-            ass.target = .{
-              .resolved = .{
-                .target = vc.target.variable,
-                .path = vc.field_chain.items,
-                .t = vc.t,
+          .runtime_chain => |*rc| switch (rc.base.data) {
+            .resolved_symref => |*rsym| switch (rsym.sym.data) {
+              .variable => |*v| {
+                ass.target = .{
+                  .resolved = .{
+                    .target = v,
+                    .path = rc.indexes.items,
+                    .t = v.t,
+                  },
+                };
+                break :innerblk &ass.target.resolved;
               },
-            };
-            break :innerblk &ass.target.resolved;
+              else => {
+                self.ctx.logger.InvalidLvalue(node.pos);
+                return self.ctx.createValueExpr(
+                  try self.ctx.values.poison(ass.node().pos));
+              }
+            },
+            .unresolved_call, .unresolved_symref => return null,
+            else => {
+              self.ctx.logger.InvalidLvalue(node.pos);
+              return self.ctx.createValueExpr(
+                try self.ctx.values.poison(ass.node().pos));
+            },
           },
-          .func_ref, .type_ref, .proto_ref, .expr_chain => {
+          .func_ref, .type_ref, .proto_ref => {
             self.ctx.logger.InvalidLvalue(node.pos);
             return self.ctx.createValueExpr(
               try self.ctx.values.poison(ass.node().pos));
@@ -324,19 +318,10 @@ pub const Interpreter = struct {
 
   fn tryInterpretCall(self: *Interpreter, rc: *model.Node.ResolvedCall,
                       stage: Stage) nyarna.Error!?*model.Expression {
+    const target = (try self.tryInterpret(rc.target, stage)) orelse
+      return null;
     if (stage.kind == .resolve) return null;
-    const sig = switch (rc.target.expected_type) {
-      .intrinsic  => |intr| std.debug.panic(
-        "call target has unexpected type {s}", .{@tagName(intr)}),
-      .structural => |strct| switch (strct.*) {
-        .callable => |*c| c.sig,
-        else => std.debug.panic(
-          "call target has unexpected type: {s}", .{@tagName(strct.*)}),
-      },
-      .instantiated => |inst| std.debug.panic(
-        "call target has unexpected type: {s}", .{@tagName(inst.data)}),
-    };
-    const is_keyword = sig.returns.is(.ast_node);
+    const is_keyword = rc.sig.returns.is(.ast_node);
     const cur_allocator = if (is_keyword) self.allocator()
                           else self.ctx.global();
     var args_failed_to_interpret = false;
@@ -350,8 +335,8 @@ pub const Interpreter = struct {
     for (rc.args) |*arg, i| {
       if (arg.*.data != .expression) {
         arg.*.data =
-          if (try self.associate(arg.*, sig.parameters[i].ptype, arg_stage)) |e|
-            .{.expression = e}
+          if (try self.associate(arg.*, rc.sig.parameters[i].ptype,
+                                 arg_stage)) |e| .{.expression = e}
           else {
             args_failed_to_interpret = true;
             continue;
@@ -365,7 +350,7 @@ pub const Interpreter = struct {
     }
 
     const args = try cur_allocator.alloc(
-      *model.Expression, sig.parameters.len);
+      *model.Expression, rc.sig.parameters.len);
     var seen_poison = false;
     for (rc.args) |arg, i| {
       args[i] = arg.data.expression;
@@ -377,11 +362,11 @@ pub const Interpreter = struct {
       .data = .{
         .call = .{
           .ns = rc.ns,
-          .target = rc.target,
+          .target = target,
           .exprs = args,
         },
       },
-      .expected_type = sig.returns,
+      .expected_type = rc.sig.returns,
     };
     if (is_keyword) {
       var eval = self.ctx.evaluator();
@@ -485,6 +470,67 @@ pub const Interpreter = struct {
       def.node().pos, name, try eval.evaluate(expr));
     def_val.root = def.root;
     return try self.ctx.createValueExpr(def_val.value());
+  }
+
+
+  fn ensureResolved(self: *Interpreter, node: *model.Node, stage: Stage)
+      nyarna.Error!?*model.Node {
+    switch (node.data) {
+      .unresolved_call, .unresolved_symref => {
+        if (stage.kind == .final or stage.kind == .keyword) {
+          const res = try chains.Resolver.init(self, stage).resolve(node);
+          switch (res) {
+            .runtime_chain => |*rc| {
+              std.debug.assert(rc.indexes.items.len == 0);
+              return rc.base;
+            },
+            .func_ref => |*fref| {
+              std.debug.assert(fref.prefix == null);
+              const expr = try self.ctx.createValueExpr(
+                (try self.ctx.values.funcRef(node.pos, fref.target)).value());
+              node.data = .{.expression = expr};
+              return node;
+            },
+            .type_ref => |tref| {
+              const expr = try self.ctx.createValueExpr(
+                (try self.ctx.values.@"type"(node.pos, tref.*)).value());
+              node.data = .{.expression = expr};
+              return node;
+            },
+            .proto_ref => |pref| {
+              const expr = try self.ctx.createValueExpr(
+                (try self.ctx.value.prototype(node.pos, pref.*)).value());
+              node.data = .{.expression = expr};
+              return node;
+            },
+            .failed => return null,
+            .poison => {
+              node.data = .poison;
+              return node;
+            }
+          }
+        } else return null;
+      },
+      else => return node,
+    }
+  }
+
+  fn tryInterpretRAccess(self: *Interpreter, racc: *model.Node.ResolvedAccess,
+      stage: Stage) nyarna.Error!?*model.Expression {
+    const base = (try self.tryInterpret(racc.base, stage)) orelse return null;
+    var t = base.expected_type;
+    for (racc.path) |index| t = types.descend(t, index);
+    std.debug.assert(racc.path.len > 0);
+    const expr = try self.ctx.global().create(model.Expression);
+    expr.* = .{
+      .pos = racc.node().pos,
+      .data = .{.access = .{
+        .subject = base,
+        .path = try self.ctx.global().dupe(usize, racc.path),
+      }},
+      .expected_type = t,
+    };
+    return expr;
   }
 
   fn locationsCanGenVars(self: *Interpreter, node: *model.Node, stage: Stage)
@@ -707,8 +753,8 @@ pub const Interpreter = struct {
   fn tryInterpretUCall(self: *Interpreter, uc: *model.Node.UnresolvedCall,
                        stage: Stage) nyarna.Error!?*model.Expression {
     if (stage.kind == .intermediate) return null;
-    const call_ctx = try chains.CallContext.fromChain(self, uc.target.pos,
-      try chains.Resolver.init(self, stage).resolve(uc.target));
+    const call_ctx = try chains.CallContext.fromChain(self,
+      uc.target, try chains.Resolver.init(self, stage).resolve(uc.target));
     switch (call_ctx) {
       .known => |k| {
         var sm = try mapper.SignatureMapper.init(
@@ -1007,6 +1053,7 @@ pub const Interpreter = struct {
           .{.intrinsic = if (lit.kind == .space) .space else .literal},
           try self.ctx.global().dupe(u8, lit.content))).value()),
       .location => |*loc| self.tryInterpretLoc(loc, stage),
+      .resolved_access => |*racc| self.tryInterpretRAccess(racc, stage),
       .resolved_symref => |*ref| self.tryInterpretSymref(ref),
       .resolved_call => |*rc| self.tryInterpretCall(rc, stage),
       .gen_concat => |*gc| self.tryGenConcat(gc, stage),
@@ -1166,9 +1213,13 @@ pub const Interpreter = struct {
         return if (seen_unfinished) null else
           (try builder.finish()).resulting_type;
       },
+      .resolved_access => |*ra| {
+        var t = (try self.probeType(ra.base, stage)).?;
+        for (ra.path) |index| t = types.descend(t, index);
+        return t;
+      },
       .resolved_call => |*rc| {
-        if (rc.target.expected_type.structural.callable.sig.returns.is(
-            .ast_node)) {
+        if (rc.sig.returns.is(.ast_node)) {
           // this is a keyword call. tryInterpretCall will attempt to
           // execute it.
           if (try self.tryInterpretCall(rc, stage)) |expr| {
@@ -1180,7 +1231,7 @@ pub const Interpreter = struct {
           // node, on which we recurse.
           std.debug.assert(node.data != .resolved_call);
           return try self.probeType(node, stage);
-        } else return rc.target.expected_type.structural.callable.sig.returns;
+        } else return rc.sig.returns;
       },
       .resolved_symref => |*ref| {
         const callable = switch (ref.sym.data) {
@@ -1354,10 +1405,10 @@ pub const Interpreter = struct {
         inst.data == .float or inst.data == .tenum,
     });
     switch (input.data) {
-      .access, .assign, .definition, .funcgen, .location, .resolved_symref,
-      .resolved_call, .gen_concat, .gen_enum, .gen_float, .gen_intersection,
-      .gen_list, .gen_map, .gen_numeric, .gen_optional, .gen_paragraphs,
-      .gen_record, .gen_textual => {
+      .access, .assign, .definition, .funcgen, .location, .resolved_access,
+      .resolved_symref, .resolved_call, .gen_concat, .gen_enum, .gen_float,
+      .gen_intersection, .gen_list, .gen_map, .gen_numeric, .gen_optional,
+      .gen_paragraphs, .gen_record, .gen_textual => {
         if (try self.tryInterpret(input, stage)) |expr| {
           if (types.containedScalar(expr.expected_type)) |scalar_type| {
             if (self.ctx.types().lesserEqual(scalar_type, t)) return expr;
