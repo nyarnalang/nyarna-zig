@@ -311,14 +311,6 @@ pub const BlockConfig = struct {
 /// others) and enough information is available for the node to make the
 /// transition.
 pub const Node = struct {
-  pub const Access = struct {
-    subject: *Node,
-    id: []const u8,
-
-    pub inline fn node(self: *@This()) *Node {
-      return Node.parent(self);
-    }
-  };
   pub const Assign = struct {
     target: union(enum) {
       unresolved: *Node,
@@ -468,6 +460,14 @@ pub const Node = struct {
       return Node.parent(self);
     }
   };
+  pub const UnresolvedAccess = struct {
+    subject: *Node,
+    id: []const u8,
+
+    pub inline fn node(self: *@This()) *Node {
+      return Node.parent(self);
+    }
+  };
   pub const UnresolvedCall = struct {
     pub const ArgKind = union(enum) {
       named: []const u8,
@@ -575,31 +575,31 @@ pub const Node = struct {
   };
 
   pub const Data = union(enum) {
-    access: Access,
-    assign: Assign,
-    branches: Branches,
-    concat: Concat,
-    definition: Definition,
-    expression: *Expression,
-    funcgen: Funcgen,
-    gen_concat: tg.Concat,
-    gen_enum: tg.Enum,
-    gen_float: tg.Float,
-    gen_intersection: tg.Intersection,
-    gen_list: tg.List,
-    gen_map: tg.Map,
-    gen_numeric: tg.Numeric,
-    gen_optional: tg.Optional,
-    gen_paragraphs: tg.Paragraphs,
-    gen_record: tg.Record,
-    gen_textual: tg.Textual,
-    literal: Literal,
-    location: Location,
-    paras: Paras,
-    resolved_access: ResolvedAccess,
-    resolved_call: ResolvedCall,
-    resolved_symref: ResolvedSymref,
-    unresolved_call: UnresolvedCall,
+    unresolved_access: UnresolvedAccess,
+    assign           : Assign,
+    branches         : Branches,
+    concat           : Concat,
+    definition       : Definition,
+    expression       : *Expression,
+    funcgen          : Funcgen,
+    gen_concat       : tg.Concat,
+    gen_enum         : tg.Enum,
+    gen_float        : tg.Float,
+    gen_intersection : tg.Intersection,
+    gen_list         : tg.List,
+    gen_map          : tg.Map,
+    gen_numeric      : tg.Numeric,
+    gen_optional     : tg.Optional,
+    gen_paragraphs   : tg.Paragraphs,
+    gen_record       : tg.Record,
+    gen_textual      : tg.Textual,
+    literal          : Literal,
+    location         : Location,
+    paras            : Paras,
+    resolved_access  : ResolvedAccess,
+    resolved_call    : ResolvedCall,
+    resolved_symref  : ResolvedSymref,
+    unresolved_call  : UnresolvedCall,
     unresolved_symref: UnresolvedSymref,
     poison,
     void,
@@ -611,7 +611,6 @@ pub const Node = struct {
   fn parent(it: anytype) *Node {
     const t = @typeInfo(@TypeOf(it)).Pointer.child;
     const addr = @ptrToInt(it) - switch (t) {
-      Access           => offset(Data, "access"),
       Assign           => offset(Data, "assign"),
       Branches         => offset(Data, "branches"),
       Concat           => offset(Data, "concat"),
@@ -635,6 +634,7 @@ pub const Node = struct {
       tg.Paragraphs    => offset(Data, "gen_paragraphs"),
       tg.Record        => offset(Data, "gen_record"),
       tg.Textual       => offset(Data, "gen_textual"),
+      UnresolvedAccess => offset(Data, "unresolved_access"),
       UnresolvedCall   => offset(Data, "unresolved_call"),
       UnresolvedSymref => offset(Data, "unresolved_symref"),
       else => unreachable
@@ -710,6 +710,9 @@ pub const Symbol = struct {
   defined_at: Position,
   name: []const u8,
   data: Data,
+  /// the type in whose namespace this symbol is declared. null if the symbol is
+  /// not declared in the namespace of a type.
+  parent_type: ?Type,
 
   fn parent(it: anytype) *Symbol {
     const t = @typeInfo(@TypeOf(it)).Pointer.child;
@@ -1590,11 +1593,6 @@ pub const NodeGenerator = struct {
     return ret;
   }
 
-  pub inline fn access(self: *Self, pos: Position, content: Node.Access)
-      !*Node.Access {
-    return &(try self.node(pos, .{.access = content})).data.access;
-  }
-
   pub inline fn assign(self: *Self, pos: Position, content: Node.Assign)
       !*Node.Assign {
     return &(try self.node(pos, .{.assign = content})).data.assign;
@@ -1766,13 +1764,20 @@ pub const NodeGenerator = struct {
       }})).data.gen_textual;
   }
 
-  pub inline fn ucall(self: *Self, pos: Position,
+  pub inline fn uAccess(
+      self: *Self, pos: Position, content: Node.UnresolvedAccess)
+      !*Node.UnresolvedAccess {
+    return &(try self.node(
+      pos, .{.unresolved_access = content})).data.unresolved_access;
+  }
+
+  pub inline fn uCall(self: *Self, pos: Position,
                       content: Node.UnresolvedCall) !*Node.UnresolvedCall {
     return &(try self.node(
       pos, .{.unresolved_call = content})).data.unresolved_call;
   }
 
-  pub inline fn usymref(
+  pub inline fn uSymref(
       self: *Self, pos: Position, content: Node.UnresolvedSymref)
       !*Node.UnresolvedSymref {
     return &(try self.node(

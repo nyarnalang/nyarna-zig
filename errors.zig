@@ -13,11 +13,12 @@ pub const GenericParserError = enum {
   NamedArgumentInAssignment, MissingBlockNameEnd, UnknownFlag,
   NonLocationFlag, NonDefinitionFlag, BlockHeaderNotAllowedForDefinition,
   MissingSymbolName, MissingSymbolType, MissingSymbolEntity, UnknownSyntax,
-  PrefixedFunctionMustBeCalled, AstNodeInNonKeyword, CannotResolveImmediately,
+  PrefixedSymbolMustBeCalled, AstNodeInNonKeyword, CannotResolveImmediately,
   InvalidLvalue, UnknownParameter, TooManyArguments, UnexpectedPrimaryBlock,
   InvalidPositionalArgument, UnknownSymbol, UnknownEnumValue, BlockNeedsConfig,
   CantBeCalled, InvalidNamedArgInAssign, UnfinishedCallInTypeArg, NotAType,
   CantCallUnfinished, UnknownField, FailedToCalculateReturnType,
+  FieldAccessWithoutInstance,
 };
 
 pub const WrongItemError = enum {

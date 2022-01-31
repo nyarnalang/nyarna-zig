@@ -167,7 +167,7 @@ pub const Intrinsics = Provider.Wrapper(struct {
   //---------
 
   fn declare(intpr: *Interpreter, pos: model.Position, ns: u15,
-             _: ?model.Type, public: *model.Node, private: *model.Node)
+             parent: ?model.Type, public: *model.Node, private: *model.Node)
       nyarna.Error!*model.Node {
     var def_count: usize = 0;
     for ([_]*model.Node{public, private}) |node| switch (node.data) {
@@ -221,7 +221,7 @@ pub const Intrinsics = Provider.Wrapper(struct {
       },
       else => unreachable,
     };
-    var res = try algo.DeclareResolution.create(intpr, defs, ns);
+    var res = try algo.DeclareResolution.create(intpr, defs, ns, parent);
     try res.execute();
     return intpr.node_gen.@"void"(pos);
   }
@@ -556,6 +556,7 @@ fn typeSymbol(ctx: Context, name: []const u8, t: model.Type)
     .defined_at = model.Position.intrinsic(),
     .name = name,
     .data = .{.@"type" = t},
+    .parent_type = null,
   };
   return ret;
 }
@@ -567,6 +568,7 @@ fn prototypeSymbol(ctx: Context, name: []const u8, pt: model.Prototype)
     .defined_at = model.Position.intrinsic(),
     .name = name,
     .data = .{.prototype = pt},
+    .parent_type = null,
   };
   return ret;
 }

@@ -21,6 +21,11 @@ pub const ResolutionContext = struct {
     known, failed,
   };
 
+  pub const Target = union(enum) {
+    ns: u15,
+    t: model.Type,
+  };
+
   /// must only be called on unresolved calls or symbol references. returns
   ///   .unfinished_function
   ///     during type inference for calls that form cycles back to the currently
@@ -49,8 +54,9 @@ pub const ResolutionContext = struct {
   /// registers all links to sibling nodes that are encountered.
   /// will be set during graph processing and is not to be set by the caller.
   dependencies: std.ArrayListUnmanaged(usize) = undefined,
-  /// the namespace in which all symbols declared via this context reside.
-  ns: u15,
+  /// the target in whose namespace all symbols declared via this context
+  /// reside. either a command character namespace or a type.
+  target: Target,
 
   fn addDep(ctx: *ResolutionContext, local: std.mem.Allocator,
             index: usize) !void {

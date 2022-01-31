@@ -18,7 +18,7 @@ const TypeResolver = struct {
       .dres = dres,
       .ctx = .{
         .resolveInSiblingDefinitions = linkTypes,
-        .ns = dres.ns,
+        .target = dres.in,
       },
     };
   }
@@ -81,7 +81,7 @@ const FixpointContext = struct {
       .dres = dres,
       .ctx = .{
         .resolveInSiblingDefinitions = funcReturns,
-        .ns = dres.ns,
+        .target = dres.in,
       },
     };
   }
@@ -90,6 +90,9 @@ const FixpointContext = struct {
       nyarna.Error!graph.ResolutionContext.Result {
     const self = @fieldParentPtr(TypeResolver, "ctx", ctx);
     switch (item.data) {
+      .unresolved_access => {
+        return graph.ResolutionContext.Result.failed; // TODO
+      },
       .unresolved_call => |*ucall| {
         // TODO: make chains support partial resolution and use that here
         const uref = &ucall.target.data.unresolved_symref;
@@ -148,21 +151,23 @@ pub const DeclareResolution = struct {
   processor: Processor,
   dep_discovery_ctx: graph.ResolutionContext,
   intpr: *Interpreter,
-  ns: u15,
+  in: graph.ResolutionContext.Target,
 
   pub fn create(intpr: *Interpreter,
                 defs: []*model.Node.Definition,
-                ns: u15) !*DeclareResolution {
-    var res = try intpr.allocator().create(DeclareResolution);
+                ns: u15, parent: ?model.Type) !*DeclareResolution {
+    const in = if (parent) |ptype| graph.ResolutionContext.Target{.t = ptype}
+               else graph.ResolutionContext.Target{.ns = ns};
+    const res = try intpr.allocator().create(DeclareResolution);
     res.* = .{
       .defs = defs,
       .processor = try Processor.init(intpr.allocator(), res),
       .dep_discovery_ctx = .{
         .resolveInSiblingDefinitions = discoverDependencies,
-        .ns = ns,
+        .target = in,
       },
       .intpr = intpr,
-      .ns = ns,
+      .in = in,
     };
     return res;
   }
@@ -182,6 +187,10 @@ pub const DeclareResolution = struct {
       .defined_at = name.node().pos,
       .name = try self.intpr.ctx.global().dupe(u8, name.content),
       .data = content,
+      .parent_type = switch (self.in) {
+        .t => |t| t,
+        .ns => null,
+      },
     };
     return sym;
   }
@@ -314,7 +323,10 @@ pub const DeclareResolution = struct {
 
       // establish model.Function symbols with fully resolved signatures, and
       // all other symbols that can be constructed by now.
-      const ns_data = self.intpr.namespace(self.ns);
+      const ns_data = switch (self.in) {
+        .ns => |index| self.intpr.namespace(index),
+        .t => |t| try self.intpr.type_namespace(t),
+      };
       for (defs) |def| {
         switch (def.content.data) {
           .funcgen => |*fgen| blk: {

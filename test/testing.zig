@@ -194,16 +194,6 @@ fn AstEmitter(Handler: anytype) type {
 
     pub fn process(self: *Self, n: *model.Node) anyerror!void {
       switch (n.data) {
-        .access => |a| {
-          const access = try self.push("ACCESS");
-          {
-            const target = try self.push("SUBJECT");
-            try self.process(a.subject);
-            try target.pop();
-          }
-          try self.emitLine("=ID \"{s}\"", .{a.id});
-          try access.pop();
-        },
         .assign => |a| {
           const ass = try self.push("ASS");
           {
@@ -382,6 +372,16 @@ fn AstEmitter(Handler: anytype) type {
           try self.emitLine(">EXCLUDE", .{});
           try self.process(gt.exclude_chars);
           try gen.pop();
+        },
+        .unresolved_access => |a| {
+          const access = try self.push("ACCESS");
+          {
+            const target = try self.push("SUBJECT");
+            try self.process(a.subject);
+            try target.pop();
+          }
+          try self.emitLine("=ID \"{s}\"", .{a.id});
+          try access.pop();
         },
         .unresolved_call => |uc| {
           const ucall = try self.push("UCALL");

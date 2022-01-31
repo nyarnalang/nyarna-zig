@@ -92,18 +92,24 @@ pub const Interpreter = struct {
   /// references. Lexer uses this to check whether a character is a command
   /// character; the namespace mapping is relevant later for the interpreter.
   /// The values are indexes into the namespaces field.
-  command_characters: std.hash_map.AutoHashMapUnmanaged(u21, u15),
+  command_characters: std.hash_map.AutoHashMapUnmanaged(u21, u15) = .{},
   /// Used when disabling all command characters. Will be swapped with
   /// command_characters until the block disabling the command characters ends.
   stored_command_characters: std.hash_map.AutoHashMapUnmanaged(u21, u15) = .{},
-  /// Internal namespaces in the source file (see 6.1).
+  /// Internal namespaces in the source file [6.1].
   /// A namespace will not be deleted when it goes out of scope, so that we do
   /// not need to apply special care for delayed resolution of symrefs:
   /// If a symref cannot initially be resolved to a symbol, it will be stored
   /// with namespace index and target name. Since namespaces are never deleted,
   // it will still try to find its target symbol in the same namespace when
   /// delayed resolution is triggered.
-  namespaces: std.ArrayListUnmanaged(Namespace),
+  namespaces: std.ArrayListUnmanaged(Namespace) = .{},
+  /// Type namespaces [6.2].
+  /// The namespace of a type is added to this hashmap when the first symbol in
+  /// that namespace is established. This hashmap is used to lookup any
+  /// references to symbols in a type's namespace in the current source file.
+  type_namespaces: std.HashMapUnmanaged(model.Type, Namespace,
+    model.Type.HashContext, std.hash_map.default_max_load_percentage) = .{},
   /// The local storage of the interpreter where all data will be allocated that
   /// will be discarded when the interpreter finishes. This includes primarily
   /// the AST nodes which will be interpreted into expressions during
@@ -112,7 +118,7 @@ pub const Interpreter = struct {
   /// global storage. This happens exactly at the time an AST node is put into
   /// an AST model.Value.
   storage: std.heap.ArenaAllocator,
-  /// Array of alternative syntaxes known to the interpreter (7.12).
+  /// Array of alternative syntaxes known to the interpreter [7.12].
   /// TODO: make this user-extensible
   syntax_registry: [2]syntaxes.SpecialSyntax,
   /// convenience object to generate nodes using the interpreter's storage.
@@ -126,8 +132,6 @@ pub const Interpreter = struct {
       .input = input,
       .ctx = ctx,
       .storage = arena,
-      .command_characters = .{},
-      .namespaces = .{},
       .syntax_registry = .{syntaxes.SymbolDefs.locations(),
                            syntaxes.SymbolDefs.definitions()},
       .node_gen = undefined,
@@ -168,10 +172,20 @@ pub const Interpreter = struct {
     return &self.namespaces.items[ns];
   }
 
+  pub inline fn type_namespace(self: *Interpreter, t: model.Type) !*Namespace {
+    const entry = try self.type_namespaces.getOrPutValue(
+      self.allocator(), t, Namespace{});
+    return entry.value_ptr;
+  }
+
   pub fn importModuleSyms(self: *Interpreter, module: *const model.Module,
                           ns_index: u15) !void {
     const ns = self.namespace(ns_index);
-    for (module.symbols) |sym| _ = try ns.tryRegister(self, sym);
+    for (module.symbols) |sym| {
+      if (sym.parent_type) |ptype| {
+        _ = try (try self.type_namespace(ptype)).tryRegister(self, sym);
+      } else _ = try ns.tryRegister(self, sym);
+    }
   }
 
   pub fn removeNamespace(self: *Interpreter, character: u21) void {
@@ -180,10 +194,11 @@ pub const Interpreter = struct {
     _ = self.namespaces.pop();
   }
 
-  fn tryInterpretAccess(self: *Interpreter, input: *model.Node, stage: Stage)
-      nyarna.Error!?*model.Expression {
+  fn tryInterpretUAccess(self: *Interpreter, uacc: *model.Node.UnresolvedAccess,
+                         stage: Stage) nyarna.Error!?*model.Expression {
+    const input = uacc.node();
     if (stage.kind == .resolve) {
-      _ = try self.tryInterpret(input.data.access.subject, stage);
+      _ = try self.tryInterpret(uacc.subject, stage);
       return null;
     }
     switch (try chains.Resolver.init(self, stage).resolve(input)) {
@@ -194,17 +209,21 @@ pub const Interpreter = struct {
         }};
         return self.tryInterpretRAccess(&input.data.resolved_access, stage);
       },
-      .func_ref => |ref| {
-        return try self.ctx.createValueExpr(
-          if (ref.prefix != null) blk: {
-            self.ctx.logger.PrefixedFunctionMustBeCalled(input.pos);
-            break :blk try self.ctx.values.poison(input.pos);
-          } else (try self.ctx.values.funcRef(input.pos, ref.target)).value());
+      .sym_ref => |ref| {
+        const value = if (ref.prefix != null) blk: {
+          self.ctx.logger.PrefixedSymbolMustBeCalled(input.pos);
+          break :blk try self.ctx.values.poison(input.pos);
+        } else switch (ref.sym.data) {
+          .func => |func|
+            (try self.ctx.values.funcRef(input.pos, func)).value(),
+          .@"type" => |t|
+            (try self.ctx.values.@"type"(input.pos, t)).value(),
+          .prototype => |pt|
+            (try self.ctx.values.prototype(input.pos, pt)).value(),
+          .variable, .poison => unreachable,
+        };
+        return try self.ctx.createValueExpr(value);
       },
-      .type_ref => |ref| return self.ctx.createValueExpr(
-        (try self.ctx.values.@"type"(input.pos, ref.*)).value()),
-      .proto_ref => |ref| return self.ctx.createValueExpr(
-        (try self.ctx.values.prototype(input.pos, ref.*)).value()),
       .failed => return null,
       .poison => return try self.ctx.createValueExpr(
         try self.ctx.values.poison(input.pos)),
@@ -250,7 +269,7 @@ pub const Interpreter = struct {
                 try self.ctx.values.poison(ass.node().pos));
             },
           },
-          .func_ref, .type_ref, .proto_ref => {
+          .sym_ref => {
             self.ctx.logger.InvalidLvalue(node.pos);
             return self.ctx.createValueExpr(
               try self.ctx.values.poison(ass.node().pos));
@@ -620,11 +639,13 @@ pub const Interpreter = struct {
               else (try self.probeType(nl.default.?, stage)).?,
             },
           },
+          .parent_type = null,
         },
         .value => |vl| .{
           .defined_at = vl.name.value().origin,
           .name = vl.name.content,
           .data = .{.variable = .{.t = vl.tloc}},
+          .parent_type = null,
         },
       };
       variables[index] = &sym.data.variable;
@@ -1021,7 +1042,6 @@ pub const Interpreter = struct {
   pub fn tryInterpret(self: *Interpreter, input: *model.Node, stage: Stage)
       nyarna.Error!?*model.Expression {
     return switch (input.data) {
-      .access => self.tryInterpretAccess(input, stage),
       .assign => |*ass| self.tryInterpretAss(ass, stage),
       .branches => |*branches| if (stage.kind == .resolve) {
         _ = try self.tryInterpret(branches.condition, stage);
@@ -1052,22 +1072,23 @@ pub const Interpreter = struct {
         (try self.ctx.values.textScalar(input.pos,
           .{.intrinsic = if (lit.kind == .space) .space else .literal},
           try self.ctx.global().dupe(u8, lit.content))).value()),
-      .location => |*loc| self.tryInterpretLoc(loc, stage),
-      .resolved_access => |*racc| self.tryInterpretRAccess(racc, stage),
-      .resolved_symref => |*ref| self.tryInterpretSymref(ref),
-      .resolved_call => |*rc| self.tryInterpretCall(rc, stage),
-      .gen_concat => |*gc| self.tryGenConcat(gc, stage),
-      .gen_enum => |*ge| self.tryGenEnum(ge, stage),
-      .gen_float => |*gf| self.tryGenFloat(gf, stage),
-      .gen_intersection => |*gi| self.tryGenIntersection(gi, stage),
-      .gen_list => |*gl| self.tryGenList(gl, stage),
-      .gen_map => |*gm| self.tryGenMap(gm, stage),
-      .gen_numeric => |*gn| self.tryGenNumeric(gn, stage),
-      .gen_optional => |*go| self.tryGenOptional(go, stage),
-      .gen_paragraphs => |*gp| self.tryGenParagraphs(gp, stage),
-      .gen_record => |*gr| self.tryGenRecord(gr, stage),
-      .gen_textual => |*gt| self.tryGenTextual(gt, stage),
-      .unresolved_call => |*uc| self.tryInterpretUCall(uc, stage),
+      .location          => |*lo| self.tryInterpretLoc(lo, stage),
+      .resolved_access   => |*ra| self.tryInterpretRAccess(ra, stage),
+      .resolved_symref   => |*rs| self.tryInterpretSymref(rs),
+      .resolved_call     => |*rc| self.tryInterpretCall(rc, stage),
+      .gen_concat        => |*gc| self.tryGenConcat(gc, stage),
+      .gen_enum          => |*ge| self.tryGenEnum(ge, stage),
+      .gen_float         => |*gf| self.tryGenFloat(gf, stage),
+      .gen_intersection  => |*gi| self.tryGenIntersection(gi, stage),
+      .gen_list          => |*gl| self.tryGenList(gl, stage),
+      .gen_map           => |*gm| self.tryGenMap(gm, stage),
+      .gen_numeric       => |*gn| self.tryGenNumeric(gn, stage),
+      .gen_optional      => |*go| self.tryGenOptional(go, stage),
+      .gen_paragraphs    => |*gp| self.tryGenParagraphs(gp, stage),
+      .gen_record        => |*gr| self.tryGenRecord(gr, stage),
+      .gen_textual       => |*gt| self.tryGenTextual(gt, stage),
+      .unresolved_access => |*ua| self.tryInterpretUAccess(ua, stage),
+      .unresolved_call   => |*uc| self.tryInterpretUCall(uc, stage),
       .unresolved_symref => |*us| self.tryInterpretURef(us, stage),
       .void, .poison => {
         const expr = try self.ctx.global().create(model.Expression);
@@ -1173,7 +1194,7 @@ pub const Interpreter = struct {
       nyarna.Error!?model.Type {
     std.debug.assert(stage.kind != .resolve);
     switch (node.data) {
-      .access, .assign, .funcgen, .gen_concat, .gen_enum, .gen_float,
+      .assign, .funcgen, .gen_concat, .gen_enum, .gen_float,
       .gen_intersection, .gen_list, .gen_map, .gen_numeric, .gen_optional,
       .gen_paragraphs, .gen_record, .gen_textual => {
         if (try self.tryInterpret(node, stage)) |expr| {
@@ -1266,7 +1287,7 @@ pub const Interpreter = struct {
         std.debug.assert(!callable.sig.returns.is(.ast_node));
         return callable.typedef();
       },
-      .unresolved_call, .unresolved_symref => {
+      .unresolved_access, .unresolved_call, .unresolved_symref => {
         if (stage.resolve) |r| {
           switch (try r.probeSibling(self.allocator(), node)) {
             .unfinished_function => |t| return t,
@@ -1405,7 +1426,7 @@ pub const Interpreter = struct {
         inst.data == .float or inst.data == .tenum,
     });
     switch (input.data) {
-      .access, .assign, .definition, .funcgen, .location, .resolved_access,
+      .assign, .definition, .funcgen, .location, .resolved_access,
       .resolved_symref, .resolved_call, .gen_concat, .gen_enum, .gen_float,
       .gen_intersection, .gen_list, .gen_map, .gen_numeric, .gen_optional,
       .gen_paragraphs, .gen_record, .gen_textual => {
@@ -1480,7 +1501,7 @@ pub const Interpreter = struct {
         return expr;
       },
       .expression => |expr| return expr,
-      .unresolved_call, .unresolved_symref => return null,
+      .unresolved_access, .unresolved_call, .unresolved_symref => return null,
       // for text literals, do compile-time type conversions if possible
       .literal => |*l| {
         const expr = try self.ctx.global().create(model.Expression);

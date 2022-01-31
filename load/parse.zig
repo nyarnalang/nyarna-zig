@@ -640,7 +640,7 @@ pub const Parser = struct {
             .access => {
               self.advance();
               if (self.cur != .identifier) unreachable; // TODO: recover
-              lvl.command.info.unknown = (try self.intpr().node_gen.access(
+              lvl.command.info.unknown = (try self.intpr().node_gen.uAccess(
                 self.lexer.walker.posFrom(lvl.command.info.unknown.pos.start),
                 .{
                   .subject = lvl.command.info.unknown,

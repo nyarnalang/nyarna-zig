@@ -20,21 +20,15 @@ pub const Resolution = union(enum) {
     /// the current type of the accessed value.
     t: model.Type,
   },
-  /// last chain item was resolved to a function.
-  func_ref: struct {
+  /// last chain item was resolved to a symbol.
+  sym_ref: struct {
     ns: u15,
-    target: *model.Function,
-    /// set if target is a function reference in the namespace of a type,
-    /// which has been accessed via an expression of that type. Such a function
-    /// reference must directly be called.
+    sym: *model.Symbol,
+    /// set if target symbol is declare in the namespace of a type and has been
+    /// accessed via an expression of that type. Such a reference must directly
+    /// be called.
     prefix: ?*model.Node = null,
   },
-  /// last chain item was resolved to a type. Value is a pointer into a
-  /// model.Symbol.
-  type_ref: *model.Type,
-  /// last chain item was resolved to a prototype. Value is a pointer into a
-  /// model.Symbol.
-  proto_ref: *model.Prototype,
   /// the resolution failed because an identifier in the chain could not be
   /// resolved – this is not necessarily an error since the chain may be
   /// successfully resolved later.
@@ -44,10 +38,14 @@ pub const Resolution = union(enum) {
 };
 
 pub const Resolver = struct {
-  const Field = struct {
-    index: usize,
-    t: model.Type,
+  const SearchResult = union(enum) {
+    field: struct {
+      index: usize,
+      t: model.Type,
+    },
+    symbol: *model.Symbol,
   };
+
 
   intpr: *interpret.Interpreter,
   stage: interpret.Stage,
@@ -56,22 +54,25 @@ pub const Resolver = struct {
     return .{.intpr = intpr, .stage = stage};
   }
 
-  fn searchField(t: model.Type, name: []const u8) ?Field {
-    // TODO: search type namespace
+  fn searchAccessible(intpr: *interpret.Interpreter, t: model.Type,
+                      name: []const u8) ?SearchResult {
     switch (t) {
-      .intrinsic, .structural => return null,
+      .intrinsic, .structural => {},
       .instantiated => |inst| switch (inst.data) {
         .record => |*rec| {
           for (rec.constructor.sig.parameters) |*field, index| {
             if (std.mem.eql(u8, field.name, name)) {
-              return Field{.index = index, .t = field.ptype};
+              return SearchResult{.field = .{.index = index, .t = field.ptype}};
             }
           }
-          return null;
         },
-        else => return null,
+        else => {},
       }
     }
+    if (intpr.type_namespaces.get(t)) |ns| {
+      if (ns.data.get(name)) |sym| return SearchResult{.symbol = sym};
+    }
+    return null;
   }
 
   /// resolves an accessor chain of *model.Node. if stage.kind != .intermediate,
@@ -80,59 +81,98 @@ pub const Resolver = struct {
   pub fn resolve(self: Resolver, chain: *model.Node)
       nyarna.Error!Resolution {
     switch (chain.data) {
-      .access => |value| {
+      .resolved_symref => |*rs| {
+        return if (rs.sym.data == .poison) Resolution.poison
+        else Resolution{.sym_ref = .{
+          .ns = rs.ns,
+          .sym = rs.sym,
+          .prefix = null,
+        }};
+      },
+      .unresolved_access => |value| {
         var res = try self.resolve(value.subject);
         switch (res) {
           .runtime_chain => |*rc| {
-            if (searchField(rc.t, value.id)) |field| {
-              try rc.indexes.append(self.intpr.allocator(), field.index);
-              rc.t = field.t;
-              return res;
+            if (searchAccessible(
+                self.intpr, rc.t, value.id)) |sr| switch (sr) {
+              .field => |field| {
+                try rc.indexes.append(self.intpr.allocator(), field.index);
+                rc.t = field.t;
+                return res;
+              },
+              .symbol => |sym| {
+                if (sym.data == .poison) return Resolution.poison;
+                const subject = if (rc.indexes.items.len == 0) rc.base
+                  else (try self.intpr.node_gen.raccess(
+                    chain.pos, rc.base, rc.indexes.items)).node();
+                return Resolution{.sym_ref = .{
+                  .ns = rc.ns,
+                  .sym = sym,
+                  .prefix = subject,
+                }};
+              },
             } else if (self.stage.kind != .intermediate) {
-              self.intpr.ctx.logger.UnknownField(chain.pos);
+              self.intpr.ctx.logger.UnknownSymbol(chain.pos);
               return .poison;
             } else return .failed;
           },
-          .func_ref => |ref| {
+          .sym_ref => |ref| {
             if (ref.prefix != null) {
-              self.intpr.ctx.logger.PrefixedFunctionMustBeCalled(
+              self.intpr.ctx.logger.PrefixedSymbolMustBeCalled(
                 value.subject.pos);
               return .poison;
             }
-            // TODO: transform function reference to variable ref, then search
-            // in that expression's type for the symbol.
-            unreachable;
-          },
-          .type_ref => |_| {
-            // TODO: search in the namespace of the type for the given name.
-            unreachable;
-          },
-          .proto_ref => |_| {
-            // TODO: decide whether prototypes have a namespace
-            unreachable;
+            switch (ref.sym.data) {
+              .func => |func| {
+                const target = searchAccessible(
+                  self.intpr, func.callable.typedef(), value.id) orelse
+                    if (self.stage.kind == .keyword or
+                        self.stage.kind == .final) {
+                      self.intpr.ctx.logger.UnknownSymbol(chain.pos);
+                      return .poison;
+                    } else return .failed;
+                switch (target) {
+                  .field => unreachable, // TODO: do functions have fields?
+                  .symbol => |sym| {
+                    if (sym.data == .poison) return .poison;
+                    return Resolution{.sym_ref = .{
+                      .ns = ref.ns,
+                      .sym = sym,
+                      .prefix = value.subject,
+                    }};
+                  },
+                }
+              },
+              .@"type" => |t| {
+                const target = searchAccessible(self.intpr, t, value.id) orelse
+                  if (self.stage.kind == .keyword or self.stage.kind == .final)
+                  {
+                    self.intpr.ctx.logger.UnknownSymbol(chain.pos);
+                    return .poison;
+                  } else return .failed;
+
+                switch (target) {
+                  .field => {
+                    self.intpr.ctx.logger.FieldAccessWithoutInstance(chain.pos);
+                    return .poison;
+                  },
+                  .symbol => |sym| {
+                    if (sym.data == .poison) return .poison;
+                    return Resolution{.sym_ref = .{
+                      .ns = ref.ns,
+                      .sym = sym,
+                      .prefix = null,
+                    }};
+                  },
+                }
+              },
+              // TODO: could we get a prototype here?
+              .variable, .poison, .prototype => unreachable,
+            }
           },
           .failed => return .failed,
           .poison => return .poison,
         }
-      },
-      .resolved_symref => |*rs| return switch (rs.sym.data) {
-        .func => |func| Resolution{
-          .func_ref = .{
-            .ns = rs.ns,
-            .target = func,
-            .prefix = null,
-          },
-        },
-        .@"type" => |*t| Resolution{.type_ref = t},
-        .prototype => |*pv| Resolution{.proto_ref = pv},
-        .variable => |*v| Resolution{
-          .runtime_chain = .{
-            .base = chain,
-            .ns = rs.ns,
-            .t = v.t,
-          },
-        },
-        .poison => Resolution.poison,
       },
       .unresolved_symref => |*usym| {
         if (self.stage.resolve) |r| {
@@ -211,56 +251,61 @@ pub const CallContext = union(enum) {
           node.pos, rc.base, rc.indexes.items)).node();
         return try chainIntoCallCtx(intpr, subject, rc.t, rc.ns);
       },
-      .func_ref => |fr| {
-        const target_expr = try intpr.ctx.createValueExpr(
-          (try intpr.ctx.values.funcRef(node.pos, fr.target)).value());
-        node.data = .{.expression = target_expr};
-        return CallContext{
-          .known = .{
-            .target = node,
-            .ns = fr.ns,
-            .signature = fr.target.sig(),
-            .first_arg = fr.prefix,
+      .sym_ref => |*sr| {
+        switch (sr.sym.data) {
+          .func => |func| {
+            const target_expr = try intpr.ctx.createValueExpr(
+              (try intpr.ctx.values.funcRef(node.pos, func)).value());
+            node.data = .{.expression = target_expr};
+            return CallContext{
+              .known = .{
+                .target = node,
+                .ns = sr.ns,
+                .signature = func.sig(),
+                .first_arg = sr.prefix,
+              },
+            };
           },
-        };
-      },
-      .type_ref => |tref| {
-        const target_expr = try intpr.ctx.createValueExpr(
-          (try intpr.ctx.values.@"type"(node.pos, tref.*)).value());
-        switch (target_expr.expected_type) {
-          .intrinsic => |intr| if (intr == .poison) return CallContext.poison,
-          .structural => |strct| switch (strct.*) {
-            .callable => |*callable| {
-              node.data = .{.expression = target_expr};
-              return CallContext{
-                .known = .{
-                  .target = node,
-                  .ns = undefined,
-                  .signature = callable.sig,
-                  .first_arg = null,
+          .@"type" => |t| {
+            const target_expr = try intpr.ctx.createValueExpr(
+              (try intpr.ctx.values.@"type"(node.pos, t)).value());
+            switch (target_expr.expected_type) {
+              .intrinsic => |intr| if (intr == .poison) return .poison,
+              .structural => |strct| switch (strct.*) {
+                .callable => |*callable| {
+                  node.data = .{.expression = target_expr};
+                  return CallContext{
+                    .known = .{
+                      .target = node,
+                      .ns = undefined,
+                      .signature = callable.sig,
+                      .first_arg = null,
+                    },
+                  };
                 },
-              };
-            },
-            else => {},
+                else => {},
+              },
+              .instantiated => {},
+            }
+            intpr.ctx.logger.CantBeCalled(target_expr.pos);
+            return CallContext.poison;
           },
-          .instantiated => {},
+          .prototype => |pt| {
+            const target_expr = try intpr.ctx.createValueExpr(
+              (try intpr.ctx.values.prototype(node.pos, pt)).value());
+            node.data = .{.expression = target_expr};
+            return CallContext{
+              .known = .{
+                .target = node,
+                .ns = undefined,
+                .signature = intpr.ctx.types().prototypeConstructor(
+                  pt).callable.sig,
+                .first_arg = null,
+              },
+            };
+          },
+          .poison, .variable => unreachable,
         }
-        intpr.ctx.logger.CantBeCalled(target_expr.pos);
-        return CallContext.poison;
-      },
-      .proto_ref => |pref| {
-        const target_expr = try intpr.ctx.createValueExpr(
-          (try intpr.ctx.values.prototype(node.pos, pref.*)).value());
-        node.data = .{.expression = target_expr};
-        return CallContext{
-          .known = .{
-            .target = node,
-            .ns = undefined,
-            .signature = intpr.ctx.types().prototypeConstructor(
-              pref.*).callable.sig,
-            .first_arg = null,
-          },
-        };
       },
       .failed => return .unknown,
       .poison => return .poison,

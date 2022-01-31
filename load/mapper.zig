@@ -284,7 +284,7 @@ pub const CollectingMapper = struct {
   fn finalize(mapper: *Mapper, pos: model.Position)
       nyarna.Error!*model.Node {
     const self = @fieldParentPtr(CollectingMapper, "mapper", mapper);
-    return (try self.intpr.node_gen.ucall(pos, .{
+    return (try self.intpr.node_gen.uCall(pos, .{
       .target = self.target,
       .proto_args = self.items.items,
       .first_block_arg = self.first_block orelse self.items.items.len,
