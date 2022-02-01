@@ -9,6 +9,23 @@ fn isPrototype(ef: *model.Symbol.ExtFunc) bool {
   return ef.callable.kind == .prototype;
 }
 
+fn subjectIsType(uacc: *model.Node.UnresolvedAccess, t: model.Type) bool {
+  return switch (uacc.subject.data) {
+    .resolved_symref => |*rsym| switch (rsym.sym.data) {
+      .@"type" => |st| st.eql(t),
+      else => false,
+    },
+    .expression => |expr| switch (expr.data) {
+      .value => |val| switch (val.data) {
+        .@"type" => |tval| tval.t.eql(t),
+        else => false,
+      },
+      else => false,
+    },
+    else => false,
+  };
+}
+
 const TypeResolver = struct {
   ctx: graph.ResolutionContext,
   dres: *DeclareResolution,
@@ -91,13 +108,31 @@ const FixpointContext = struct {
     const self = @fieldParentPtr(TypeResolver, "ctx", ctx);
     switch (item.data) {
       .unresolved_access => {
-        return graph.ResolutionContext.Result.failed; // TODO
+        // TODO: function or type could be used as value.
+        return graph.ResolutionContext.Result.failed;
       },
       .unresolved_call => |*ucall| {
+        const name = switch (self.dres.in) {
+          .ns => ucall.target.data.unresolved_symref.name,
+          .t => |t| blk: {
+            const uacc = &ucall.target.data.unresolved_access;
+            // TODO: deeper access chain
+            if (subjectIsType(uacc, t)) {
+              break :blk uacc.id;
+            } else {
+              const subject_type = (try self.dres.intpr.probeType(
+                uacc.subject, .{.kind = .intermediate, .resolve = ctx})) orelse
+                return graph.ResolutionContext.Result.failed;
+              if (subject_type.eql(t)) {
+                break :blk uacc.id;
+              } else return graph.ResolutionContext.Result.failed;
+            }
+          }
+        };
+
         // TODO: make chains support partial resolution and use that here
-        const uref = &ucall.target.data.unresolved_symref;
         for (self.dres.defs) |def| {
-          if (std.mem.eql(u8, def.name.content, uref.name)) {
+          if (std.mem.eql(u8, def.name.content, name)) {
             switch (def.content.data) {
               .gen_record => |*gr| return graph.ResolutionContext.Result{
                 .unfinished_function = .{.instantiated = gr.generated.?},
@@ -407,13 +442,9 @@ pub const DeclareResolution = struct {
       nyarna.Error!graph.ResolutionContext.Result {
     const self = @fieldParentPtr(DeclareResolution, "dep_discovery_ctx", ctx);
     switch (item.data) {
-      .unresolved_symref => |*ur| {
-        for (self.defs) |def, i| if (std.mem.eql(u8, def.name.content, ur.name))
-          return graph.ResolutionContext.Result{.known = @intCast(u21, i)};
-        // we don't know whether this is actually known but it would be a
-        // function variable, so we'll leave reporting a potential error to later
-        // steps.
-        return graph.ResolutionContext.Result{.known = null};
+      .unresolved_access => |*uacc| {
+        _ = try self.intpr.probeType(
+          uacc.subject, .{.kind = .intermediate, .resolve = ctx});
       },
       .unresolved_call => |*uc| {
         _ = try self.intpr.probeType(
@@ -422,10 +453,16 @@ pub const DeclareResolution = struct {
           _ = try self.intpr.probeType(
             arg.content, .{.kind = .intermediate, .resolve = ctx});
         }
-        return graph.ResolutionContext.Result{.known = null};
+      },
+      .unresolved_symref => |*ur| {
+        for (self.defs) |def, i| if (std.mem.eql(u8, def.name.content, ur.name))
+          return graph.ResolutionContext.Result{.known = @intCast(u21, i)};
       },
       else => unreachable,
     }
+    // we don't know whether this is actually known but it would be a
+    // function variable, so we'll leave reporting a potential error to later
+    // steps.
+    return graph.ResolutionContext.Result{.known = null};
   }
-
 };

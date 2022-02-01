@@ -543,8 +543,18 @@ pub const Lattice = struct {
       .map => {
         unreachable; // TODO
       },
-      .callable => {
-        unreachable; // TODO
+      .callable => |*c| {
+        switch (other) {
+          .structural => |os| switch (os.*) {
+            .callable => |*oc| {
+              if (oc == c) return c.typedef();
+              if (oc.repr == c.repr) return c.repr.typedef();
+            },
+            else => {},
+          },
+          else => {},
+        }
+        return model.Type{.intrinsic = .poison};
       },
       .intersection => |*inter| blk: {
         if (other.isScalar()) {

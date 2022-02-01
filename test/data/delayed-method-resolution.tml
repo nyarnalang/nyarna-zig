@@ -1,12 +1,12 @@
 === Delayed method resolution
 --- input
 \declare:
-  foo = \record:
+  Foo = \Record:
     a, b: \Raw
-  \end(record)
+  \end(Record)
 \end(declare)
 
-\declare(\foo):
+\declare(\Foo):
   double = \func:
   :body:
     \this::concat()\this::concat()
@@ -17,25 +17,18 @@
   \end(func)
 \end(declare)
 
-\foo(foo, bar)::double()
---- ast
+\Foo(foo, bar)::double()
+--- expr
 +CALL
-  +TARGET
-    =SYMREF .doc.double
-  -TARGET
-  +PROTO "this"
-    +CALL
-      +TARGET
-        =SYMREF .doc.foo
-      -TARGET
-      +PROTO "a"
-        =LIT TEXT "foo"
-      -PROTO
-      +PROTO "b"
-        =LIT TEXT "bar"
-      -PROTO
-    -CALL
-  -PROTO
+  =FUNCREF .doc.document.double
+  >ARG this
+  +CALL
+    =TYPE .doc.document.Foo
+    >ARG a
+    =TEXT literal "foo"
+    >ARG b
+    =TEXT literal "bar"
+  -CALL
 -CALL
 --- document
 =RAW Raw "foobarfoobar"
