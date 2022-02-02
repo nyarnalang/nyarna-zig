@@ -110,6 +110,9 @@ pub const Interpreter = struct {
   /// references to symbols in a type's namespace in the current source file.
   type_namespaces: std.HashMapUnmanaged(model.Type, Namespace,
     model.Type.HashContext, std.hash_map.default_max_load_percentage) = .{},
+  /// The public namespace of the current module, into which public symbols are
+  /// published.
+  public_namespace: *std.ArrayListUnmanaged(*model.Symbol),
   /// The local storage of the interpreter where all data will be allocated that
   /// will be discarded when the interpreter finishes. This includes primarily
   /// the AST nodes which will be interpreted into expressions during
@@ -124,8 +127,9 @@ pub const Interpreter = struct {
   /// convenience object to generate nodes using the interpreter's storage.
   node_gen: model.NodeGenerator,
 
-  pub fn create(ctx: nyarna.Context,
-                input: *const model.Source) !*Interpreter {
+  pub fn create(ctx: nyarna.Context, input: *const model.Source,
+                public_ns: *std.ArrayListUnmanaged(*model.Symbol))
+      !*Interpreter {
     var arena = std.heap.ArenaAllocator.init(ctx.local());
     var ret = try arena.allocator().create(Interpreter);
     ret.* = .{
@@ -135,6 +139,7 @@ pub const Interpreter = struct {
       .syntax_registry = .{syntaxes.SymbolDefs.locations(),
                            syntaxes.SymbolDefs.definitions()},
       .node_gen = undefined,
+      .public_namespace = public_ns,
     };
     ret.node_gen = model.NodeGenerator.init(ret.allocator());
     errdefer ret.deinit();

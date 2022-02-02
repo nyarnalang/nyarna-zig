@@ -347,6 +347,8 @@ pub const Node = struct {
     name: *Node.Literal,
     root: ?Position,
     content: *Node,
+    /// initially false, may be set to true during \declare processing
+    public: bool,
 
     pub inline fn node(self: *@This()) *Node {
       return Node.parent(self);
@@ -1929,8 +1931,8 @@ pub const ValueGenerator = struct {
 
   pub inline fn definition(self: *const Self, pos: Position, name: *Value.TextScalar,
                            content: *Value) !*Value.Definition {
-    return &(try self.value(pos,
-      .{.definition = .{.name = name, .content = content}})).data.definition;
+    return &(try self.value(pos, .{.definition =
+      .{.name = name, .content = content}})).data.definition;
   }
 
   pub inline fn ast(self: *const Self, root: *Node) !*Value.Ast {

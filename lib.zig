@@ -195,14 +195,18 @@ pub const Intrinsics = Provider.Wrapper(struct {
 
     var defs = try intpr.allocator().alloc(*model.Node.Definition, def_count);
     def_count = 0;
-    for ([_]*model.Node{public, private}) |node| switch (node.data) {
+    for ([_]*model.Node{public, private}) |node, i| switch (node.data) {
       .void, .poison => {},
       .definition => |*def| {
+        if (i == 0) def.public = true;
         defs[def_count] = def;
         def_count += 1;
       },
       .concat => |*con| for (con.items) |item| {
-        defs[def_count] = &item.data.definition; // TODO: check for definition
+        // TODO: check for definition
+        const def = &item.data.definition;
+        if (i == 0) def.public = true;
+        defs[def_count] = def;
         def_count += 1;
       },
       .expression => |expr| {
@@ -215,6 +219,7 @@ pub const Intrinsics = Provider.Wrapper(struct {
             .root = def.root,
             .content = try intpr.node_gen.expression(
               try intpr.ctx.createValueExpr(def.content)),
+            .public = i == 0,
           });
           def_count += 1;
         }

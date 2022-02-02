@@ -216,7 +216,7 @@ pub const DeclareResolution = struct {
   }
 
   inline fn genSym(self: *DeclareResolution, name: *model.Node.Literal,
-            content: model.Symbol.Data) !*model.Symbol {
+                   content: model.Symbol.Data, publish: bool) !*model.Symbol {
     const sym = try self.intpr.ctx.global().create(model.Symbol);
     sym.* = .{
       .defined_at = name.node().pos,
@@ -227,14 +227,17 @@ pub const DeclareResolution = struct {
         .ns => null,
       },
     };
+    if (publish) {
+      try self.intpr.public_namespace.append(self.intpr.ctx.global(), sym);
+    }
     return sym;
   }
 
   fn genSymFromValue(self: *DeclareResolution, name: *model.Node.Literal,
-                     value: *model.Value) !*model.Symbol {
+                     value: *model.Value, publish: bool) !*model.Symbol {
     switch (value.data) {
       .@"type" => |tref| {
-        const sym = try self.genSym(name, .{.@"type" = tref.t});
+        const sym = try self.genSym(name, .{.@"type" = tref.t}, publish);
         switch (tref.t) {
           .instantiated => |inst| inst.name = sym,
           else => {},
@@ -242,11 +245,11 @@ pub const DeclareResolution = struct {
         return sym;
       },
       .funcref => |fref| {
-        const sym = try self.genSym(name, .{.func = fref.func});
+        const sym = try self.genSym(name, .{.func = fref.func}, publish);
         fref.func.name = sym;
         return sym;
       },
-      .poison => return try self.genSym(name, .poison),
+      .poison => return try self.genSym(name, .poison, publish),
       else => unreachable,
     }
   }
@@ -376,7 +379,7 @@ pub const DeclareResolution = struct {
                 break :blk;
               };
             func.callable.sig.returns = fgen.cur_returns;
-            const sym = try self.genSym(def.name, .{.func = func});
+            const sym = try self.genSym(def.name, .{.func = func}, def.public);
             func.name = sym;
             _ = try ns_data.tryRegister(self.intpr, sym);
             continue;
@@ -384,14 +387,14 @@ pub const DeclareResolution = struct {
           .poison => {},
           .expression => |expr| {
             const value = try self.intpr.ctx.evaluator().evaluate(expr);
-            _ = try ns_data.tryRegister(
-              self.intpr, try self.genSymFromValue(def.name, value));
+            _ = try ns_data.tryRegister(self.intpr,
+              try self.genSymFromValue(def.name, value, def.public));
             continue;
           },
           else => continue,
         }
         // also establish poison symbols
-        const sym = try self.genSym(def.name, .poison);
+        const sym = try self.genSym(def.name, .poison, def.public);
         _ = try ns_data.tryRegister(self.intpr, sym);
         def.content.data = .poison;
       }
@@ -403,7 +406,7 @@ pub const DeclareResolution = struct {
             const expr = try self.intpr.interpret(def.content);
             const value = try self.intpr.ctx.evaluator().evaluate(expr);
             _ = try ns_data.tryRegister(self.intpr,
-              try self.genSymFromValue(def.name, value));
+              try self.genSymFromValue(def.name, value, def.public));
           },
           .funcgen => |*fgen| {
             const func = &fgen.params.pregen.data.ny;

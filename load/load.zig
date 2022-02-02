@@ -30,7 +30,8 @@ pub const ModuleLoader = struct {
     ret.public_syms = .{};
     ret.logger = .{.reporter = data.reporter};
     errdefer data.storage.allocator().destroy(ret);
-    ret.interpreter = try Interpreter.create(ret.ctx(), input);
+    ret.interpreter =
+      try Interpreter.create(ret.ctx(), input, &ret.public_syms);
     ret.parser = parse.Parser.init();
     return ret;
   }
