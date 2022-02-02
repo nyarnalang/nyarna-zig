@@ -18,7 +18,7 @@ pub const GenericParserError = enum {
   InvalidPositionalArgument, UnknownSymbol, UnknownEnumValue, BlockNeedsConfig,
   CantBeCalled, InvalidNamedArgInAssign, UnfinishedCallInTypeArg, NotAType,
   CantCallUnfinished, UnknownField, FailedToCalculateReturnType,
-  FieldAccessWithoutInstance,
+  FieldAccessWithoutInstance, MethodOutsideDeclare,
 };
 
 pub const WrongItemError = enum {

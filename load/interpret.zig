@@ -618,11 +618,24 @@ pub const Interpreter = struct {
   /// On success, this function also resolves all unresolved references to the
   /// variables in the function's body.
   pub fn tryInterpretFuncParams(
-      self: *Interpreter, func: *model.Node.Funcgen, stage: Stage) !bool {
+      self: *Interpreter, func: *model.Node.Funcgen, stage: Stage,
+      this_type: ?model.Type) !bool {
     if (!(try self.locationsCanGenVars(func.params.unresolved, stage))) {
       return false;
     }
+    // refuse params creation if this is a \method and the \this type is not yet
+    // available.
+    if (func.needs_this_inject and this_type == null and
+        stage.kind == .intermediate) return false;
     var locs = std.ArrayList(model.Node.Funcgen.LocRef).init(self.allocator());
+    if (func.needs_this_inject) {
+      if (this_type) |t| {
+        try locs.append(.{.value = try self.ctx.values.location(
+          func.node().pos, self.ctx.thisName(), t)});
+      } else {
+        self.ctx.logger.MethodOutsideDeclare(func.node().pos);
+      }
+    }
     try self.collectLocations(func.params.unresolved, &locs);
     var variables =
       try self.allocator().alloc(*model.Symbol.Variable, locs.items.len);
@@ -669,7 +682,7 @@ pub const Interpreter = struct {
       self: *Interpreter, func: *model.Node.Funcgen, ret_type: model.Type,
       stage: Stage) nyarna.Error!?*model.Function {
     switch (func.params) {
-      .unresolved => if (!try self.tryInterpretFuncParams(func, stage))
+      .unresolved => if (!try self.tryInterpretFuncParams(func, stage, null))
         return null,
       .resolved => {},
       .pregen => |pregen| return pregen,
@@ -751,19 +764,29 @@ pub const Interpreter = struct {
         model.Type{.intrinsic = .poison}
       else ret_val.data.@"type".t;
       const ret = (try self.tryPregenFunc(func, returns, stage))
-        orelse return null;
+        orelse {
+          // just for discovering potential dependencies during \declare
+          // resolution.
+          _ = try self.tryInterpretFuncBody(func, returns, stage);
+          return null;
+        };
       const ny = &ret.data.ny;
       ny.body = (try self.tryInterpretFuncBody(
         func, returns, stage)) orelse return null;
       return ret;
     } else {
+      var failed_parts = false;
       switch (func.params) {
-        .unresolved => if (!try self.tryInterpretFuncParams(func, stage))
-          return null,
+        .unresolved => {
+          if (!try self.tryInterpretFuncParams(func, stage, null)) {
+            failed_parts = true;
+          }
+        },
         else => {},
       }
       const body_expr = (try self.tryInterpretFuncBody(func, null, stage))
         orelse return null;
+      if (failed_parts) return null;
       const ret = (try self.tryPregenFunc(
         func, body_expr.expected_type, stage)).?;
       ret.data.ny.body = body_expr;

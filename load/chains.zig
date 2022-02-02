@@ -111,7 +111,11 @@ pub const Resolver = struct {
                   .prefix = subject,
                 }};
               },
-            } else if (self.stage.kind != .intermediate) {
+            } else if (self.stage.kind != .intermediate and
+                       self.stage.kind != .resolve) {
+              // in .resolve stage there may still be unresolved accesses to
+              // the current type's namespace, so we don't poison in that case
+              // yet.
               self.intpr.ctx.logger.UnknownSymbol(chain.pos);
               return .poison;
             } else return .failed;

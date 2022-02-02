@@ -249,12 +249,23 @@ pub const Intrinsics = Provider.Wrapper(struct {
   fn func(intpr: *Interpreter, pos: model.Position, ns: u15,
           @"return": *model.Node, params: *model.Node, body: *model.Node)
       nyarna.Error!*model.Node {
-    var returns_node: ?*model.Node = switch (@"return".data) {
+    const returns_node: ?*model.Node = switch (@"return".data) {
       .poison, .void => null,
       else => @"return",
     };
     return (try intpr.node_gen.funcgen(
-      pos, returns_node, params, ns, body)).node();
+      pos, returns_node, params, ns, body, false)).node();
+  }
+
+  fn method(intpr: *Interpreter, pos: model.Position, ns: u15,
+            @"return": *model.Node, params: *model.Node, body: *model.Node)
+      nyarna.Error!*model.Node {
+    const returns_node: ?*model.Node = switch (@"return".data) {
+      .poison, .void => null,
+      else => @"return",
+    };
+    return (try intpr.node_gen.funcgen(
+      pos, returns_node, params, ns, body, true)).node();
   }
 
   //-----------------------
@@ -593,7 +604,7 @@ pub fn intrinsicModule(ctx: Context) !*model.Module {
   var ret = try ctx.global().create(model.Module);
   ret.root = try ctx.createValueExpr(
     try ctx.values.void(model.Position.intrinsic()));
-  ret.symbols = try ctx.global().alloc(*model.Symbol, 18);
+  ret.symbols = try ctx.global().alloc(*model.Symbol, 19);
   var index: usize = 0;
 
   var ip = Intrinsics.init();
@@ -830,6 +841,17 @@ pub fn intrinsicModule(ctx: Context) !*model.Module {
   try b.push(try ctx.values.intLocation("body", .{.intrinsic = .ast_node}));
   ret.symbols[index] =
     try extFuncSymbol(ctx, "func", true, b.finish(), &ip.provider);
+  index += 1;
+
+  // method
+  b = try types.SigBuilder.init(ctx, 3, .{.intrinsic = .ast_node}, false);
+  try b.push(try ctx.values.intLocation("return", .{.intrinsic = .ast_node}));
+  try b.push((try ctx.values.intLocation(
+    "params", .{.intrinsic = .ast_node})).withPrimary(
+      model.Position.intrinsic()).withHeader(location_block));
+  try b.push(try ctx.values.intLocation("body", .{.intrinsic = .ast_node}));
+  ret.symbols[index] =
+    try extFuncSymbol(ctx, "method", true, b.finish(), &ip.provider);
   index += 1;
 
   std.debug.assert(index == ret.symbols.len);

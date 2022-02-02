@@ -52,6 +52,9 @@ pub const Globals = struct {
   stack: []model.StackItem,
   /// current top of the stack, where new stack allocations happen.
   stack_ptr: [*]model.StackItem,
+  /// TextScalar containing the name "this" which is used as variable name for
+  /// methods.
+  this_name: model.Value,
 
   pub fn create(backing_allocator: std.mem.Allocator,
                 reporter: *errors.Reporter, stack_size: usize) !*Globals {
@@ -66,6 +69,13 @@ pub const Globals = struct {
       .builtin_registry = .{},
       .stack = undefined,
       .stack_ptr = undefined,
+      .this_name = .{
+        .origin = model.Position.intrinsic(),
+        .data = .{.text = .{
+          .t = .{.intrinsic = .literal},
+          .content = "this",
+        }},
+      },
     };
     errdefer backing_allocator.destroy(ret);
     errdefer ret.storage.deinit();
@@ -126,6 +136,10 @@ pub const Context = struct {
   /// Interface to the type lattice. It allows you to create and compare types.
   pub inline fn types(self: *const Context) *Lattice {
     return &self.data.types;
+  }
+
+  pub inline fn thisName(self: *const Context) *model.Value.TextScalar {
+    return &self.data.this_name.data.text;
   }
 
   pub inline fn createValueExpr(

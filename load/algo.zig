@@ -300,8 +300,13 @@ pub const DeclareResolution = struct {
             },
             .funcgen => |*fgen| {
               if (fgen.params == .unresolved) {
-                if (!try self.intpr.tryInterpretFuncParams(
-                    fgen, .{.kind = .final, .resolve = &tr.ctx})) {
+                const success = switch (self.in) {
+                  .ns => try self.intpr.tryInterpretFuncParams(
+                    fgen, .{.kind = .final, .resolve = &tr.ctx}, null),
+                  .t => |t| try self.intpr.tryInterpretFuncParams(
+                    fgen, .{.kind = .final, .resolve = &tr.ctx}, t),
+                };
+                if (!success) {
                   def.content.data = .poison;
                   continue;
                 }
@@ -443,8 +448,24 @@ pub const DeclareResolution = struct {
     const self = @fieldParentPtr(DeclareResolution, "dep_discovery_ctx", ctx);
     switch (item.data) {
       .unresolved_access => |*uacc| {
-        _ = try self.intpr.probeType(
+        const res = try self.intpr.probeType(
           uacc.subject, .{.kind = .intermediate, .resolve = ctx});
+        switch (self.in) {
+          .ns => {},
+          .t => if (res == null) {
+            // typically means that we hit a variable in a function body. If so,
+            // we just assume that this variable has the \declare type.
+            // This means we'll resolve the name of this access in our defs to
+            // discover dependencies.
+            // This will overreach in rare cases but we accept that for now.
+            for (self.defs) |def, i| {
+              if (std.mem.eql(u8, def.name.content, uacc.id)) {
+                return graph.ResolutionContext.Result{
+                  .known = @intCast(u21, i)};
+              }
+            }
+          },
+        }
       },
       .unresolved_call => |*uc| {
         _ = try self.intpr.probeType(

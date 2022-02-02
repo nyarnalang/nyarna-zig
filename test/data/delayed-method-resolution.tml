@@ -7,14 +7,14 @@
 \end(declare)
 
 \declare(\Foo):
-  double = \func:
+  double = \method:
   :body:
     \this::concat()\this::concat()
-  \end(func)
-  concat = \func:
+  \end(method)
+  concat = \method:
   :body:
     \this::a\this::b
-  \end(func)
+  \end(method)
 \end(declare)
 
 \Foo(foo, bar)::double()
@@ -23,11 +23,11 @@
   =FUNCREF .doc.document.double
   >ARG this
   +CALL
-    =TYPE .doc.document.Foo
+    =TYPE record .doc.document.Foo
     >ARG a
-    =TEXT literal "foo"
+    =TEXT raw "foo"
     >ARG b
-    =TEXT literal "bar"
+    =TEXT raw "bar"
   -CALL
 -CALL
 --- document
