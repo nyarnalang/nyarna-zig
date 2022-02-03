@@ -30,7 +30,7 @@ pub fn lexTest(f: *tml.File) !void {
   var data = try nyarna.Globals.create(
     std.testing.allocator, &r.reporter, nyarna.default_stack_size);
   defer data.destroy();
-  var ml = try nyarna.ModuleLoader.create(data, &src, &.{});
+  var ml = try nyarna.ModuleLoader.create(data, &src, &.{}, true);
   defer ml.destroy();
   var lexer = try ml.initLexer();
   defer lexer.deinit();
@@ -596,7 +596,7 @@ const Checker = struct {
     self.full_output.deinit(std.testing.allocator);
   }
 
-  fn moduleTest(self: *@This(), process: Tester) !void {
+  fn moduleTest(self: *@This(), process: Tester, only_parse: bool) !void {
     var src_meta = model.Source.Descriptor{
       .name = "input",
       .locator = ".doc.document",
@@ -614,8 +614,9 @@ const Checker = struct {
     var data = try nyarna.Globals.create(
       std.testing.allocator, &r.reporter, nyarna.default_stack_size);
     defer data.destroy();
-    var ml = try nyarna.ModuleLoader.create(data, &src, &.{});
-    defer ml.destroy();
+    var ml = try nyarna.ModuleLoader.create(data, &src, only_parse, only_parse);
+    defer if (only_parse) ml.destroy(); // if not only_parse, module loader gets
+                                        // destroyed when finalizing the module.
     var emitter = AstEmitter(*Checker){
       .depth = 0,
       .handler = self,
@@ -677,24 +678,25 @@ const Checker = struct {
 
 fn parseTestImpl(emitter: *AstEmitter(*Checker), ml: *nyarna.ModuleLoader)
     anyerror!void {
-  var res = try ml.loadAsNode(true);
-  try emitter.process(res);
+  while (!try ml.work()) {}
+  try emitter.process(ml.finalizeNode());
 }
 
 pub fn parseTest(f: *tml.File) !void {
   var checker = try Checker.init(f, "rawast");
   defer checker.deinit();
-  try checker.moduleTest(parseTestImpl);
+  try checker.moduleTest(parseTestImpl, true);
 }
 
 fn interpretTestImpl(emitter: *AstEmitter(*Checker), ml: *nyarna.ModuleLoader)
     anyerror!void {
-  var res = try ml.load(false);
+  while (!try ml.work()) {}
+  const res = try ml.finalize();
   try emitter.processExpr(res.root);
 }
 
 pub fn interpretTest(f: *tml.File) !void {
   var checker = try Checker.init(f, "expr");
   defer checker.deinit();
-  try checker.moduleTest(interpretTestImpl);
+  try checker.moduleTest(interpretTestImpl, false);
 }

@@ -37,9 +37,10 @@ test "parse simple line" {
   var data = try nyarna.Globals.create(
     std.testing.allocator, &r.reporter, nyarna.default_stack_size);
   defer data.destroy();
-  var ml = try nyarna.ModuleLoader.create(data, &src, &.{});
+  var ml = try nyarna.ModuleLoader.create(data, &src, true, true);
   defer ml.destroy();
-  var res = try ml.loadAsNode(true);
+  while (!try ml.work()) {}
+  var res = ml.finalizeNode();
   try ensureLiteral(res, .text, "Hello, World!");
 }
 
@@ -62,9 +63,10 @@ test "parse assignment" {
   var data = try nyarna.Globals.create(
     std.testing.allocator, &r.reporter, nyarna.default_stack_size);
   defer data.destroy();
-  var ml = try nyarna.ModuleLoader.create(data, &src, &.{});
+  var ml = try nyarna.ModuleLoader.create(data, &src, true, true);
   defer ml.destroy();
-  var res = try ml.loadAsNode(true);
+  while (!try ml.work()) {}
+  var res = ml.finalizeNode();
   try std.testing.expectEqual(model.Node.Data.assign, res.data);
   try ensureUnresSymref(res.data.assign.target.unresolved, 0, "foo");
   try ensureLiteral(res.data.assign.replacement, .text, "bar");
@@ -89,16 +91,18 @@ test "parse access" {
   var data = try nyarna.Globals.create(
     std.testing.allocator, &r.reporter, nyarna.default_stack_size);
   defer data.destroy();
-  var ml = try nyarna.ModuleLoader.create(data, &src, &.{});
+  var ml = try nyarna.ModuleLoader.create(data, &src, true, true);
   defer ml.destroy();
-  var res = try ml.loadAsNode(true);
-  try std.testing.expectEqual(model.Node.Data.access, res.data);
+  while (!try ml.work()) {}
+  var res = ml.finalizeNode();
+  try std.testing.expectEqual(model.Node.Data.unresolved_access, res.data);
   try std.testing.expectEqual(
-    model.Node.Data.access, res.data.access.subject.data);
-  try std.testing.expectEqualStrings("c", res.data.access.id);
-  try ensureUnresSymref(res.data.access.subject.data.access.subject, 0, "a");
+    model.Node.Data.unresolved_access, res.data.unresolved_access.subject.data);
+  try std.testing.expectEqualStrings("c", res.data.unresolved_access.id);
+  try ensureUnresSymref(
+    res.data.unresolved_access.subject.data.unresolved_access.subject, 0, "a");
   try std.testing.expectEqualStrings(
-    "b", res.data.access.subject.data.access.id);
+    "b", res.data.unresolved_access.subject.data.unresolved_access.id);
 }
 
 test "parse concat" {
@@ -120,9 +124,10 @@ test "parse concat" {
   var data = try nyarna.Globals.create(
     std.testing.allocator, &r.reporter, nyarna.default_stack_size);
   defer data.destroy();
-  var ml = try nyarna.ModuleLoader.create(data, &src, &.{});
+  var ml = try nyarna.ModuleLoader.create(data, &src, true, true);
   defer ml.destroy();
-  var res = try ml.loadAsNode(true);
+  while (!try ml.work()) {}
+  var res = ml.finalizeNode();
   try std.testing.expectEqual(model.Node.Data.concat, res.data);
   try ensureLiteral(res.data.concat.items[0], .text, "lorem");
   try ensureUnresSymref(res.data.concat.items[1], 0, "a");
@@ -151,9 +156,10 @@ test "parse paragraphs" {
   var data = try nyarna.Globals.create(
     std.testing.allocator, &r.reporter, nyarna.default_stack_size);
   defer data.destroy();
-  var ml = try nyarna.ModuleLoader.create(data, &src, &.{});
+  var ml = try nyarna.ModuleLoader.create(data, &src, true, true);
   defer ml.destroy();
-  var res = try ml.loadAsNode(true);
+  while (!try ml.work()) {}
+  var res = ml.finalizeNode();
   try std.testing.expectEqual(model.Node.Data.paras, res.data);
   try ensureLiteral(res.data.paras.items[0].content, .text, "lorem");
   try std.testing.expectEqual(
@@ -181,9 +187,10 @@ test "parse unknown call" {
   var data = try nyarna.Globals.create(
     std.testing.allocator, &r.reporter, nyarna.default_stack_size);
   defer data.destroy();
-  var ml = try nyarna.ModuleLoader.create(data, &src, &.{});
+  var ml = try nyarna.ModuleLoader.create(data, &src, true, true);
   defer ml.destroy();
-  var res = try ml.loadAsNode(true);
+  while (!try ml.work()) {}
+  var res = ml.finalizeNode();
   try std.testing.expectEqual(model.Node.Data.unresolved_call, res.data);
   try ensureUnresSymref(res.data.unresolved_call.target, 0, "spam");
   try std.testing.expectEqual(
@@ -217,9 +224,10 @@ test "parse block" {
   var data = try nyarna.Globals.create(
     std.testing.allocator, &r.reporter, nyarna.default_stack_size);
   defer data.destroy();
-  var ml = try nyarna.ModuleLoader.create(data, &src, &.{});
+  var ml = try nyarna.ModuleLoader.create(data, &src, true, true);
   defer ml.destroy();
-  var res = try ml.loadAsNode(true);
+  while (!try ml.work()) {}
+  var res = ml.finalizeNode();
   try std.testing.expectEqual(model.Node.Data.unresolved_call, res.data);
   try ensureUnresSymref(res.data.unresolved_call.target, 0, "block");
   try std.testing.expectEqual(

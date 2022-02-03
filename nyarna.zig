@@ -24,7 +24,8 @@ pub const Error = error {
 /// assumes we have enough memory to not waste time on implementing that.
 ///
 /// This is an internal, not an external API. External code should solely
-/// interact with Globals via the limited interface of the Context type.
+/// interact with Globals via the limited interface of the Context and Processor
+/// types.
 pub const Globals = struct {
   /// The error reporter for this loader, supplied externally.
   reporter: *errors.Reporter,
@@ -106,7 +107,10 @@ pub const Globals = struct {
 const Lattice = types.Lattice;
 const SigBuilderRes = types.SigBuilderRes;
 
-/// The Context is a public API for accessing global values and logging.
+/// The Context is a public API for accessing global values and logging. This
+/// API is useful for external code that implements external functions for
+/// Nyarna.
+///
 /// External code shall not directly interface with the data field and only use
 /// the accessors defined in Context. This both provides a more stable external
 /// API, and prevents external callers from bringing the data into an invalid
@@ -156,4 +160,67 @@ pub const Context = struct {
   pub inline fn evaluator(self: *const Context) Evaluator {
     return Evaluator{.ctx = self.*};
   }
+};
+
+
+
+/// This type is the API's entry point.
+pub const Processor = struct {
+  pub const MainLoader = struct {
+    impl: *ModuleLoader,
+
+    /// for deinitialization in error scenarios.
+    /// must not be called if finalize() is called.
+    pub fn deinit(self: *MainLoader) void {
+      self.impl.destroy();
+    }
+
+    /// finish loading the document.
+    pub fn finalize(self: *MainLoader) !*model.Module { // TODO: document
+      defer self.deinit();
+      while (!try self.impl.work()) unreachable; // TODO
+      return try self.impl.finalize();
+    }
+  };
+
+  globals: *Globals,
+
+  const Self = @This();
+
+  pub fn init(allocator: std.mem.Allocator, reporter: *errors.Reporter,
+              stack_size: usize) !Processor {
+    return Processor{
+      .globals = try Globals.create(allocator, reporter, stack_size),
+    };
+  }
+
+  /// start loading the given source.
+  /// source is loaded until a declaration of module parameters is encountered.
+  /// use the returned MainLoader's pushArg() to push arguments.
+  /// use the returned MainLoader's finalize() to finish loading.
+  ///
+  /// caller must either deinit() or finalize() the returned MainLoader.
+  pub fn startLoading(self: *Self, source: *const model.Source) !MainLoader {
+    var ret = MainLoader{
+      .impl = try ModuleLoader.create(self.globals, source, false, false),
+    };
+    while (true) {
+      _ = try self.impl.work();
+      switch (self.state) {
+        .initial => unreachable,
+        .encountered_parameters, .finished => return ret,
+        .parsing, .interpreting => unreachable, // TODO
+      }
+    }
+  }
+
+  /// parse a command-line argument, be it a direct string or a reference to a
+  /// file.
+  pub fn parseArg(self: *Self, source: *const model.Source) !*model.Node {
+    const loader = try ModuleLoader.create(self.data, source);
+    defer loader.destroy();
+    return try loader.loadAsNode(true);
+  }
+
+
 };

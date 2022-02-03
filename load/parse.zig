@@ -13,6 +13,24 @@ const chains = @import("chains.zig");
 
 const last = @import("../helpers.zig").last;
 
+/// The parser can return one of these if outside action is required before
+/// resuming parsing.
+pub const UnwindReason = error {
+  /// emitted when an \import is encountered that specifies a source that has
+  /// not yet been loaded. Caller must load that source and the resume parsing.
+  referred_source_unavailable,
+  /// emitted when a module's parameter declaration has been encountered. Caller
+  /// may inspect declared parameters, push available arguments, then resume
+  /// parsing.
+  ///
+  /// Caller is not required to check whether all parameters get an argument or
+  /// whether pushed arguments can be bound. This will be checked and handled by
+  /// the parser, errors will be logged.
+  encountered_parameters,
+};
+
+pub const Error = nyarna.Error || UnwindReason;
+
 /// The parser creates AST nodes.
 /// Whenever an AST node is created, the parser checks whether it needs to be
 /// evaluated immediately, and if so, asks the interpreter to do so, which will
@@ -347,19 +365,19 @@ pub const Parser = struct {
   /// Instead, they are handed to the loader's errors.Handler. To check whether
   /// errors have occurred, check for increase of the handler's error_count.
   pub fn parseSource(self: *Parser, context: *Interpreter, fullast: bool)
-      !*model.Node {
+      Error!*model.Node {
     self.lexer = try lex.Lexer.init(context);
     self.advance();
     return self.doParse(fullast);
   }
 
-  /// continue parsing. Precondition: Either parseSource() or resumeParse()
-  /// have returned with .referred_source_unavailable previously on the given
-  /// parser, and have never returned a *model.Node.
+  /// continue parsing. Precondition: parseSource() or resumeParse() have
+  /// returned with an UnwindReason previously on the given parser, and have
+  /// never returned a *model.Node.
   ///
   /// Apart from the precondition, this function has the same semantics as
   /// parseSource(), including that it may return .referred_source_unavailable.
-  pub fn resumeParse(self: *Parser) !*model.Node {
+  pub fn resumeParse(self: *Parser) Error!*model.Node {
     // when resuming, the fullast value is irrelevant since it is only inspected
     // when encountering the first non-space token in the file – which will
     // always be before parsing is interrupted.
