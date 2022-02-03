@@ -38,6 +38,7 @@ pub const ModuleLoader = struct {
   state: union(enum) {
     initial,
     encountered_parameters,
+    requesting_parameters,
     parsing,
     interpreting: *model.Node,
     finished: *model.Expression,
@@ -82,6 +83,8 @@ pub const ModuleLoader = struct {
         if (self.state == .initial or self.state == .encountered_parameters) {
           self.state = .parsing;
         },
+      parse.UnwindReason.request_import_parameters =>
+        self.state = .requesting_parameters,
       parse.UnwindReason.encountered_parameters =>
         self.state = .encountered_parameters,
       else => |actual_error| return actual_error,
@@ -97,7 +100,7 @@ pub const ModuleLoader = struct {
           catch |e| return self.handleError(e);
         self.state = .{.interpreting = node};
       },
-      .parsing, .encountered_parameters => {
+      .parsing, .encountered_parameters, .requesting_parameters => {
         const node = self.parser.resumeParse()
           catch |e| return self.handleError(e);
         self.state = .{.interpreting = node};

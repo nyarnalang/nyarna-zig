@@ -16,8 +16,17 @@ const last = @import("../helpers.zig").last;
 /// The parser can return one of these if outside action is required before
 /// resuming parsing.
 pub const UnwindReason = error {
-  /// emitted when an \import is encountered that specifies a source that has
-  /// not yet been loaded. Caller must load that source and the resume parsing.
+  /// emitted when an \import is encountered and arguments are given for it,
+  /// but the referenced source has not been loaded yet. Requests for the
+  /// referenced to be loaded until its parameters are known, then continue with
+  /// the current source.
+  request_import_parameters,
+  /// emitted when an \import is encountered but the referenced source has not
+  /// been fully loaded yet. Not emitted if request_import_parameters applies,
+  /// which is then emitted instead.
+  /// Will be emitted after parsing all arguments when resuming after
+  /// request_import_parameters.
+  /// Requests the referenced source to be fully loaded, then resume parsing.
   referred_source_unavailable,
   /// emitted when a module's parameter declaration has been encountered. Caller
   /// may inspect declared parameters, push available arguments, then resume
