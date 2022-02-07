@@ -229,10 +229,7 @@ pub const Locator = struct {
   path: []const u8,
 
   pub fn parse(input: []const u8) !Locator {
-    // TODO: render error
-    if (input.len == 0) {
-      return Error.parse_error;
-    }
+    if (input.len == 0) return Error.parse_error;
     var ret = Locator{.repr = input, .resolver = null, .path = undefined};
     if (input[0] == '.') {
       const end = std.mem.indexOfScalar(u8, input[1..], '.') orelse
@@ -242,6 +239,7 @@ pub const Locator = struct {
     } else {
       ret.path = input;
     }
+    return ret;
   }
 
   pub fn parent(self: Locator) Locator {
@@ -401,6 +399,15 @@ pub const Node = struct {
       return Node.parent(self);
     }
   };
+
+  pub const Import = struct {
+    module_index: usize,
+
+    pub inline fn node(self: *@This()) *Node {
+      return Node.parent(self);
+    }
+  };
+
   pub const Literal = struct {
     kind: enum {text, space},
     content: []const u8,
@@ -602,6 +609,7 @@ pub const Node = struct {
     gen_paragraphs   : tg.Paragraphs,
     gen_record       : tg.Record,
     gen_textual      : tg.Textual,
+    import           : Import,
     literal          : Literal,
     location         : Location,
     paras            : Paras,
@@ -626,6 +634,7 @@ pub const Node = struct {
       Definition       => offset(Data, "definition"),
       *Expression      => offset(Data, "expression"),
       Funcgen          => offset(Data, "funcgen"),
+      Import           => offset(Data, "import"),
       Literal          => offset(Data, "literal"),
       Location         => offset(Data, "location"),
       Paras            => offset(Data, "paras"),
@@ -1634,6 +1643,11 @@ pub const NodeGenerator = struct {
       .returns = returns, .params = .{.unresolved = params},
       .params_ns = params_ns, .body = body, .needs_this_inject = inject_this,
     }})).data.funcgen;
+  }
+
+  pub inline fn import(self: *Self, pos: Position, index: usize) !*Node.Import {
+    return &(try self.node(
+      pos, .{.import = .{.module_index = index}})).data.import;
   }
 
   pub inline fn literal(self: *Self, pos: Position, content: Node.Literal)

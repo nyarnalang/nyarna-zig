@@ -6,7 +6,7 @@ pub const LexerError = enum {
   IllegalCodePoint, IllegalOpeningParenthesis, IllegalBlocksStartInArgs,
   IllegalCommandChar, MixedIndentation, IllegalIndentation,
   IllegalContentAtHeader, IllegalCharacterForId, InvalidEndCommand,
-  SwallowDepthWithoutDiamondClose,
+  SwallowDepthWithoutDiamondClose, InvalidLocator,
 };
 
 pub const GenericParserError = enum {
@@ -18,7 +18,7 @@ pub const GenericParserError = enum {
   InvalidPositionalArgument, UnknownSymbol, UnknownEnumValue, BlockNeedsConfig,
   CantBeCalled, InvalidNamedArgInAssign, UnfinishedCallInTypeArg, NotAType,
   CantCallUnfinished, UnknownField, FailedToCalculateReturnType,
-  FieldAccessWithoutInstance, MethodOutsideDeclare,
+  FieldAccessWithoutInstance, MethodOutsideDeclare, CannotResolveLocator,
 };
 
 pub const WrongItemError = enum {

@@ -27,6 +27,12 @@ pub const Error = error {
 /// interact with Globals via the limited interface of the Context and Processor
 /// types.
 pub const Globals = struct {
+  pub const ModuleEntry = union(enum) {
+    loading: *ModuleLoader,
+    waiting_for_params: *ModuleLoader,
+    loaded: *model.Module,
+  };
+
   /// The error reporter for this loader, supplied externally.
   reporter: *errors.Reporter,
   /// The backing allocator for heap allocations used by this loader.
@@ -56,6 +62,13 @@ pub const Globals = struct {
   /// TextScalar containing the name "this" which is used as variable name for
   /// methods.
   this_name: model.Value,
+  /// modules that have already been referenced. the key is the absolute
+  /// locator. The first reference will add the module as .loading. The
+  /// loading process will load the last not onloaded module in a loop
+  ///  until all modules have been loaded.
+  ///
+  /// This list is also used to catch cyclic references.
+  known_modules: std.StringArrayHashMapUnmanaged(ModuleEntry) = .{},
 
   pub fn create(backing_allocator: std.mem.Allocator,
                 reporter: *errors.Reporter, stack_size: usize) !*Globals {
@@ -100,6 +113,37 @@ pub const Globals = struct {
     self.storage.deinit();
     self.backing_allocator.free(self.stack);
     self.backing_allocator.destroy(self);
+  }
+
+  fn lastLoadingModule(self: *Globals) ?usize {
+    var index: usize = self.known_modules.count();
+    while (index > 0) {
+      index -= 1;
+      if (self.known_modules.values()[index] == .loading) return index;
+    }
+    return null;
+  }
+
+  /// while there is an unloaded module in .known_modules, continues loading the
+  /// last one. If the uppermost module encounters a parameter specification,
+  /// returns so that caller may inject those.
+  fn work(self: *Globals) !void {
+    while (self.lastLoadingModule()) |index| {
+      const loader = self.known_modules.values()[index].loading;
+      _ = try loader.work();
+      switch (loader.state) {
+        .initial => unreachable,
+        .finished => {
+          self.known_modules.values()[index] =
+            .{.loaded = try loader.finalize()};
+        },
+        .encountered_parameters => {
+          self.known_modules.values()[index] = .{.waiting_for_params = loader};
+          if (index == 0) return;
+        },
+        .parsing, .interpreting => {},
+      }
+    }
   }
 };
 
@@ -160,14 +204,21 @@ pub const Context = struct {
   pub inline fn evaluator(self: *const Context) Evaluator {
     return Evaluator{.ctx = self.*};
   }
+
+  /// tries to resolve the given locator to a module.
+  /// if successful, returns the index of the module.
+  pub fn searchModule(self: *Context, locator: model.Locator) !?usize {
+    // TODO
+    _ = locator;
+    _ = self;
+    return null;
+  }
 };
-
-
 
 /// This type is the API's entry point.
 pub const Processor = struct {
   pub const MainLoader = struct {
-    impl: *ModuleLoader,
+    globals: *Globals,
 
     /// for deinitialization in error scenarios.
     /// must not be called if finalize() is called.
@@ -176,21 +227,21 @@ pub const Processor = struct {
     }
 
     /// finish loading the document.
-    pub fn finalize(self: *MainLoader) !*model.Module { // TODO: document
+    pub fn finalize(self: *MainLoader) !*model.Module { // TODO: return document
       defer self.deinit();
-      while (!try self.impl.work()) unreachable; // TODO
-      return try self.impl.finalize();
+      try self.globals.work();
+      return self.globals.known_modules.values()[0].loaded;
     }
   };
 
-  globals: *Globals,
+  allocator: std.mem.Allocator,
+  stack_size: usize,
 
   const Self = @This();
 
-  pub fn init(allocator: std.mem.Allocator, reporter: *errors.Reporter,
-              stack_size: usize) !Processor {
+  pub fn init(allocator: std.mem.Allocator, stack_size: usize) !Processor {
     return Processor{
-      .globals = try Globals.create(allocator, reporter, stack_size),
+      .allocator = allocator, .stack_size = stack_size,
     };
   }
 
@@ -200,18 +251,16 @@ pub const Processor = struct {
   /// use the returned MainLoader's finalize() to finish loading.
   ///
   /// caller must either deinit() or finalize() the returned MainLoader.
-  pub fn startLoading(self: *Self, source: *const model.Source) !MainLoader {
+  pub fn startLoading(self: *Self, source: *const model.Source,
+                      reporter: *errors.Reporter) !MainLoader {
     var ret = MainLoader{
-      .impl = try ModuleLoader.create(self.globals, source, false, false),
+      .globals = try Globals.create(self.allocator, reporter, self.stack_size),
     };
-    while (true) {
-      _ = try self.impl.work();
-      switch (self.state) {
-        .initial => unreachable,
-        .encountered_parameters, .finished => return ret,
-        .parsing, .interpreting => unreachable, // TODO
-      }
-    }
+    errdefer ret.globals.destroy();
+    ret.globals.known_modules.put(source.meta.locator,
+      try ModuleLoader.create(ret.globals, source, false, false));
+    ret.globals.work();
+    return ret;
   }
 
   /// parse a command-line argument, be it a direct string or a reference to a

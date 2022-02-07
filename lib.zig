@@ -232,23 +232,42 @@ pub const Intrinsics = Provider.Wrapper(struct {
   }
 
   fn @"if"(intpr: *Interpreter, pos: model.Position,
-           condition: *model.Value.Ast, then: *model.Value.Ast,
-           @"else": *model.Value.Ast) nyarna.Error!*model.Node {
+           condition: *model.Node, then: *model.Node,
+           @"else": *model.Node) nyarna.Error!*model.Node {
     const nodes = try intpr.allocator().alloc(*model.Node, 2);
-    nodes[1] = then.root;
-    nodes[0] = @"else".root;
+    nodes[1] = then;
+    nodes[0] = @"else";
 
     const ret = try intpr.allocator().create(model.Node);
     ret.* = .{
       .pos = pos,
       .data = .{
         .branches = .{
-          .condition = condition.root,
+          .condition = condition,
           .branches = nodes,
         },
       },
     };
     return ret;
+  }
+
+  fn import(intpr: *Interpreter, pos: model.Position,
+            locator: *model.Node) nyarna.Error!*model.Node {
+    const expr = (try intpr.interpretWithTargetScalar(
+      locator, .{.intrinsic = .raw}, .{.kind = .keyword})) orelse
+      return try intpr.node_gen.poison(pos);
+    const value = try intpr.ctx.evaluator().evaluate(expr);
+    if (value.data == .poison) return try intpr.node_gen.poison(pos);
+    const parsed = model.Locator.parse(value.data.text.content) catch {
+      intpr.ctx.logger.InvalidLocator(locator.pos);
+      return try intpr.node_gen.poison(pos);
+    };
+    if (try intpr.ctx.searchModule(parsed)) |index| {
+      return (try intpr.node_gen.import(pos, index)).node();
+    } else {
+      intpr.ctx.logger.CannotResolveLocator(locator.pos);
+      return try intpr.node_gen.poison(pos);
+    }
   }
 
   fn func(intpr: *Interpreter, pos: model.Position, ns: u15,

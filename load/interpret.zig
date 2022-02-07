@@ -1094,6 +1094,7 @@ pub const Interpreter = struct {
         break :blk try self.ctx.createValueExpr(
           (try self.ctx.values.funcRef(input.pos, val)).value());
       },
+      .import => |_| unreachable, // TODO
       .literal => |lit|
         // TODO: delay this until stage.kind == .final?
         try self.ctx.createValueExpr(
@@ -1222,7 +1223,7 @@ pub const Interpreter = struct {
       nyarna.Error!?model.Type {
     std.debug.assert(stage.kind != .resolve);
     switch (node.data) {
-      .assign, .funcgen, .gen_concat, .gen_enum, .gen_float,
+      .assign, .import, .funcgen, .gen_concat, .gen_enum, .gen_float,
       .gen_intersection, .gen_list, .gen_map, .gen_numeric, .gen_optional,
       .gen_paragraphs, .gen_record, .gen_textual => {
         if (try self.tryInterpret(node, stage)) |expr| {
@@ -1442,7 +1443,7 @@ pub const Interpreter = struct {
   /// Same as tryInterpret, but takes a target type that may be used to generate
   /// typed literal values from text literals. The target type *must* be a
   /// scalar type.
-  fn interpretWithTargetScalar(
+  pub fn interpretWithTargetScalar(
       self: *Interpreter, input: *model.Node, t: model.Type, stage: Stage)
       nyarna.Error!?*model.Expression {
     std.debug.assert(stage.kind != .resolve);
@@ -1454,7 +1455,7 @@ pub const Interpreter = struct {
         inst.data == .float or inst.data == .tenum,
     });
     switch (input.data) {
-      .assign, .definition, .funcgen, .location, .resolved_access,
+      .assign, .definition, .funcgen, .import, .location, .resolved_access,
       .resolved_symref, .resolved_call, .gen_concat, .gen_enum, .gen_float,
       .gen_intersection, .gen_list, .gen_map, .gen_numeric, .gen_optional,
       .gen_paragraphs, .gen_record, .gen_textual => {

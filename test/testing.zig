@@ -230,6 +230,10 @@ fn AstEmitter(Handler: anytype) type {
           try def.pop();
         },
         .expression => |e| try self.processExpr(e),
+        .import => |i| {
+          try self.emitLine("=IMPORT {s}", .{
+            self.data.known_modules.keys()[i.module_index]});
+        },
         .literal => |a| {
           try self.emitLine("=LIT {s} \"{}\"",
             .{@tagName(a.kind), std.zig.fmtEscapes(a.content)});
