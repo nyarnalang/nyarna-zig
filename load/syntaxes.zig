@@ -84,7 +84,7 @@ pub const SymbolDefs = struct {
 
   fn init(intpr: *Interpreter, variant: Variant)
       std.mem.Allocator.Error!*Processor {
-    const ret = try intpr.allocator().create(SymbolDefs);
+    const ret = try intpr.allocator.create(SymbolDefs);
     ret.intpr = intpr;
     ret.proc = .{
       .push = SymbolDefs.push,
@@ -137,7 +137,7 @@ pub const SymbolDefs = struct {
         .names => switch (item) {
           .space => return .none,
           .literal => |name| {
-            try self.names.append(self.intpr.allocator(),
+            try self.names.append(self.intpr.allocator,
               try self.intpr.node_gen.literal(
                 pos, .{.kind = .text, .content = name}));
             break .after_name;
@@ -552,13 +552,13 @@ pub const SymbolDefs = struct {
       comptime additionals_field: ?[]const u8,
       comptime optional_pos_fields: []const []const u8,
       comptime optional_node_fields: []const []const u8) !*model.Node {
-    const ret = try self.intpr.allocator().create(model.Node);
+    const ret = try self.intpr.allocator.create(model.Node);
     ret.pos = pos;
     ret.data = @unionInit(@TypeOf(ret.data), kind, undefined);
     const val = &@field(ret.data, kind);
     val.name = name;
     const pos_into = if (additionals_field) |a| blk: {
-      const af = try self.intpr.allocator().create(
+      const af = try self.intpr.allocator.create(
         @typeInfo(
           @typeInfo(@TypeOf(@field(val, a))).Optional.child
         ).Pointer.child);
@@ -610,7 +610,7 @@ pub const SymbolDefs = struct {
             &[_][]const u8{"root"}, &[_][]const u8{});
         },
       };
-      try self.produced.append(self.intpr.allocator(), node);
+      try self.produced.append(self.intpr.allocator, node);
     }
   }
 

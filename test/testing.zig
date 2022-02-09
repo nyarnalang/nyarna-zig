@@ -1,37 +1,22 @@
 const std = @import("std");
 const nyarna = @import("nyarna");
 const model = nyarna.model;
-const tml = @import("tml.zig");
+pub const TestDataResolver = @import("resolve.zig").TestDataResolver;
 const errors = nyarna.errors;
 
 const Error = error {
   no_match,
 };
 
-pub fn lexTest(f: *tml.File) !void {
-  var input = f.items.get("input").?;
-  try input.content.appendSlice(f.alloc(), "\x04\x04\x04\x04");
-  const expected_data = f.items.get("tokens").?;
-  var expected_content = std.mem.split(u8, expected_data.content.items, "\n");
-  var src_meta = model.Source.Descriptor{
-    .name = "input",
-    .locator = ".doc.document",
-    .argument = false,
-  };
-  var src = model.Source{
-    .meta = &src_meta,
-    .content = input.content.items,
-    .offsets = .{
-      .line = input.line_offset, .column = 0,
-    },
-    .locator_ctx = ".doc.",
-  };
+pub fn lexTest(data: *TestDataResolver) !void {
   var r = errors.CmdLineReporter.init();
-  var data = try nyarna.Globals.create(
-    std.testing.allocator, &r.reporter, nyarna.default_stack_size);
-  defer data.destroy();
-  var ml = try nyarna.ModuleLoader.create(data, &src, &.{}, true);
-  defer ml.destroy();
+  var proc = try nyarna.Processor.init(
+    std.testing.allocator, nyarna.default_stack_size, &r.reporter);
+  defer proc.deinit();
+  var loader = try proc.initMainModule(&data.api, "input", true);
+  const ml = loader.globals.known_modules.values()[0].require_module;
+  defer loader.deinit();
+  var expected_content = data.valueLines("tokens");
   var lexer = try ml.initLexer();
   defer lexer.deinit();
   var startpos = lexer.recent_end;
@@ -577,22 +562,18 @@ const Checker = struct {
   const Tester =
     fn(emitter: *AstEmitter(*Checker), ml: *nyarna.ModuleLoader) anyerror!void;
 
-  expected_iter: std.mem.TokenIterator(u8),
+  expected_iter: std.mem.SplitIterator(u8),
   line: usize,
   full_output: std.ArrayListUnmanaged(u8),
   failed: bool,
-  input: tml.Value,
+  data: *TestDataResolver,
 
-  fn init(f: *tml.File, name_in_input: []const u8) !Checker {
-    var input = f.items.get("input").?;
-    try input.content.appendSlice(f.alloc(), "\x04\x04\x04\x04");
-    const expected_data = f.items.get(name_in_input).?;
+  fn init(data: *TestDataResolver, name_in_input: []const u8) !Checker {
     return Checker{
-      .expected_iter =
-        std.mem.tokenize(u8, expected_data.content.items, "\n"),
-      .line = expected_data.line_offset + 1,
+      .expected_iter = data.valueLines(name_in_input),
+      .line = data.source.items.get(name_in_input).?.line_offset + 1,
       .full_output = .{}, .failed = false,
-      .input = input,
+      .data = data,
     };
   }
 
@@ -600,38 +581,14 @@ const Checker = struct {
     self.full_output.deinit(std.testing.allocator);
   }
 
-  fn moduleTest(self: *@This(), process: Tester, only_parse: bool) !void {
-    var src_meta = model.Source.Descriptor{
-      .name = "input",
-      .locator = ".doc.document",
-      .argument = false,
-    };
-    var src = model.Source{
-      .meta = &src_meta,
-      .content = self.input.content.items,
-      .offsets = .{
-        .line = self.input.line_offset, .column = 0,
-      },
-      .locator_ctx = ".doc.",
-    };
-    var r = errors.CmdLineReporter.init();
-    var data = try nyarna.Globals.create(
-      std.testing.allocator, &r.reporter, nyarna.default_stack_size);
-    defer data.destroy();
-    var ml = try nyarna.ModuleLoader.create(data, &src, only_parse, only_parse);
-    defer if (only_parse) ml.destroy(); // if not only_parse, module loader gets
-                                        // destroyed when finalizing the module.
-    var emitter = AstEmitter(*Checker){
-      .depth = 0,
-      .handler = self,
-      .data = data,
-    };
-    try process(&emitter, ml);
+  fn finish(self: *@This()) !void {
     if (self.expected_iter.next()) |line| {
-      if (!self.failed) {
-        std.log.err("got less output than expected, line {} missing:\n{s}\n",
-          .{self.line, line});
-        self.failed = true;
+      if (line.len > 0 or self.expected_iter.next() != null) {
+        if (!self.failed) {
+          std.log.err("got less output than expected, line {} missing:\n{s}\n",
+            .{self.line, line});
+          self.failed = true;
+        }
       }
     }
     if (self.failed) {
@@ -643,7 +600,6 @@ const Checker = struct {
         , .{self.full_output.items});
       return Error.no_match;
     }
-    try std.testing.expectEqual(@as(usize, 0), ml.logger.count);
   }
 
   fn handle(self: *@This(), line: []const u8) !void {
@@ -680,27 +636,42 @@ const Checker = struct {
   }
 };
 
-fn parseTestImpl(emitter: *AstEmitter(*Checker), ml: *nyarna.ModuleLoader)
-    anyerror!void {
+pub fn parseTest(data: *TestDataResolver) !void {
+  var checker = try Checker.init(data, "rawast");
+  defer checker.deinit();
+  var r = errors.CmdLineReporter.init();
+  var proc = try nyarna.Processor.init(
+    std.testing.allocator, nyarna.default_stack_size, &r.reporter);
+  defer proc.deinit();
+  var loader = try proc.initMainModule(&checker.data.api, "input", true);
+  const ml = loader.globals.known_modules.values()[0].require_module;
+  defer loader.deinit();
+  var emitter = AstEmitter(*Checker){
+    .depth = 0,
+    .handler = &checker,
+    .data = loader.globals,
+  };
   while (!try ml.work()) {}
   try emitter.process(ml.finalizeNode());
+  try checker.finish();
+  try std.testing.expectEqual(@as(usize, 0), ml.logger.count);
 }
 
-pub fn parseTest(f: *tml.File) !void {
-  var checker = try Checker.init(f, "rawast");
+pub fn interpretTest(data: *TestDataResolver) !void {
+  var checker = try Checker.init(data, "expr");
   defer checker.deinit();
-  try checker.moduleTest(parseTestImpl, true);
-}
-
-fn interpretTestImpl(emitter: *AstEmitter(*Checker), ml: *nyarna.ModuleLoader)
-    anyerror!void {
-  while (!try ml.work()) {}
-  const res = try ml.finalize();
-  try emitter.processExpr(res.root);
-}
-
-pub fn interpretTest(f: *tml.File) !void {
-  var checker = try Checker.init(f, "expr");
-  defer checker.deinit();
-  try checker.moduleTest(interpretTestImpl, false);
+  var r = errors.CmdLineReporter.init();
+  var proc = try nyarna.Processor.init(
+    std.testing.allocator, nyarna.default_stack_size, &r.reporter);
+  defer proc.deinit();
+  var loader = try proc.startLoading(&data.api, "input");
+  const document = (try loader.finalize()).?;
+  defer document.destroy();
+  var emitter = AstEmitter(*Checker){
+    .depth = 0,
+    .handler = &checker,
+    .data = document.globals,
+  };
+  try emitter.processExpr(document.main.root);
+  try checker.finish();
 }

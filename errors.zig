@@ -114,6 +114,10 @@ pub const ConstructionError = enum {
   NotInEnum
 };
 
+pub const FileError = enum {
+  FailedToOpen, NotAFile, FailedToRead,
+};
+
 pub const Reporter = struct {
   lexerErrorFn:
     fn(reporter: *Reporter, id: LexerError, pos: model.Position) void,
@@ -135,6 +139,9 @@ pub const Reporter = struct {
   constructionErrorFn:
     fn(reporter: *Reporter, id: ConstructionError, pos: model.Position,
        t: model.Type) void,
+  fileErrorFn:
+    fn(reporter: *Reporter, id: FileError, pos: model.Position,
+       path: []const u8, message: []const u8) void,
 };
 
 fn formatItemDescr(d: WrongItemError.ItemDescr, comptime _: []const u8,
@@ -195,6 +202,7 @@ pub const CmdLineReporter = struct {
         .wrongIdErrorFn = CmdLineReporter.wrongIdError,
         .wrongTypeErrorFn = CmdLineReporter.wrongTypeError,
         .constructionErrorFn = CmdLineReporter.constructionError,
+        .fileErrorFn = CmdLineReporter.fileError,
       },
       .writer = stdout.writer(),
       .do_style = std.os.isatty(stdout.handle),
@@ -336,6 +344,21 @@ pub const CmdLineReporter = struct {
     switch (id) {
       .NotInEnum =>
         self.renderError("given value is not part of enum {}", .{t_fmt}),
+    }
+  }
+
+  fn fileError(reporter: *Reporter, id: FileError, pos: model.Position,
+               path: []const u8, message: []const u8) void {
+    const self = @fieldParentPtr(CmdLineReporter, "reporter", reporter);
+    self.renderPos(.{.bold}, pos);
+    switch (id) {
+      .FailedToOpen =>
+        self.renderError("cannot open {s}: {s}", .{path, message}),
+      .NotAFile =>
+        self.renderError("{s} is not a file, but a {s}", .{path, message}),
+      .FailedToRead =>
+        self.renderError("failed to read content of file {s}: {s}",
+                         .{path, message}),
     }
   }
 };

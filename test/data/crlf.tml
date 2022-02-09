@@ -10,7 +10,7 @@
 \end(func)(x)
 --- expr
 +CALL
-  =FUNCREF .doc.document.<anonymous>
+  =FUNCREF .doc.input.<anonymous>
   >ARG t
   =TEXT raw "x"
 -CALL

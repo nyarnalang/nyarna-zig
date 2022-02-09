@@ -193,10 +193,10 @@ pub const DeclareResolution = struct {
                 ns: u15, parent: ?model.Type) !*DeclareResolution {
     const in = if (parent) |ptype| graph.ResolutionContext.Target{.t = ptype}
                else graph.ResolutionContext.Target{.ns = ns};
-    const res = try intpr.allocator().create(DeclareResolution);
+    const res = try intpr.allocator.create(DeclareResolution);
     res.* = .{
       .defs = defs,
-      .processor = try Processor.init(intpr.allocator(), res),
+      .processor = try Processor.init(intpr.allocator, res),
       .dep_discovery_ctx = .{
         .resolveInSiblingDefinitions = discoverDependencies,
         .target = in,
@@ -256,7 +256,7 @@ pub const DeclareResolution = struct {
 
   pub fn execute(self: *DeclareResolution) !void {
     try self.processor.firstStep();
-    try self.processor.secondStep(self.intpr.allocator());
+    try self.processor.secondStep(self.intpr.allocator);
     // third step: process components in reverse topological order.
 
     for (self.processor.components) |first_index, cmpt_index| {

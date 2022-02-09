@@ -16,18 +16,15 @@ const last = @import("../helpers.zig").last;
 /// The parser can return one of these if outside action is required before
 /// resuming parsing.
 pub const UnwindReason = error {
-  /// emitted when an \import is encountered and arguments are given for it,
-  /// but the referenced source has not been loaded yet. Requests for the
-  /// referenced to be loaded until its parameters are known, then continue with
-  /// the current source.
-  request_import_parameters,
-  /// emitted when an \import is encountered but the referenced source has not
-  /// been fully loaded yet. Not emitted if request_import_parameters applies,
-  /// which is then emitted instead.
-  /// Will be emitted after parsing all arguments when resuming after
-  /// request_import_parameters.
-  /// Requests the referenced source to be fully loaded, then resume parsing.
-  referred_source_unavailable,
+  /// emitted when an \import is encountered, but the referred module has not
+  /// been processed far enough.
+  ///
+  /// if arguments are given to the import, the referred module needs only to
+  /// be processed up until its parameter declaration.
+  ///
+  /// if arguments have been processed or none have been given, the referred
+  /// module needs tob e fully loaded.
+  referred_module_unavailable,
   /// emitted when a module's parameter declaration has been encountered. Caller
   /// may inspect declared parameters, push available arguments, then resume
   /// parsing.
@@ -166,7 +163,7 @@ pub const Parser = struct {
         std.debug.assert(res == .none);
       } else {
         if (level.dangling_space) |space_node| {
-          try level.nodes.append(ip.allocator(), space_node);
+          try level.nodes.append(ip.allocator, space_node);
           level.dangling_space = null;
         }
         const res = if (level.fullast) item else switch (item.data) {
@@ -181,7 +178,7 @@ pub const Parser = struct {
           .expression => |expr| if (expr.data == .void) return,
           else => {}
         }
-        try level.nodes.append(ip.allocator(), res);
+        try level.nodes.append(ip.allocator, res);
       }
     }
 
@@ -240,7 +237,7 @@ pub const Parser = struct {
         !void {
       if (level.nodes.items.len > 0) {
         if (try level.finalizeParagraph(ip)) |content| {
-          try level.paragraphs.append(ip.allocator(), .{
+          try level.paragraphs.append(ip.allocator, .{
             .content = content,
             .lf_after = lf_after
           });
@@ -313,7 +310,7 @@ pub const Parser = struct {
   cur_start: model.Cursor,
 
   inline fn allocator(self: *@This()) std.mem.Allocator {
-    return self.intpr().allocator();
+    return self.intpr().allocator;
   }
 
   inline fn intpr(self: *@This()) *Interpreter {

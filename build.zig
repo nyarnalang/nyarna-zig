@@ -87,16 +87,4 @@ pub fn build(b: *Builder) !void {
 
   var type_test_step = b.step("typeTest", "Run type tests");
   type_test_step.dependOn(&type_test.step);
-
-  var parse_test_orig = b.addTest("test/parse_test_orig.zig");
-  parse_test_orig.step.dependOn(&ehgen_cmd.step);
-  parse_test_orig.addPackage(testing_pkg);
-  parse_test_orig.addPackage(nyarna_pkg);
-  parse_test_orig.addPackage(errors_pkg);
-  parse_test_orig.setFilter(test_filter);
-  parse_test_orig.emit_bin = testEmitOption(emit_bin, "parse_test_orig");
-
-  var parse_test_orig_step =
-    b.step("parseTestOrig", "Run original parser tests");
-  parse_test_orig_step.dependOn(&parse_test_orig.step);
 }

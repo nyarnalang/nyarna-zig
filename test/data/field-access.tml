@@ -97,10 +97,10 @@
 -PARA
 --- expr
 +CALL
-  =FUNCREF .doc.document.foo
+  =FUNCREF .doc.input.foo
   >ARG data
   +CALL
-    =TYPE record .doc.document.Data
+    =TYPE record .doc.input.Data
     >ARG a
     =TEXT raw "x"
     >ARG b

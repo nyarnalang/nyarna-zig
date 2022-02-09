@@ -13,7 +13,7 @@
 \foo(false, one, two)
 --- expr
 +CALL
-  =FUNCREF .doc.document.foo
+  =FUNCREF .doc.input.foo
   >ARG recurse
   =ENUM Boolean "true"
   >ARG before
@@ -23,7 +23,7 @@
 -CALL
 =TEXT raw "\n"
 +CALL
-  =FUNCREF .doc.document.foo
+  =FUNCREF .doc.input.foo
   >ARG recurse
   =ENUM Boolean "false"
   >ARG before

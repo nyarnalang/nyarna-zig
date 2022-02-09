@@ -193,7 +193,7 @@ pub const Intrinsics = Provider.Wrapper(struct {
       }
     };
 
-    var defs = try intpr.allocator().alloc(*model.Node.Definition, def_count);
+    var defs = try intpr.allocator.alloc(*model.Node.Definition, def_count);
     def_count = 0;
     for ([_]*model.Node{public, private}) |node, i| switch (node.data) {
       .void, .poison => {},
@@ -234,11 +234,11 @@ pub const Intrinsics = Provider.Wrapper(struct {
   fn @"if"(intpr: *Interpreter, pos: model.Position,
            condition: *model.Node, then: *model.Node,
            @"else": *model.Node) nyarna.Error!*model.Node {
-    const nodes = try intpr.allocator().alloc(*model.Node, 2);
+    const nodes = try intpr.allocator.alloc(*model.Node, 2);
     nodes[1] = then;
     nodes[0] = @"else";
 
-    const ret = try intpr.allocator().create(model.Node);
+    const ret = try intpr.allocator.create(model.Node);
     ret.* = .{
       .pos = pos,
       .data = .{

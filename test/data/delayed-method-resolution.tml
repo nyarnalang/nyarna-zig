@@ -20,10 +20,10 @@
 \Foo(foo, bar)::double()
 --- expr
 +CALL
-  =FUNCREF .doc.document.double
+  =FUNCREF .doc.input.double
   >ARG this
   +CALL
-    =TYPE record .doc.document.Foo
+    =TYPE record .doc.input.Foo
     >ARG a
     =TEXT raw "foo"
     >ARG b

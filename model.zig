@@ -67,6 +67,13 @@ pub const Source = struct {
     locator: []const u8,
     /// true iff the source has been given as command-line argument
     argument: bool,
+
+    /// generates the value that should go into Source.locator_ctx from the
+    /// absolute locator.
+    pub fn genLocatorCtx(self: *const Descriptor) []const u8 {
+      const index = std.mem.lastIndexOf(u8, self.locator, ".").?;
+      return self.locator[0..index + 1]; // include the '.'
+    }
   };
 
   /// This source's metadata. The metadata will live longer than the source
@@ -82,8 +89,8 @@ pub const Source = struct {
     line: usize = 0,
     column: usize = 0
   },
-  /// the locator minus its final element, used for resolving
-  /// relative locators inside this source.
+  /// the locator minus its final element, used for resolving relative locators
+  /// inside this source. See Descriptor.genLocatorCtx().
   locator_ctx: []const u8,
 
   /// returns the position inside the source at the given cursor
@@ -1588,6 +1595,16 @@ pub const Module = struct {
   /// the root expression contained in the file
   root: *Expression,
   // TODO: locator (?)
+};
+
+/// A document is the final result of loading a main module.
+pub const Document = struct {
+  main: *Module,
+  globals: *nyarna.Globals,
+
+  pub fn destroy(self: *Document) void {
+    self.globals.destroy();
+  }
 };
 
 pub const NodeGenerator = struct {

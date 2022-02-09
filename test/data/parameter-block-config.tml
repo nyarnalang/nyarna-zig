@@ -29,19 +29,19 @@
 \end(verbatim)
 --- expr
 +CALL
-  =FUNCREF .doc.document.nocomments
+  =FUNCREF .doc.input.nocomments
   >ARG content
   =TEXT raw "This is # not a comment"
 -CALL
 =TEXT raw "\n"
 +CALL
-  =FUNCREF .doc.document.nocommands
+  =FUNCREF .doc.input.nocommands
   >ARG content
   =TEXT raw "This is \\not a command"
 -CALL
 =TEXT raw "\n"
 +CALL
-  =FUNCREF .doc.document.verbatim
+  =FUNCREF .doc.input.verbatim
   >ARG content
   =TEXT raw "This is \\neither a command # nor a comment"
 -CALL

@@ -36,13 +36,13 @@
 -ROOT
 --- expr
 +CALL
-  =FUNCREF .doc.document.foo
+  =FUNCREF .doc.input.foo
   >ARG recurse
   =ENUM Boolean "true"
 -CALL
 =TEXT literal "\n"
 +CALL
-  =FUNCREF .doc.document.bar
+  =FUNCREF .doc.input.bar
   >ARG recurse
   =ENUM Boolean "true"
 -CALL

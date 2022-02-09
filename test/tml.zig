@@ -37,7 +37,7 @@ pub const File = struct {
     return ParseError.parsing_failed;
   }
 
-  pub fn alloc(f: *File) std.mem.Allocator {
+  pub fn allocator(f: *File) std.mem.Allocator {
     return f.arena.allocator();
   }
 
@@ -71,15 +71,15 @@ pub const File = struct {
     var ret: File = undefined;
     ret.arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     errdefer ret.deinit();
-    ret.items = Values.init(ret.alloc());
+    ret.items = Values.init(ret.allocator());
     ret.params = .{
-      .@"inline" = Values.init(ret.alloc()),
-      .file = Values.init(ret.alloc()),
-      .lib = Values.init(ret.alloc()),
-      .output = Values.init(ret.alloc()),
-      .errors = Values.init(ret.alloc()),
+      .@"inline" = Values.init(ret.allocator()),
+      .file = Values.init(ret.allocator()),
+      .lib = Values.init(ret.allocator()),
+      .output = Values.init(ret.allocator()),
+      .errors = Values.init(ret.allocator()),
     };
-    ret.name = try ret.alloc().dupe(u8, line[4..]);
+    ret.name = try ret.allocator().dupe(u8, line[4..]);
 
     line = lines.next() orelse {
       return failWith(name, "missing value after header", .{});
@@ -93,15 +93,15 @@ pub const File = struct {
        const name_end = std.mem.indexOfScalar(u8, header, ':');
        const tag_start = std.mem.indexOfScalar(u8, header, '{');
        var sub_name: []const u8 = "";
-       const item_name = std.mem.trim(u8, try ret.alloc().dupe(u8, blk: {
+       const item_name = std.mem.trim(u8, try ret.allocator().dupe(u8, blk: {
          if (name_end) |val| {
           if (tag_start) |tval| {
             if (val > tval) return failWith(
               name, "`{{` before `:` in value header", .{});
-            sub_name = try ret.alloc().dupe(
+            sub_name = try ret.allocator().dupe(
               u8, std.mem.trim(u8, header[val + 1..tval], " \t"));
           } else {
-            sub_name = try ret.alloc().dupe(
+            sub_name = try ret.allocator().dupe(
               u8, std.mem.trim(u8, header[val + 1..], " \t"));
           }
           break :blk header[0..val];
@@ -151,23 +151,23 @@ pub const File = struct {
           var cur = line;
           while (cur.len > 0) {
             const esc = std.mem.indexOfScalar(u8, cur, '%') orelse {
-              try content.appendSlice(ret.alloc(), cur);
+              try content.appendSlice(ret.allocator(), cur);
               break;
             };
-            try content.appendSlice(ret.alloc(), cur[0..esc]);
-            try content.append(ret.alloc(),
+            try content.appendSlice(ret.allocator(), cur[0..esc]);
+            try content.append(ret.allocator(),
                 try std.fmt.parseUnsigned(u8, cur[esc+1..esc+3], 16));
             cur = cur[esc+3..];
           }
         } else {
-          try content.appendSlice(ret.alloc(), line);
+          try content.appendSlice(ret.allocator(), line);
         }
-        try content.appendSlice(ret.alloc(), newline);
+        try content.appendSlice(ret.allocator(), newline);
       }
       if (tags.strip) {
         if (std.mem.lastIndexOfAny(u8, content.items, "\r\n\t ")) |e| {
           content.shrinkRetainingCapacity(e);
-          try content.append(ret.alloc(), '\n');
+          try content.append(ret.allocator(), '\n');
         }
       }
       var found = false;

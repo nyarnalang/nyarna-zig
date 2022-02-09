@@ -13,7 +13,6 @@ fn genTests(dir: *std.fs.Dir, sets: []TestSet) !void {
   for (sets) |set| {
     _ = try set.file.write(
       \\const std = @import("std");
-      \\const tml = @import("tml.zig");
       \\const testing = @import("testing");
       \\
       \\
@@ -44,15 +43,15 @@ fn genTests(dir: *std.fs.Dir, sets: []TestSet) !void {
         _ = try set.file.write("test \"");
         _ = try set.file.write(content.name);
         _ = try set.file.write(\\" {
-          \\  var data = try tml.File.loadPath("test/data/
+          \\  var resolver = try testing.TestDataResolver.init("test/data/
         );
         _ = try set.file.write(entry.name);
         _ = try set.file.write(\\");
-          \\  defer data.deinit();
+          \\  defer resolver.deinit();
           \\  try testing.
         );
         _ = try set.file.write(set.funcname);
-        _ = try set.file.write("(&data);\n" ++
+        _ = try set.file.write("(&resolver);\n" ++
           \\}
           \\
         );

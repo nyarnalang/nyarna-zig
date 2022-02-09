@@ -29,6 +29,9 @@ const lex = @import("lex.zig");
 pub const ModuleLoader = struct {
   data: *nyarna.Globals,
   parser: parse.Parser,
+  /// for data local to the module loading process. will go out of scope when
+  /// the module has finished loading.
+  storage: std.heap.ArenaAllocator,
   interpreter: *Interpreter,
   /// The error handler which is used to report any recoverable errors that
   /// are encountered. If one or more errors are encountered during loading,
@@ -37,32 +40,49 @@ pub const ModuleLoader = struct {
   public_syms: std.ArrayListUnmanaged(*model.Symbol) = .{},
   state: union(enum) {
     initial,
+    /// encountered a parameter specification
     encountered_parameters,
-    requesting_parameters,
     parsing,
     interpreting: *model.Node,
     finished: *model.Expression,
   },
   fullast: bool,
-  no_interpret: bool,
 
   /// allocates the loader and initializes it. Give no_interpret if you want to
   /// load the input as Node without interpreting it.
-  pub fn create(data: *nyarna.Globals, input: *const model.Source,
-                fullast: bool, no_interpret: bool) !*ModuleLoader {
+  pub fn create(data: *nyarna.Globals, input: *const model.Source.Descriptor,
+                resolver: *nyarna.Resolver, fullast: bool) !*ModuleLoader {
     var ret = try data.storage.allocator().create(ModuleLoader);
     ret.* = .{
       .data = data,
       .logger = .{.reporter = data.reporter},
       .fullast = fullast,
-      .no_interpret = no_interpret,
       .state = .initial,
       .interpreter = undefined,
       .parser = parse.Parser.init(),
+      .storage = std.heap.ArenaAllocator.init(data.backing_allocator),
     };
     errdefer data.storage.allocator().destroy(ret);
-    ret.interpreter =
-      try Interpreter.create(ret.ctx(), input, &ret.public_syms);
+    const source =
+      (try resolver.getSource(input, ret.storage.allocator(), &ret.logger))
+      orelse blk: {
+        const poison = try data.storage.allocator().create(model.Expression);
+        poison.* = .{
+          .pos = model.Position{
+            .source = input,
+            .start = model.Cursor.unknown(),
+            .end = model.Cursor.unknown(),
+          },
+          .data = .poison,
+          .expected_type = .{.intrinsic = .poison},
+        };
+        ret.state = .{.finished = poison};
+        // it is safe to leave the source undefined here, as a finished
+        // ModuleLoader will never call its interpreter.
+        break :blk undefined;
+      };
+    ret.interpreter = (try Interpreter.create(
+      ret.ctx(), ret.storage.allocator(), source, &ret.public_syms));
     return ret;
   }
 
@@ -73,18 +93,16 @@ pub const ModuleLoader = struct {
   /// deallocates the loader and its owned data.
   pub fn destroy(self: *ModuleLoader) void {
     const allocator = self.data.storage.allocator();
-    self.interpreter.deinit();
+    self.storage.deinit();
     allocator.destroy(self);
   }
 
   fn handleError(self: *ModuleLoader, e: parse.Error) nyarna.Error!bool {
     switch (e) {
-      parse.UnwindReason.referred_source_unavailable =>
+      parse.UnwindReason.referred_module_unavailable =>
         if (self.state == .initial or self.state == .encountered_parameters) {
           self.state = .parsing;
         },
-      parse.UnwindReason.request_import_parameters =>
-        self.state = .requesting_parameters,
       parse.UnwindReason.encountered_parameters =>
         self.state = .encountered_parameters,
       else => |actual_error| return actual_error,
@@ -100,13 +118,13 @@ pub const ModuleLoader = struct {
           catch |e| return self.handleError(e);
         self.state = .{.interpreting = node};
       },
-      .parsing, .encountered_parameters, .requesting_parameters => {
+      .parsing, .encountered_parameters => {
         const node = self.parser.resumeParse()
           catch |e| return self.handleError(e);
         self.state = .{.interpreting = node};
       },
       .interpreting => |node| {
-        if (self.no_interpret) return true;
+        if (self.fullast) return true;
         const root = self.interpreter.interpret(node)
           catch |e| return self.handleError(e);
         self.state = .{.finished = root};
@@ -120,15 +138,16 @@ pub const ModuleLoader = struct {
   /// preconditions:
   ///
   ///  * self.work() must have returned true
-  ///  * create() must have been called with no_interpret == false
+  ///  * create() must have been called with fullast == false
   pub fn finalize(self: *ModuleLoader) !*model.Module {
-    std.debug.assert(!self.no_interpret);
+    std.debug.assert(!self.fullast);
     defer self.destroy();
-    const ret = try self.interpreter.ctx.global().create(model.Module);
+    const ret = try self.ctx().global().create(model.Module);
     ret.* = .{
       .symbols = self.public_syms.items,
       .root = self.state.finished,
     };
+    if (self.logger.count > 0) self.data.seen_error = true;
     return ret;
   }
 
@@ -136,15 +155,16 @@ pub const ModuleLoader = struct {
   /// preconditions:
   ///
   ///  * self.work() must have returned true
-  ///  * create() must have been called with no_interpret == true
+  ///  * create() must have been called with fullast == true
   pub fn finalizeNode(self: *ModuleLoader) *model.Node {
-    std.debug.assert(self.no_interpret);
+    std.debug.assert(self.fullast);
     return self.state.interpreting;
   }
 
   /// this function mainly exists for testing the lexer. as far as the public
   /// API is concerned, the lexer is an implementation detail.
   pub fn initLexer(self: *ModuleLoader) !lex.Lexer {
+    std.debug.assert(self.state == .initial);
     return lex.Lexer.init(self.interpreter);
   }
 };

@@ -96,7 +96,7 @@ pub const Resolver = struct {
             if (searchAccessible(
                 self.intpr, rc.t, value.id)) |sr| switch (sr) {
               .field => |field| {
-                try rc.indexes.append(self.intpr.allocator(), field.index);
+                try rc.indexes.append(self.intpr.allocator, field.index);
                 rc.t = field.t;
                 return res;
               },
@@ -180,7 +180,7 @@ pub const Resolver = struct {
       },
       .unresolved_symref => |*usym| {
         if (self.stage.resolve) |r| {
-          switch (try r.probeSibling(self.intpr.allocator(), chain)) {
+          switch (try r.probeSibling(self.intpr.allocator, chain)) {
             .variable => |v| {
               chain.data = .{.resolved_symref = .{
                 .sym = v.sym(),

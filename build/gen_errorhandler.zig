@@ -12,11 +12,10 @@ pub fn main() !void {
     \\pub usingnamespace errors;
     \\
     \\pub const Handler = struct {
-    \\  const Reporter = errors.Reporter;
     \\  const WrongItemError = errors.WrongItemError;
     \\
     \\  count: usize = 0,
-    \\  reporter: *Reporter,
+    \\  reporter: *errors.Reporter,
     \\
   );
   inline for (@typeInfo(errors.LexerError).Enum.fields) |f| {
@@ -81,6 +80,15 @@ pub fn main() !void {
     \\    self.count += 1;
     \\    self.reporter.constructionErrorFn(self.reporter,
     ++ "." ++ f.name ++ ", pos, t);\n" ++
+    \\  }
+    \\
+    );
+  }
+  inline for (@typeInfo(errors.FileError).Enum.fields) |f| {
+    _ = try eh.write("  pub fn " ++ f.name ++ "(self: *@This(), pos: model.Position, path: []const u8, message: []const u8) void {\n" ++
+    \\    self.count += 1;
+    \\    self.reporter.fileErrorFn(self.reporter,
+    ++ "." ++ f.name ++ ", pos, path, message);\n" ++
     \\  }
     \\
     );

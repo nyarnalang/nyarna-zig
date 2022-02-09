@@ -266,7 +266,7 @@ pub const Lexer = struct {
       .comments_disabled_at = null,
       .levels =
         try std.ArrayListUnmanaged(Level).initCapacity(
-          intpr.allocator(), 32),
+          intpr.allocator, 32),
       .level = .{
         .indentation = 0,
         .tabs = null,
@@ -1199,7 +1199,7 @@ pub const Lexer = struct {
   }
 
   fn pushLevel(l: *Lexer) !void {
-    try l.levels.append(l.intpr.allocator(), l.level);
+    try l.levels.append(l.intpr.allocator, l.level);
     l.level = .{
       .indentation = undefined,
       .tabs = null,

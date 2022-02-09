@@ -1,4 +1,4 @@
-=== Hello, world (calculated at compile time)
+=== Hello, world
 --- input
 \declare:
   hello = \func:
@@ -11,7 +11,7 @@
 \hello(World)
 --- expr
 +CALL
-  =FUNCREF .doc.document.hello
+  =FUNCREF .doc.input.hello
   >ARG who
   =TEXT raw "World"
 -CALL

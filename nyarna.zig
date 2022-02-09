@@ -5,8 +5,10 @@ pub const model = @import("model.zig");
 pub const types = @import("types.zig");
 pub const errors = @import("errors");
 pub const lib = @import("lib.zig");
+pub const resolve = @import("resolve.zig");
 pub const ModuleLoader = @import("load/load.zig").ModuleLoader;
 pub const EncodedCharacter = @import("load/unicode.zig").EncodedCharacter;
+pub const Resolver = resolve.Resolver;
 
 pub const default_stack_size = 1024 * 1024; // 1MB
 
@@ -28,9 +30,18 @@ pub const Error = error {
 /// types.
 pub const Globals = struct {
   pub const ModuleEntry = union(enum) {
-    loading: *ModuleLoader,
-    waiting_for_params: *ModuleLoader,
+    require_module: *ModuleLoader,
+    require_params: *ModuleLoader,
     loaded: *model.Module,
+  };
+  const ResolverEntry = struct {
+    /// the prefix in absolute locators that refers to this resolver, e.g. "std"
+    name: []const u8,
+    /// whether this resolver is queried on any relative locator that can not be
+    /// resolved otherwise.
+    implicit: bool,
+    /// the actual resolver
+    resolver: *resolve.Resolver,
   };
 
   /// The error reporter for this loader, supplied externally.
@@ -69,9 +80,14 @@ pub const Globals = struct {
   ///
   /// This list is also used to catch cyclic references.
   known_modules: std.StringArrayHashMapUnmanaged(ModuleEntry) = .{},
+  /// known resolvers.
+  resolvers: []ResolverEntry,
+  /// set to true if any module encountered errors
+  seen_error: bool = false,
 
   pub fn create(backing_allocator: std.mem.Allocator,
-                reporter: *errors.Reporter, stack_size: usize) !*Globals {
+                reporter: *errors.Reporter, stack_size: usize,
+                resolvers: []ResolverEntry) !*Globals {
     const ret = try backing_allocator.create(Globals);
     ret.* = .{
       .reporter = reporter,
@@ -90,6 +106,7 @@ pub const Globals = struct {
           .content = "this",
         }},
       },
+      .resolvers = resolvers,
     };
     errdefer backing_allocator.destroy(ret);
     errdefer ret.storage.deinit();
@@ -110,6 +127,11 @@ pub const Globals = struct {
 
   pub fn destroy(self: *Globals) void {
     self.types.deinit();
+    for (self.known_modules.values()) |value| switch (value) {
+      .require_module => |ml| ml.destroy(),
+      .require_params => |ml| ml.destroy(),
+      .loaded => {},
+    };
     self.storage.deinit();
     self.backing_allocator.free(self.stack);
     self.backing_allocator.destroy(self);
@@ -119,7 +141,14 @@ pub const Globals = struct {
     var index: usize = self.known_modules.count();
     while (index > 0) {
       index -= 1;
-      if (self.known_modules.values()[index] == .loading) return index;
+      switch (self.known_modules.values()[index]) {
+        .require_module => return index,
+        .require_params => |ml| switch (ml.state) {
+          .initial, .parsing => return index,
+          else => {},
+        },
+        .loaded => {},
+      }
     }
     return null;
   }
@@ -129,19 +158,27 @@ pub const Globals = struct {
   /// returns so that caller may inject those.
   fn work(self: *Globals) !void {
     while (self.lastLoadingModule()) |index| {
-      const loader = self.known_modules.values()[index].loading;
-      _ = try loader.work();
-      switch (loader.state) {
-        .initial => unreachable,
-        .finished => {
-          self.known_modules.values()[index] =
-            .{.loaded = try loader.finalize()};
+      var must_finish = false;
+      const loader = switch (self.known_modules.values()[index]) {
+        .require_params => |ml| ml,
+        .require_module => |ml| blk: {
+          must_finish = true;
+          break :blk ml;
         },
-        .encountered_parameters => {
-          self.known_modules.values()[index] = .{.waiting_for_params = loader};
-          if (index == 0) return;
-        },
-        .parsing, .interpreting => {},
+        .loaded => unreachable,
+      };
+      while (true) {
+        _ = try loader.work();
+        switch (loader.state) {
+          .initial => unreachable,
+          .finished => {
+            const module = try loader.finalize();
+            self.known_modules.values()[index] = .{.loaded = module};
+            break;
+          },
+          .encountered_parameters => if (!must_finish) break,
+          .parsing, .interpreting => break,
+        }
       }
     }
   }
@@ -223,43 +260,98 @@ pub const Processor = struct {
     /// for deinitialization in error scenarios.
     /// must not be called if finalize() is called.
     pub fn deinit(self: *MainLoader) void {
-      self.impl.destroy();
+      self.globals.destroy();
     }
 
     /// finish loading the document.
-    pub fn finalize(self: *MainLoader) !*model.Module { // TODO: return document
-      defer self.deinit();
+    pub fn finalize(self: *MainLoader) !?*model.Document {
+      errdefer self.deinit();
       try self.globals.work();
-      return self.globals.known_modules.values()[0].loaded;
+      if (self.globals.seen_error) {
+        self.deinit();
+        return null;
+      }
+      const doc = try self.globals.storage.allocator().create(model.Document);
+      doc.* = .{
+        .main = self.globals.known_modules.values()[0].loaded,
+        .globals = self.globals,
+      };
+      return doc;
     }
   };
 
   allocator: std.mem.Allocator,
   stack_size: usize,
+  reporter: *errors.Reporter,
+  resolvers: std.ArrayListUnmanaged(Globals.ResolverEntry) = .{},
 
   const Self = @This();
 
-  pub fn init(allocator: std.mem.Allocator, stack_size: usize) !Processor {
-    return Processor{
-      .allocator = allocator, .stack_size = stack_size,
+  pub fn init(allocator: std.mem.Allocator, stack_size: usize,
+              reporter: *errors.Reporter) !Processor {
+    var ret = Processor{
+      .allocator = allocator, .stack_size = stack_size, .reporter = reporter,
     };
+    try ret.resolvers.append(allocator, .{
+      .name = "doc",
+      .implicit = false,
+      .resolver = undefined, // given in startLoading()
+    });
+    // TODO: std resolver
+    return ret;
   }
 
-  /// start loading the given source.
-  /// source is loaded until a declaration of module parameters is encountered.
+  pub fn deinit(self: *Processor) void {
+    self.resolvers.deinit(self.allocator);
+  }
+
+  /// initialize loading of the given main module. should only be used for
+  /// low-level access (useful for testing). The returned ModuleLoader has not
+  /// started any loading yet, and thus you can't push arguments
+  /// (but can finalize()).
+  ///
+  /// This is used for testing.
+  pub fn initMainModule(self: *Self, doc_resolver: *resolve.Resolver,
+                        main_module: []const u8, fullast: bool)
+      !MainLoader {
+    self.resolvers.items[0].resolver = doc_resolver;
+    var ret = MainLoader{
+      .globals = try Globals.create(self.allocator, self.reporter,
+                                    self.stack_size, self.resolvers.items),
+    };
+    errdefer ret.globals.destroy();
+    var logger = errors.Handler{.reporter = self.reporter};
+    const desc = (try doc_resolver.resolve(
+      main_module, model.Position.intrinsic(), &logger)).?;
+
+    const ml =
+      try ModuleLoader.create(ret.globals, desc, doc_resolver, fullast);
+    if (fullast) {
+      try ret.globals.known_modules.put(
+        ret.globals.storage.allocator(), desc.name, .{.require_module = ml});
+    } else {
+      try ret.globals.known_modules.put(
+        ret.globals.storage.allocator(), desc.name, .{.require_params = ml});
+    }
+    return ret;
+  }
+
+  /// start loading a document. preconditions:
+  ///   * doc_resolver must be the resolver which provides the main module.
+  ///   * main_module must be a relative locator to be resolved by doc_resolver.
+  /// not fulfilling the preconditions will result in undefined behavior.
+  ///
+  /// the main module's source is loaded until a declaration of module
+  /// parameters is encountered.
+  ///
   /// use the returned MainLoader's pushArg() to push arguments.
   /// use the returned MainLoader's finalize() to finish loading.
   ///
   /// caller must either deinit() or finalize() the returned MainLoader.
-  pub fn startLoading(self: *Self, source: *const model.Source,
-                      reporter: *errors.Reporter) !MainLoader {
-    var ret = MainLoader{
-      .globals = try Globals.create(self.allocator, reporter, self.stack_size),
-    };
-    errdefer ret.globals.destroy();
-    ret.globals.known_modules.put(source.meta.locator,
-      try ModuleLoader.create(ret.globals, source, false, false));
-    ret.globals.work();
+  pub fn startLoading(self: *Self, doc_resolver: *resolve.Resolver,
+                      main_module: []const u8) !MainLoader {
+    const ret = try self.initMainModule(doc_resolver, main_module, false);
+    try ret.globals.work();
     return ret;
   }
 
@@ -270,6 +362,4 @@ pub const Processor = struct {
     defer loader.destroy();
     return try loader.loadAsNode(true);
   }
-
-
 };

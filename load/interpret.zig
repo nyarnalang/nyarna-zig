@@ -52,7 +52,7 @@ pub const Namespace = struct {
 
   pub fn tryRegister(self: *Namespace, intpr: *Interpreter, sym: *model.Symbol)
       !bool {
-    const res = try self.data.getOrPut(intpr.allocator(), sym.name);
+    const res = try self.data.getOrPut(intpr.allocator, sym.name);
     if (res.found_existing) {
       intpr.ctx.logger.DuplicateSymbolName(
         sym.name, sym.defined_at, res.value_ptr.*.defined_at);
@@ -113,62 +113,42 @@ pub const Interpreter = struct {
   /// The public namespace of the current module, into which public symbols are
   /// published.
   public_namespace: *std.ArrayListUnmanaged(*model.Symbol),
-  /// The local storage of the interpreter where all data will be allocated that
-  /// will be discarded when the interpreter finishes. This includes primarily
-  /// the AST nodes which will be interpreted into expressions during
-  /// interpretation. Some AST nodes may become exported (for example, as part
-  /// of a function implementation) in which case they must be copied to the
-  /// global storage. This happens exactly at the time an AST node is put into
-  /// an AST model.Value.
-  storage: std.heap.ArenaAllocator,
+  /// Allocator for data private to the interpreter (use ctx.global() for other
+  /// data).This includes primarily the AST nodes generated from the parser.
+  /// anything allocated here *must* be copied when referred by an external
+  /// entity, such as a Value or an Expression.
+  allocator: std.mem.Allocator,
   /// Array of alternative syntaxes known to the interpreter [7.12].
   /// TODO: make this user-extensible
   syntax_registry: [2]syntaxes.SpecialSyntax,
   /// convenience object to generate nodes using the interpreter's storage.
   node_gen: model.NodeGenerator,
 
-  pub fn create(ctx: nyarna.Context, input: *const model.Source,
-                public_ns: *std.ArrayListUnmanaged(*model.Symbol))
-      !*Interpreter {
-    var arena = std.heap.ArenaAllocator.init(ctx.local());
-    var ret = try arena.allocator().create(Interpreter);
+  /// creates an interpreter.
+  pub fn create(
+      ctx: nyarna.Context, allocator: std.mem.Allocator, source: *model.Source,
+      public_ns: *std.ArrayListUnmanaged(*model.Symbol)) !*Interpreter {
+    var ret = try allocator.create(Interpreter);
     ret.* = .{
-      .input = input,
+      .input = source,
       .ctx = ctx,
-      .storage = arena,
+      .allocator = allocator,
       .syntax_registry = .{syntaxes.SymbolDefs.locations(),
                            syntaxes.SymbolDefs.definitions()},
       .node_gen = undefined,
       .public_namespace = public_ns,
     };
-    ret.node_gen = model.NodeGenerator.init(ret.allocator());
-    errdefer ret.deinit();
+    ret.node_gen = model.NodeGenerator.init(allocator);
     try ret.addNamespace('\\');
     return ret;
-  }
-
-  /// discards the internal storage for AST nodes.
-  pub fn deinit(self: *Interpreter) void {
-    // self.storage is inside the deallocated memory so we must copy it, else
-    // we would need to run into use-after-free.
-    var storage = self.storage;
-    storage.deinit();
-  }
-
-  /// returns the allocator for interpreter-local storage, i.e. values that
-  /// are to go out of scope when the interpreter has finished parsing a source.
-  ///
-  /// use Interpreter.node_gen for generating nodes that use this allocator.
-  pub inline fn allocator(self: *Interpreter) std.mem.Allocator {
-    return self.storage.allocator();
   }
 
   pub fn addNamespace(self: *Interpreter, character: u21) !void {
     const index = self.namespaces.items.len;
     if (index > std.math.maxInt(u16)) return nyarna.Error.too_many_namespaces;
     try self.command_characters.put(
-      self.allocator(), character, @intCast(u15, index));
-    try self.namespaces.append(self.allocator(), .{});
+      self.allocator, character, @intCast(u15, index));
+    try self.namespaces.append(self.allocator, .{});
     // intrinsic symbols of every namespace.
     try self.importModuleSyms(self.ctx.data.intrinsics, @intCast(u15, index));
   }
@@ -179,7 +159,7 @@ pub const Interpreter = struct {
 
   pub inline fn type_namespace(self: *Interpreter, t: model.Type) !*Namespace {
     const entry = try self.type_namespaces.getOrPutValue(
-      self.allocator(), t, Namespace{});
+      self.allocator, t, Namespace{});
     return entry.value_ptr;
   }
 
@@ -346,7 +326,7 @@ pub const Interpreter = struct {
       return null;
     if (stage.kind == .resolve) return null;
     const is_keyword = rc.sig.returns.is(.ast_node);
-    const cur_allocator = if (is_keyword) self.allocator()
+    const cur_allocator = if (is_keyword) self.allocator
                           else self.ctx.global();
     var args_failed_to_interpret = false;
     const arg_stage = Stage{.kind = if (is_keyword) .keyword else stage.kind,
@@ -632,7 +612,7 @@ pub const Interpreter = struct {
     // available.
     if (func.needs_this_inject and this_type == null and
         stage.kind == .intermediate) return false;
-    var locs = std.ArrayList(model.Node.Funcgen.LocRef).init(self.allocator());
+    var locs = std.ArrayList(model.Node.Funcgen.LocRef).init(self.allocator);
     if (func.needs_this_inject) {
       if (this_type) |t| {
         try locs.append(.{.value = try self.ctx.values.location(
@@ -643,7 +623,7 @@ pub const Interpreter = struct {
     }
     try self.collectLocations(func.params.unresolved, &locs);
     var variables =
-      try self.allocator().alloc(*model.Symbol.Variable, locs.items.len);
+      try self.allocator.alloc(*model.Symbol.Variable, locs.items.len);
     for (locs.items) |loc, index| {
       const sym = try self.ctx.global().create(model.Symbol);
       sym.* = switch (loc) {
@@ -865,7 +845,7 @@ pub const Interpreter = struct {
       .unresolved_symref => |*usym| {
         var expr = (try self.tryInterpretURef(usym, stage))
           orelse if (stage.resolve) |r|
-            switch (try r.probeSibling(self.allocator(), node)) {
+            switch (try r.probeSibling(self.allocator, node)) {
               .unfinished_function => {
                 self.ctx.logger.CantCallUnfinished(node.pos);
                 return TypeResult.failed;
@@ -951,7 +931,7 @@ pub const Interpreter = struct {
       t: model.Type,
     } = null;
     var builder = try types.IntersectionTypeBuilder.init(
-      gi.types.len + 1, self.allocator());
+      gi.types.len + 1, self.allocator);
     var failed_some = false;
     var poison = false;
     for (gi.types) |node| {
@@ -1142,7 +1122,7 @@ pub const Interpreter = struct {
   pub fn resolveSymbol(self: *Interpreter, pos: model.Position, ns: u15,
                        name: []const u8) !*model.Node {
     var syms = &self.namespaces.items[ns].data;
-    var ret = try self.allocator().create(model.Node);
+    var ret = try self.allocator.create(model.Node);
     ret.* = .{
       .pos = pos,
       .data = if (syms.get(name)) |sym| .{
@@ -1186,7 +1166,7 @@ pub const Interpreter = struct {
     }
     return if (seen_unfinished) null else if (first_incompatible) |index| blk: {
       const type_arr =
-        try self.allocator().alloc(model.Type, index + 1);
+        try self.allocator.alloc(model.Type, index + 1);
       type_arr[0] = (try self.probeType(nodes[index], stage)).?;
       var j = @as(usize, 0);
       while (j < index) : (j += 1) {
@@ -1318,7 +1298,7 @@ pub const Interpreter = struct {
       },
       .unresolved_access, .unresolved_call, .unresolved_symref => {
         if (stage.resolve) |r| {
-          switch (try r.probeSibling(self.allocator(), node)) {
+          switch (try r.probeSibling(self.allocator, node)) {
             .unfinished_function => |t| return t,
             .unfinished_type, .known => return null,
             .failed => {
