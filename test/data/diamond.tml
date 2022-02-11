@@ -1,5 +1,5 @@
 === Diamond dependency
---- lib:comparer
+--- input:comparer
 \library:>
 \declare:
   CompareResult = \integer(first=-1, last=1)
@@ -15,7 +15,7 @@
     \end(CompareResult)
   \end(func)
 \end(declare)
---- lib:printer
+--- input:printer
 \library:>
 \import(comparer)
 

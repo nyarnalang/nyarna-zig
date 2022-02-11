@@ -26,7 +26,7 @@ pub const File = struct {
   params: struct {
     @"inline": Values,
     file: Values,
-    lib: Values,
+    input: Values,
     output: Values,
     errors: Values,
   },
@@ -75,7 +75,7 @@ pub const File = struct {
     ret.params = .{
       .@"inline" = Values.init(ret.allocator()),
       .file = Values.init(ret.allocator()),
-      .lib = Values.init(ret.allocator()),
+      .input = Values.init(ret.allocator()),
       .output = Values.init(ret.allocator()),
       .errors = Values.init(ret.allocator()),
     };
@@ -171,22 +171,22 @@ pub const File = struct {
         }
       }
       var found = false;
-      inline for (.{"inline", "file", "lib", "output", "errors"}) |field| {
-        if (std.mem.eql(u8, field, item_name)) {
-          try @field(ret.params, field).put(
-            sub_name, .{.line_offset = start, .content = content});
-          found = true;
-          break;
+      if (name_end != null) {
+        if (sub_name.len == 0) return failWith(
+          name, "subname must follow after ':'", .{});
+        inline for (.{"inline", "file", "input", "output", "errors"}) |field| {
+          if (std.mem.eql(u8, field, item_name)) {
+            try @field(ret.params, field).put(
+              sub_name, .{.line_offset = start, .content = content});
+            found = true;
+            break;
+          }
         }
-      }
-      if (!found) {
-        if (sub_name.len > 0) {
+        if (!found) {
           return failWith(name, "unknown selector: `{s}`", .{item_name});
-        } else {
-          try ret.items.put(
-            item_name, .{.line_offset = start, .content = content});
         }
-      }
+      } else try ret.items.put(
+              item_name, .{.line_offset = start, .content = content});
     }
     return ret;
   }

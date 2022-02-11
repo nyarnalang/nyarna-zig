@@ -239,8 +239,8 @@ pub const Locator = struct {
     if (input.len == 0) return Error.parse_error;
     var ret = Locator{.repr = input, .resolver = null, .path = undefined};
     if (input[0] == '.') {
-      const end = std.mem.indexOfScalar(u8, input[1..], '.') orelse
-        return Error.parse_error;
+      const end = (std.mem.indexOfScalar(u8, input[1..], '.') orelse
+        return Error.parse_error) + 1;
       ret.resolver = input[1..end];
       ret.path = input[end+1..];
     } else {
@@ -408,6 +408,7 @@ pub const Node = struct {
   };
 
   pub const Import = struct {
+    ns_index: u15,
     module_index: usize,
 
     pub inline fn node(self: *@This()) *Node {
@@ -1662,9 +1663,12 @@ pub const NodeGenerator = struct {
     }})).data.funcgen;
   }
 
-  pub inline fn import(self: *Self, pos: Position, index: usize) !*Node.Import {
+  pub inline fn import(self: *Self, pos: Position, ns_index: u15,
+                       module_index: usize) !*Node.Import {
     return &(try self.node(
-      pos, .{.import = .{.module_index = index}})).data.import;
+      pos, .{.import = .{
+        .ns_index = ns_index, .module_index = module_index,
+      }})).data.import;
   }
 
   pub inline fn literal(self: *Self, pos: Position, content: Node.Literal)

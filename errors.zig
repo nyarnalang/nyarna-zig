@@ -17,7 +17,7 @@ pub const GenericParserError = enum {
   TooManyArguments, UnexpectedPrimaryBlock, InvalidPositionalArgument,
   BlockNeedsConfig, InvalidNamedArgInAssign, UnfinishedCallInTypeArg, NotAType,
   CantCallUnfinished, FailedToCalculateReturnType, FieldAccessWithoutInstance,
-  MethodOutsideDeclare, CannotResolveLocator,
+  MethodOutsideDeclare, CannotResolveLocator, ImportIllegalInFullast,
 };
 
 pub const WrongItemError = enum {

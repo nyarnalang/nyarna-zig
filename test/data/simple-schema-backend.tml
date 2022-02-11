@@ -1,5 +1,5 @@
 === Simple Schema Backend
---- lib:Document
+--- input:Document
 \standalone(Schema)
 
 \declare:

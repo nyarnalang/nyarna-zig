@@ -1,0 +1,14 @@
+=== Simple import
+--- input:foo
+Lorem ipsum
+--- input:bar
+Dolor sit amet
+--- input
+\import(foo)
+\import(bar)
+--- expr
+=TEXT literal "Lorem ipsum"
+=TEXT literal "\n"
+=TEXT literal "Dolor sit amet"
+--- document
+=RAW Raw "Lorem ipsum\nDolor sit amet"

@@ -92,8 +92,33 @@ pub const Parser = struct {
           } else .failed;
     }
 
-    fn shift(c: *Command, ip: *Interpreter, end: model.Cursor) !void {
+    fn shift(c: *Command, ip: *Interpreter, end: model.Cursor,
+             fullast: bool) !void {
       const newNode = try c.mapper.finalize(ip.input.between(c.start, end));
+      switch (newNode.data) {
+        .resolved_call => |*rcall| {
+          if (rcall.sig.returns.is(.ast_node)) {
+            if (fullast) {
+              switch (rcall.target.data) {
+                .resolved_symref => |*rsym| {
+                  if (std.mem.eql(u8, "import", rsym.sym.name)) {
+                    ip.ctx.logger.ImportIllegalInFullast(newNode.pos);
+                    newNode.data = .poison;
+                  }
+                },
+                else => {}
+              }
+            } else {
+              // try to immediately call keywords.
+              if (try ip.tryInterpret(
+                  newNode, .{.kind = .intermediate})) |expr| {
+                newNode.data = .{.expression = expr};
+              }
+            }
+          }
+        },
+        else => {},
+      }
       c.info = .{.unknown = newNode};
     }
 
@@ -501,7 +526,8 @@ pub const Parser = struct {
               while (self.levels.items.len > 1) {
                 try self.leaveLevel();
                 const parent = self.curLevel();
-                try parent.command.shift(self.intpr(), self.cur_start);
+                try parent.command.shift(
+                  self.intpr(), self.cur_start, parent.fullast);
                 try parent.append(self.intpr(), parent.command.info.unknown);
               }
               return self.levels.items[0].finalize(self);
@@ -575,7 +601,7 @@ pub const Parser = struct {
               }
               self.state = .command;
               try self.curLevel().command.shift(
-                self.intpr(), self.cur_start);
+                self.intpr(), self.cur_start, self.curLevel().fullast);
             },
             else => std.debug.panic(
                 "unexpected token in default: {s}\n", .{@tagName(self.cur)}),
@@ -660,6 +686,32 @@ pub const Parser = struct {
         },
         .command => {
           var lvl = self.curLevel();
+          switch (lvl.command.info.unknown.data) {
+            .import => |*import| {
+              if (self.cur != .list_start and self.cur != .blocks_sep) {
+                // import that isn't called. must load.
+                const me = &self.intpr().ctx.data.known_modules.values()[
+                  import.module_index];
+                switch (me.*) {
+                  .require_params => |ml| {
+                    me.* = .{.require_module = ml};
+                    return UnwindReason.referred_module_unavailable;
+                  },
+                  .require_module => {
+                    // if another module set require_module already, it had
+                    // taken priority over the current module and therefore
+                    // would have already been loaded.
+                    unreachable;
+                  },
+                  .loaded => |module| {
+                    try self.intpr().importModuleSyms(module, import.ns_index);
+                    import.node().data = .{.expression = module.root};
+                  },
+                }
+              }
+            },
+            else => {}
+          }
           switch (self.cur) {
             .access => {
               self.advance();
@@ -688,6 +740,10 @@ pub const Parser = struct {
             },
             .list_start, .blocks_sep => {
               const target = lvl.command.info.unknown;
+              switch (target.data) {
+                .import => unreachable, // TODO
+                else => {},
+              }
               const ctx = try chains.CallContext.fromChain(
                 self.intpr(), target, try chains.Resolver.init(
                   self.intpr(), .{.kind = .intermediate}).resolve(target));
@@ -733,7 +789,8 @@ pub const Parser = struct {
             self.advance();
           } else {
             self.state = .command;
-            try self.curLevel().command.shift(self.intpr(), end);
+            try self.curLevel().command.shift(
+              self.intpr(), end, self.curLevel().fullast);
           }
         },
         .after_blocks_start => {
@@ -1159,7 +1216,8 @@ pub const Parser = struct {
               const cur_parent = &self.levels.items[i - 1];
               try cur_parent.command.pushArg(
                 try self.levels.items[i].finalize(self));
-              try cur_parent.command.shift(self.intpr(), end_cursor);
+              try cur_parent.command.shift(
+                self.intpr(), end_cursor, cur_parent.fullast);
               try cur_parent.append(
                 self.intpr(), cur_parent.command.info.unknown);
             }

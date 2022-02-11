@@ -375,7 +375,9 @@ pub const Interpreter = struct {
     if (is_keyword) {
       var eval = self.ctx.evaluator();
       const res = try eval.evaluateKeywordCall(self, &expr.data.call);
-      const interpreted_res = try self.tryInterpret(res, stage);
+      // if this is an import, the parser must handle it.
+      const interpreted_res = if (res.data == .import) null else
+        try self.tryInterpret(res, stage);
       if (interpreted_res == null) {
         // it would be nicer to actually replace the original node with `res`
         // but that would make the tryInterpret API more complicated so we just
@@ -474,6 +476,27 @@ pub const Interpreter = struct {
       def.node().pos, name, try eval.evaluate(expr));
     def_val.root = def.root;
     return try self.ctx.createValueExpr(def_val.value());
+  }
+
+  pub fn tryInterpretImport(self: *Interpreter, import: *model.Node.Import)
+      parse.Error!?*model.Expression {
+    const me = &self.ctx.data.known_modules.values()[import.module_index];
+    switch (me) {
+      .loaded => |module| {
+        self.importModuleSyms(module, import.ns_index);
+        return module.root;
+      },
+      .require_params => |ml| {
+        me.* = .{.require_module = ml};
+        return parse.UnwindReason.referred_module_unavailable;
+      },
+      .require_module => {
+        // cannot happen. if the module is further down the dependency chain
+        // than the current one is, then it would have had priority before ours
+        // after .require_module has been set.
+        unreachable;
+      }
+    }
   }
 
 
@@ -1074,7 +1097,8 @@ pub const Interpreter = struct {
         break :blk try self.ctx.createValueExpr(
           (try self.ctx.values.funcRef(input.pos, val)).value());
       },
-      .import => |_| unreachable, // TODO
+      .import => unreachable, // this must always be handled directly
+                              // by the parser.
       .literal => |lit|
         // TODO: delay this until stage.kind == .final?
         try self.ctx.createValueExpr(

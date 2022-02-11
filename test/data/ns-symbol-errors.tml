@@ -1,5 +1,5 @@
 === Namespace symbol errors
---- lib:foo
+--- input:foo
 \library:>
 \declare:
   bar = \func:

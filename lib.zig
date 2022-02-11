@@ -251,7 +251,7 @@ pub const Intrinsics = Provider.Wrapper(struct {
     return ret;
   }
 
-  fn import(intpr: *Interpreter, pos: model.Position,
+  fn import(intpr: *Interpreter, pos: model.Position, ns: u15,
             locator: *model.Node) nyarna.Error!*model.Node {
     const expr = (try intpr.interpretWithTargetScalar(
       locator, .{.intrinsic = .raw}, .{.kind = .keyword})) orelse
@@ -263,7 +263,7 @@ pub const Intrinsics = Provider.Wrapper(struct {
       return try intpr.node_gen.poison(pos);
     };
     if (try intpr.ctx.searchModule(locator.pos, parsed)) |index| {
-      return (try intpr.node_gen.import(pos, index)).node();
+      return (try intpr.node_gen.import(pos, ns, index)).node();
     } else {
       return try intpr.node_gen.poison(pos);
     }
@@ -627,7 +627,7 @@ pub fn intrinsicModule(ctx: Context) !*model.Module {
   var ret = try ctx.global().create(model.Module);
   ret.root = try ctx.createValueExpr(
     try ctx.values.void(model.Position.intrinsic()));
-  ret.symbols = try ctx.global().alloc(*model.Symbol, 19);
+  ret.symbols = try ctx.global().alloc(*model.Symbol, 20);
   var index: usize = 0;
 
   var ip = Intrinsics.init();
@@ -651,7 +651,7 @@ pub fn intrinsicModule(ctx: Context) !*model.Module {
       .map = &.{},
       .off_colon = null,
       .off_comment = null,
-      .full_ast = null,
+      .full_ast = model.Position.intrinsic(),
     }, null);
 
   //-------------
@@ -875,6 +875,13 @@ pub fn intrinsicModule(ctx: Context) !*model.Module {
   try b.push(try ctx.values.intLocation("body", .{.intrinsic = .ast_node}));
   ret.symbols[index] =
     try extFuncSymbol(ctx, "method", true, b.finish(), &ip.provider);
+  index += 1;
+
+  // import
+  b = try types.SigBuilder.init(ctx, 1, .{.intrinsic = .ast_node}, false);
+  try b.push(try ctx.values.intLocation("locator", .{.intrinsic = .ast_node}));
+  ret.symbols[index] =
+    try extFuncSymbol(ctx, "import", true, b.finish(), &ip.provider);
   index += 1;
 
   std.debug.assert(index == ret.symbols.len);

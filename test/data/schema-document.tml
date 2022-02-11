@@ -1,5 +1,5 @@
 === Schema document
---- lib:Document
+--- input:Document
 \standalone(Schema)
 
 \declare:

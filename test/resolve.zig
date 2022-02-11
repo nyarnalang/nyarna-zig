@@ -31,7 +31,22 @@ pub const TestDataResolver = struct {
   fn resolve(res: *nyarna.Resolver, path: []const u8, _: model.Position,
              _: *errors.Handler) !?*model.Source.Descriptor {
     const self = @fieldParentPtr(TestDataResolver, "api", res);
-    const item = self.source.items.getPtr(path) orelse return null;
+    const item = if (std.mem.eql(u8, "input", path))
+      self.source.items.getPtr(path) orelse {
+        std.debug.print("failed to fetch '{s}'\nexisting items:\n", .{path});
+        var iter = self.source.items.keyIterator();
+        while (iter.next()) |key| std.debug.print("{s}\n", .{key.*});
+        std.debug.print("existing inputs:\n", .{});
+        iter = self.source.params.input.keyIterator();
+        while (iter.next()) |key| std.debug.print("{s}\n", .{key.*});
+        unreachable;
+      }
+    else self.source.params.input.getPtr(path) orelse {
+      std.debug.print("failed to fetch '{s}'\nexisting inputs:\n", .{path});
+      var iter = self.source.params.input.keyIterator();
+      while (iter.next()) |key| std.debug.print("{s}\n", .{key.*});
+      return null;
+    };
     const absolute = try self.source.arena.allocator().alloc(u8, path.len + 5);
     std.mem.copy(u8, absolute, ".doc.");
     std.mem.copy(u8, (absolute.ptr + 5)[0..path.len], path);

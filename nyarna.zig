@@ -80,9 +80,6 @@ pub const Globals = struct {
   ///
   /// This list is also used to catch cyclic references.
   known_modules: std.StringArrayHashMapUnmanaged(ModuleEntry) = .{},
-  /// index of the poison module in known_modules. The poison module is the
-  /// module returned for any locator that cannot be resolved.
-  poison_module: ?usize = null,
   /// known resolvers.
   resolvers: []ResolverEntry,
   /// set to true if any module encountered errors
@@ -184,25 +181,6 @@ pub const Globals = struct {
         }
       }
     }
-  }
-
-  pub fn getPoisonModule(self: *Globals) !usize {
-    if (self.poison_module) |index| return index;
-    const pexpr = try self.storage.allocator().create(model.Expression);
-    pexpr.* = .{
-      .position = model.Position.intrinsic(),
-      .data = .poison,
-      .expected_type = .{.intrinsic = .poison},
-    };
-    const pmod = try self.storage.allocator().create(model.Module);
-    pmod.* = .{
-      .root = pexpr,
-      .symbols = .{},
-    };
-    const res = try self.known_modules.getOrPut(self.storage.allocator(), "");
-    std.debug.assert(!res.found_existing);
-    res.value_ptr.* = .{.loaded = pmod};
-    return res.index;
   }
 };
 
