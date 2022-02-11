@@ -105,7 +105,7 @@ pub const SignatureMapper = struct {
               .config = flag == .block_with_config, .direct = input == .named};
           }
         }
-        self.intpr.ctx.logger.UnknownParameter(pos);
+        self.intpr.ctx.logger.UnknownParameter(pos, name);
         return null;
       },
       .primary => {

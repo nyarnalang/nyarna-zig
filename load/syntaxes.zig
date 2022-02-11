@@ -314,7 +314,7 @@ pub const SymbolDefs = struct {
               std.hash.Adler32.hash("varmap") => &self.varmap,
               std.hash.Adler32.hash("root") => &self.root,
               else => {
-                self.logger().UnknownFlag(pos);
+                self.logger().UnknownFlag(pos, id);
                 return .none;
               }
             };

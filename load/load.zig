@@ -167,4 +167,75 @@ pub const ModuleLoader = struct {
     std.debug.assert(self.state == .initial);
     return lex.Lexer.init(self.interpreter);
   }
+
+  /// tries to resolve the given locator to a module.
+  /// if successful, returns the index of the module.
+  ///
+  /// creates a requirement for the module to provide its parameters.
+  ///
+  /// returns null if no module cannot be found for the given locator or if
+  /// referencing the module would create a cyclic dependency. If null is
+  /// returned, an error message has been logged.
+  pub fn searchModule(self: *ModuleLoader, pos: model.Position,
+                      locator: model.Locator) !?usize {
+    var resolver: *nyarna.Resolver = undefined;
+    const descriptor = if (locator.resolver) |name| blk: {
+      if (self.data.known_modules.getIndex(locator.path)) |index| return index;
+      for (self.data.resolvers) |*re| {
+        if (std.mem.eql(u8, re.name, name)) {
+          if (try re.resolver.resolve(locator.path, pos, &self.logger)) |desc| {
+            resolver = re.resolver;
+            break :blk desc;
+          }
+          self.logger.CannotResolveLocator(pos);
+          return null;
+        }
+      }
+      self.logger.UnknownResolver(pos, name);
+      return null;
+    } else blk: {
+      // try to resolve the locator relative to the current module.
+      const fullpath = try self.storage.allocator().alloc(
+        u8, self.interpreter.input.locator_ctx.len + locator.path.len);
+      defer self.storage.allocator().free(fullpath);
+      std.mem.copy(u8, fullpath, self.interpreter.input.locator_ctx);
+      std.mem.copy(
+        u8, (fullpath.ptr + self.interpreter.input.locator_ctx.len)[
+          0..locator.path.len], locator.path);
+      const rel_loc = model.Locator.parse(fullpath) catch unreachable;
+      const rel_name = rel_loc.resolver.?;
+      for (self.data.resolvers) |*re| if (std.mem.eql(u8, rel_name, re.name)) {
+        if (try re.resolver.resolve(rel_loc.path, pos, &self.logger)) |desc| {
+          resolver = re.resolver;
+          break :blk desc;
+        }
+        break;
+      };
+      // try with each resolver that is set to implicitly resolve paths.
+      for (self.data.resolvers) |*re| if (re.implicit) {
+        if (try re.resolver.resolve(locator.path, pos, &self.logger)) |desc| {
+          resolver = re.resolver;
+          break :blk desc;
+        }
+      };
+      self.logger.CannotResolveLocator(pos);
+      return null;
+    };
+    const loader = try create(self.data, descriptor, resolver, false);
+    const res = try self.data.known_modules.getOrPut(
+      self.data.storage.allocator(), descriptor.locator);
+    std.debug.assert(!res.found_existing);
+    res.value_ptr.* = .{.require_params = loader};
+    return res.index;
+  }
+
+  /// tries to query the parameters of the module at the given index.
+  /// returns null if the referenced module has not yet been loaded far enough
+  /// for it to provide parameters.
+  pub fn getModuleParams(self: *ModuleLoader, module_index: usize)
+      ?*model.Type.Signature {
+    _ = self;
+    _ = module_index;
+    unreachable; // TODO
+  }
 };

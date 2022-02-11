@@ -151,9 +151,9 @@ const FixpointContext = struct {
         }
         unreachable;
       },
-      .unresolved_symref => {
+      .unresolved_symref => |usym| {
         // TODO: function could be used as value.
-        self.dres.intpr.ctx.logger.UnknownSymbol(item.pos);
+        self.dres.intpr.ctx.logger.UnknownSymbol(item.pos, usym.name);
         return graph.ResolutionContext.Result.failed;
       },
       else => unreachable,

@@ -10,15 +10,14 @@ pub const LexerError = enum {
 };
 
 pub const GenericParserError = enum {
-  NamedArgumentInAssignment, MissingBlockNameEnd, UnknownFlag,
-  NonLocationFlag, NonDefinitionFlag, BlockHeaderNotAllowedForDefinition,
-  MissingSymbolName, MissingSymbolType, MissingSymbolEntity, UnknownSyntax,
-  PrefixedSymbolMustBeCalled, AstNodeInNonKeyword, CannotResolveImmediately,
-  InvalidLvalue, UnknownParameter, TooManyArguments, UnexpectedPrimaryBlock,
-  InvalidPositionalArgument, UnknownSymbol, UnknownEnumValue, BlockNeedsConfig,
-  CantBeCalled, InvalidNamedArgInAssign, UnfinishedCallInTypeArg, NotAType,
-  CantCallUnfinished, UnknownField, FailedToCalculateReturnType,
-  FieldAccessWithoutInstance, MethodOutsideDeclare, CannotResolveLocator,
+  NamedArgumentInAssignment, MissingBlockNameEnd, NonLocationFlag,
+  NonDefinitionFlag, BlockHeaderNotAllowedForDefinition, MissingSymbolName,
+  MissingSymbolType, MissingSymbolEntity, PrefixedSymbolMustBeCalled,
+  AstNodeInNonKeyword, CannotResolveImmediately, InvalidLvalue, CantBeCalled,
+  TooManyArguments, UnexpectedPrimaryBlock, InvalidPositionalArgument,
+  BlockNeedsConfig, InvalidNamedArgInAssign, UnfinishedCallInTypeArg, NotAType,
+  CantCallUnfinished, FailedToCalculateReturnType, FieldAccessWithoutInstance,
+  MethodOutsideDeclare, CannotResolveLocator,
 };
 
 pub const WrongItemError = enum {
@@ -29,6 +28,11 @@ pub const WrongItemError = enum {
   };
 
   ExpectedXGotY, MissingToken, PrematureToken, IllegalItem
+};
+
+pub const UnknownError = enum {
+  UnknownFlag, UnknownSyntax, UnknownParameter, UnknownSymbol, UnknownEnumValue,
+  UnknownField, UnknownResolver,
 };
 
 pub const WrongIdError = enum {
@@ -127,6 +131,9 @@ pub const Reporter = struct {
     fn(reporter: *Reporter, id: WrongItemError, pos: model.Position,
        expected: []const WrongItemError.ItemDescr,
        got: WrongItemError.ItemDescr) void,
+  unknownErrorFn:
+    fn(reporter: *Reporter, id: UnknownError, pos: model.Position,
+       name: []const u8) void,
   wrongIdErrorFn:
     fn(reporter: *Reporter, id: WrongIdError, pos: model.Position,
        expected: []const u8, got: []const u8, defined_at: model.Position) void,
@@ -199,6 +206,7 @@ pub const CmdLineReporter = struct {
         .parserErrorFn = CmdLineReporter.parserError,
         .previousOccurenceFn = CmdLineReporter.previousOccurence,
         .wrongItemErrorFn = CmdLineReporter.wrongItemError,
+        .unknownErrorFn = CmdLineReporter.unknownError,
         .wrongIdErrorFn = CmdLineReporter.wrongIdError,
         .wrongTypeErrorFn = CmdLineReporter.wrongTypeError,
         .constructionErrorFn = CmdLineReporter.constructionError,
@@ -267,6 +275,19 @@ pub const CmdLineReporter = struct {
     const arr = std.fmt.Formatter(formatItemArr){.data = expected};
     const single = std.fmt.Formatter(formatItemDescr){.data = got};
     self.renderError("wrong token: expected {}, got {}", .{arr, single});
+  }
+
+  fn unknownError(reporter: *Reporter, id: UnknownError, pos: model.Position,
+                  name: []const u8) void {
+    const self = @fieldParentPtr(CmdLineReporter, "reporter", reporter);
+    self.renderPos(.{.bold}, pos);
+    const entity: []const u8 = switch (id) {
+      .UnknownFlag => "flag", .UnknownSyntax => "syntax",
+      .UnknownParameter => "parameter", .UnknownSymbol => "symbol",
+      .UnknownEnumValue => "enum value", .UnknownField => "field",
+      .UnknownResolver => "resolver",
+    };
+    self.renderError("unknown {s}: '{s}'", .{entity, name});
   }
 
   fn wrongIdError(

@@ -116,7 +116,7 @@ pub const Resolver = struct {
               // in .resolve stage there may still be unresolved accesses to
               // the current type's namespace, so we don't poison in that case
               // yet.
-              self.intpr.ctx.logger.UnknownSymbol(chain.pos);
+              self.intpr.ctx.logger.UnknownSymbol(chain.pos, value.id);
               return .poison;
             } else return .failed;
           },
@@ -132,7 +132,7 @@ pub const Resolver = struct {
                   self.intpr, func.callable.typedef(), value.id) orelse
                     if (self.stage.kind == .keyword or
                         self.stage.kind == .final) {
-                      self.intpr.ctx.logger.UnknownSymbol(chain.pos);
+                      self.intpr.ctx.logger.UnknownSymbol(chain.pos, value.id);
                       return .poison;
                     } else return .failed;
                 switch (target) {
@@ -151,7 +151,7 @@ pub const Resolver = struct {
                 const target = searchAccessible(self.intpr, t, value.id) orelse
                   if (self.stage.kind == .keyword or self.stage.kind == .final)
                   {
-                    self.intpr.ctx.logger.UnknownSymbol(chain.pos);
+                    self.intpr.ctx.logger.UnknownSymbol(chain.pos, value.id);
                     return .poison;
                   } else return .failed;
 

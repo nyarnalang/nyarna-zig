@@ -262,10 +262,9 @@ pub const Intrinsics = Provider.Wrapper(struct {
       intpr.ctx.logger.InvalidLocator(locator.pos);
       return try intpr.node_gen.poison(pos);
     };
-    if (try intpr.ctx.searchModule(parsed)) |index| {
+    if (try intpr.ctx.searchModule(locator.pos, parsed)) |index| {
       return (try intpr.node_gen.import(pos, index)).node();
     } else {
-      intpr.ctx.logger.CannotResolveLocator(locator.pos);
       return try intpr.node_gen.poison(pos);
     }
   }

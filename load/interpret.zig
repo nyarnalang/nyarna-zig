@@ -828,7 +828,7 @@ pub const Interpreter = struct {
       .intermediate, .resolve => {},
       .assumed => unreachable,
       .keyword => self.ctx.logger.CannotResolveImmediately(us.node().pos),
-      .final => self.ctx.logger.UnknownSymbol(us.node().pos),
+      .final => self.ctx.logger.UnknownSymbol(us.node().pos, us.name),
     }
     return null;
   }
@@ -853,7 +853,7 @@ pub const Interpreter = struct {
               .unfinished_type => |t| return TypeResult{.unfinished = t},
               .known => return TypeResult.unavailable,
               .failed => {
-                self.ctx.logger.UnknownSymbol(node.pos);
+                self.ctx.logger.UnknownSymbol(node.pos, usym.name);
                 return TypeResult.failed;
               },
               .variable => |v| return TypeResult{.finished = v.t},
@@ -1377,7 +1377,7 @@ pub const Interpreter = struct {
         .float => unreachable, // TODO
         .tenum => |*e| {
           const index = e.values.getIndex(l.content) orelse {
-            self.ctx.logger.UnknownEnumValue(l.node().pos);
+            self.ctx.logger.UnknownEnumValue(l.node().pos, l.content);
             return self.ctx.values.poison(l.node().pos);
           };
           return (try self.ctx.values.@"enum"(l.node().pos, e, index)).value();

@@ -470,7 +470,7 @@ pub const Parser = struct {
     return last(self.levels.items);
   }
 
-  fn doParse(self: *Parser, implicit_fullast: bool) !*model.Node {
+  fn doParse(self: *Parser, implicit_fullast: bool) Error!*model.Node {
     while (true) {
       switch (self.state) {
         .start => {
@@ -947,8 +947,9 @@ pub const Parser = struct {
           },
           .syntax => {
             if (self.cur == .literal) {
-              switch (std.hash.Adler32.hash(
-                  self.lexer.walker.contentFrom(self.cur_start.byte_offset))) {
+              const syntax_name =
+                self.lexer.walker.contentFrom(self.cur_start.byte_offset);
+              switch (std.hash.Adler32.hash(syntax_name)) {
                 std.hash.Adler32.hash("locations") => {
                   into.syntax = .{
                     .pos = model.Position.intrinsic(),
@@ -963,7 +964,7 @@ pub const Parser = struct {
                 },
                 else =>
                   self.logger().UnknownSyntax(
-                    self.lexer.walker.posFrom(self.cur_start)),
+                    self.lexer.walker.posFrom(self.cur_start), syntax_name),
               }
             } else {
               self.logger().ExpectedXGotY(
