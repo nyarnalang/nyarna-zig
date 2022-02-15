@@ -142,16 +142,19 @@ pub const ModuleLoader = struct {
   pub fn finalize(self: *ModuleLoader) !*model.Module {
     std.debug.assert(!self.fullast);
     defer self.destroy();
+    std.debug.assert(self.interpreter.var_containers.items.len == 1);
     const ret = try self.ctx().global().create(model.Module);
     ret.* = .{
       .symbols = self.public_syms.items,
       .root = self.state.finished,
+      .container = self.interpreter.var_containers.items[0].container,
     };
     if (self.logger.count > 0) self.data.seen_error = true;
     return ret;
   }
 
-  /// deallocates the loader and returns the loaded node.
+  /// returns the loaded node. does *not* destroy the loader. returned node does
+  /// only live as long as the loader. caller must call destroy() on the loader.
   /// preconditions:
   ///
   ///  * self.work() must have returned true

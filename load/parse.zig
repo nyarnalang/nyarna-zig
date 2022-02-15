@@ -173,13 +173,20 @@ pub const Parser = struct {
     command: Command,
     /// whether this level has fullast semantics.
     fullast: bool,
-
+    /// list of nodes in the current paragraph parsed at this content level.
     nodes: std.ArrayListUnmanaged(*model.Node),
+    /// finished paragraphs at this content level.
     paragraphs: std.ArrayListUnmanaged(model.Node.Paras.Item),
-
+    /// block configuration of this level. only applicable to block arguments.
     block_config: ?*const model.BlockConfig,
+    /// syntax that parses this level. only applicable to block arguments.
     syntax_proc: ?*syntaxes.SpecialSyntax.Processor = null,
+    /// recently parsed whitespace. might be either added to nodes to discarded
+    /// depending on the following item.
     dangling_space: ?*model.Node = null,
+    /// number of variables existing in intpr.variables when this level has
+    /// been started.
+    variable_start: usize,
 
     fn append(level: *ContentLevel, ip: *Interpreter, item: *model.Node)
         !void {
@@ -231,17 +238,27 @@ pub const Parser = struct {
       };
     }
 
-    fn finalize(level: *ContentLevel, p: *Parser) !*model.Node {
+    fn finalize(level: *ContentLevel, p: *Parser, parent: *Command)
+        !*model.Node {
       if (level.block_config) |c| {
-        try p.revertBlockConfig(c);
+        if (try p.revertBlockConfig(c)) |container| {
+          try parent.mapper.pushContainer(container);
+        }
       }
+      const ip = p.intpr();
+      while (ip.variables.items.len > level.variable_start) {
+        const av = ip.variables.pop();
+        const ns = ip.namespace(av.ns);
+        ns.data.shrinkRetainingCapacity(ns.data.count() - 1);
+      }
+
       const alloc = p.allocator();
       if (level.syntax_proc) |proc| {
         return try proc.finish(
-          proc, p.intpr().input.between(level.start, p.cur_start));
+          proc, ip.input.between(level.start, p.cur_start));
       } else if (level.paragraphs.items.len == 0) {
         return (try level.finalizeParagraph(p.intpr())) orelse
-          try p.intpr().node_gen.void(p.intpr().input.at(level.start));
+          try ip.node_gen.void(p.intpr().input.at(level.start));
       } else {
         if (level.nodes.items.len > 0) {
           if (try level.finalizeParagraph(p.intpr())) |content| {
@@ -251,7 +268,7 @@ pub const Parser = struct {
             });
           }
         }
-        return (try p.intpr().node_gen.paras(
+        return (try ip.node_gen.paras(
           level.paragraphs.items[0].content.pos.span(
             last(level.paragraphs.items).content.pos),
           .{.items = level.paragraphs.items})).node();
@@ -385,6 +402,7 @@ pub const Parser = struct {
       .paragraphs = .{},
       .block_config = null,
       .fullast = fullast,
+      .variable_start = self.intpr().variables.items.len,
     });
   }
 
@@ -486,7 +504,7 @@ pub const Parser = struct {
   fn leaveLevel(self: *Parser) !void {
     var lvl = self.curLevel();
     var parent = &self.levels.items[self.levels.items.len - 2];
-    const lvl_node = try lvl.finalize(self);
+    const lvl_node = try lvl.finalize(self, &parent.command);
     try parent.command.pushArg(lvl_node);
     _ = self.levels.pop();
   }
@@ -530,7 +548,9 @@ pub const Parser = struct {
                   self.intpr(), self.cur_start, parent.fullast);
                 try parent.append(self.intpr(), parent.command.info.unknown);
               }
-              return self.levels.items[0].finalize(self);
+              // the root level has no parent level. It is also no 'varhead'
+              // block, so the parent value is never used an can be undefined.
+              return self.levels.items[0].finalize(self, undefined);
             },
             .symref => {
               self.curLevel().command = .{
@@ -805,7 +825,7 @@ pub const Parser = struct {
                 .unknown => {},
                 .maybe => {
                   const lvl = self.levels.pop();
-                  if (lvl.block_config) |c| try self.revertBlockConfig(c);
+                  if (lvl.block_config) |c| _ = try self.revertBlockConfig(c);
                 },
                 .yes => try self.leaveLevel(),
               }
@@ -870,6 +890,10 @@ pub const Parser = struct {
           try self.pushLevel(if (parent.command.choseAstNodeParam()) false
                              else parent.fullast);
           if (!(try self.processBlockHeader(null))) {
+            if (parent.implicitBlockConfig()) |c| {
+              try self.applyBlockConfig(
+                self.intpr().input.at(self.cur_start), c);
+            }
             while (self.cur == .space or self.cur == .indent) self.advance();
           }
           self.state = if (
@@ -939,7 +963,9 @@ pub const Parser = struct {
     }
   }
 
-  const ConfigItemKind = enum {csym, syntax, map, off, fullast, empty, unknown};
+  const ConfigItemKind = enum {
+    csym, empty, fullast, map, off,syntax, varhead, unknown,
+  };
 
   fn readBlockConfig(self: *Parser, into: *model.BlockConfig,
                      map_allocator: std.mem.Allocator) !void {
@@ -950,6 +976,7 @@ pub const Parser = struct {
       .off_colon = null,
       .off_comment = null,
       .full_ast = null,
+      .var_head = null,
       .map = undefined,
     };
     var first = true;
@@ -977,6 +1004,7 @@ pub const Parser = struct {
         std.hash.Adler32.hash("map") => .map,
         std.hash.Adler32.hash("off") => .off,
         std.hash.Adler32.hash("fullast") => .fullast,
+        std.hash.Adler32.hash("varhead") => .varhead,
         std.hash.Adler32.hash("") => .empty,
         else => blk: {
           self.logger().UnknownConfigDirective(
@@ -1084,6 +1112,10 @@ pub const Parser = struct {
           },
           .fullast => {
             into.full_ast = self.lexer.walker.posFrom(self.cur_start);
+            break :consume_next;
+          },
+          .varhead => {
+            into.var_head = self.lexer.walker.posFrom(self.cur_start);
             break :consume_next;
           },
           .empty => {
@@ -1215,7 +1247,7 @@ pub const Parser = struct {
             while (i > target_level) : (i -= 1) {
               const cur_parent = &self.levels.items[i - 1];
               try cur_parent.command.pushArg(
-                try self.levels.items[i].finalize(self));
+                try self.levels.items[i].finalize(self, &cur_parent.command));
               try cur_parent.command.shift(
                 self.intpr(), end_cursor, cur_parent.fullast);
               try cur_parent.append(
@@ -1379,12 +1411,27 @@ pub const Parser = struct {
       self.lexer.disableComments();
     }
 
-    if (config.full_ast) |_| lvl.fullast = true;
+    if (config.full_ast != null) lvl.fullast = true;
+
+    if (config.var_head != null) {
+      const ip = self.intpr();
+      const container = try ip.ctx.global().create(model.VariableContainer);
+      container.* = .{
+        .num_values = 0,
+      };
+      try ip.var_containers.append(ip.allocator, .{
+        .offset = ip.variables.items.len,
+        .container = container,
+      });
+    }
 
     lvl.block_config = config;
   }
 
-  fn revertBlockConfig(self: *Parser, config: *const model.BlockConfig) !void {
+  /// returns the VariableContainer of the variables inside the block if the
+  /// block config had 'varhead'.
+  fn revertBlockConfig(self: *Parser, config: *const model.BlockConfig)
+      !?*model.VariableContainer {
     // config.syntax does not need to be reversed, this happens automatically by
     // leaving the level.
 
@@ -1455,5 +1502,9 @@ pub const Parser = struct {
 
     // off_colon, off_comment, and special syntax are reversed automatically by
     // the lexer. full_ast is automatically reversed by leaving the level.
+
+    return if (config.var_head != null)
+      self.intpr().var_containers.pop().container
+    else null;
   }
 };

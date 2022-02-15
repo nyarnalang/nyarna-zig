@@ -270,25 +270,27 @@ pub const Intrinsics = Provider.Wrapper(struct {
   }
 
   fn func(intpr: *Interpreter, pos: model.Position, ns: u15,
-          @"return": *model.Node, params: *model.Node, body: *model.Node)
+          @"return": *model.Node, params: *model.Node, body: *model.Value.Ast)
       nyarna.Error!*model.Node {
     const returns_node: ?*model.Node = switch (@"return".data) {
       .poison, .void => null,
       else => @"return",
     };
+    // TODO: can body.container be null here?
     return (try intpr.node_gen.funcgen(
-      pos, returns_node, params, ns, body, false)).node();
+      pos, returns_node, params, ns, body.root, body.container.?, false
+    )).node();
   }
 
   fn method(intpr: *Interpreter, pos: model.Position, ns: u15,
-            @"return": *model.Node, params: *model.Node, body: *model.Node)
+            @"return": *model.Node, params: *model.Node, body: *model.Value.Ast)
       nyarna.Error!*model.Node {
     const returns_node: ?*model.Node = switch (@"return".data) {
       .poison, .void => null,
       else => @"return",
     };
     return (try intpr.node_gen.funcgen(
-      pos, returns_node, params, ns, body, true)).node();
+      pos, returns_node, params, ns, body.root, body.container.?, true)).node();
   }
 
   //-----------------------
@@ -559,6 +561,10 @@ fn registerGenericImpl(ctx: Context, p: *const Provider, name: []const u8)
 
 fn extFunc(ctx: Context, name: *model.Symbol, bres: types.SigBuilderResult,
            ns_dependent: bool, p: *const Provider) !*model.Function {
+  const container = try ctx.global().create(model.VariableContainer);
+  container.* = .{
+    .num_values = @intCast(u15, bres.sig.parameters.len),
+  };
   const ret = try ctx.global().create(model.Function);
   ret.* = .{
     .callable = try bres.createCallable(ctx.global(), .function),
@@ -570,6 +576,7 @@ fn extFunc(ctx: Context, name: *model.Symbol, bres: types.SigBuilderResult,
       },
     },
     .name = name,
+    .variables = container,
   };
   return ret;
 }
@@ -641,6 +648,7 @@ pub fn intrinsicModule(ctx: Context) !*model.Module {
       .off_colon = null,
       .off_comment = null,
       .full_ast = null,
+      .var_head = null,
     }, null);
 
   const def_syntax = // zig 0.9.0 crashes when inlining this
@@ -652,6 +660,17 @@ pub fn intrinsicModule(ctx: Context) !*model.Module {
       .off_colon = null,
       .off_comment = null,
       .full_ast = model.Position.intrinsic(),
+      .var_head = null,
+    }, null);
+
+  const body_block = try ctx.values.blockHeader(
+    model.Position.intrinsic(), model.BlockConfig{
+      .syntax = null,
+      .map = &.{},
+      .off_colon = null,
+      .off_comment = null,
+      .full_ast = null,
+      .var_head = model.Position.intrinsic(),
     }, null);
 
   //-------------
@@ -861,7 +880,9 @@ pub fn intrinsicModule(ctx: Context) !*model.Module {
   try b.push((try ctx.values.intLocation(
     "params", .{.intrinsic = .ast_node})).withPrimary(
       model.Position.intrinsic()).withHeader(location_block));
-  try b.push(try ctx.values.intLocation("body", .{.intrinsic = .ast_node}));
+  try b.push(
+    (try ctx.values.intLocation("body", .{.intrinsic = .ast_node})).withHeader(
+      body_block));
   ret.symbols[index] =
     try extFuncSymbol(ctx, "func", true, b.finish(), &ip.provider);
   index += 1;
@@ -872,7 +893,9 @@ pub fn intrinsicModule(ctx: Context) !*model.Module {
   try b.push((try ctx.values.intLocation(
     "params", .{.intrinsic = .ast_node})).withPrimary(
       model.Position.intrinsic()).withHeader(location_block));
-  try b.push(try ctx.values.intLocation("body", .{.intrinsic = .ast_node}));
+  try b.push(
+    (try ctx.values.intLocation("body", .{.intrinsic = .ast_node})).withHeader(
+      body_block));
   ret.symbols[index] =
     try extFuncSymbol(ctx, "method", true, b.finish(), &ip.provider);
   index += 1;

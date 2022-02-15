@@ -44,19 +44,6 @@ pub const Evaluator = struct {
     return !seen_poison;
   }
 
-  fn bindVariables(vars: model.VariableContainer,
-                   frame: ?[*]model.StackItem) void {
-    if (frame) |base| {
-      for (vars) |v, i| {
-        v.cur_value = &base[i];
-      }
-    } else {
-      for (vars) |v| {
-        v.cur_value = null;
-      }
-    }
-  }
-
   fn RetTypeForCtx(comptime ImplCtx: type) type {
     return switch (ImplCtx) {
       *Evaluator => *model.Value,
@@ -119,9 +106,9 @@ pub const Evaluator = struct {
               self.registeredFnForCtx(@TypeOf(impl_ctx), ef.impl_index);
             std.debug.assert(
               call.exprs.len == fr.func.sig().parameters.len);
-            fr.func.cur_frame = try self.setupParameterStackFrame(
-              fr.func.sig(), ef.ns_dependent, fr.func.cur_frame);
-            var frame_ptr = fr.func.cur_frame.? + 1;
+            fr.func.variables.cur_frame = try self.setupParameterStackFrame(
+              fr.func.sig(), ef.ns_dependent, fr.func.variables.cur_frame);
+            var frame_ptr = fr.func.argStart();
             var ns_val: model.Value = undefined;
             if (ef.ns_dependent) {
               ns_val = .{
@@ -135,27 +122,23 @@ pub const Evaluator = struct {
                 },
                 .origin = undefined,
               };
-              frame_ptr.* = .{
-                .value = &ns_val,
-              };
+              frame_ptr.* = .{.value = &ns_val};
               frame_ptr += 1;
             }
             defer self.resetParameterStackFrame(
-              &fr.func.cur_frame, fr.func.sig());
+              &fr.func.variables.cur_frame, fr.func.sig());
             return if (try self.fillParameterStackFrame(
                 call.exprs, frame_ptr))
-              target_impl(impl_ctx, call.expr().pos, fr.func.cur_frame.? + 1)
+              target_impl(impl_ctx, call.expr().pos, fr.func.argStart())
             else poison(impl_ctx, call.expr().pos);
           },
           .ny => |*nf| {
-            defer bindVariables(nf.variables, fr.func.cur_frame);
-            fr.func.cur_frame = try self.setupParameterStackFrame(
-              fr.func.sig(), false, fr.func.cur_frame);
+            fr.func.variables.cur_frame = try self.setupParameterStackFrame(
+              fr.func.sig(), false, fr.func.variables.cur_frame);
             defer self.resetParameterStackFrame(
-              &fr.func.cur_frame, fr.func.sig());
+              &fr.func.variables.cur_frame, fr.func.sig());
             if (try self.fillParameterStackFrame(
-                call.exprs, fr.func.cur_frame.? + 1)) {
-              bindVariables(nf.variables, fr.func.cur_frame);
+                call.exprs, fr.func.argStart())) {
               const val = try self.evaluate(nf.body);
               return switch (@TypeOf(impl_ctx)) {
                 *Evaluator => val,
@@ -205,7 +188,7 @@ pub const Evaluator = struct {
         return cur;
       },
       .assignment => |*assignment| {
-        var cur_ptr = &assignment.target.cur_value.?.*.value;
+        var cur_ptr = assignment.target.curPtr();
         for (assignment.path) |index| {
           cur_ptr = switch (cur_ptr.*.data) {
             .record => |*record| &record.fields[index],
@@ -259,7 +242,7 @@ pub const Evaluator = struct {
           return ret orelse try self.ctx.values.void(expr.pos);
         }
       },
-      .var_retrieval => |*var_retr| return var_retr.variable.cur_value.?.value,
+      .var_retrieval => |*var_retr| return var_retr.variable.curPtr().*,
       .poison => return self.ctx.values.poison(expr.pos),
       .void => return self.ctx.values.void(expr.pos),
     }

@@ -204,6 +204,8 @@ pub const Context = struct {
   /// public interface for generating values.
   values: model.ValueGenerator = .{},
 
+  /// search a referenced module. must only be called while interpreting,
+  /// otherwise leads to undefined behavior.
   pub inline fn searchModule(self: *const Context, pos: model.Position,
                              locator: model.Locator) !?usize {
     return @fieldParentPtr(ModuleLoader, "logger", self.logger).searchModule(

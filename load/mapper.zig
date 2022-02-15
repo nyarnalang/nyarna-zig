@@ -29,6 +29,8 @@ pub const Mapper = struct {
   configFn: fn(self: *Self, at: Cursor) ?*model.BlockConfig,
   paramTypeFn: fn(self: *Self, at: Cursor) ?model.Type,
   finalizeFn: fn(self: *Self, pos: model.Position) nyarna.Error!*model.Node,
+  pushContainerFn: ?fn(self: *Self, container: *model.VariableContainer)
+    nyarna.Error!void = null,
 
   pub fn map(self: *Self, pos: model.Position, input: ArgKind,
              flag: ProtoArgFlag) ?Cursor {
@@ -47,6 +49,10 @@ pub const Mapper = struct {
     try self.pushFn(self, at, content);
   }
 
+  pub fn pushContainer(self: *Self, container: *model.VariableContainer) !void {
+    if (self.pushContainerFn) |f| try f(self, container);
+  }
+
   pub fn finalize(self: *Self, pos: model.Position) nyarna.Error!*model.Node {
     return self.finalizeFn(self, pos);
   }
@@ -61,6 +67,7 @@ pub const SignatureMapper = struct {
   filled: []bool,
   intpr: *Interpreter,
   ns: u15,
+  cur_container: ?*model.VariableContainer = null,
 
   pub fn init(intpr: *Interpreter, subject: *model.Node, ns: u15,
               sig: *const model.Type.Signature) !SignatureMapper {
@@ -70,6 +77,7 @@ pub const SignatureMapper = struct {
         .configFn = SignatureMapper.config,
         .paramTypeFn = SignatureMapper.paramType,
         .pushFn = SignatureMapper.push,
+        .pushContainerFn = SignatureMapper.pushContainer,
         .finalizeFn = SignatureMapper.finalize,
       },
       .subject = subject,
@@ -167,9 +175,12 @@ pub const SignatureMapper = struct {
       .varargs => unreachable,
       else => param.ptype,
     };
-    const arg = if (target_type.is(.ast_node)) try self.intpr.genValueNode(
-      (try self.intpr.ctx.values.ast(content)).value())
-    else blk: {
+    const arg = if (target_type.is(.ast_node)) blk: {
+      defer self.cur_container = null;
+      break :blk try self.intpr.genValueNode(
+        (try self.intpr.ctx.values.ast(content, self.cur_container)).value());
+    } else blk: {
+      std.debug.assert(self.cur_container == null);
       if (try self.intpr.associate(
           content, param.ptype, .{.kind = .intermediate})) |expr| {
         content.data = .{.expression = expr};
@@ -191,6 +202,13 @@ pub const SignatureMapper = struct {
     }
   }
 
+  fn pushContainer(mapper: *Mapper, container: *model.VariableContainer)
+      nyarna.Error!void {
+    const self = @fieldParentPtr(SignatureMapper, "mapper", mapper);
+    std.debug.assert(self.cur_container == null);
+    self.cur_container = container;
+  }
+
   fn finalize(mapper: *Mapper, pos: model.Position) nyarna.Error!*model.Node {
     const self = @fieldParentPtr(SignatureMapper, "mapper", mapper);
     var missing_param = false;
@@ -202,7 +220,7 @@ pub const SignatureMapper = struct {
             .ast_node => blk: {
               break :blk try self.intpr.genValueNode(
                 (try self.intpr.ctx.values.ast(
-                  try self.intpr.node_gen.@"void"(pos))).value());
+                  try self.intpr.node_gen.@"void"(pos), null)).value());
             },
             else => null,
           },

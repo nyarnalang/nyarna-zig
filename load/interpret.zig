@@ -83,6 +83,20 @@ pub const Namespace = struct {
 /// The interpreter is a parameter to keyword implementations, which are allowed
 /// to leverage its facilities for the implementation of static semantics.
 pub const Interpreter = struct {
+  /// does not need reference to actual variable; only used to shrink the
+  /// variable's namespace when leaving the level where the variable was
+  /// defined.
+  const ActiveVariable = struct {
+    ns: u15,
+  };
+  const ActiveVarContainer = struct {
+    /// into Interpreter.variables. At this offset, the first variable (if any)
+    /// of the container is found.
+    offset: usize,
+    /// unfinished. required to link newly created variables to it.
+    container: *model.VariableContainer,
+  };
+
   /// The source that is being parsed. Must not be changed during an
   /// interpreter's operation.
   input: *const model.Source,
@@ -123,6 +137,12 @@ pub const Interpreter = struct {
   syntax_registry: [2]syntaxes.SpecialSyntax,
   /// convenience object to generate nodes using the interpreter's storage.
   node_gen: model.NodeGenerator,
+  /// variables declared in the source code. At any time, this list contains all
+  /// variables that are currently established in a namespace.
+  variables: std.ArrayListUnmanaged(ActiveVariable),
+  /// length equals the current list of open levels whose block configuration
+  /// includes `varhead`.
+  var_containers: std.ArrayListUnmanaged(ActiveVarContainer),
 
   /// creates an interpreter.
   pub fn create(
@@ -137,9 +157,18 @@ pub const Interpreter = struct {
                            syntaxes.SymbolDefs.definitions()},
       .node_gen = undefined,
       .public_namespace = public_ns,
+      .variables = .{},
+      .var_containers = .{},
     };
     ret.node_gen = model.NodeGenerator.init(allocator);
     try ret.addNamespace('\\');
+    const container = try ctx.global().create(model.VariableContainer);
+    container.* = .{
+      .num_values = 0,
+    };
+    try ret.var_containers.append(ret.allocator, .{
+      .offset = 0, .container = container,
+    });
     return ret;
   }
 
@@ -658,6 +687,8 @@ pub const Interpreter = struct {
               .t = if (nl.@"type") |lt|
                 lt.data.expression.data.value.data.@"type".t
               else (try self.probeType(nl.default.?, stage)).?,
+              .container = func.variables,
+              .offset = func.variables.num_values + @intCast(u15, index),
             },
           },
           .parent_type = null,
@@ -665,18 +696,22 @@ pub const Interpreter = struct {
         .value => |vl| .{
           .defined_at = vl.name.value().origin,
           .name = vl.name.content,
-          .data = .{.variable = .{.t = vl.tloc}},
+          .data = .{.variable = .{
+            .t = vl.tloc,
+            .container = func.variables,
+            .offset = func.variables.num_values + @intCast(u15, index),
+          }},
           .parent_type = null,
         },
       };
       variables[index] = &sym.data.variable;
+      func.variables.num_values += 1;
     }
     func.params = .{
-      .resolved = .{
-        .locations = locs.items,
-        .variables = variables,
-      },
+      .resolved = .{.locations = locs.items},
     };
+    func.variables.num_values += @intCast(u15, locs.items.len);
+
     // resolve references to arguments inside body.
     const ns = &self.namespaces.items[func.params_ns];
     const mark = ns.mark();
@@ -734,11 +769,9 @@ pub const Interpreter = struct {
       .name = null,
       .defined_at = func.node().pos,
       .data = .{
-        .ny = .{
-          .variables = func.params.resolved.variables,
-          .body = undefined,
-        },
+        .ny = .{.body = undefined},
       },
+      .variables = func.variables,
     };
     func.params = .{.pregen = ret};
     return ret;
