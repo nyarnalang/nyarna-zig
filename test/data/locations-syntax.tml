@@ -23,26 +23,20 @@
     -LOC
     +LOC egg
       +DEFAULT
-        +UCALL
-          +TARGET
-            =SYMREF [0]Integer
-          -TARGET
-          +PROTO pos
-            =LIT text "42"
-          -PROTO
-        -UCALL
+        +RCALL
+          =TYPE numeric .std.intrinsic.Integer
+          >ARG input
+          =NUMBER Integer 42
+        -RCALL
       -DEFAULT
     -LOC
     +LOC sausage
       +DEFAULT
-        +UCALL
-          +TARGET
-            =SYMREF [0]Integer
-          -TARGET
-          +PROTO pos
-            =LIT text "42"
-          -PROTO
-        -UCALL
+        +RCALL
+          =TYPE numeric .std.intrinsic.Integer
+          >ARG input
+          =NUMBER Integer 42
+        -RCALL
       -DEFAULT
     -LOC
     +LOC baked

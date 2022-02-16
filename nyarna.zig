@@ -249,6 +249,74 @@ pub const Context = struct {
   pub inline fn evaluator(self: *const Context) Evaluator {
     return Evaluator{.ctx = self.*};
   }
+
+  /// Create an enum value from a given text. If unsuccessful, logs error and
+  /// returns null.
+  pub fn enumFrom(self: *const Context, pos: model.Position, text: []const u8,
+                  t: *const model.Type.Enum) !?*model.Value.Enum {
+    const index = t.values.getIndex(text) orelse {
+      self.logger.NotInEnum(pos, t.typedef(), text);
+      return null;
+    };
+    return try self.values.@"enum"(pos, t, index);
+  }
+
+  pub fn numberFrom(self: *const Context, pos: model.Position,
+                    text: []const u8, t: *const model.Type.Numeric)
+      !?*model.Value.Number {
+    var val: i64 = 0;
+    var neg = false;
+    var rest = switch (if (text.len == 0) @as(u8, 0) else text[0]) {
+      '+' => text[1..],
+      '-' => blk: {
+        neg = true;
+        break :blk text[1..];
+      },
+      else => text,
+    };
+    if (rest.len == 0) {
+      self.logger.NotANumber(pos, t.typedef(), text);
+      return null;
+    }
+    var dec_factor: ?i64 = null;
+    var cur = rest.ptr;
+    const end = rest[rest.len - 1 ..].ptr;
+    while (true) : (cur += 1) {
+      if (cur[0] == '.') {
+        if (dec_factor != null or cur == end) {
+          self.logger.NotANumber(pos, t.typedef(), text);
+          return null;
+        }
+        const num_decimals = @ptrToInt(end) - @ptrToInt(cur);
+        if (num_decimals > t.decimals) {
+          self.logger.TooManyDecimals(pos, t.typedef(), text);
+          return null;
+        }
+        dec_factor = std.math.pow(
+          i64, 10, @intCast(i64, t.decimals - num_decimals));
+      } else if (cur[0] < '0' or cur[0] > '9') {
+        self.logger.NotANumber(pos, t.typedef(), text);
+        return null;
+      } else {
+        if (@mulWithOverflow(i64, val, 10, &val) or
+            @addWithOverflow(i64, val, cur[0] - '0', &val)) {
+          self.logger.NumberTooLarge(pos, t.typedef(), text);
+          return null;
+        }
+      }
+      if (cur == end) break;
+    }
+    if (neg) dec_factor = if (dec_factor) |factor| factor * -1 else -1;
+    if (dec_factor) |factor| if (@mulWithOverflow(i64, val, factor, &val)) {
+      self.logger.NumberTooLarge(pos, t.typedef(), text);
+      return null;
+    };
+    if (val < t.min or val > t.max) {
+      self.logger.OutOfRange(pos, t.typedef(), text);
+      return null;
+    }
+    return try self.values.number(pos, t, val);
+  }
 };
 
 /// This type is the API's entry point.

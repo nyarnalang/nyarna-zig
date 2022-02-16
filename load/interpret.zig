@@ -89,7 +89,7 @@ pub const Interpreter = struct {
   const ActiveVariable = struct {
     ns: u15,
   };
-  const ActiveVarContainer = struct {
+  pub const ActiveVarContainer = struct {
     /// into Interpreter.variables. At this offset, the first variable (if any)
     /// of the container is found.
     offset: usize,
@@ -283,7 +283,20 @@ pub const Interpreter = struct {
                 try self.ctx.values.poison(ass.node().pos));
             },
           },
-          .sym_ref => {
+          .sym_ref => |*sr| {
+            switch (sr.sym.data) {
+              .variable => |*v| {
+                ass.target = .{
+                  .resolved = .{
+                    .target = v,
+                    .path = &.{},
+                    .t = v.t,
+                  },
+                };
+                break :innerblk &ass.target.resolved;
+              },
+              else => {},
+            }
             self.ctx.logger.InvalidLvalue(node.pos);
             return self.ctx.createValueExpr(
               try self.ctx.values.poison(ass.node().pos));
@@ -323,11 +336,12 @@ pub const Interpreter = struct {
   }
 
   fn tryInterpretSymref(self: *Interpreter, ref: *model.Node.ResolvedSymref)
-      nyarna.Error!*model.Expression {
+      nyarna.Error!?*model.Expression {
     switch (ref.sym.data) {
       .func => |func| return self.ctx.createValueExpr(
         (try self.ctx.values.funcRef(ref.node().pos, func)).value()),
       .variable => |*v| {
+        if (v.t.is(.every)) return null;
         const expr = try self.ctx.global().create(model.Expression);
         expr.* = .{
           .pos = ref.node().pos,
@@ -889,6 +903,15 @@ pub const Interpreter = struct {
     return null;
   }
 
+  fn tryInterpretVarTypeSetter(
+      self: *Interpreter, vs: *model.Node.VarTypeSetter, stage: Stage)
+      nyarna.Error!?*model.Expression {
+    if (try self.tryInterpret(vs.content, stage)) |expr| {
+      vs.v.t = expr.expected_type;
+      return expr;
+    } else return null;
+  }
+
   const TypeResult = union(enum) {
     finished: model.Type,
     unfinished: model.Type,
@@ -1156,6 +1179,7 @@ pub const Interpreter = struct {
       .unresolved_access => |*ua| self.tryInterpretUAccess(ua, stage),
       .unresolved_call   => |*uc| self.tryInterpretUCall(uc, stage),
       .unresolved_symref => |*us| self.tryInterpretURef(us, stage),
+      .vt_setter         => |*vs| self.tryInterpretVarTypeSetter(vs, stage),
       .void, .poison => {
         const expr = try self.ctx.global().create(model.Expression);
         expr.* = .{
@@ -1262,7 +1286,7 @@ pub const Interpreter = struct {
     switch (node.data) {
       .assign, .import, .funcgen, .gen_concat, .gen_enum, .gen_float,
       .gen_intersection, .gen_list, .gen_map, .gen_numeric, .gen_optional,
-      .gen_paragraphs, .gen_record, .gen_textual => {
+      .gen_paragraphs, .gen_record, .gen_textual, .vt_setter => {
         if (try self.tryInterpret(node, stage)) |expr| {
           node.data = .{.expression = expr};
           return expr.expected_type;
@@ -1333,9 +1357,10 @@ pub const Interpreter = struct {
               .concat, .paragraphs, .list, .map => unreachable, // TODO
               else => model.Type{.intrinsic = .@"type"},
             },
-            .instantiated => |it| return switch (it.data) {
-              .textual, .numeric, .float, .tenum => unreachable, // TODO
-              .record => |rt| rt.typedef(),
+            .instantiated => |it| switch (it.data) {
+              .textual, .float, .tenum => unreachable, // TODO
+              .numeric => |nm| return nm.typedef(),
+              .record => |rt| return rt.typedef(),
             },
           },
           .prototype => |pt| return @as(?model.Type, switch (pt) {
@@ -1430,14 +1455,14 @@ pub const Interpreter = struct {
       },
       .instantiated => |ti| switch (ti.data) {
         .textual => unreachable, // TODO
-        .numeric => unreachable, // TODO
+        .numeric => |*n| {
+          return if (try self.ctx.numberFrom(l.node().pos, l.content, n)) |nv|
+            nv.value() else try self.ctx.values.poison(l.node().pos);
+        },
         .float => unreachable, // TODO
         .tenum => |*e| {
-          const index = e.values.getIndex(l.content) orelse {
-            self.ctx.logger.UnknownEnumValue(l.node().pos, l.content);
-            return self.ctx.values.poison(l.node().pos);
-          };
-          return (try self.ctx.values.@"enum"(l.node().pos, e, index)).value();
+          return if (try self.ctx.enumFrom(l.node().pos, l.content, e)) |ev|
+            ev.value() else try self.ctx.values.poison(l.node().pos);
         },
         .record => {
           self.ctx.logger.ExpectedExprOfTypeXGotY(l.node().pos,
@@ -1598,6 +1623,9 @@ pub const Interpreter = struct {
         };
         return expr;
       },
+      // cannot happen, because the vt_setter defines a type, nothing can force
+      // a type on the vt_setter.
+      .vt_setter => unreachable,
       .void => return try self.ctx.createValueExpr(
         try self.ctx.values.void(input.pos)),
       .poison => return try self.ctx.createValueExpr(

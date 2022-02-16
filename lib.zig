@@ -1,6 +1,7 @@
 const std = @import("std");
 const nyarna = @import("nyarna.zig");
-const Interpreter = @import("load/interpret.zig").Interpreter;
+const interpret = @import("load/interpret.zig");
+const Interpreter = interpret.Interpreter;
 const Context = nyarna.Context;
 const Evaluator = @import("runtime.zig").Evaluator;
 const model = nyarna.model;
@@ -293,6 +294,209 @@ pub const Intrinsics = Provider.Wrapper(struct {
       pos, returns_node, params, ns, body.root, body.container.?, true)).node();
   }
 
+  fn @"var"(intpr: *Interpreter, pos: model.Position, ns: u15,
+            defs: *model.Node) nyarna.Error!*model.Node {
+    const Proc = struct {
+      ip: *Interpreter,
+      keyword_pos: model.Position,
+      concat_loc: model.Type,
+      ac: *Interpreter.ActiveVarContainer,
+      namespace: *interpret.Namespace,
+      ns_index: u15,
+
+      fn init(ip: *Interpreter, index: u15, keyword_pos: model.Position)
+          !@This() {
+        return @This(){
+          .ip = ip,
+          .keyword_pos = keyword_pos,
+          .concat_loc =
+            (try ip.ctx.types().concat(.{.intrinsic = .location})).?,
+          .ac = &ip.var_containers.items[ip.var_containers.items.len - 1],
+          .namespace = ip.namespace(index),
+          .ns_index = index,
+        };
+      }
+
+      inline fn empty(self: *@This()) !*model.Node {
+        return try self.ip.node_gen.void(self.keyword_pos);
+      }
+
+      fn node(self: *@This(), n: *model.Node) nyarna.Error!*model.Node {
+        switch (n.data) {
+          .location => |*loc| {
+            const t = if (loc.@"type") |tnode| blk: {
+              const expr =
+                (try self.ip.associate(tnode, .{.intrinsic = .@"type"},
+                .{.kind = .keyword})) orelse return self.empty();
+              const val = try self.ip.ctx.evaluator().evaluate(expr);
+              switch (val.data) {
+                .poison => return try self.empty(),
+                .@"type" => |*tv| break :blk tv.t,
+                else => unreachable,
+              }
+            } else
+              (try self.ip.probeType(loc.default.?, .{.kind = .intermediate}))
+              orelse model.Type{.intrinsic = .every};
+            return try self.variable(loc.name.node().pos, t,
+              try self.ip.ctx.global().dupe(u8, loc.name.content),
+              loc.default orelse (try self.defaultValue(t, n.pos)) orelse {
+                self.ip.ctx.logger.MissingInitialValue(loc.name.node().pos);
+                return try self.empty();
+              });
+          },
+          .concat => |*con| {
+            const items =
+              try self.ip.allocator.alloc(*model.Node, con.items.len);
+            for (con.items) |item, index| items[index] = try self.node(item);
+            return (try self.ip.node_gen.concat(
+              self.keyword_pos, .{.items = items})).node();
+          },
+          .expression => |expr| return self.expression(expr),
+          .poison, .void => return try self.empty(),
+          else => {
+            const expr = (try self.ip.tryInterpret(n, .{.kind = .keyword}))
+              orelse return self.empty();
+            return self.expression(expr);
+          }
+        }
+      }
+
+      fn expression(self: *@This(), expr: *model.Expression) !*model.Node {
+        if (expr.data == .poison) return try self.empty();
+        if (!self.ip.ctx.types().lesserEqual(
+            expr.expected_type, self.concat_loc)) {
+          self.ip.ctx.logger.ExpectedExprOfTypeXGotY(
+            expr.pos, &[_]model.Type{self.concat_loc, expr.expected_type});
+          return try self.empty();
+        }
+        expr.expected_type = self.concat_loc;
+        const val = try self.ip.ctx.evaluator().evaluate(expr);
+        return self.value(val);
+      }
+
+      fn value(self: *@This(), val: *model.Value) !*model.Node {
+        switch (val.data) {
+          .poison => return try self.empty(),
+          .concat => |*con| {
+            const items =
+              try self.ip.allocator.alloc(*model.Node, con.content.items.len);
+            for (con.content.items) |item, index| {
+              const loc = &item.data.location;
+              const initial = if (loc.default) |expr|
+                try self.ip.node_gen.expression(expr)
+              else (try self.defaultValue(
+                  loc.tloc, item.origin)) orelse {
+                self.ip.ctx.logger.MissingInitialValue(loc.name.value().origin);
+                items[index] =
+                  try self.ip.node_gen.void(loc.name.value().origin);
+                continue;
+              };
+              items[index] = try self.variable(
+                loc.name.value().origin, loc.tloc, loc.name.content, initial);
+            }
+            return (try self.ip.node_gen.concat(
+              self.keyword_pos, .{.items = items})).node();
+          },
+          else => unreachable,
+        }
+      }
+
+      fn variable(self: *@This(), name_pos: model.Position, t: model.Type,
+                  name: []const u8, initial: *model.Node) !*model.Node {
+        const sym = try self.ip.ctx.global().create(model.Symbol);
+        const offset =
+          @intCast(u15, self.ip.variables.items.len - self.ac.offset);
+        sym.* = .{
+          .defined_at = name_pos,
+          .name = name,
+          .data = .{.variable = .{
+            .t = t,
+            .container = self.ac.container,
+            .offset = offset,
+          }},
+          .parent_type = null,
+        };
+        if (try self.namespace.tryRegister(self.ip, sym)) {
+          try self.ip.variables.append(
+            self.ip.allocator, .{.ns = self.ns_index});
+          if (offset + 1 > self.ac.container.num_values) {
+            self.ac.container.num_values = offset + 1;
+          }
+          const replacement = if (t.is(.every))
+            // t being .every means that it depends on the initial expression,
+            // and that expression can't be interpreted right now. This commonly
+            // happens if an argument value is assigned (argument variables are
+            // established after a function body has been read in). To
+            // accomodate for that, we create a variable but with „every“ type.
+            // references to this variable mustn't be resolved until the type
+            // has been update. Updating the type happens by using the special
+            // VarTypeSetter node, which we create here for the initial
+            // assignment.
+            try self.ip.node_gen.vtSetter(&sym.data.variable, initial)
+          else initial;
+          return (try self.ip.node_gen.assign(initial.pos, .{
+            .target = .{.resolved = .{
+              .target = &sym.data.variable,
+              .path = &.{},
+              .t = t,
+            }},
+            .replacement = replacement,
+          })).node();
+        } else return try self.empty();
+      }
+
+      fn defaultValue(self: *@This(), t: model.Type, vpos: model.Position)
+          !?*model.Node {
+        return switch (t) {
+          .intrinsic => |intr| switch (intr) {
+            .ast_node, .void, .every => try self.ip.node_gen.void(vpos),
+            .space, .literal, .raw =>
+              (try self.ip.node_gen.literal(vpos, .{
+                .kind = .space,
+                .content = "",
+              })).node(),
+            else => return null,
+          },
+          .structural => |strct| switch (strct.*) {
+            .concat, .optional, .paragraphs => try self.ip.node_gen.void(vpos),
+            .list => null, // TODO: call list constructor
+            .map => null, // TODO: call map constructor
+            .callable, .intersection => null,
+          },
+          .instantiated => |inst| switch (inst.data) {
+            .textual => (try self.ip.node_gen.literal(vpos, .{
+              .kind = .space,
+              .content = "",
+            })).node(),
+            .numeric => |*num| {
+              const val: i64 = if (num.min <= 0)
+                if (num.max >= 0) 0 else num.max
+              else num.min;
+              const nval = try self.ip.ctx.values.number(vpos, num, val);
+              return try self.ip.genValueNode(nval.value());
+            },
+            .float => |*fl| {
+              const fval = try self.ip.ctx.values.float(vpos, fl,
+                switch (fl.precision) {
+                  .half => .{.half = 0},
+                  .single => .{.single = 0},
+                  .double => .{.double = 0},
+                  .quadruple, .octuple => .{.quadruple = 0},
+                });
+              return try self.ip.genValueNode(fval.value());
+            },
+            .tenum => |*en| {
+              const eval = try self.ip.ctx.values.@"enum"(vpos, en, 0);
+              return try self.ip.genValueNode(eval.value());
+            },
+            .record => null,
+          },
+        };
+      }
+    };
+    return try (try Proc.init(intpr, ns, pos)).node(defs);
+  }
+
   //-----------------------
   // prototype constructors
   //-----------------------
@@ -514,8 +718,9 @@ pub const Intrinsics = Provider.Wrapper(struct {
 
   fn constrNumeric(eval: *Evaluator, pos: model.Position,
                    input: *model.Value.TextScalar) nyarna.Error!*model.Value {
-    _ = eval; _ = pos; _ = input;
-    unreachable; // TODO
+    return if (try eval.ctx.numberFrom(input.value().origin, input.content,
+      &eval.target_type.instantiated.data.numeric)) |nv| nv.value()
+    else try eval.ctx.values.poison(pos);
   }
 
   fn constrFloat(eval: *Evaluator, pos: model.Position,
@@ -526,13 +731,9 @@ pub const Intrinsics = Provider.Wrapper(struct {
 
   fn constrEnum(eval: *Evaluator, pos: model.Position,
                 input: *model.Value.TextScalar) nyarna.Error!*model.Value {
-    const enum_type = &eval.target_type.instantiated.data.tenum;
-    return if (enum_type.values.getIndex(input.content)) |index|
-      (try eval.ctx.values.@"enum"(pos, enum_type, index)).value()
-    else blk: {
-      eval.ctx.logger.NotInEnum(pos, eval.target_type);
-      break :blk try eval.ctx.values.poison(pos);
-    };
+    return if (try eval.ctx.enumFrom(input.value().origin, input.content,
+      &eval.target_type.instantiated.data.tenum)) |ev| ev.value()
+    else try eval.ctx.values.poison(pos);
   }
 });
 
@@ -634,7 +835,7 @@ pub fn intrinsicModule(ctx: Context) !*model.Module {
   var ret = try ctx.global().create(model.Module);
   ret.root = try ctx.createValueExpr(
     try ctx.values.void(model.Position.intrinsic()));
-  ret.symbols = try ctx.global().alloc(*model.Symbol, 20);
+  ret.symbols = try ctx.global().alloc(*model.Symbol, 22);
   var index: usize = 0;
 
   var ip = Intrinsics.init();
@@ -724,6 +925,10 @@ pub fn intrinsicModule(ctx: Context) !*model.Module {
 
   // Boolean
   ret.symbols[index] = ctx.types().boolean.name.?;
+  index += 1;
+
+  // Integer
+  ret.symbols[index] = ctx.types().integer.name.?;
   index += 1;
 
   // instantiated scalars
@@ -905,6 +1110,15 @@ pub fn intrinsicModule(ctx: Context) !*model.Module {
   try b.push(try ctx.values.intLocation("locator", .{.intrinsic = .ast_node}));
   ret.symbols[index] =
     try extFuncSymbol(ctx, "import", true, b.finish(), &ip.provider);
+  index += 1;
+
+  // var
+  b = try types.SigBuilder.init(ctx, 1, .{.intrinsic = .ast_node}, false);
+  try b.push(
+    (try ctx.values.intLocation("defs", .{.intrinsic = .ast_node})).withHeader(
+      location_block).withPrimary(model.Position.intrinsic()));
+  ret.symbols[index] =
+    try extFuncSymbol(ctx, "var", true, b.finish(), &ip.provider);
   index += 1;
 
   std.debug.assert(index == ret.symbols.len);

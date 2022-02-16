@@ -533,6 +533,24 @@ pub const Node = struct {
       return Node.parent(self);
     }
   };
+  /// special node for the sole purpose of setting a variable's type later.
+  /// variables must be established immediately so that references to their
+  /// symbol can be resolved before the symbol goes out of scope. However, the
+  /// type of a variable might not be available immediately if defined by its
+  /// initial expression (i.e. the initial expression cannot be interpreted
+  /// immediately). In that case, the variable's type is set to .every which
+  /// tells referrers that references to that variable mustn't be interpreted
+  /// yet. Interpreting the VarTypeSetter node will update the type of v with
+  /// the type of the interpreted node, and returns the result of interpreting
+  /// the node.
+  pub const VarTypeSetter = struct {
+    v: *Symbol.Variable,
+    content: *Node,
+
+    pub inline fn node(self: *@This()) *Node {
+      return Node.parent(self);
+    }
+  };
 
   /// Nodes in here are type generator nodes. They are created by prototype
   /// functions (e.g. \List, \Concat, \Textual etc). They may need multiple
@@ -630,6 +648,7 @@ pub const Node = struct {
     resolved_symref  : ResolvedSymref,
     unresolved_call  : UnresolvedCall,
     unresolved_symref: UnresolvedSymref,
+    vt_setter        : VarTypeSetter,
     poison,
     void,
   };
@@ -667,6 +686,7 @@ pub const Node = struct {
       UnresolvedAccess => offset(Data, "unresolved_access"),
       UnresolvedCall   => offset(Data, "unresolved_call"),
       UnresolvedSymref => offset(Data, "unresolved_symref"),
+      VarTypeSetter    => offset(Data, "vt_setter"),
       else => unreachable
     };
     return @fieldParentPtr(Node, "data", @intToPtr(*Data, addr));
@@ -758,7 +778,7 @@ pub const Symbol = struct {
   data: Data,
   /// the type in whose namespace this symbol is declared. null if the symbol is
   /// not declared in the namespace of a type.
-  parent_type: ?Type,
+  parent_type: ?Type = null,
 
   fn parent(it: anytype) *Symbol {
     const t = @typeInfo(@TypeOf(it)).Pointer.child;
@@ -993,6 +1013,10 @@ pub const Type = union(enum) {
     pub inline fn typedef(self: *const @This()) Type {
       return Instantiated.typedef(self);
     }
+
+    pub inline fn instantiated(self: *const @This()) *Instantiated {
+      return Instantiated.parent(self);
+    }
   };
 
   /// parameters of a Float type.
@@ -1010,6 +1034,10 @@ pub const Type = union(enum) {
 
     pub inline fn typedef(self: *const @This()) Type {
       return Instantiated.typedef(self);
+    }
+
+    pub inline fn instantiated(self: *const @This()) *Instantiated {
+      return Instantiated.parent(self);
     }
   };
 
@@ -1340,6 +1368,21 @@ pub const Value = struct {
 
     pub inline fn value(self: *@This()) *Value {
       return Value.parent(self);
+    }
+
+    fn format(
+        self: *const Number, comptime _: []const u8, _: std.fmt.FormatOptions,
+        writer: anytype) @TypeOf(writer).Error!void {
+      const one = std.math.pow(i64, 10, self.t.decimals);
+      try std.fmt.format(writer, "{}", .{@divTrunc(self.content, one)});
+      const rest = @mod((std.math.absInt(self.content) catch unreachable), one);
+      if (rest > 0) {
+        try std.fmt.format(writer, ".{}", .{rest});
+      }
+    }
+
+    pub fn formatter(self: *const @This()) std.fmt.Formatter(format) {
+      return .{.data = self};
     }
   };
   /// a Float value
@@ -1861,6 +1904,12 @@ pub const NodeGenerator = struct {
       !*Node.UnresolvedSymref {
     return &(try self.node(
       pos, .{.unresolved_symref = content})).data.unresolved_symref;
+  }
+
+  pub inline fn vtSetter(self: *Self, v: *Symbol.Variable, n: *Node) !*Node {
+    return try self.node(n.pos, .{.vt_setter = .{
+      .v = v, .content = n,
+    }});
   }
 
   pub inline fn poison(self: *Self, pos: Position) !*Node {

@@ -18,6 +18,7 @@ pub const GenericParserError = enum {
   BlockNeedsConfig, InvalidNamedArgInAssign, UnfinishedCallInTypeArg, NotAType,
   CantCallUnfinished, FailedToCalculateReturnType, FieldAccessWithoutInstance,
   MethodOutsideDeclare, CannotResolveLocator, ImportIllegalInFullast,
+  MissingInitialValue, IllegalNumericInterval,
 };
 
 pub const WrongItemError = enum {
@@ -31,7 +32,7 @@ pub const WrongItemError = enum {
 };
 
 pub const UnknownError = enum {
-  UnknownFlag, UnknownSyntax, UnknownParameter, UnknownSymbol, UnknownEnumValue,
+  UnknownFlag, UnknownSyntax, UnknownParameter, UnknownSymbol,
   UnknownField, UnknownResolver,
 };
 
@@ -115,7 +116,7 @@ pub const WrongTypeError = enum {
 };
 
 pub const ConstructionError = enum {
-  NotInEnum
+  NotInEnum, OutOfRange, TooManyDecimals, NotANumber, NumberTooLarge,
 };
 
 pub const FileError = enum {
@@ -145,7 +146,7 @@ pub const Reporter = struct {
        types: []const model.Type) void,
   constructionErrorFn:
     fn(reporter: *Reporter, id: ConstructionError, pos: model.Position,
-       t: model.Type) void,
+       t: model.Type, repr: []const u8) void,
   fileErrorFn:
     fn(reporter: *Reporter, id: FileError, pos: model.Position,
        path: []const u8, message: []const u8) void,
@@ -284,8 +285,7 @@ pub const CmdLineReporter = struct {
     const entity: []const u8 = switch (id) {
       .UnknownFlag => "flag", .UnknownSyntax => "syntax",
       .UnknownParameter => "parameter", .UnknownSymbol => "symbol",
-      .UnknownEnumValue => "enum value", .UnknownField => "field",
-      .UnknownResolver => "resolver",
+      .UnknownField => "field", .UnknownResolver => "resolver",
     };
     self.renderError("unknown {s}: '{s}'", .{entity, name});
   }
@@ -357,14 +357,24 @@ pub const CmdLineReporter = struct {
     }
   }
 
-  fn constructionError(reporter: *Reporter, id: ConstructionError,
-                       pos: model.Position, t: model.Type) void {
+  fn constructionError(
+      reporter: *Reporter, id: ConstructionError, pos: model.Position,
+      t: model.Type, repr: []const u8) void {
     const self = @fieldParentPtr(CmdLineReporter, "reporter", reporter);
     self.renderPos(.{.bold}, pos);
     const t_fmt = t.formatter();
     switch (id) {
-      .NotInEnum =>
-        self.renderError("given value is not part of enum {}", .{t_fmt}),
+      .NotInEnum => self.renderError(
+        "given value '{s}' is not part of enum {}", .{repr, t_fmt}),
+      .OutOfRange => self.renderError(
+        "given value '{s}' is outside of the range of type {}", .{repr, t_fmt}),
+      .TooManyDecimals => self.renderError(
+        "given value '{s}' has too many decimal digits for type {}",
+        .{repr, t_fmt}),
+      .NotANumber => self.renderError(
+        "given value '{s}' cannot be read as number.", .{repr}),
+      .NumberTooLarge => self.renderError(
+        "number '{s}' is too large.", .{repr}),
     }
   }
 

@@ -75,16 +75,6 @@ fn formatAdditionals(
       .{.header = h, .data = a.data}, fmt, options, writer);
 }
 
-fn formatTypeName(t: model.Type, comptime _: []const u8,
-                  _: std.fmt.FormatOptions, writer: anytype) !void {
-  switch (t) {
-    .intrinsic => |i| try writer.writeAll(@tagName(i)),
-    .structural => |_| unreachable,
-    .instantiated => |i|
-      try writer.writeAll(if (i.name) |sym| sym.name else "<anon>"),
-  }
-}
-
 const HeaderWithGlobal = struct {
   header: *const model.Value.BlockHeader,
   data: *nyarna.Globals,
@@ -151,16 +141,35 @@ fn AstEmitter(Handler: anytype) type {
       }
     };
 
+    const LineBuilder = struct {
+      buffer: [1024]u8 = undefined,
+      i: usize = 0,
+
+      fn init(depth: usize) LineBuilder {
+        var ret = LineBuilder{};
+        while (ret.i < depth) : (ret.i += 1) ret.buffer[ret.i] = ' ';
+        return ret;
+      }
+
+      fn append(self: *LineBuilder, comptime fmt: []const u8, args: anytype)
+          !void {
+        const ret = try std.fmt.bufPrint(self.buffer[self.i..], fmt, args);
+        self.i += ret.len;
+      }
+
+      fn finish(self: *LineBuilder, h: Handler) !void {
+        try h.handle(self.buffer[0..self.i]);
+      }
+    };
+
     handler: Handler,
     depth: usize,
     data: *nyarna.Globals,
 
-    fn emitLine(self: *Self, comptime fmt: []const u8, args: anytype)
-        !void {
-      var buffer: [1024]u8 = undefined;
-      var i: usize = 0; while (i < self.depth*2) : (i += 1) buffer[i] = ' ';
-      const str = try std.fmt.bufPrint(buffer[i..], fmt, args);
-      try self.handler.handle(buffer[0..i+str.len]);
+    fn emitLine(self: *Self, comptime fmt: []const u8, args: anytype) !void {
+      var lb = LineBuilder.init(self.depth * 2);
+      try lb.append(fmt, args);
+      try lb.finish(self.handler);
     }
 
     fn push(self: *Self, comptime name: []const u8) !Popper {
@@ -181,19 +190,28 @@ fn AstEmitter(Handler: anytype) type {
       switch (n.data) {
         .assign => |a| {
           const ass = try self.push("ASS");
-          {
-            const target = try self.push("TARGET");
-            try switch (a.target) {
-              .unresolved => |u| self.process(u),
-              .resolved => unreachable, // TODO
-            };
-            try target.pop();
+          switch (a.target) {
+            .unresolved => |u| {
+              const target = try self.push("TARGET");
+              try self.process(u);
+              try target.pop();
+            },
+            .resolved => |r| {
+              var lb = LineBuilder.init(self.depth * 2);
+              try lb.append("=TARGET {s}", .{r.target.sym().name});
+              var t = r.target.t;
+              for (r.path) |index| {
+                const param =
+                  &t.instantiated.data.record.constructor.sig.parameters[
+                    index];
+                try lb.append("::{s}", .{param.name});
+                t = param.ptype;
+              }
+              try lb.finish(self.handler);
+            }
           }
-          {
-            const repl = try self.push("REPL");
-            try self.process(a.replacement);
-            try repl.pop();
-          }
+          try self.emitLine(">REPL", .{});
+          try self.process(a.replacement);
           try ass.pop();
         },
         .branches => |b| {
@@ -393,6 +411,13 @@ fn AstEmitter(Handler: anytype) type {
         },
         .unresolved_symref => |u|
           try self.emitLine("=SYMREF [{}]{s}", .{u.ns, u.name}),
+        .vt_setter => |vs| {
+          const setter = try self.push("VT_SETTER");
+          try self.emitLine("=VARIABLE {s}", .{vs.v.sym().name});
+          try self.emitLine(">CONTENT", .{});
+          try self.process(vs.content);
+          try setter.pop();
+        },
         .void => try self.emitLine("=VOID", .{}),
         .poison => try self.emitLine("=POISON", .{}),
       }
@@ -403,8 +428,21 @@ fn AstEmitter(Handler: anytype) type {
         .access => |_| {
           unreachable;
         },
-        .assignment => |_| {
-          unreachable;
+        .assignment => |ass| {
+          const a = try self.push("ASSIGNMENT");
+          var lb = LineBuilder.init(self.depth * 2);
+          try lb.append("=TARGET {s}", .{ass.target.sym().name});
+          var t = ass.target.t;
+          for (ass.path) |index| {
+            const param =
+              &t.instantiated.data.record.constructor.sig.parameters[index];
+            try lb.append("::{s}", .{param.name});
+            t = param.ptype;
+          }
+          try lb.finish(self.handler);
+          try self.emitLine(">EXPR", .{});
+          try self.processExpr(ass.expr);
+          try a.pop();
         },
         .branches => |b| {
           const branches = try self.push("BRANCHES");
@@ -435,8 +473,8 @@ fn AstEmitter(Handler: anytype) type {
           }
           try p.pop();
         },
-        .var_retrieval => |_| {
-          unreachable;
+        .var_retrieval => |v| {
+          try self.emitLine("=GETVAR {s}", .{v.variable.sym().name});
         },
         .poison => try self.emitLine("=POISON", .{}),
         .void => try self.emitLine("=VOID", .{}),
@@ -480,20 +518,21 @@ fn AstEmitter(Handler: anytype) type {
     fn processValue(self: *Self, v: *const model.Value) anyerror!void {
       switch (v.data) {
         .text => |txt| {
-          const t = std.fmt.Formatter(formatTypeName){.data = txt.t};
+          const t_fmt = txt.t.formatter();
           try self.emitLine("=TEXT {} \"{}\"",
-            .{t, std.zig.fmtEscapes(txt.content)});
+            .{t_fmt, std.zig.fmtEscapes(txt.content)});
         },
-        .number => |_| {
-          unreachable;
+        .number => |num| {
+          const t_fmt = num.t.typedef().formatter();
+          try self.emitLine("=NUMBER {} {}", .{t_fmt, num.formatter()});
         },
         .float => |_| {
           unreachable;
         },
         .@"enum" => |ev| {
-          const t = std.fmt.Formatter(formatTypeName){.data = ev.t.typedef()};
+          const t_fmt = ev.t.typedef().formatter();
           try self.emitLine("=ENUM {} \"{s}\"",
-            .{t, ev.t.values.entries.items(.key)[ev.index]});
+            .{t_fmt, ev.t.values.entries.items(.key)[ev.index]});
         },
         .record => |_| {
           unreachable;

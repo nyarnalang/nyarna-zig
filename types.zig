@@ -254,6 +254,7 @@ pub const Lattice = struct {
   /// predefined types. TODO: move these to system.ny
   boolean: *model.Type.Instantiated,
   unicode_category: *model.Type.Instantiated,
+  integer: *model.Type.Instantiated,
 
   pub fn init(ctx: nyarna.Context) !Lattice {
     var ret = Lattice{
@@ -270,6 +271,7 @@ pub const Lattice = struct {
       .constructors = undefined, // set later by loading the intrinsic lib
       .boolean = undefined,
       .unicode_category = undefined,
+      .integer = undefined,
     };
 
     var builder = try EnumTypeBuilder.init(ctx, model.Position.intrinsic());
@@ -304,6 +306,19 @@ pub const Lattice = struct {
       unisym.data = .{.@"type" = .{.instantiated = e.instantiated()}};
       e.instantiated().name = unisym;
       break :blk e.instantiated();
+    };
+
+    ret.integer = blk: {
+      var nb = try NumericTypeBuilder.init(ctx, model.Position.intrinsic());
+      const n = (try nb.finish()).?;
+      const intSym = try ret.allocator.create(model.Symbol);
+      intSym.* = .{
+        .defined_at = model.Position.intrinsic(),
+        .name = "Integer",
+        .data = .{.@"type" = .{.instantiated = n.instantiated()}},
+      };
+      n.instantiated().name = intSym;
+      break :blk n.instantiated();
     };
 
     ret.self_ref_list.* = .{
@@ -593,7 +608,11 @@ pub const Lattice = struct {
           else => model.Type{.intrinsic = .poison},
         },
         .structural => unreachable, // case is handled in supWithStructural.
-        .instantiated => model.Type{.intrinsic = .poison},
+        .instantiated => |inst| switch (inst.data) {
+          .textual, .numeric, .float, .tenum =>
+            return model.Type{.intrinsic = .raw},
+          .record => model.Type{.intrinsic = .poison},
+        } ,
       },
       .every => other,
       else => .{.intrinsic = .poison},
@@ -712,8 +731,10 @@ pub const Lattice = struct {
         },
         .structural => model.Type{.intrinsic = .@"type"}, // TODO
         .instantiated => |inst| switch (inst.data) {
-          .record => |rec| rec.constructor.typedef(),
-          else => model.Type{.intrinsic = .@"type"}, // TODO
+          .numeric => |*num| num.constructor.typedef(),
+          .tenum   => |*enu| enu.constructor.typedef(),
+          .record  => |*rec| rec.constructor.typedef(),
+          else     =>        model.Type{.intrinsic = .@"type"}, // TODO
         },
       },
       .prototype => |pv| self.prototypeConstructor(pv.pt).callable.typedef(),
@@ -1075,6 +1096,57 @@ pub const EnumTypeBuilder = struct {
   }
 
   pub fn finish(self: *Self) !*model.Type.Enum {
+    var sb = try SigBuilder.init(
+      self.ctx, 1, self.ret.typedef(), true);
+    try sb.push((try self.ctx.values.location(
+      self.ret.instantiated().at, try self.ctx.values.textScalar(
+        model.Position.intrinsic(), .{.intrinsic = .raw}, "input"
+      ), self.ret.typedef())).withPrimary(model.Position.intrinsic()));
+    self.ret.constructor =
+      try sb.finish().createCallable(self.ctx.global(), .type);
+    return self.ret;
+  }
+};
+
+pub const NumericTypeBuilder = struct {
+  const Self = @This();
+
+  ctx: nyarna.Context,
+  ret: *model.Type.Numeric,
+  pos: model.Position,
+
+  pub fn init(ctx: nyarna.Context, pos: model.Position) !Self {
+    const inst = try ctx.global().create(model.Type.Instantiated);
+    inst.* = .{
+      .at = pos,
+      .name = null,
+      .data = .{.numeric = .{
+        .constructor = undefined,
+        .min = std.math.minInt(i64),
+        .max = std.math.maxInt(i64),
+        .decimals = 0,
+      }},
+    };
+    return Self{.ctx = ctx, .ret = &inst.data.numeric, .pos = pos};
+  }
+
+  pub fn min(self: *Self, value: i64) void {
+    self.ret.min = value;
+  }
+
+  pub fn max(self: *Self, value: i64) void {
+    self.ret.max = value;
+  }
+
+  pub fn decimals(self: *Self, value: i64) void {
+    self.ret.decimals = value;
+  }
+
+  pub fn finish(self: *Self) !?*model.Type.Numeric {
+    if (self.ret.min > self.ret.max) {
+      self.ctx.logger.IllegalNumericInterval(self.pos);
+      return null;
+    }
     var sb = try SigBuilder.init(
       self.ctx, 1, self.ret.typedef(), true);
     try sb.push((try self.ctx.values.location(

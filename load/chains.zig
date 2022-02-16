@@ -82,8 +82,15 @@ pub const Resolver = struct {
       nyarna.Error!Resolution {
     switch (chain.data) {
       .resolved_symref => |*rs| {
-        return if (rs.sym.data == .poison) Resolution.poison
-        else Resolution{.sym_ref = .{
+        switch (rs.sym.data) {
+          .poison => return Resolution.poison,
+          .variable => |*v| if (v.t.is(.every)) {
+            std.debug.assert(self.stage.kind == .intermediate);
+            return Resolution.failed;
+          },
+          else => {},
+        }
+        return  Resolution{.sym_ref = .{
           .ns = rs.ns,
           .sym = rs.sym,
           .prefix = null,
@@ -186,6 +193,7 @@ pub const Resolver = struct {
                 .sym = v.sym(),
                 .ns = usym.ns,
               }};
+              std.debug.assert(!v.t.is(.every));
               return Resolution{
                 .runtime_chain = .{
                   .base = chain,

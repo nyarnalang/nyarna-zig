@@ -23,7 +23,6 @@ fn genTests(dir: *std.fs.Dir, sets: []TestSet) !void {
     "auto-paragraphs.tml", // missing: intrinsic funcs
     "doc-param.tml", // missing: document parameters
     "integer-fragment.tml", // missing: intrinsic funcs, module kinds
-    "simple-variables.tml", // missing: variable decls
   };
 
   files: while (try i.next()) |entry| {
