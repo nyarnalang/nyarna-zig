@@ -7,5 +7,5 @@
 \end(declare)
 
 \foo()
---- errors:ast
+--- errors:expr
 7:1 - 7:14 SkippingEndSubject

@@ -32,6 +32,8 @@ pub const Mapper = struct {
   pushContainerFn: ?fn(self: *Self, container: *model.VariableContainer)
     nyarna.Error!void = null,
 
+  subject_pos: model.Position,
+
   pub fn map(self: *Self, pos: model.Position, input: ArgKind,
              flag: ProtoArgFlag) ?Cursor {
     return self.mapFn(self, pos, input, flag);
@@ -69,8 +71,12 @@ pub const SignatureMapper = struct {
   ns: u15,
   cur_container: ?*model.VariableContainer = null,
 
-  pub fn init(intpr: *Interpreter, subject: *model.Node, ns: u15,
-              sig: *const model.Type.Signature) !SignatureMapper {
+  pub fn init(
+    intpr: *Interpreter,
+    subject: *model.Node,
+    ns: u15,
+    sig: *const model.Type.Signature,
+  ) !SignatureMapper {
     var res = SignatureMapper{
       .mapper = .{
         .mapFn = SignatureMapper.map,
@@ -79,6 +85,7 @@ pub const SignatureMapper = struct {
         .pushFn = SignatureMapper.push,
         .pushContainerFn = SignatureMapper.pushContainer,
         .finalizeFn = SignatureMapper.finalize,
+        .subject_pos = subject.lastIdPos(),
       },
       .subject = subject,
       .signature = sig,
@@ -255,8 +262,10 @@ pub const CollectingMapper = struct {
   first_block: ?usize = null,
   intpr: *Interpreter,
 
-  pub fn init(target: *model.Node, intpr: *Interpreter)
-      CollectingMapper {
+  pub fn init(
+    target: *model.Node,
+    intpr: *Interpreter,
+  ) CollectingMapper {
     return .{
       .mapper = .{
         .mapFn = CollectingMapper.map,
@@ -264,6 +273,7 @@ pub const CollectingMapper = struct {
         .paramTypeFn = CollectingMapper.paramType,
         .pushFn = CollectingMapper.push,
         .finalizeFn = CollectingMapper.finalize,
+        .subject_pos = target.lastIdPos(),
       },
       .target = target,
       .intpr = intpr,
@@ -316,7 +326,10 @@ pub const AssignmentMapper = struct {
   replacement: ?*model.Node,
   intpr: *Interpreter,
 
-  pub fn init(subject: *model.Node, intpr: *Interpreter) AssignmentMapper {
+  pub fn init(
+    subject: *model.Node,
+    intpr: *Interpreter,
+  ) AssignmentMapper {
     return .{
       .mapper = .{
         .mapFn = AssignmentMapper.map,
@@ -324,6 +337,7 @@ pub const AssignmentMapper = struct {
         .paramTypeFn = AssignmentMapper.paramType,
         .pushFn =  AssignmentMapper.push,
         .finalizeFn = AssignmentMapper.finalize,
+        .subject_pos = subject.lastIdPos(),
       },
       .subject = subject,
       .replacement = null,

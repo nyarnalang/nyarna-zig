@@ -5,7 +5,7 @@ pub const LexerError = enum {
   UnknownConfigDirective, MissingClosingParenthesis, InvalidUtf8Encoding,
   IllegalCodePoint, IllegalOpeningParenthesis, IllegalBlocksStartInArgs,
   IllegalCommandChar, MixedIndentation, IllegalIndentation,
-  IllegalContentAtHeader, IllegalCharacterForId, InvalidEndCommand,
+  IllegalContentAtHeader, IllegalCharacters, InvalidEndCommand,
   SwallowDepthWithoutDiamondClose, InvalidLocator,
 };
 
@@ -25,7 +25,50 @@ pub const WrongItemError = enum {
   pub const ItemDescr = union(enum) {
     token: model.Token,
     character: u21,
-    node
+    node,
+
+    pub fn format(
+      self: ItemDescr,
+      comptime _: []const u8,
+      options: std.fmt.FormatOptions,
+      writer: anytype
+    ) @TypeOf(writer).Error!void {
+      switch (self) {
+        .token => |t| try writer.writeAll(@tagName(t)),
+        .character => |c| {
+          try writer.writeByte('\'');
+          try std.fmt.formatUnicodeCodepoint(c, options, writer);
+          try writer.writeByte('\'');
+        },
+        .node => try writer.writeAll("<node>"),
+      }
+    }
+
+    pub fn formatAll(
+      data: []const ItemDescr,
+      comptime specifier: []const u8,
+      options: std.fmt.FormatOptions,
+      writer: anytype
+    ) @TypeOf(writer).Error!void {
+      if ((comptime std.mem.eql(u8, specifier, "?")) and data.len == 1) {
+        try data[0].format("", options, writer);
+      } else {
+        for (data) |cur, index| {
+          try if (index == 0) writer.writeByte('{')
+          else writer.writeAll(", ");
+          try cur.format(specifier, options, writer);
+        }
+        try writer.writeByte('}');
+      }
+    }
+
+    pub fn formatter(self: ItemDescr) std.fmt.Formatter(format) {
+      return .{.data = self};
+    }
+
+    pub fn formatterAll(data: []const ItemDescr) std.fmt.Formatter(formatAll) {
+      return .{.data = data};
+    }
   };
 
   ExpectedXGotY, MissingToken, PrematureToken, IllegalItem
@@ -51,7 +94,7 @@ pub const PreviousOccurenceError = enum {
   IsNotANamespaceCharacter, AlreadyANamespaceCharacter, DuplicateFlag,
   DuplicateBlockHeader, IncompatibleFlag, DuplicateAutoSwallow,
   DuplicateParameterArgument, MissingParameterArgument, DuplicateSymbolName,
-  MultipleScalarTypesInIntersection,
+  MultipleScalarTypesInIntersection, MissingEndCommand, CannotAssignToConst,
 
   fn errorMsg(e: PreviousOccurenceError) []const u8 {
     return switch (e) {
@@ -69,6 +112,8 @@ pub const PreviousOccurenceError = enum {
       .DuplicateSymbolName => " hides existing symbol",
       .MultipleScalarTypesInIntersection =>
         " conflicts with another scalar type",
+      .MissingEndCommand => " is missing and explict end",
+      .CannotAssignToConst => " is constant and cannot be assigned to",
     };
   }
 
@@ -81,6 +126,8 @@ pub const PreviousOccurenceError = enum {
       .DuplicateParameterArgument, .MissingParameterArgument => "argument",
       .DuplicateSymbolName => "symbol",
       .MultipleScalarTypesInIntersection => "type",
+      .MissingEndCommand => "command",
+      .CannotAssignToConst => "variable",
     };
   }
 
@@ -93,6 +140,8 @@ pub const PreviousOccurenceError = enum {
       .MissingParameterArgument => "parameter definition",
       .DuplicateSymbolName => "symbol definition",
       .MultipleScalarTypesInIntersection => "previous type",
+      .MissingEndCommand => "here",
+      .CannotAssignToConst => "variable definition",
     };
   }
 };
@@ -152,34 +201,6 @@ pub const Reporter = struct {
        path: []const u8, message: []const u8) void,
 };
 
-fn formatItemDescr(d: WrongItemError.ItemDescr, comptime _: []const u8,
-                   options: std.fmt.FormatOptions, writer: anytype)
-    @TypeOf(writer).Error!void {
-  switch (d) {
-    .token => |t| try writer.writeAll(@tagName(t)),
-    .character => |c| {
-      try writer.writeByte('\'');
-      try std.fmt.formatUnicodeCodepoint(c, options, writer);
-      try writer.writeByte('\'');
-    },
-    .node => try writer.writeAll("<node>"),
-  }
-}
-
-fn formatItemArr(i: []const WrongItemError.ItemDescr, comptime fmt: []const u8,
-                 options: std.fmt.FormatOptions, writer: anytype)
-    @TypeOf(writer).Error!void {
-  if (i.len == 1) try formatItemDescr(i[0], fmt, options, writer)
-  else {
-    for (i) |cur, index| {
-      try if (index == 0) writer.writeByte('[')
-      else writer.writeAll(", ");
-      try formatItemDescr(cur, fmt, options, writer);
-    }
-    try writer.writeByte(']');
-  }
-}
-
 pub const CmdLineReporter = struct {
   const Style = enum(u8) {
     reset = 0,
@@ -230,16 +251,6 @@ pub const CmdLineReporter = struct {
     if (self.do_style) self.writer.writeAll("\x1b[m") catch unreachable;
   }
 
-  fn renderPos(self: *CmdLineReporter, styles: anytype, pos: model.Position)
-      void {
-    if (pos.source.argument)
-      self.style(styles, "arg \"{s}\"({}:{}): ",
-        .{pos.source.name, pos.start.at_line, pos.start.before_column})
-    else
-      self.style(styles, "{s}({}:{}): ",
-        .{pos.source.name, pos.start.at_line, pos.start.before_column});
-  }
-
   fn renderError(self: *CmdLineReporter, comptime fmt: []const u8,
                  args: anytype) void {
     self.style(.{.bold, .fg_red}, "[error] ", .{});
@@ -256,36 +267,38 @@ pub const CmdLineReporter = struct {
 
   fn lexerError(reporter: *Reporter, id: LexerError, pos: model.Position) void {
     const self = @fieldParentPtr(CmdLineReporter, "reporter", reporter);
-    self.renderPos(.{.bold}, pos);
+    self.style(.{.bold}, "{s}", .{pos});
     self.renderError("(lex) {s}", .{@tagName(id)});
   }
 
   fn parserError(reporter: *Reporter, id: GenericParserError,
                  pos: model.Position) void {
     const self = @fieldParentPtr(CmdLineReporter, "reporter", reporter);
-    self.renderPos(.{.bold}, pos);
+    self.style(.{.bold}, "{s}", .{pos});
     self.renderError("(parse) {s}", .{@tagName(id)});
   }
 
   fn wrongItemError(
-      reporter: *Reporter, _: WrongItemError, pos: model.Position,
-      expected: []const WrongItemError.ItemDescr, got: WrongItemError.ItemDescr)
-      void {
+    reporter: *Reporter,
+    _: WrongItemError, // TODO
+    pos: model.Position,
+    expected: []const WrongItemError.ItemDescr, got: WrongItemError.ItemDescr
+  ) void {
     const self = @fieldParentPtr(CmdLineReporter, "reporter", reporter);
-    self.renderPos(.{.bold}, pos);
-    const arr = std.fmt.Formatter(formatItemArr){.data = expected};
-    const single = std.fmt.Formatter(formatItemDescr){.data = got};
-    self.renderError("wrong token: expected {}, got {}", .{arr, single});
+    self.style(.{.bold}, "{s}", .{pos});
+    const arr = WrongItemError.ItemDescr.formatterAll(expected);
+    const single = got.formatter();
+    self.renderError("wrong token: expected {?}, got {}", .{arr, single});
   }
 
   fn unknownError(reporter: *Reporter, id: UnknownError, pos: model.Position,
                   name: []const u8) void {
     const self = @fieldParentPtr(CmdLineReporter, "reporter", reporter);
-    self.renderPos(.{.bold}, pos);
+    self.style(.{.bold}, "{s}", .{pos});
     const entity: []const u8 = switch (id) {
-      .UnknownFlag => "flag", .UnknownSyntax => "syntax",
-      .UnknownParameter => "parameter", .UnknownSymbol => "symbol",
-      .UnknownField => "field", .UnknownResolver => "resolver",
+      .UnknownFlag      => "flag",      .UnknownSyntax   => "syntax",
+      .UnknownParameter => "parameter", .UnknownSymbol   => "symbol",
+      .UnknownField     => "field",     .UnknownResolver => "resolver",
     };
     self.renderError("unknown {s}: '{s}'", .{entity, name});
   }
@@ -294,10 +307,10 @@ pub const CmdLineReporter = struct {
       reporter: *Reporter, id: WrongIdError, pos: model.Position,
       expected: []const u8, got: []const u8, defined_at: model.Position) void {
     const self = @fieldParentPtr(CmdLineReporter, "reporter", reporter);
-    self.renderPos(.{.bold}, pos);
+    self.style(.{.bold}, "{s}", .{pos});
     self.renderError("{s} id: expected '{s}', got '{s}'",
         .{WrongIdError.kind(id), expected, got});
-    self.renderPos(.{}, defined_at);
+    self.writer.print("{s}", .{defined_at}) catch unreachable;
     _ = self.writer.write("command started here") catch unreachable;
   }
 
@@ -305,9 +318,9 @@ pub const CmdLineReporter = struct {
       reporter: *Reporter, id: PreviousOccurenceError, repr: []const u8,
       pos: model.Position, previous: model.Position) void {
     const self = @fieldParentPtr(CmdLineReporter, "reporter", reporter);
-    self.renderPos(.{.bold}, pos);
+    self.style(.{.bold}, "{s}", .{pos});
     self.renderError("{s} '{s}'{s}", .{id.entityName(), repr, id.errorMsg()});
-    self.renderPos(.{}, previous);
+    self.writer.print("{s}", .{previous}) catch unreachable;
     self.writer.print("{s} here\n", .{id.prevOccurenceKind()})
       catch unreachable;
   }
@@ -315,7 +328,7 @@ pub const CmdLineReporter = struct {
   fn wrongTypeError(reporter: *Reporter, id: WrongTypeError,
                     pos: model.Position, types: []const model.Type) void {
     const self = @fieldParentPtr(CmdLineReporter, "reporter", reporter);
-    self.renderPos(.{.bold}, pos);
+    self.style(.{.bold}, "{s}", .{pos});
     switch (id) {
       .ExpectedExprOfTypeXGotY => {
         const t1 = types[0].formatter();
@@ -361,7 +374,7 @@ pub const CmdLineReporter = struct {
       reporter: *Reporter, id: ConstructionError, pos: model.Position,
       t: model.Type, repr: []const u8) void {
     const self = @fieldParentPtr(CmdLineReporter, "reporter", reporter);
-    self.renderPos(.{.bold}, pos);
+    self.style(.{.bold}, "{s}", .{pos});
     const t_fmt = t.formatter();
     switch (id) {
       .NotInEnum => self.renderError(
@@ -381,7 +394,7 @@ pub const CmdLineReporter = struct {
   fn fileError(reporter: *Reporter, id: FileError, pos: model.Position,
                path: []const u8, message: []const u8) void {
     const self = @fieldParentPtr(CmdLineReporter, "reporter", reporter);
-    self.renderPos(.{.bold}, pos);
+    self.style(.{.bold}, "{s}", .{pos});
     switch (id) {
       .FailedToOpen =>
         self.renderError("cannot open {s}: {s}", .{path, message}),

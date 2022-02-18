@@ -8,5 +8,5 @@
 \end(declar)
 
 \foo()
---- errors:ast
+--- errors:expr
 8:1 - 8:13 WrongEndSubject

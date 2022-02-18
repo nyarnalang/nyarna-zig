@@ -6,7 +6,7 @@
   :body:
     \content
   \end(func)
-  
+
   wirbl = \func:
     inner : \Text
   :body:
@@ -19,6 +19,6 @@
     \end(warbl)
   \end(func)
 \end(declare)
---- errors:ast
+--- errors:expr
 14:7 - 14:13 ParamWithBlockConfigResolvedTooLate
 18:7 - 18:10 ParamWithBlockConfigResolvedTooLate

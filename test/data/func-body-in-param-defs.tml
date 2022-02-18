@@ -7,7 +7,7 @@
 \end(declare)
 
 \Integer(42)::double()
---- errors:ast
+--- errors:expr
 5:10 - 5:19 CannotAssignXToY
   source type is `Integer`
   target type is `Identifier`

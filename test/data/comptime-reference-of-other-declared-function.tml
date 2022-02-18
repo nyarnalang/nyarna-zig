@@ -8,5 +8,5 @@
     \in
   \end(func)
 \end(declare)
---- errors:ast
+--- errors:expr
 6:23 - 6:37 ComptimeCallMayNotReferenceUnfinishedSymbols

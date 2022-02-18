@@ -20,7 +20,7 @@
 \block:<@ to $>
   Lorem
 \end(block)
---- errors:ast
+--- errors:expr
 14:7 - 14:16 OccupiedNamespaceSymbol
   namespace symbol is `%`
 15:3 - 15:9 UnknownSymbol

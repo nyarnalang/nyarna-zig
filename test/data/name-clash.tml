@@ -5,9 +5,9 @@
   :body:
     bar
   \end(func)
-  
+
   foo = \integer()
 \end(declare)
---- errors:ast
+--- errors:expr
 9:3 - 9:6 SymbolNameClash
   4:3 - 4:6 previous value defined here

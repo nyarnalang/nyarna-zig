@@ -6,7 +6,8 @@
   \derp:=(3)
 \end(func)(42)
 \if:=(10)
---- errors:ast
-6:3 - 6:8 AssignmentTargetNotAnLvalue
-  4:3 - 4:7 "derp" defined here
-8:1 - 8:4 CannotAssignToExpression
+--- errors:expr
+6:3 - 6:8 CannotAssignToConst
+  repr = derp
+  previous = input(4:3)
+8:1 - 8:4 InvalidLvalue

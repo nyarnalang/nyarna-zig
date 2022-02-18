@@ -6,11 +6,12 @@
 :\else:
   bar
 :derp
---- errors:ast
+--- errors:rawast
 4:6 - 4:6 MissingBlockNameEnd
-6:2 - 6:7 IllegalCommand
-6:7 - 6:8 MissingBlockName
+6:2 - 6:3 IllegalCharacters
 8:6 - 8:6 MissingBlockNameEnd
-8:1 - 8:6 UnknownParameterName
-8:6 - 8:6 MissingEndCommand
-  3:4 call started here
+8:2 - 8:6 UnknownParameter
+  name = derp
+3:2 - 3:4 MissingEndCommand
+  repr = if
+  previous = input(9:1)

@@ -4,7 +4,7 @@
 foo
 --- rawast
 +RCALL
-  =FUNCREF .std.intrinsic.if
+  =SYMREF <intrinsic>.if
   >ARG condition
   +AST
     =LIT text "true"

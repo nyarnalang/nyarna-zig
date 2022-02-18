@@ -5,7 +5,7 @@
 :body:
   \foo:,bar
 \end(func)(Um)
---- errors:ast
+--- errors:expr
 4:15 - 4:18 IllegalCommand
 4:18 - 4:23 InvalidTextualCharacter
   identifier is "("

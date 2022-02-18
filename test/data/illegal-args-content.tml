@@ -9,7 +9,7 @@
 \end(block), \Raw:>)
 
 \block(content = a =)
---- errors:ast
+--- errors:expr
 7:7 - 7:9 IllegalAssignment
 7:17 - 7:18 IllegalColonInParamList
 9:1 - 9:12 InvalidEndCommand

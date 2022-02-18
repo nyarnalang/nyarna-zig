@@ -5,7 +5,7 @@
 :body:
   \foo
 \end(func)(42)
---- errors:ast
+--- errors:expr
 3:16 - 3:17 IllegalEqualsInParam
 3:21 - 3:22 IllegalOpeningParenthesis
 3:17 - 3:27 InvalidEnumValue

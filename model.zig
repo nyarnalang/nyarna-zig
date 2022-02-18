@@ -23,6 +23,20 @@ pub const Cursor = struct {
   pub fn unknown() Cursor {
     return .{.at_line = 0, .before_column = 0, .byte_offset = 0};
   }
+
+  /// format the cursor in the form "<line>:<column>", without byte offset.
+  pub fn format(
+    self: Cursor,
+    comptime _: []const u8,
+    _: std.fmt.FormatOptions,
+    writer: anytype
+  ) !void {
+    try std.fmt.format(writer, "{}:{}", .{self.at_line, self.before_column});
+  }
+
+  pub fn formatter(self: Cursor) std.fmt.Formatter(format) {
+    return .{.data = self};
+  }
 };
 
 /// Describes the origin of a construct. Usually start and end cursor are in a
@@ -51,6 +65,49 @@ pub const Position = struct {
       .end = Cursor.unknown(),
       .source = &IntrinsicSource,
     };
+  }
+
+  pub fn trimFrontChar(self: Position, byte_len: u3) Position {
+    const nstart = Cursor{
+      .at_line = self.start.at_line,
+      .before_column = self.start.before_column + 1,
+      .byte_offset = self.start.byte_offset + byte_len,
+    };
+    return Position{
+      .source = self.source, .start = nstart, .end = self.end,
+    };
+  }
+
+  /// formats the position in the form
+  ///
+  ///   <path/to/file>(<start> - <end>)
+  ///
+  /// Positions in command-line arguments emit
+  ///
+  ///   argument "<name>"(<start> - <end>)
+  ///
+  /// instead. give "s" as specifier if you only want the <start>.
+  pub fn format(
+    self: Position,
+    comptime specifier: []const u8,
+    _: std.fmt.FormatOptions,
+    writer: anytype
+  ) @TypeOf(writer).Error!void {
+    if (self.source.argument) {
+      try std.fmt.format(writer, "argument \"{s}\"", .{self.source.name});
+    } else {
+      try writer.writeAll(self.source.name);
+    }
+    if (comptime std.mem.eql(u8, specifier, "s")) {
+      try std.fmt.format(writer, "({})", .{self.start.formatter()});
+    } else {
+      try std.fmt.format(
+        writer, "({} - {})", .{self.start.formatter(), self.end.formatter()});
+    }
+  }
+
+  pub fn formatter(self: Position) std.fmt.Formatter(format) {
+    return .{.data = self};
   }
 };
 
@@ -199,8 +256,6 @@ pub const Token = enum(u16) {
   illegal_indentation,
   /// content behind a ':', ':<…>' or ':>'.
   illegal_content_at_header,
-  /// character that is not allowed inside of an identifier.
-  illegal_character_for_id,
   /// '\end' without opening parenthesis following
   invalid_end_command,
   /// '\end(' with \ being the wrong command character
@@ -326,7 +381,8 @@ pub const Node = struct {
       resolved: struct {
         target: *Symbol.Variable,
         path: []usize,
-        t: Type
+        t: Type,
+        pos: Position,
       },
     },
     replacement: *Node,
@@ -465,6 +521,7 @@ pub const Node = struct {
   pub const ResolvedAccess = struct {
     base: *Node,
     path: []const usize,
+    last_name_pos: Position,
 
     pub inline fn node(self: *@This()) *Node {
       return Node.parent(self);
@@ -483,6 +540,7 @@ pub const Node = struct {
   pub const ResolvedSymref = struct {
     ns: u15,
     sym: *Symbol,
+    name_pos: Position,
 
     pub inline fn node(self: *@This()) *Node {
       return Node.parent(self);
@@ -491,6 +549,7 @@ pub const Node = struct {
   pub const UnresolvedAccess = struct {
     subject: *Node,
     id: []const u8,
+    id_pos: Position,
 
     pub inline fn node(self: *@This()) *Node {
       return Node.parent(self);
@@ -528,9 +587,14 @@ pub const Node = struct {
   pub const UnresolvedSymref = struct {
     ns: u15,
     name: []const u8,
+    nschar_len: u3,
 
     pub inline fn node(self: *@This()) *Node {
       return Node.parent(self);
+    }
+
+    pub inline fn namePos(self: *@This()) Position {
+      return self.node().pos.trimFrontChar(self.nschar_len);
     }
   };
   /// special node for the sole purpose of setting a variable's type later.
@@ -621,7 +685,6 @@ pub const Node = struct {
   };
 
   pub const Data = union(enum) {
-    unresolved_access: UnresolvedAccess,
     assign           : Assign,
     branches         : Branches,
     concat           : Concat,
@@ -646,6 +709,7 @@ pub const Node = struct {
     resolved_access  : ResolvedAccess,
     resolved_call    : ResolvedCall,
     resolved_symref  : ResolvedSymref,
+    unresolved_access: UnresolvedAccess,
     unresolved_call  : UnresolvedCall,
     unresolved_symref: UnresolvedSymref,
     vt_setter        : VarTypeSetter,
@@ -690,6 +754,20 @@ pub const Node = struct {
       else => unreachable
     };
     return @fieldParentPtr(Node, "data", @intToPtr(*Data, addr));
+  }
+
+  pub fn lastIdPos(self: *Node) Position {
+    return switch (self.data) {
+      .resolved_access => |*racc| racc.last_name_pos,
+      .resolved_symref => |*rsym| rsym.name_pos,
+      .unresolved_access => |*uacc| uacc.id_pos,
+      .unresolved_symref => |*usym| usym.namePos(),
+      else => Position{
+        .source = self.pos.source,
+        .start = self.pos.end,
+        .end = self.pos.end,
+      },
+    };
   }
 };
 
@@ -752,6 +830,9 @@ pub const Symbol = struct {
     /// `container.cur_frame + offset + 1` is the location of this variable's
     /// current value. The 1 skips the current frame's header.
     offset: u15,
+    /// whether this variable can be assigned a new value. false for argument
+    /// and const variables.
+    assignable: bool,
 
     pub inline fn sym(self: *Variable) *Symbol {
       return Symbol.parent(self);
@@ -1197,8 +1278,11 @@ pub const Type = union(enum) {
   }
 
   pub fn format(
-      self: Type, comptime fmt: []const u8, opt: std.fmt.FormatOptions,
-      writer: anytype) @TypeOf(writer).Error!void {
+    self: Type,
+    comptime fmt: []const u8,
+    opt: std.fmt.FormatOptions,
+    writer: anytype
+  ) @TypeOf(writer).Error!void {
     switch (self) {
       .intrinsic => |it| try writer.writeAll(@tagName(it)),
       .structural => |struc| try switch (struc.*) {
@@ -1248,14 +1332,17 @@ pub const Type = union(enum) {
     }
   }
 
-  pub fn formatAll(types: []const Type, comptime fmt: []const u8,
-                   options: std.fmt.FormatOptions, writer: anytype)
-    @TypeOf(writer).Error!void {
-  for (types) |t, i| {
-    if (i > 0) try writer.writeAll(", ");
-    try t.format(fmt, options, writer);
+  pub fn formatAll(
+    types: []const Type,
+    comptime fmt: []const u8,
+    options: std.fmt.FormatOptions,
+    writer: anytype
+  ) @TypeOf(writer).Error!void {
+    for (types) |t, i| {
+      if (i > 0) try writer.writeAll(", ");
+      try t.format(fmt, options, writer);
+    }
   }
-}
 
   pub inline fn formatter(self: Type) std.fmt.Formatter(format) {
     return .{.data = self};
@@ -1371,8 +1458,11 @@ pub const Value = struct {
     }
 
     fn format(
-        self: *const Number, comptime _: []const u8, _: std.fmt.FormatOptions,
-        writer: anytype) @TypeOf(writer).Error!void {
+      self: *const Number,
+      comptime _: []const u8,
+      _: std.fmt.FormatOptions,
+      writer: anytype
+    ) @TypeOf(writer).Error!void {
       const one = std.math.pow(i64, 10, self.t.decimals);
       try std.fmt.format(writer, "{}", .{@divTrunc(self.content, one)});
       const rest = @mod((std.math.absInt(self.content) catch unreachable), one);
@@ -1760,8 +1850,10 @@ pub const NodeGenerator = struct {
   }
 
   pub fn locationFromValue(
-      self: *Self, ctx: nyarna.Context, value: *Value.Location)
-      !*Node.Location {
+    self: *Self,
+    ctx: nyarna.Context,
+    value: *Value.Location,
+  ) !*Node.Location {
     const loc_node = try self.location(value.value().origin, .{
       .name = try self.literal(
         value.name.value().origin, .{
@@ -1776,9 +1868,10 @@ pub const NodeGenerator = struct {
       else null,
       .additionals = null
     });
-    if (value.primary != null or value.varargs != null or
-        value.varmap != null or value.mutable != null or
-        value.header != null) {
+    if (
+      value.primary != null or value.varargs != null or value.varmap != null or
+      value.mutable != null or value.header != null
+    ) {
       const add = try self.allocator.create(Node.Location.Additionals);
       inline for ([_][]const u8{
           "primary", "varargs", "varmap", "mutable", "header"}) |field|
@@ -1793,11 +1886,17 @@ pub const NodeGenerator = struct {
     return &(try self.node(pos, .{.paras = content})).data.paras;
   }
 
-  pub inline fn raccess(self: *Self, pos: Position, base: *Node,
-                        path: []const usize) !*Node.ResolvedAccess {
+  pub inline fn raccess(
+    self: *Self,
+    pos: Position,
+    base: *Node,
+    path: []const usize,
+    last_name_pos: Position,
+  ) !*Node.ResolvedAccess {
     return &(try self.node(pos, .{.resolved_access = .{
       .base = base,
       .path = path,
+      .last_name_pos = last_name_pos,
     }})).data.resolved_access;
   }
 
@@ -1807,8 +1906,11 @@ pub const NodeGenerator = struct {
       pos, .{.resolved_call = content})).data.resolved_call;
   }
 
-  pub inline fn rsymref(self: *Self, pos: Position,
-                        content: Node.ResolvedSymref) !*Node.ResolvedSymref {
+  pub inline fn rsymref(
+    self: *Self,
+    pos: Position,
+    content: Node.ResolvedSymref,
+  ) !*Node.ResolvedSymref {
     return &(try self.node(
       pos, .{.resolved_symref = content})).data.resolved_symref;
   }
@@ -1875,9 +1977,13 @@ pub const NodeGenerator = struct {
       pos, .{.gen_record = .{.fields = fields}})).data.gen_record;
   }
 
-  pub inline fn tgTextual(self: *Self, pos: Position, categories: []*Node,
-                          include_chars: *Node, exclude_chars: *Node)
-      !*Node.tg.Textual {
+  pub inline fn tgTextual(
+    self: *Self,
+    pos: Position,
+    categories: []*Node,
+    include_chars: *Node,
+    exclude_chars: *Node,
+  ) !*Node.tg.Textual {
     return &(try self.node(
       pos, .{.gen_textual = .{
         .categories = categories,
@@ -1887,21 +1993,28 @@ pub const NodeGenerator = struct {
   }
 
   pub inline fn uAccess(
-      self: *Self, pos: Position, content: Node.UnresolvedAccess)
-      !*Node.UnresolvedAccess {
+    self: *Self,
+    pos: Position,
+    content: Node.UnresolvedAccess,
+  ) !*Node.UnresolvedAccess {
     return &(try self.node(
       pos, .{.unresolved_access = content})).data.unresolved_access;
   }
 
-  pub inline fn uCall(self: *Self, pos: Position,
-                      content: Node.UnresolvedCall) !*Node.UnresolvedCall {
+  pub inline fn uCall(
+    self: *Self,
+    pos: Position,
+    content: Node.UnresolvedCall,
+  ) !*Node.UnresolvedCall {
     return &(try self.node(
       pos, .{.unresolved_call = content})).data.unresolved_call;
   }
 
   pub inline fn uSymref(
-      self: *Self, pos: Position, content: Node.UnresolvedSymref)
-      !*Node.UnresolvedSymref {
+    self: *Self,
+    pos: Position,
+    content: Node.UnresolvedSymref,
+  ) !*Node.UnresolvedSymref {
     return &(try self.node(
       pos, .{.unresolved_symref = content})).data.unresolved_symref;
   }
@@ -1941,26 +2054,42 @@ pub const ValueGenerator = struct {
     return ret;
   }
 
-  pub inline fn textScalar(self: *const Self, pos: Position, t: Type,
-                           content: []const u8) !*Value.TextScalar {
+  pub inline fn textScalar(
+    self: *const Self,
+    pos: Position,
+    t: Type,
+    content: []const u8,
+  ) !*Value.TextScalar {
     return &(try self.value(
       pos, .{.text = .{.t = t, .content = content}})).data.text;
   }
 
-  pub inline fn number(self: *const Self, pos: Position, t: *const Type.Numeric,
-                       content: i64) !*Value.Number {
+  pub inline fn number(
+    self: *const Self,
+    pos: Position,
+    t: *const Type.Numeric,
+    content: i64,
+  ) !*Value.Number {
     return &(try self.value(
       pos, .{.number = .{.t = t, .content = content}})).data.number;
   }
 
-  pub inline fn float(self: *const Self, pos: Position, t: *const Type.Float,
-                      content: Value.FloatNumber.Content) !*Value.FloatNumber {
+  pub inline fn float(
+    self: *const Self,
+    pos: Position,
+    t: *const Type.Float,
+    content: Value.FloatNumber.Content,
+  ) !*Value.FloatNumber {
     return &(try self.value(
       pos, .{.float = .{.t = t, .content = content}})).data.float;
   }
 
-  pub inline fn @"enum"(self: *const Self, pos: Position, t: *const Type.Enum,
-                        index: usize) !*Value.Enum {
+  pub inline fn @"enum"(
+    self: *const Self,
+    pos: Position,
+    t: *const Type.Enum,
+    index: usize,
+  ) !*Value.Enum {
     return &(try self.value(
       pos, .{.@"enum" = .{.t = t, .index = index}})).data.@"enum";
   }
@@ -1984,8 +2113,11 @@ pub const ValueGenerator = struct {
     })).data.concat;
   }
 
-  pub inline fn para(self: *const Self, pos: Position, t: *const Type.Paragraphs)
-      !*Value.Para {
+  pub inline fn para(
+    self: *const Self,
+    pos: Position,
+    t: *const Type.Paragraphs
+  ) !*Value.Para {
     return &(try self.value(pos, .{
       .para = .{
         .t = t,
@@ -2033,8 +2165,11 @@ pub const ValueGenerator = struct {
   }
 
   pub inline fn location(
-      self: *const Self, pos: Position, name: *Value.TextScalar,
-      t: Type) !*Value.Location {
+    self: *const Self,
+    pos: Position,
+    name: *Value.TextScalar,
+    t: Type,
+  ) !*Value.Location {
     return &(try self.value(
       pos, .{.location = .{.name = name, .tloc = t}})).data.location;
   }
@@ -2048,21 +2183,32 @@ pub const ValueGenerator = struct {
     return self.location(Position.intrinsic(), name_val, t);
   }
 
-  pub inline fn definition(self: *const Self, pos: Position, name: *Value.TextScalar,
-                           content: *Value) !*Value.Definition {
+  pub inline fn definition(
+    self: *const Self,
+    pos: Position,
+    name: *Value.TextScalar,
+    content: *Value,
+  ) !*Value.Definition {
     return &(try self.value(pos, .{.definition =
       .{.name = name, .content = content}})).data.definition;
   }
 
-  pub inline fn ast(self: *const Self, root: *Node,
-                    container: ?*VariableContainer) !*Value.Ast {
+  pub inline fn ast(
+    self: *const Self,
+    root: *Node,
+    container: ?*VariableContainer,
+  ) !*Value.Ast {
     return &(try self.value(root.pos, .{.ast = .{
       .root = root, .container = container,
     }})).data.ast;
   }
 
-  pub inline fn blockHeader(self: *const Self, pos: Position, config: ?BlockConfig,
-                            swallow_depth: ?u21) !*Value.BlockHeader {
+  pub inline fn blockHeader(
+    self: *const Self,
+    pos: Position,
+    config: ?BlockConfig,
+    swallow_depth: ?u21,
+  ) !*Value.BlockHeader {
     return &(try self.value(pos,
       .{.block_header = .{.config = config, .swallow_depth = swallow_depth}}
     )).data.block_header;

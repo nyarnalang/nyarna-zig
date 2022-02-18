@@ -208,8 +208,11 @@ pub const Interpreter = struct {
     _ = self.namespaces.pop();
   }
 
-  fn tryInterpretUAccess(self: *Interpreter, uacc: *model.Node.UnresolvedAccess,
-                         stage: Stage) nyarna.Error!?*model.Expression {
+  fn tryInterpretUAccess(
+    self: *Interpreter,
+    uacc: *model.Node.UnresolvedAccess,
+    stage: Stage,
+  ) nyarna.Error!?*model.Expression {
     const input = uacc.node();
     if (stage.kind == .resolve) {
       _ = try self.tryInterpret(uacc.subject, stage);
@@ -220,6 +223,7 @@ pub const Interpreter = struct {
         input.data = .{.resolved_access = .{
           .base = rc.base,
           .path = rc.indexes.items,
+          .last_name_pos = rc.last_name_pos,
         }};
         return self.tryInterpretRAccess(&input.data.resolved_access, stage);
       },
@@ -266,6 +270,7 @@ pub const Interpreter = struct {
                     .target = v,
                     .path = rc.indexes.items,
                     .t = v.t,
+                    .pos = node.pos,
                   },
                 };
                 break :innerblk &ass.target.resolved;
@@ -291,6 +296,7 @@ pub const Interpreter = struct {
                     .target = v,
                     .path = &.{},
                     .t = v.t,
+                    .pos = node.pos,
                   },
                 };
                 break :innerblk &ass.target.resolved;
@@ -309,6 +315,13 @@ pub const Interpreter = struct {
         }
       }
     };
+    if (!target.target.assignable) {
+      const sym = target.target.sym();
+      self.ctx.logger.CannotAssignToConst(
+        sym.name, target.pos, sym.defined_at);
+      return self.ctx.createValueExpr(
+        try self.ctx.values.poison(ass.node().pos));
+    }
     const target_expr =
       (try self.associate(ass.replacement, target.t, stage))
         orelse return null;
@@ -703,6 +716,7 @@ pub const Interpreter = struct {
               else (try self.probeType(nl.default.?, stage)).?,
               .container = func.variables,
               .offset = func.variables.num_values + @intCast(u15, index),
+              .assignable = false,
             },
           },
           .parent_type = null,
@@ -714,6 +728,7 @@ pub const Interpreter = struct {
             .t = vl.tloc,
             .container = func.variables,
             .offset = func.variables.num_values + @intCast(u15, index),
+            .assignable = false,
           }},
           .parent_type = null,
         },
@@ -892,7 +907,10 @@ pub const Interpreter = struct {
     const ns = self.namespace(us.ns);
     if (ns.data.get(us.name)) |sym| {
       const input = us.node();
-      input.data = .{.resolved_symref = .{.ns = us.ns, .sym = sym}};
+      const name_pos = us.namePos();
+      input.data = .{.resolved_symref = .{
+        .ns = us.ns, .sym = sym, .name_pos = name_pos,
+      }};
       return self.tryInterpret(input, stage);
     } else switch (stage.kind) {
       .intermediate, .resolve => {},
@@ -1200,8 +1218,13 @@ pub const Interpreter = struct {
     else try self.ctx.createValueExpr(try self.ctx.values.poison(input.pos));
   }
 
-  pub fn resolveSymbol(self: *Interpreter, pos: model.Position, ns: u15,
-                       name: []const u8) !*model.Node {
+  pub fn resolveSymbol(
+    self: *Interpreter,
+    pos: model.Position,
+    ns: u15,
+    nschar_len: u3,
+    name: []const u8,
+  ) !*model.Node {
     var syms = &self.namespaces.items[ns].data;
     var ret = try self.allocator.create(model.Node);
     ret.* = .{
@@ -1210,10 +1233,11 @@ pub const Interpreter = struct {
         .resolved_symref = .{
           .ns = ns,
           .sym = sym,
+          .name_pos = pos.trimFrontChar(nschar_len),
         },
       } else .{
         .unresolved_symref = .{
-          .ns = ns, .name = name
+          .ns = ns, .name = name, .nschar_len = nschar_len,
         }
       },
     };

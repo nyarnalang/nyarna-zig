@@ -7,7 +7,7 @@
   herp
 \end(foo)
 \block(=spam
---- errors:ast
+--- errors:expr
 3:9 - 3:12 IllegalCommand
 3:12 - 3:13 IllegalOpeningParenthesis
 3:13 - 3:16 IllegalContentAfterCommandId

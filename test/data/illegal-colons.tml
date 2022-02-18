@@ -3,11 +3,11 @@
 \func:
   foo : \Integer {}:1
   bar : \Text {}:
-:body:<nocolon>:5
+:body:<off :>:5
   \foo
 \end(func)(spam, egg)
---- errors:ast
-4:20 - 4:22 IllegalColonAfterFlags
+--- errors:rawast
+4:21 - 4:22 SwallowDepthWithoutDiamondClose
 5:17 - 5:18 IllegalColonAfterFlags
-6:16 - 6:18 IllegalColonAfterBlockConfig
+6:17 - 6:18 SwallowDepthWithoutDiamondClose
 8:12 - 8:16 CannotConvertToInteger

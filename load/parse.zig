@@ -130,23 +130,26 @@ pub const Parser = struct {
     }
 
     fn startResolvedCall(
-        c: *Command, ip: *Interpreter, target: *model.Node,
-        ns: u15, sig: *const model.Type.Signature) !void {
-      c.info = .{
-        .resolved_call =
-          try mapper.SignatureMapper.init(ip, target, ns, sig),
+      self: *Command,
+      ip: *Interpreter,
+      target: *model.Node,
+      ns: u15,
+      sig: *const model.Type.Signature,
+    ) !void {
+      self.info = .{
+        .resolved_call = try mapper.SignatureMapper.init(ip, target, ns, sig),
       };
-      c.mapper = &c.info.resolved_call.mapper;
-      c.cur_cursor = .not_pushed;
+      self.mapper = &self.info.resolved_call.mapper;
+      self.cur_cursor = .not_pushed;
     }
 
-    fn startUnresolvedCall(c: *Command, ip: *Interpreter) !void {
-      const subject = c.info.unknown;
-      c.info = .{
+    fn startUnresolvedCall(self: *Command, ip: *Interpreter) !void {
+      const subject = self.info.unknown;
+      self.info = .{
         .unresolved_call = mapper.CollectingMapper.init(subject, ip),
       };
-      c.mapper = &c.info.unresolved_call.mapper;
-      c.cur_cursor = .not_pushed;
+      self.mapper = &self.info.unresolved_call.mapper;
+      self.cur_cursor = .not_pushed;
     }
 
     fn choseAstNodeParam(c: *Command) bool {
@@ -449,6 +452,7 @@ pub const Parser = struct {
         // the following errors are not handled here since they indicate
         // structure:
         //   missing_block_name_sep (ends block name)
+        //   wrong_call_id, skipping_call_id (end a call)
         //
         .illegal_code_point => errors.Handler.IllegalCodePoint,
         .illegal_opening_parenthesis =>
@@ -456,10 +460,10 @@ pub const Parser = struct {
         .illegal_blocks_start_in_args =>
           errors.Handler.IllegalBlocksStartInArgs,
         .illegal_command_char => errors.Handler.IllegalCommandChar,
+        .illegal_characters => errors.Handler.IllegalCharacters,
         .mixed_indentation => errors.Handler.MixedIndentation,
         .illegal_indentation => errors.Handler.IllegalIndentation,
         .illegal_content_at_header => errors.Handler.IllegalContentAtHeader,
-        .illegal_character_for_id => errors.Handler.IllegalCharacterForId,
         .invalid_end_command => errors.Handler.InvalidEndCommand,
         .comment => continue,
         else => |t| {
@@ -484,10 +488,10 @@ pub const Parser = struct {
       .illegal_opening_parenthesis => errors.Handler.IllegalOpeningParenthesis,
       .illegal_blocks_start_in_args => errors.Handler.IllegalBlocksStartInArgs,
       .illegal_command_char => errors.Handler.IllegalCommandChar,
+      .illegal_characters => errors.Handler.IllegalCharacters,
       .mixed_indentation => errors.Handler.MixedIndentation,
       .illegal_indentation => errors.Handler.IllegalIndentation,
       .illegal_content_at_header => errors.Handler.IllegalContentAtHeader,
-      .illegal_character_for_id => errors.Handler.IllegalCharacterForId,
       .invalid_end_command => unreachable,
       .wrong_call_id => unreachable,
       .skipping_call_id => unreachable,
@@ -544,6 +548,15 @@ pub const Parser = struct {
               while (self.levels.items.len > 1) {
                 try self.leaveLevel();
                 const parent = self.curLevel();
+                if (parent.command.swallow_depth == null) {
+                  const spos = parent.command.mapper.subject_pos;
+                  const name =
+                    if (spos.end.byte_offset - spos.start.byte_offset > 0)
+                      self.lexer.walker.contentIn(spos) else "<unnamed>";
+                  self.intpr().ctx.logger.MissingEndCommand(
+                    name, parent.command.mapper.subject_pos,
+                    self.lexer.walker.posFrom(self.cur_start));
+                }
                 try parent.command.shift(
                   self.intpr(), self.cur_start, parent.fullast);
                 try parent.append(self.intpr(), parent.command.info.unknown);
@@ -557,8 +570,12 @@ pub const Parser = struct {
                 .start = self.cur_start,
                 .info = .{
                   .unknown = try self.intpr().resolveSymbol(
-                      self.lexer.walker.posFrom(self.cur_start),
-                      self.lexer.ns, self.lexer.recent_id),
+                    self.lexer.walker.posFrom(self.cur_start),
+                    self.lexer.ns,
+                    std.unicode.utf8CodepointSequenceLength(
+                      self.lexer.code_point) catch unreachable,
+                    self.lexer.recent_id
+                  ),
                 },
                 .mapper = undefined,
                 .cur_cursor = undefined,
@@ -734,6 +751,7 @@ pub const Parser = struct {
           }
           switch (self.cur) {
             .access => {
+              const start = self.lexer.recent_end;
               self.advance();
               if (self.cur != .identifier) unreachable; // TODO: recover
               lvl.command.info.unknown = (try self.intpr().node_gen.uAccess(
@@ -741,6 +759,7 @@ pub const Parser = struct {
                 .{
                   .subject = lvl.command.info.unknown,
                   .id = self.lexer.recent_id,
+                  .id_pos = self.lexer.walker.posFrom(start),
                 })).node();
               self.advance();
             },

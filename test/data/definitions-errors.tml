@@ -12,7 +12,7 @@
 \declare:
   sausage = \func:
     spam : \end(declare)
---- errors:ast
+--- errors:expr
 4:3 - 4:3 MissingSymbolName
 5:10 - 5:10 MissingCommaBetweenNames
 5:13 - 5:13 MissingLocationType

@@ -401,8 +401,13 @@ pub const Intrinsics = Provider.Wrapper(struct {
         }
       }
 
-      fn variable(self: *@This(), name_pos: model.Position, t: model.Type,
-                  name: []const u8, initial: *model.Node) !*model.Node {
+      fn variable(
+        self: *@This(),
+        name_pos: model.Position,
+        t: model.Type,
+        name: []const u8,
+        initial: *model.Node,
+      ) !*model.Node {
         const sym = try self.ip.ctx.global().create(model.Symbol);
         const offset =
           @intCast(u15, self.ip.variables.items.len - self.ac.offset);
@@ -413,6 +418,7 @@ pub const Intrinsics = Provider.Wrapper(struct {
             .t = t,
             .container = self.ac.container,
             .offset = offset,
+            .assignable = true,
           }},
           .parent_type = null,
         };
@@ -439,6 +445,7 @@ pub const Intrinsics = Provider.Wrapper(struct {
               .target = &sym.data.variable,
               .path = &.{},
               .t = t,
+              .pos = initial.pos,
             }},
             .replacement = replacement,
           })).node();

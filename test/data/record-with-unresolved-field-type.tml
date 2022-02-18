@@ -14,6 +14,6 @@
 
 \val::first
 \val::second
---- errors:ast
+--- errors:expr
 6:22 - 6:25 CannotInferTypeFromDefaultValue
 7:23 - 7:27 CannotInferTypeFromDefaultValue

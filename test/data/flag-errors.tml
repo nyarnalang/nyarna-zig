@@ -8,7 +8,7 @@
 \end(func)(1, 2)
 \func:
   baz : \Text {
---- errors:ast
+--- errors:expr
 4:19 - 4:31 InvalidTextualCharacter
   identifier is " "
 4:32 - 4:46 IllegalContentAfterFlags

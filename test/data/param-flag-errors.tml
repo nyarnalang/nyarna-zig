@@ -6,7 +6,7 @@
 :body:
   \foo\bar
 \end(func)(one, two)
---- errors:ast
+--- errors:expr
 4:22 - 4:25 MultipleEvaluationModes
   4:15 - 4:20 previous value defined here
 5:22 - 5:26 DuplicateFlag

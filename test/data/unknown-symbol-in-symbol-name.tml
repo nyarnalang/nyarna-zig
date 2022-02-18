@@ -12,7 +12,7 @@
 \end(declare)
 
 Lorem ipsum
---- errors:ast
+--- errors:expr
 4:3 - 4:7 UnknownSymbol
   identifier is "foo"
 8:5 - 8:9 UnknownSymbol

@@ -9,5 +9,5 @@
 :owner:
   \Text
 \end(declare)
---- errors:ast
+--- errors:expr
 9:1 - 10:8 FirstParameterAssignedTooLate

@@ -16,7 +16,7 @@
     x = \if(true):
       42
 \end(foo)
---- errors:ast
+--- errors:expr
 11:1 - 11:14 SkippingEndSubject
 11:1 - 11:14 SkippingEndSubject
 18:1 - 18:10 SkippingEndSubject

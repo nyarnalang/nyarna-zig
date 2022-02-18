@@ -3,5 +3,5 @@
 \if(false): foo
   bar
 \end(if)
---- errors:ast
+--- errors:expr
 3:13 - 3:16 IllegalContentAfterColon

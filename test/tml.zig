@@ -201,7 +201,7 @@ test "simple file" {
     \\=== Titel
     \\--- input
     \\a b c
-    \\--- errors:ast {strip}
+    \\--- errors:expr {strip}
     \\foo
     \\--- inline:a
     \\d e

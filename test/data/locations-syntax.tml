@@ -24,7 +24,7 @@
     +LOC egg
       +DEFAULT
         +RCALL
-          =TYPE numeric .std.intrinsic.Integer
+          =SYMREF <intrinsic>.Integer
           >ARG input
           =NUMBER Integer 42
         -RCALL
@@ -33,7 +33,7 @@
     +LOC sausage
       +DEFAULT
         +RCALL
-          =TYPE numeric .std.intrinsic.Integer
+          =SYMREF <intrinsic>.Integer
           >ARG input
           =NUMBER Integer 42
         -RCALL
@@ -42,7 +42,7 @@
     +LOC baked
       +TYPE
         +RCALL
-          =PROTO list
+          =SYMREF <intrinsic>.List
           >ARG inner
           +AST
             =SYMREF [0]Text
@@ -55,7 +55,7 @@
       =FLAGS {primary}
       +DEFAULT
         +RCALL
-          =FUNCREF .std.intrinsic.if
+          =SYMREF <intrinsic>.if
           >ARG condition
           +AST
             =LIT text "true"

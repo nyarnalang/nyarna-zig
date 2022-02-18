@@ -4,7 +4,8 @@ const tml = @import("tml");
 const TestSet = struct {
   file: std.fs.File,
   tml_item: []const u8,
-  funcname: []const u8
+  func_name: []const u8,
+  err_func_name: []const u8,
 };
 
 fn genTests(dir: *std.fs.Dir, sets: []TestSet) !void {
@@ -38,19 +39,35 @@ fn genTests(dir: *std.fs.Dir, sets: []TestSet) !void {
     var content = try tml.File.loadFile(dir, entry.name, &file);
     defer content.deinit();
     for (sets) |*set| {
-      if (content.items.get(set.tml_item)) |_| {
-        _ = try set.file.write("test \"");
-        _ = try set.file.write(content.name);
-        _ = try set.file.write(\\" {
+      if (content.items.get(set.tml_item) != null) {
+        try set.file.writeAll("test \"");
+        try set.file.writeAll(content.name);
+        try set.file.writeAll(\\" {
           \\  var resolver = try testing.TestDataResolver.init("test/data/
         );
-        _ = try set.file.write(entry.name);
-        _ = try set.file.write(\\");
+        try set.file.writeAll(entry.name);
+        try set.file.writeAll(\\");
           \\  defer resolver.deinit();
           \\  try testing.
         );
-        _ = try set.file.write(set.funcname);
-        _ = try set.file.write("(&resolver);\n" ++
+        try set.file.writeAll(set.func_name);
+        try set.file.writeAll(\\(&resolver);
+          \\}
+          \\
+        );
+      }
+      if (content.params.errors.get(set.tml_item) != null) {
+        try std.fmt.format(set.file.writer(), "test \"{s}\"", .{content.name});
+        try set.file.writeAll(\\ {
+          \\  var resolver = try testing.TestDataResolver.init("test/data/
+        );
+        try set.file.writeAll(entry.name);
+        try set.file.writeAll(\\");
+          \\  defer resolver.deinit();
+          \\  try testing.
+        );
+        try set.file.writeAll(set.err_func_name);
+        try set.file.writeAll(\\(&resolver);
           \\}
           \\
         );
@@ -67,17 +84,20 @@ pub fn main() !void {
     .{
       .file = undefined,
       .tml_item = "tokens",
-      .funcname = "lexTest",
+      .func_name = "lexTest",
+      .err_func_name = "lexErrorTest",
     },
     .{
       .file = undefined,
       .tml_item = "rawast",
-      .funcname = "parseTest",
+      .func_name = "parseTest",
+      .err_func_name = "parseErrorTest",
     },
     .{
       .file = undefined,
       .tml_item = "expr",
-      .funcname = "interpretTest",
+      .func_name = "interpretTest",
+      .err_func_name = "interpretErrorTest",
     },
   };
   sets[0].file = try std.fs.cwd().createFile("lex_test.zig", .{});

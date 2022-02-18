@@ -5,10 +5,10 @@
     a : \Integer
     b : \Text
   \end(record)
-  
+
   bar = \intersection(\Text, \foo)
 \end(declare)
 
 \bar(true)
---- errors:ast
+--- errors:expr
 12:1 - 12:5 NotACallableValue

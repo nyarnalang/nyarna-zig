@@ -9,7 +9,7 @@
 \end(block)
 
 \block:<\if
---- errors:ast
+--- errors:expr
 3:9 - 3:12 InvalidBlockDirective
 3:13 - 3:13 MissingBlockConfigEnd
 7:9 - 7:15 InvalidBlockDirective

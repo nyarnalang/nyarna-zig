@@ -712,6 +712,24 @@ pub const Lattice = struct {
     return model.Type{.structural = res.value_ptr.*};
   }
 
+  /// returns the type of the given type if it was a Value.
+  pub fn typeType(self: *const Lattice, t: model.Type) model.Type {
+    return switch (t) {
+      .intrinsic => |i| switch (i) {
+        .location, .definition, .literal, .space, .raw =>
+          self.typeConstructor(t).callable.typedef(),
+        else => model.Type{.intrinsic = .@"type"},
+      },
+      .structural => model.Type{.intrinsic = .@"type"}, // TODO
+      .instantiated => |inst| switch (inst.data) {
+        .numeric => |*num| num.constructor.typedef(),
+        .tenum   => |*enu| enu.constructor.typedef(),
+        .record  => |*rec| rec.constructor.typedef(),
+        else     =>        model.Type{.intrinsic = .@"type"}, // TODO
+      }
+    };
+  }
+
   pub fn valueType(self: *const Lattice, v: *model.Value) model.Type {
     return switch (v.data) {
       .text => |*txt| txt.t,
@@ -723,20 +741,7 @@ pub const Lattice = struct {
       .para => |*para| para.t.typedef(),
       .list => |*list| list.t.typedef(),
       .map => |*map| map.t.typedef(),
-      .@"type" => |tv| switch (tv.t) {
-        .intrinsic => |i| switch (i) {
-          .location, .definition, .literal, .space, .raw =>
-            self.typeConstructor(tv.t).callable.typedef(),
-          else => model.Type{.intrinsic = .@"type"},
-        },
-        .structural => model.Type{.intrinsic = .@"type"}, // TODO
-        .instantiated => |inst| switch (inst.data) {
-          .numeric => |*num| num.constructor.typedef(),
-          .tenum   => |*enu| enu.constructor.typedef(),
-          .record  => |*rec| rec.constructor.typedef(),
-          else     =>        model.Type{.intrinsic = .@"type"}, // TODO
-        },
-      },
+      .@"type" => |tv| return self.typeType(tv.t),
       .prototype => |pv| self.prototypeConstructor(pv.pt).callable.typedef(),
       .funcref => |*fr| fr.func.callable.typedef(),
       .location => .{.intrinsic = .location},

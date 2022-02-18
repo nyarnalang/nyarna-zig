@@ -5,7 +5,7 @@
 :%0Ebody:
   \foo
 \end(func)(42)
---- errors:ast
+--- errors:expr
 3:6 - 3:7 IllegalControlCharacter
 3:8 - 3:9 IllegalControlCharacter
 4:8 - 4:9 IllegalControlCharacter

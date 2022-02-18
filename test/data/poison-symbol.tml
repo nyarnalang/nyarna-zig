@@ -7,7 +7,7 @@
 \foo(1, 2, 3)
 \spam::bar
 \foo:=(bar)
---- errors:ast
+--- errors:expr
 4:9 - 4:13 UnknownSymbol
   identifier is "bar"
 5:10 - 5:11 NotAValidDeclarationValue

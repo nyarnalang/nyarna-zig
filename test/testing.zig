@@ -127,490 +127,651 @@ fn formatBlockHeader(hc: HeaderWithGlobal, comptime _: []const u8,
   } else if (hc.header.config == null) try writer.writeAll("null");
 }
 
-fn AstEmitter(Handler: anytype) type {
-  return struct {
-    const Self = @This();
+const AstEmitter = struct {
+  const Self = @This();
 
-    const Popper = struct {
-      e: *Self,
-      name: []const u8,
+  const Popper = struct {
+    e: *Self,
+    name: []const u8,
 
-      fn pop(self: Popper) !void {
-        self.e.depth -= 1;
-        try self.e.emitLine("-{s}", .{self.name});
-      }
-    };
-
-    const LineBuilder = struct {
-      buffer: [1024]u8 = undefined,
-      i: usize = 0,
-
-      fn init(depth: usize) LineBuilder {
-        var ret = LineBuilder{};
-        while (ret.i < depth) : (ret.i += 1) ret.buffer[ret.i] = ' ';
-        return ret;
-      }
-
-      fn append(self: *LineBuilder, comptime fmt: []const u8, args: anytype)
-          !void {
-        const ret = try std.fmt.bufPrint(self.buffer[self.i..], fmt, args);
-        self.i += ret.len;
-      }
-
-      fn finish(self: *LineBuilder, h: Handler) !void {
-        try h.handle(self.buffer[0..self.i]);
-      }
-    };
-
-    handler: Handler,
-    depth: usize,
-    data: *nyarna.Globals,
-
-    fn emitLine(self: *Self, comptime fmt: []const u8, args: anytype) !void {
-      var lb = LineBuilder.init(self.depth * 2);
-      try lb.append(fmt, args);
-      try lb.finish(self.handler);
-    }
-
-    fn push(self: *Self, comptime name: []const u8) !Popper {
-      try self.emitLine("+{s}", .{name});
-      self.depth += 1;
-      return Popper{.e = self, .name = name};
-    }
-
-    fn pushWithKey(self: *Self, comptime name: []const u8,
-                   key: []const u8, value: ?[]const u8) !Popper {
-      if (value) |v| try self.emitLine("+{s} {s}=\"{s}\"", .{name, key, v})
-      else try self.emitLine("+{s} {s}", .{name, key});
-      self.depth += 1;
-      return Popper{.e = self, .name = name};
-    }
-
-    pub fn process(self: *Self, n: *model.Node) anyerror!void {
-      switch (n.data) {
-        .assign => |a| {
-          const ass = try self.push("ASS");
-          switch (a.target) {
-            .unresolved => |u| {
-              const target = try self.push("TARGET");
-              try self.process(u);
-              try target.pop();
-            },
-            .resolved => |r| {
-              var lb = LineBuilder.init(self.depth * 2);
-              try lb.append("=TARGET {s}", .{r.target.sym().name});
-              var t = r.target.t;
-              for (r.path) |index| {
-                const param =
-                  &t.instantiated.data.record.constructor.sig.parameters[
-                    index];
-                try lb.append("::{s}", .{param.name});
-                t = param.ptype;
-              }
-              try lb.finish(self.handler);
-            }
-          }
-          try self.emitLine(">REPL", .{});
-          try self.process(a.replacement);
-          try ass.pop();
-        },
-        .branches => |b| {
-          const branches = try self.push("BRANCHES");
-          try self.process(b.condition);
-          for (b.branches) |branch, i| {
-            try self.emitLine(">BRANCH {}", .{i});
-            try self.process(branch);
-          }
-          try branches.pop();
-        },
-        .concat => |c| {
-          for (c.items) |item| try self.process(item);
-        },
-        .definition => |d| {
-          const def = try self.pushWithKey("DEF", d.name.content,
-            if (d.root != null) @as(?[]const u8, "root") else null);
-          try self.process(d.content);
-          try def.pop();
-        },
-        .expression => |e| try self.processExpr(e),
-        .import => |i| {
-          try self.emitLine("=IMPORT {s}", .{
-            self.data.known_modules.keys()[i.module_index]});
-        },
-        .literal => |a| {
-          try self.emitLine("=LIT {s} \"{}\"",
-            .{@tagName(a.kind), std.zig.fmtEscapes(a.content)});
-        },
-        .funcgen => |fg| {
-          const func = try self.push("FUNC");
-          if (fg.returns) |ret| {
-            const rl = try self.push("RETURN");
-            try self.process(ret);
-            try rl.pop();
-          }
-          try self.process(fg.params.unresolved);
-          const body = try self.push("BODY");
-          try self.process(fg.body);
-          try body.pop();
-          try func.pop();
-        },
-        .location => |loc| {
-          const l = try self.pushWithKey("LOC", loc.name.content, null);
-          if (loc.@"type") |t| {
-            const tnode = try self.push("TYPE");
-            try self.process(t);
-            try tnode.pop();
-          }
-          if (loc.additionals) |a| {
-            if (a.primary != null or a.varargs != null or a.varmap != null or
-                a.mutable != null or a.header != null) {
-              const fmt = std.fmt.Formatter(formatAdditionals){.data = .{
-                .value = a, .data = self.data,
-              }};
-              try self.emitLine("=FLAGS {}", .{fmt});
-            }
-          }
-          if (loc.default) |d| {
-            const dnode = try self.push("DEFAULT");
-            try self.process(d);
-            try dnode.pop();
-          }
-          try l.pop();
-        },
-        .paras => |p| {
-          for (p.items) |i| {
-            const para = try self.push("PARA");
-            try self.process(i.content);
-            try para.pop();
-          }
-        },
-        .resolved_access => |ra| {
-          const racc = try self.push("RACCESS");
-          try self.process(ra.base);
-          for (ra.path) |index| {
-            try self.emitLine(">DESCEND {}", .{index});
-          }
-          try racc.pop();
-        },
-        .resolved_call => |rc| {
-          const rcall = try self.push("RCALL");
-          try self.process(rc.target);
-          for (rc.args) |a, i| {
-            try self.emitLine(">ARG {s}", .{rc.sig.parameters[i].name});
-            try self.process(a);
-          }
-          try rcall.pop();
-        },
-        .resolved_symref => |res|
-          try self.emitLine("=SYMREF {s}.{s}",
-            .{res.sym.defined_at.source.name, res.sym.name}),
-        .gen_concat => |gc| {
-          const gen = try self.pushWithKey("TGEN", "Concat", null);
-          try self.process(gc.inner);
-          try gen.pop();
-        },
-        .gen_enum => |ge| {
-          const gen = try self.pushWithKey("TGEN", "Enum", null);
-          for (ge.values) |value| try self.process(value);
-          try gen.pop();
-        },
-        .gen_float => |gf| {
-          const gen = try self.pushWithKey("TGEN", "Float", null);
-          try self.process(gf.precision);
-          try gen.pop();
-        },
-        .gen_intersection => |gi| {
-          const gen = try self.pushWithKey("TGEN", "Intersection", null);
-          for (gi.types) |item| try self.process(item);
-          try gen.pop();
-        },
-        .gen_list => |gl| {
-          const gen = try self.pushWithKey("TGEN", "List", null);
-          try self.process(gl.inner);
-          try gen.pop();
-        },
-        .gen_map => |gm| {
-          const gen = try self.pushWithKey("TGEN", "Map", null);
-          try self.process(gm.key);
-          try self.process(gm.value);
-          try gen.pop();
-        },
-        .gen_numeric => |gn| {
-          const gen = try self.pushWithKey("TGEN", "Numeric", null);
-          if (gn.min) |min| {
-            try self.emitLine(">MIN", .{});
-            try self.process(min);
-          }
-          if (gn.max) |max| {
-            try self.emitLine(">MAX", .{});
-            try self.process(max);
-          }
-          if (gn.decimals) |decimals| {
-            try self.emitLine(">DECIMALS", .{});
-            try self.process(decimals);
-          }
-          try gen.pop();
-        },
-        .gen_optional => |go| {
-          const gen = try self.pushWithKey("TGEN", "Optional", null);
-          try self.process(go.inner);
-          try gen.pop();
-        },
-        .gen_paragraphs => |gp| {
-          const gen = try self.pushWithKey("TGEN", "Paragraphs", null);
-          for (gp.inners) |inner| try self.process(inner);
-          if (gp.auto) |auto| {
-            try self.emitLine(">AUTO", .{});
-            try self.process(auto);
-          }
-          try gen.pop();
-        },
-        .gen_record => |gr| {
-          const gen = try self.pushWithKey("TGEN", "Record", null);
-          for (gr.fields) |field| try self.process(field.node());
-          try gen.pop();
-        },
-        .gen_textual => |gt| {
-          const gen = try self.pushWithKey("TGEN", "Textual", null);
-          try self.emitLine(">CATEGORIES", .{});
-          for (gt.categories) |cat| try self.process(cat);
-          try self.emitLine(">INCLUDE", .{});
-          try self.process(gt.include_chars);
-          try self.emitLine(">EXCLUDE", .{});
-          try self.process(gt.exclude_chars);
-          try gen.pop();
-        },
-        .unresolved_access => |a| {
-          const access = try self.push("ACCESS");
-          {
-            const target = try self.push("SUBJECT");
-            try self.process(a.subject);
-            try target.pop();
-          }
-          try self.emitLine("=ID \"{s}\"", .{a.id});
-          try access.pop();
-        },
-        .unresolved_call => |uc| {
-          const ucall = try self.push("UCALL");
-          {
-            const t = try self.push("TARGET");
-            try self.process(uc.target);
-            try t.pop();
-          }
-          for (uc.proto_args) |a| {
-            const parg = try switch (a.kind) {
-              .position => self.pushWithKey("PROTO", "pos", null),
-              .named => |named| self.pushWithKey("PROTO", "name", named),
-              .direct => |direct| self.pushWithKey("PROTO", "direct", direct),
-              .primary => self.pushWithKey("PROTO", "primary", null),
-            };
-            try self.process(a.content);
-            try parg.pop();
-          }
-          try ucall.pop();
-        },
-        .unresolved_symref => |u|
-          try self.emitLine("=SYMREF [{}]{s}", .{u.ns, u.name}),
-        .vt_setter => |vs| {
-          const setter = try self.push("VT_SETTER");
-          try self.emitLine("=VARIABLE {s}", .{vs.v.sym().name});
-          try self.emitLine(">CONTENT", .{});
-          try self.process(vs.content);
-          try setter.pop();
-        },
-        .void => try self.emitLine("=VOID", .{}),
-        .poison => try self.emitLine("=POISON", .{}),
-      }
-    }
-
-    pub fn processExpr(self: *Self, e: *model.Expression) anyerror!void {
-      switch (e.data) {
-        .access => |_| {
-          unreachable;
-        },
-        .assignment => |ass| {
-          const a = try self.push("ASSIGNMENT");
-          var lb = LineBuilder.init(self.depth * 2);
-          try lb.append("=TARGET {s}", .{ass.target.sym().name});
-          var t = ass.target.t;
-          for (ass.path) |index| {
-            const param =
-              &t.instantiated.data.record.constructor.sig.parameters[index];
-            try lb.append("::{s}", .{param.name});
-            t = param.ptype;
-          }
-          try lb.finish(self.handler);
-          try self.emitLine(">EXPR", .{});
-          try self.processExpr(ass.expr);
-          try a.pop();
-        },
-        .branches => |b| {
-          const branches = try self.push("BRANCHES");
-          try self.processExpr(b.condition);
-          for (b.branches) |branch, i| {
-            try self.emitLine(">BRANCH {}", .{i});
-            try self.processExpr(branch);
-          }
-          try branches.pop();
-        },
-        .call => |call| {
-          const c = try self.push("CALL");
-          try self.processExpr(call.target);
-          const sig = call.target.expected_type.structural.callable.sig;
-          for (call.exprs) |expr, i| {
-            try self.emitLine(">ARG {s}", .{sig.parameters[i].name});
-            try self.processExpr(expr);
-          }
-          try c.pop();
-        },
-        .concatenation => |c| for (c) |expr| try self.processExpr(expr),
-        .value => |value| try self.processValue(value),
-        .paragraphs => |paras| {
-          const p = try self.push("PARAGRAPHS");
-          for (paras) |para| {
-            try self.emitLine(">PARA {}", .{para.lf_after});
-            try self.processExpr(para.content);
-          }
-          try p.pop();
-        },
-        .var_retrieval => |v| {
-          try self.emitLine("=GETVAR {s}", .{v.variable.sym().name});
-        },
-        .poison => try self.emitLine("=POISON", .{}),
-        .void => try self.emitLine("=VOID", .{}),
-      }
-    }
-
-    fn processType(self: *Self, t: model.Type) anyerror!void {
-      switch (t) {
-        .intrinsic => |i| try self.emitLine("=TYPE {s}", .{@tagName(i)}),
-        .structural => unreachable,
-        .instantiated => |i| {
-          if (i.name) |sym| try self.emitLine("=TYPE {s} {s}.{s}",
-            .{@tagName(i.data), sym.defined_at.source.locator, sym.name})
-          else {
-            const tc = try self.pushWithKey("TYPE", @tagName(i.data), null);
-            switch (i.data) {
-              .textual => |_| unreachable,
-              .numeric => |_| unreachable,
-              .float => |_| unreachable,
-              .tenum => |en| {
-                for (en.values.entries.items(.key)) |*key| {
-                  try self.emitLine("=ITEM {s}", .{key});
-                }
-              },
-              .record => |*rec| {
-                for (rec.constructor.sig.parameters) |*param| {
-                  const p = try self.pushWithKey("PARAM", param.name, null);
-                  try self.emitLine("=PARAM {s}", .{param.name});
-                  try self.processType(param.ptype);
-                  if (param.default) |default| try self.processExpr(default);
-                  try p.pop();
-                }
-              },
-            }
-            try tc.pop();
-          }
-        },
-      }
-    }
-
-    fn processValue(self: *Self, v: *const model.Value) anyerror!void {
-      switch (v.data) {
-        .text => |txt| {
-          const t_fmt = txt.t.formatter();
-          try self.emitLine("=TEXT {} \"{}\"",
-            .{t_fmt, std.zig.fmtEscapes(txt.content)});
-        },
-        .number => |num| {
-          const t_fmt = num.t.typedef().formatter();
-          try self.emitLine("=NUMBER {} {}", .{t_fmt, num.formatter()});
-        },
-        .float => |_| {
-          unreachable;
-        },
-        .@"enum" => |ev| {
-          const t_fmt = ev.t.typedef().formatter();
-          try self.emitLine("=ENUM {} \"{s}\"",
-            .{t_fmt, ev.t.values.entries.items(.key)[ev.index]});
-        },
-        .record => |_| {
-          unreachable;
-        },
-        .concat => |_| {
-          unreachable;
-        },
-        .para => |_| {
-          unreachable;
-        },
-        .list => |_| {
-          unreachable;
-        },
-        .map => |_| {
-          unreachable;
-        },
-        .location => |loc| {
-          const wrap = try self.pushWithKey("LOC", loc.name.content, null);
-          try self.processType(loc.tloc);
-          inline for ([_][]const u8{"primary", "varargs", "varmap", "mutable"})
-              |flag|
-            if (@field(loc, flag) != null)
-              try self.emitLine("=FLAG {s}", .{flag});
-          if (loc.default) |defexpr| {
-            const default = try self.push("DEFAULT");
-            try self.processExpr(defexpr);
-            try default.pop();
-          }
-          if (loc.header) |hval| {
-            const header = try self.push("HEADER");
-            try self.processValue(hval.value());
-            try header.pop();
-          }
-          try wrap.pop();
-        },
-        .definition => |def| {
-          const wrap = try self.pushWithKey("DEF", def.name.content,
-            if (def.root != null) @as([]const u8, "{root}") else null);
-          try self.processValue(def.content);
-          try wrap.pop();
-        },
-        .ast => |a| {
-          const ast = try self.push("AST");
-          try self.process(a.root);
-          try ast.pop();
-        },
-        .@"type" => |tv| try self.processType(tv.t),
-        .prototype => |pv| try self.emitLine("=PROTO {s}", .{@tagName(pv.pt)}),
-        .funcref => |fr| try self.emitLine("=FUNCREF {s}.{s}",
-          .{fr.func.defined_at.source.locator, if (fr.func.name) |sym|
-            sym.name else "<anonymous>"}),
-        .poison => try self.emitLine("=POISON", .{}),
-        .void => try self.emitLine("=VOID", .{}),
-        .block_header => |*h| {
-          const hf = std.fmt.Formatter(formatBlockHeader){
-            .data = .{.header = h, .data = self.data}
-          };
-          try self.emitLine("=HEADER {}", .{hf});
-        },
-      }
+    fn pop(self: Popper) !void {
+      self.e.depth -= 1;
+      try self.e.emitLine("-{s}", .{self.name});
     }
   };
-}
+
+  const LineBuilder = struct {
+    buffer: [1024]u8 = undefined,
+    i: usize = 0,
+
+    fn init(depth: usize) LineBuilder {
+      var ret = LineBuilder{};
+      while (ret.i < depth) : (ret.i += 1) ret.buffer[ret.i] = ' ';
+      return ret;
+    }
+
+    fn append(self: *LineBuilder, comptime fmt: []const u8, args: anytype)
+        !void {
+      const ret = try std.fmt.bufPrint(self.buffer[self.i..], fmt, args);
+      self.i += ret.len;
+    }
+
+    fn finish(self: *LineBuilder, h: *Checker) !void {
+      try h.handle(self.buffer[0..self.i]);
+    }
+  };
+
+  handler: *Checker,
+  depth: usize,
+  data: *nyarna.Globals,
+
+  fn init(data: *nyarna.Globals, handler: *Checker) AstEmitter {
+    return .{.depth = 0, .handler = handler, .data = data};
+  }
+
+  fn emitLine(self: *Self, comptime fmt: []const u8, args: anytype) !void {
+    var lb = LineBuilder.init(self.depth * 2);
+    try lb.append(fmt, args);
+    try lb.finish(self.handler);
+  }
+
+  fn push(self: *Self, comptime name: []const u8) !Popper {
+    try self.emitLine("+{s}", .{name});
+    self.depth += 1;
+    return Popper{.e = self, .name = name};
+  }
+
+  fn pushWithKey(self: *Self, comptime name: []const u8,
+                  key: []const u8, value: ?[]const u8) !Popper {
+    if (value) |v| try self.emitLine("+{s} {s}=\"{s}\"", .{name, key, v})
+    else try self.emitLine("+{s} {s}", .{name, key});
+    self.depth += 1;
+    return Popper{.e = self, .name = name};
+  }
+
+  pub fn process(self: *Self, n: *model.Node) anyerror!void {
+    switch (n.data) {
+      .assign => |a| {
+        const ass = try self.push("ASS");
+        switch (a.target) {
+          .unresolved => |u| {
+            const target = try self.push("TARGET");
+            try self.process(u);
+            try target.pop();
+          },
+          .resolved => |r| {
+            var lb = LineBuilder.init(self.depth * 2);
+            try lb.append("=TARGET {s}", .{r.target.sym().name});
+            var t = r.target.t;
+            for (r.path) |index| {
+              const param =
+                &t.instantiated.data.record.constructor.sig.parameters[
+                  index];
+              try lb.append("::{s}", .{param.name});
+              t = param.ptype;
+            }
+            try lb.finish(self.handler);
+          }
+        }
+        try self.emitLine(">REPL", .{});
+        try self.process(a.replacement);
+        try ass.pop();
+      },
+      .branches => |b| {
+        const branches = try self.push("BRANCHES");
+        try self.process(b.condition);
+        for (b.branches) |branch, i| {
+          try self.emitLine(">BRANCH {}", .{i});
+          try self.process(branch);
+        }
+        try branches.pop();
+      },
+      .concat => |c| {
+        for (c.items) |item| try self.process(item);
+      },
+      .definition => |d| {
+        const def = try self.pushWithKey("DEF", d.name.content,
+          if (d.root != null) @as(?[]const u8, "root") else null);
+        try self.process(d.content);
+        try def.pop();
+      },
+      .expression => |e| try self.processExpr(e),
+      .import => |i| {
+        try self.emitLine("=IMPORT {s}", .{
+          self.data.known_modules.keys()[i.module_index]});
+      },
+      .literal => |a| {
+        try self.emitLine("=LIT {s} \"{}\"",
+          .{@tagName(a.kind), std.zig.fmtEscapes(a.content)});
+      },
+      .funcgen => |fg| {
+        const func = try self.push("FUNC");
+        if (fg.returns) |ret| {
+          const rl = try self.push("RETURN");
+          try self.process(ret);
+          try rl.pop();
+        }
+        try self.process(fg.params.unresolved);
+        const body = try self.push("BODY");
+        try self.process(fg.body);
+        try body.pop();
+        try func.pop();
+      },
+      .location => |loc| {
+        const l = try self.pushWithKey("LOC", loc.name.content, null);
+        if (loc.@"type") |t| {
+          const tnode = try self.push("TYPE");
+          try self.process(t);
+          try tnode.pop();
+        }
+        if (loc.additionals) |a| {
+          if (a.primary != null or a.varargs != null or a.varmap != null or
+              a.mutable != null or a.header != null) {
+            const fmt = std.fmt.Formatter(formatAdditionals){.data = .{
+              .value = a, .data = self.data,
+            }};
+            try self.emitLine("=FLAGS {}", .{fmt});
+          }
+        }
+        if (loc.default) |d| {
+          const dnode = try self.push("DEFAULT");
+          try self.process(d);
+          try dnode.pop();
+        }
+        try l.pop();
+      },
+      .paras => |p| {
+        for (p.items) |i| {
+          const para = try self.push("PARA");
+          try self.process(i.content);
+          try para.pop();
+        }
+      },
+      .resolved_access => |ra| {
+        const racc = try self.push("RACCESS");
+        try self.process(ra.base);
+        for (ra.path) |index| {
+          try self.emitLine(">DESCEND {}", .{index});
+        }
+        try racc.pop();
+      },
+      .resolved_call => |rc| {
+        const rcall = try self.push("RCALL");
+        try self.process(rc.target);
+        for (rc.args) |a, i| {
+          try self.emitLine(">ARG {s}", .{rc.sig.parameters[i].name});
+          try self.process(a);
+        }
+        try rcall.pop();
+      },
+      .resolved_symref => |res|
+        try self.emitLine("=SYMREF {s}.{s}",
+          .{res.sym.defined_at.source.name, res.sym.name}),
+      .gen_concat => |gc| {
+        const gen = try self.pushWithKey("TGEN", "Concat", null);
+        try self.process(gc.inner);
+        try gen.pop();
+      },
+      .gen_enum => |ge| {
+        const gen = try self.pushWithKey("TGEN", "Enum", null);
+        for (ge.values) |value| try self.process(value);
+        try gen.pop();
+      },
+      .gen_float => |gf| {
+        const gen = try self.pushWithKey("TGEN", "Float", null);
+        try self.process(gf.precision);
+        try gen.pop();
+      },
+      .gen_intersection => |gi| {
+        const gen = try self.pushWithKey("TGEN", "Intersection", null);
+        for (gi.types) |item| try self.process(item);
+        try gen.pop();
+      },
+      .gen_list => |gl| {
+        const gen = try self.pushWithKey("TGEN", "List", null);
+        try self.process(gl.inner);
+        try gen.pop();
+      },
+      .gen_map => |gm| {
+        const gen = try self.pushWithKey("TGEN", "Map", null);
+        try self.process(gm.key);
+        try self.process(gm.value);
+        try gen.pop();
+      },
+      .gen_numeric => |gn| {
+        const gen = try self.pushWithKey("TGEN", "Numeric", null);
+        if (gn.min) |min| {
+          try self.emitLine(">MIN", .{});
+          try self.process(min);
+        }
+        if (gn.max) |max| {
+          try self.emitLine(">MAX", .{});
+          try self.process(max);
+        }
+        if (gn.decimals) |decimals| {
+          try self.emitLine(">DECIMALS", .{});
+          try self.process(decimals);
+        }
+        try gen.pop();
+      },
+      .gen_optional => |go| {
+        const gen = try self.pushWithKey("TGEN", "Optional", null);
+        try self.process(go.inner);
+        try gen.pop();
+      },
+      .gen_paragraphs => |gp| {
+        const gen = try self.pushWithKey("TGEN", "Paragraphs", null);
+        for (gp.inners) |inner| try self.process(inner);
+        if (gp.auto) |auto| {
+          try self.emitLine(">AUTO", .{});
+          try self.process(auto);
+        }
+        try gen.pop();
+      },
+      .gen_record => |gr| {
+        const gen = try self.pushWithKey("TGEN", "Record", null);
+        for (gr.fields) |field| try self.process(field.node());
+        try gen.pop();
+      },
+      .gen_textual => |gt| {
+        const gen = try self.pushWithKey("TGEN", "Textual", null);
+        try self.emitLine(">CATEGORIES", .{});
+        for (gt.categories) |cat| try self.process(cat);
+        try self.emitLine(">INCLUDE", .{});
+        try self.process(gt.include_chars);
+        try self.emitLine(">EXCLUDE", .{});
+        try self.process(gt.exclude_chars);
+        try gen.pop();
+      },
+      .unresolved_access => |a| {
+        const access = try self.push("ACCESS");
+        {
+          const target = try self.push("SUBJECT");
+          try self.process(a.subject);
+          try target.pop();
+        }
+        try self.emitLine("=ID \"{s}\"", .{a.id});
+        try access.pop();
+      },
+      .unresolved_call => |uc| {
+        const ucall = try self.push("UCALL");
+        {
+          const t = try self.push("TARGET");
+          try self.process(uc.target);
+          try t.pop();
+        }
+        for (uc.proto_args) |a| {
+          const parg = try switch (a.kind) {
+            .position => self.pushWithKey("PROTO", "pos", null),
+            .named => |named| self.pushWithKey("PROTO", "name", named),
+            .direct => |direct| self.pushWithKey("PROTO", "direct", direct),
+            .primary => self.pushWithKey("PROTO", "primary", null),
+          };
+          try self.process(a.content);
+          try parg.pop();
+        }
+        try ucall.pop();
+      },
+      .unresolved_symref => |u|
+        try self.emitLine("=SYMREF [{}]{s}", .{u.ns, u.name}),
+      .vt_setter => |vs| {
+        const setter = try self.push("VT_SETTER");
+        try self.emitLine("=VARIABLE {s}", .{vs.v.sym().name});
+        try self.emitLine(">CONTENT", .{});
+        try self.process(vs.content);
+        try setter.pop();
+      },
+      .void => try self.emitLine("=VOID", .{}),
+      .poison => try self.emitLine("=POISON", .{}),
+    }
+  }
+
+  pub fn processExpr(self: *Self, e: *model.Expression) anyerror!void {
+    switch (e.data) {
+      .access => |_| {
+        unreachable;
+      },
+      .assignment => |ass| {
+        const a = try self.push("ASSIGNMENT");
+        var lb = LineBuilder.init(self.depth * 2);
+        try lb.append("=TARGET {s}", .{ass.target.sym().name});
+        var t = ass.target.t;
+        for (ass.path) |index| {
+          const param =
+            &t.instantiated.data.record.constructor.sig.parameters[index];
+          try lb.append("::{s}", .{param.name});
+          t = param.ptype;
+        }
+        try lb.finish(self.handler);
+        try self.emitLine(">EXPR", .{});
+        try self.processExpr(ass.expr);
+        try a.pop();
+      },
+      .branches => |b| {
+        const branches = try self.push("BRANCHES");
+        try self.processExpr(b.condition);
+        for (b.branches) |branch, i| {
+          try self.emitLine(">BRANCH {}", .{i});
+          try self.processExpr(branch);
+        }
+        try branches.pop();
+      },
+      .call => |call| {
+        const c = try self.push("CALL");
+        try self.processExpr(call.target);
+        const sig = call.target.expected_type.structural.callable.sig;
+        for (call.exprs) |expr, i| {
+          try self.emitLine(">ARG {s}", .{sig.parameters[i].name});
+          try self.processExpr(expr);
+        }
+        try c.pop();
+      },
+      .concatenation => |c| for (c) |expr| try self.processExpr(expr),
+      .value => |value| try self.processValue(value),
+      .paragraphs => |paras| {
+        const p = try self.push("PARAGRAPHS");
+        for (paras) |para| {
+          try self.emitLine(">PARA {}", .{para.lf_after});
+          try self.processExpr(para.content);
+        }
+        try p.pop();
+      },
+      .var_retrieval => |v| {
+        try self.emitLine("=GETVAR {s}", .{v.variable.sym().name});
+      },
+      .poison => try self.emitLine("=POISON", .{}),
+      .void => try self.emitLine("=VOID", .{}),
+    }
+  }
+
+  fn processType(self: *Self, t: model.Type) anyerror!void {
+    switch (t) {
+      .intrinsic => |i| try self.emitLine("=TYPE {s}", .{@tagName(i)}),
+      .structural => unreachable,
+      .instantiated => |i| {
+        if (i.name) |sym| try self.emitLine("=TYPE {s} {s}.{s}",
+          .{@tagName(i.data), sym.defined_at.source.locator, sym.name})
+        else {
+          const tc = try self.pushWithKey("TYPE", @tagName(i.data), null);
+          switch (i.data) {
+            .textual => |_| unreachable,
+            .numeric => |_| unreachable,
+            .float => |_| unreachable,
+            .tenum => |en| {
+              for (en.values.entries.items(.key)) |*key| {
+                try self.emitLine("=ITEM {s}", .{key});
+              }
+            },
+            .record => |*rec| {
+              for (rec.constructor.sig.parameters) |*param| {
+                const p = try self.pushWithKey("PARAM", param.name, null);
+                try self.emitLine("=PARAM {s}", .{param.name});
+                try self.processType(param.ptype);
+                if (param.default) |default| try self.processExpr(default);
+                try p.pop();
+              }
+            },
+          }
+          try tc.pop();
+        }
+      },
+    }
+  }
+
+  fn processValue(self: *Self, v: *const model.Value) anyerror!void {
+    switch (v.data) {
+      .text => |txt| {
+        const t_fmt = txt.t.formatter();
+        try self.emitLine("=TEXT {} \"{}\"",
+          .{t_fmt, std.zig.fmtEscapes(txt.content)});
+      },
+      .number => |num| {
+        const t_fmt = num.t.typedef().formatter();
+        try self.emitLine("=NUMBER {} {}", .{t_fmt, num.formatter()});
+      },
+      .float => |_| {
+        unreachable;
+      },
+      .@"enum" => |ev| {
+        const t_fmt = ev.t.typedef().formatter();
+        try self.emitLine("=ENUM {} \"{s}\"",
+          .{t_fmt, ev.t.values.entries.items(.key)[ev.index]});
+      },
+      .record => |_| {
+        unreachable;
+      },
+      .concat => |_| {
+        unreachable;
+      },
+      .para => |_| {
+        unreachable;
+      },
+      .list => |_| {
+        unreachable;
+      },
+      .map => |_| {
+        unreachable;
+      },
+      .location => |loc| {
+        const wrap = try self.pushWithKey("LOC", loc.name.content, null);
+        try self.processType(loc.tloc);
+        inline for ([_][]const u8{"primary", "varargs", "varmap", "mutable"})
+            |flag|
+          if (@field(loc, flag) != null)
+            try self.emitLine("=FLAG {s}", .{flag});
+        if (loc.default) |defexpr| {
+          const default = try self.push("DEFAULT");
+          try self.processExpr(defexpr);
+          try default.pop();
+        }
+        if (loc.header) |hval| {
+          const header = try self.push("HEADER");
+          try self.processValue(hval.value());
+          try header.pop();
+        }
+        try wrap.pop();
+      },
+      .definition => |def| {
+        const wrap = try self.pushWithKey("DEF", def.name.content,
+          if (def.root != null) @as([]const u8, "{root}") else null);
+        try self.processValue(def.content);
+        try wrap.pop();
+      },
+      .ast => |a| {
+        const ast = try self.push("AST");
+        try self.process(a.root);
+        try ast.pop();
+      },
+      .@"type" => |tv| try self.processType(tv.t),
+      .prototype => |pv| try self.emitLine("=PROTO {s}", .{@tagName(pv.pt)}),
+      .funcref => |fr| try self.emitLine("=FUNCREF {s}.{s}",
+        .{fr.func.defined_at.source.locator, if (fr.func.name) |sym|
+          sym.name else "<anonymous>"}),
+      .poison => try self.emitLine("=POISON", .{}),
+      .void => try self.emitLine("=VOID", .{}),
+      .block_header => |*h| {
+        const hf = std.fmt.Formatter(formatBlockHeader){
+          .data = .{.header = h, .data = self.data}
+        };
+        try self.emitLine("=HEADER {}", .{hf});
+      },
+    }
+  }
+};
+
+/// implements Reporter. forwards lines to the registered checker.
+const ErrorEmitter = struct {
+  api: errors.Reporter,
+  buffer: [1024]u8 = undefined,
+  handler: *Checker,
+
+  fn init(handler: *Checker) ErrorEmitter {
+    return .{
+      .api = .{
+        .lexerErrorFn = lexerError,
+        .parserErrorFn = parserError,
+        .wrongItemErrorFn = wrongItemError,
+        .unknownErrorFn = unknownError,
+        .wrongIdErrorFn = wrongIdError,
+        .previousOccurenceFn = previousOccurence,
+        .wrongTypeErrorFn = wrongTypeError,
+        .constructionErrorFn = constructionError,
+        .fileErrorFn = fileError,
+      },
+      .handler = handler,
+    };
+  }
+
+  fn forwardError(
+    self: *ErrorEmitter,
+    id: anytype,
+    pos: model.Position
+  ) void {
+    const line = std.fmt.bufPrint(&self.buffer, "{} - {} {s}",
+      .{pos.start.formatter(), pos.end.formatter(), @tagName(id)})
+      catch unreachable;
+    self.handler.handle(line) catch unreachable;
+  }
+
+  fn forwardArg(
+    self: *ErrorEmitter,
+    name: []const u8,
+    comptime fmt: []const u8,
+    value: anytype
+  ) void {
+    const line = std.fmt.bufPrint(
+      &self.buffer, "  {s} = " ++ fmt, .{name, value}) catch unreachable;
+    self.handler.handle(line) catch unreachable;
+  }
+
+  fn lexerError(
+    reporter: *errors.Reporter,
+    id: errors.LexerError,
+    pos: model.Position
+  ) void {
+    @fieldParentPtr(ErrorEmitter, "api", reporter).forwardError(id, pos);
+  }
+
+  fn parserError(
+    reporter: *errors.Reporter,
+    id: errors.GenericParserError,
+    pos: model.Position
+  ) void {
+    @fieldParentPtr(ErrorEmitter, "api", reporter).forwardError(id, pos);
+  }
+
+  fn wrongItemError(
+    reporter: *errors.Reporter,
+    id: errors.WrongItemError,
+    pos: model.Position,
+    expected: []const errors.WrongItemError.ItemDescr,
+    got: errors.WrongItemError.ItemDescr
+  ) void {
+    const self = @fieldParentPtr(ErrorEmitter, "api", reporter);
+    self.forwardError(id, pos);
+    const expected_fmt = errors.WrongItemError.ItemDescr.formatterAll(expected);
+    self.forwardArg("expected", "{}", expected_fmt);
+    self.forwardArg("got", "{}", got.formatter());
+  }
+
+  fn unknownError(
+    reporter: *errors.Reporter,
+    id: errors.UnknownError,
+    pos: model.Position,
+    name: []const u8
+  ) void {
+    const self = @fieldParentPtr(ErrorEmitter, "api", reporter);
+    self.forwardError(id, pos);
+    self.forwardArg("name", "{s}", name);
+  }
+
+  fn wrongIdError(
+    reporter: *errors.Reporter,
+    id: errors.WrongIdError,
+    pos: model.Position,
+    expected: []const u8,
+    got: []const u8,
+    defined_at: model.Position
+  ) void {
+    const self = @fieldParentPtr(ErrorEmitter, "api", reporter);
+    self.forwardError(id, pos);
+    self.forwardArg("expected", "{s}", expected);
+    self.forwardArg("got", "{s}", got);
+    self.forwardArg("defined_at", "{s}", defined_at.formatter());
+  }
+
+  fn previousOccurence(
+    reporter: *errors.Reporter,
+    id: errors.PreviousOccurenceError,
+    repr: []const u8,
+    pos: model.Position,
+    previous: model.Position
+  ) void {
+    const self = @fieldParentPtr(ErrorEmitter, "api", reporter);
+    self.forwardError(id, pos);
+    self.forwardArg("repr", "{s}", repr);
+    self.forwardArg("previous", "{s}", previous);
+  }
+
+  fn wrongTypeError(
+    reporter: *errors.Reporter,
+    id: errors.WrongTypeError,
+    pos: model.Position,
+    types: []const model.Type
+  ) void {
+    const self = @fieldParentPtr(ErrorEmitter, "api", reporter);
+    self.forwardError(id, pos);
+    self.forwardArg("types", "{}", model.Type.formatterAll(types));
+  }
+
+  fn constructionError(
+    reporter: *errors.Reporter,
+    id: errors.ConstructionError,
+    pos: model.Position,
+    t: model.Type,
+    repr: []const u8
+  ) void {
+    const self = @fieldParentPtr(ErrorEmitter, "api", reporter);
+    self.forwardError(id, pos);
+    self.forwardArg("t", "{}", t.formatter());
+    self.forwardArg("repr", "{s}", repr);
+  }
+
+  fn fileError(
+    reporter: *errors.Reporter,
+    id: errors.FileError,
+    pos: model.Position,
+    path: []const u8,
+    message: []const u8
+  ) void {
+    const self = @fieldParentPtr(ErrorEmitter, "api", reporter);
+    self.forwardError(id, pos);
+    self.forwardArg("path", "{s}", path);
+    self.forwardArg("message", "{s}", message);
+  }
+};
 
 const Checker = struct {
-  const Tester =
-    fn(emitter: *AstEmitter(*Checker), ml: *nyarna.ModuleLoader) anyerror!void;
-
   expected_iter: std.mem.SplitIterator(u8),
   line: usize,
   full_output: std.ArrayListUnmanaged(u8),
   failed: bool,
   data: *TestDataResolver,
 
-  fn init(data: *TestDataResolver, name_in_input: []const u8) !Checker {
+  fn init(data: *TestDataResolver, name_in_input: []const u8) Checker {
     return Checker{
       .expected_iter = data.valueLines(name_in_input),
       .line = data.source.items.get(name_in_input).?.line_offset + 1,
+      .full_output = .{}, .failed = false,
+      .data = data,
+    };
+  }
+
+  fn initErrorChecker(data: *TestDataResolver, name_in_errors: []const u8)
+      Checker {
+    return Checker{
+      .expected_iter = data.paramLines("errors", name_in_errors),
+      .line = data.source.params.errors.get(name_in_errors).?.line_offset + 1,
       .full_output = .{}, .failed = false,
       .data = data,
     };
@@ -676,7 +837,7 @@ const Checker = struct {
 };
 
 pub fn parseTest(data: *TestDataResolver) !void {
-  var checker = try Checker.init(data, "rawast");
+  var checker = Checker.init(data, "rawast");
   defer checker.deinit();
   var r = errors.CmdLineReporter.init();
   var proc = try nyarna.Processor.init(
@@ -685,32 +846,54 @@ pub fn parseTest(data: *TestDataResolver) !void {
   var loader = try proc.initMainModule(&checker.data.api, "input", true);
   const ml = loader.globals.known_modules.values()[0].require_module;
   defer loader.deinit();
-  var emitter = AstEmitter(*Checker){
-    .depth = 0,
-    .handler = &checker,
-    .data = loader.globals,
-  };
+  var emitter = AstEmitter.init(loader.globals, &checker);
   while (!try ml.work()) {}
   try emitter.process(ml.finalizeNode());
   try checker.finish();
   try std.testing.expectEqual(@as(usize, 0), ml.logger.count);
 }
 
+pub fn parseErrorTest(data: *TestDataResolver) !void {
+  var checker = Checker.initErrorChecker(data, "rawast");
+  defer checker.deinit();
+  var reporter = ErrorEmitter.init(&checker);
+  var proc = try nyarna.Processor.init(
+    std.testing.allocator, nyarna.default_stack_size, &reporter.api);
+  defer proc.deinit();
+  var loader = try proc.initMainModule(&checker.data.api, "input", true);
+  const ml = loader.globals.known_modules.values()[0].require_module;
+  defer loader.deinit();
+  while (!try ml.work()) {}
+  try checker.finish();
+}
+
 pub fn interpretTest(data: *TestDataResolver) !void {
-  var checker = try Checker.init(data, "expr");
+  var checker = Checker.init(data, "expr");
   defer checker.deinit();
   var r = errors.CmdLineReporter.init();
   var proc = try nyarna.Processor.init(
     std.testing.allocator, nyarna.default_stack_size, &r.reporter);
   defer proc.deinit();
   var loader = try proc.startLoading(&data.api, "input");
-  const document = (try loader.finalize()).?;
-  defer document.destroy();
-  var emitter = AstEmitter(*Checker){
-    .depth = 0,
-    .handler = &checker,
-    .data = document.globals,
-  };
-  try emitter.processExpr(document.main.root);
+  if (try loader.finalize()) |document| {
+    var emitter = AstEmitter.init(document.globals, &checker);
+    try emitter.processExpr(document.main.root);
+    defer document.destroy();
+    try checker.finish();
+  } else return error.TestUnexpectedResult;
+}
+
+pub fn interpretErrorTest(data: *TestDataResolver) !void {
+  var checker = Checker.initErrorChecker(data, "expr");
+  defer checker.deinit();
+  var reporter = ErrorEmitter.init(&checker);
+  var proc = try nyarna.Processor.init(
+    std.testing.allocator, nyarna.default_stack_size, &reporter.api);
+  defer proc.deinit();
+  var loader = try proc.startLoading(&data.api, "input");
+  if (try loader.finalize()) |doc| {
+    doc.destroy();
+    return error.TestUnexpectedResult;
+  }
   try checker.finish();
 }

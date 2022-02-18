@@ -3,5 +3,5 @@
 \declare:
   foo = \intersection(\Text, \foo)
 \end(declare)
---- errors:ast
+--- errors:expr
 4:3 - 4:6 SelfReferentialType

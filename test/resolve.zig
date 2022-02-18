@@ -87,4 +87,10 @@ pub const TestDataResolver = struct {
       std.mem.SplitIterator(u8) {
     return std.mem.split(u8, self.source.items.get(name).?.content.items, "\n");
   }
+
+  pub fn paramLines(self: *TestDataResolver, comptime param: []const u8,
+                    name: []const u8) std.mem.SplitIterator(u8) {
+    return std.mem.split(
+      u8, @field(self.source.params, param).get(name).?.content.items, "\n");
+  }
 };

@@ -16,14 +16,14 @@
 --- rawast
 +PARA
   +RCALL
-    =FUNCREF .std.intrinsic.declare
+    =SYMREF <intrinsic>.declare
     >ARG namespace
     =VOID
     >ARG public
     +AST
       +DEF Data
         +RCALL
-          =PROTO record
+          =SYMREF <intrinsic>.Record
           >ARG fields
           +LOC a
             =TYPE raw
@@ -35,7 +35,7 @@
       -DEF
       +DEF foo
         +RCALL
-          =FUNCREF .std.intrinsic.func
+          =SYMREF <intrinsic>.func
           >ARG return
           +AST
             =VOID

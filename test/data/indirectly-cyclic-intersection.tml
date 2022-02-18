@@ -2,10 +2,10 @@
 --- input
 \declare:
   foo = \intersection(\bar)
-  
+
   bar = \intersection(\foo)
 \end(declare)
---- errors:ast
+--- errors:expr
 4:3 - 4:6 CircularType
   6:3 - 6:6 previous value defined here
 6:3 - 6:6 CircularType

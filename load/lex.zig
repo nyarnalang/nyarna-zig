@@ -107,6 +107,10 @@ pub const Walker = struct {
     return (w.cur - len - 1)[0..len];
   }
 
+  pub fn contentIn(w: *Walker, pos: model.Position) []const u8 {
+    return w.source.content[pos.start.byte_offset..pos.end.byte_offset];
+  }
+
   pub fn lastUtf8Unit(w: *Walker) []const u8 {
     return (w.cur - w.recent_length)[0..w.recent_length];
   }
@@ -574,10 +578,8 @@ pub const Lexer = struct {
             l.recent_end = l.walker.before;
             return .missing_block_name_sep;
           }
-          if (res.token) |t| {
-            l.recent_end = l.walker.before;
-            return t;
-          } else unreachable;
+          l.recent_end = l.walker.before;
+          return res.token.?;
         },
         .after_id => {
           if (try l.exprContinuation(&cur, false)) |t| {
@@ -759,10 +761,7 @@ pub const Lexer = struct {
       },
       '#' => {
         switch (ctx) {
-          .block_name => {
-            l.cur_stored = l.walker.nextInline();
-            return ContentResult{.token = .illegal_character_for_id};
-          },
+          .block_name => {},
           .config => {
             l.cur_stored = l.walker.nextInline();
             return ContentResult{.token = .comment};
@@ -841,19 +840,18 @@ pub const Lexer = struct {
       },
       else => {}
     }
-    if (ctx == .config) {
-      const cat = unicode.category(cur.*);
-      if (unicode.MPS.contains(cat)) {
+    switch (ctx) {
+      .config => if (unicode.MPS.contains(unicode.category(cur.*))) {
         l.code_point = cur.*;
         return l.advanceAndReturn(.ns_sym, null);
-      }
-    } else {
-      if (l.intpr.command_characters.get(cur.*)) |ns| {
+      },
+      .block_name => {},
+      else => if (l.intpr.command_characters.get(cur.*)) |ns| {
         l.ns = ns;
         return l.genCommand(cur);
       } else if (cur.* == l.level.end_char and l.checkEndCommand()) {
         return l.genCommand(cur);
-      }
+      },
     }
     return ContentResult{.token =
       switch (ctx) {
@@ -868,11 +866,11 @@ pub const Lexer = struct {
             switch (cur.*) {
               4, ' ', '\t', '\r', '\n', ':' => break,
               else => {
-                if (l.intpr.command_characters.get(cur.*) != null or
-                    unicode.L.contains(unicode.category(cur.*))) break;
+                if (unicode.L.contains(unicode.category(cur.*))) break;
               }
             }
           }
+          l.cur_stored = cur.*;
           break :blk Token.illegal_characters;
         },
         .special => blk: {
@@ -1005,6 +1003,9 @@ pub const Lexer = struct {
     }
   }
 
+  /// attempts to read an identifier. returns true iff at least one character
+  /// has been read as identifier. l.cur_stored has been updated if returning
+  /// true.
   fn readIdentifier(l: *Lexer, cur: *u21) bool {
     const name_start = l.walker.before.byte_offset;
     while (unicode.L.contains(unicode.category(cur.*))) {

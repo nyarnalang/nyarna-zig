@@ -5,7 +5,7 @@
 :body:
   \input\input
 \end(func):>
---- errors:ast
+--- errors:expr
 7:11 - 7:11 CannotMapUnnamedBlock
 3:6 - 8:1 MissingArgumentForParameter
   4:3 - 4:8 defined here

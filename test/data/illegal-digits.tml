@@ -5,7 +5,7 @@
   :then:42
   \end(if)
 \end(block)
---- errors:ast
+--- errors:expr
 3:7 - 3:11 IllegalDigitsAfterColon
 4:7 - 4:10 InvalidEnumValue
 5:8 - 5:11 IllegalDigitsAfterColon

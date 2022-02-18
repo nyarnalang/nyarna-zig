@@ -19,7 +19,7 @@
 7:1[27] symref
 7:5[31] ws_break
 8:1[32] end_source
---- errors:ast
+--- errors:expr
 5:1 - 5:12 WrongEndSubject
 7:1 - 7:5 UnknownSymbol
   identifier is "bar"

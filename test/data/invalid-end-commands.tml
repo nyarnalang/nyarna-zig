@@ -67,7 +67,7 @@
 17:6[124] call_id
 17:8[126] ws_break
 18:1[127] end_source
---- errors:ast
+--- errors:expr
 6:3 - 6:7 InvalidEndCommand
 12:3 - 12:19 WrongEndSubject
 17:1 - 17:8 InvalidEndCommand

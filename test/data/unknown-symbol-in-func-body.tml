@@ -8,6 +8,6 @@
   \end(func);
 \end(declare)
 \foo(bar)
---- errors:ast
+--- errors:expr
 7:9 - 7:13 UnknownSymbol
-  identifier is "baz"
+  name = baz
