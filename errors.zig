@@ -18,7 +18,7 @@ pub const GenericParserError = enum {
   BlockNeedsConfig, InvalidNamedArgInAssign, UnfinishedCallInTypeArg, NotAType,
   CantCallUnfinished, FailedToCalculateReturnType, FieldAccessWithoutInstance,
   MethodOutsideDeclare, CannotResolveLocator, ImportIllegalInFullast,
-  MissingInitialValue, IllegalNumericInterval,
+  MissingInitialValue, IllegalNumericInterval, EntityCannotBeNamed,
 };
 
 pub const WrongItemError = enum {
@@ -146,6 +146,12 @@ pub const PreviousOccurenceError = enum {
   }
 };
 
+pub const PositionChainError = enum {
+  /// emitted when types in \declare reference each other in a chain that
+  /// cannot be made into a set of types.
+  CircularType,
+};
+
 pub const WrongTypeError = enum {
    /// gives two types: first expected, then actual type.
    ExpectedExprOfTypeXGotY,
@@ -190,6 +196,9 @@ pub const Reporter = struct {
   previousOccurenceFn:
     fn(reporter: *Reporter, id: PreviousOccurenceError, repr: []const u8,
        pos: model.Position, previous: model.Position) void,
+  posChainFn:
+    fn(reporter: *Reporter, id: PositionChainError, pos: model.Position,
+       references: []model.Position) void,
   wrongTypeErrorFn:
     fn(reporter: *Reporter, id: WrongTypeError, pos: model.Position,
        types: []const model.Type) void,
@@ -227,6 +236,7 @@ pub const CmdLineReporter = struct {
         .lexerErrorFn = CmdLineReporter.lexerError,
         .parserErrorFn = CmdLineReporter.parserError,
         .previousOccurenceFn = CmdLineReporter.previousOccurence,
+        .posChainFn = CmdLineReporter.posChain,
         .wrongItemErrorFn = CmdLineReporter.wrongItemError,
         .unknownErrorFn = CmdLineReporter.unknownError,
         .wrongIdErrorFn = CmdLineReporter.wrongIdError,
@@ -239,8 +249,12 @@ pub const CmdLineReporter = struct {
     };
   }
 
-  fn style(self: *CmdLineReporter, styles: anytype, comptime fmt: []const u8,
-           args: anytype) void {
+  fn style(
+    self: *CmdLineReporter,
+    styles: anytype,
+    comptime fmt: []const u8,
+    args: anytype,
+  ) void {
     if (self.do_style) {
       inline for (styles) |s| {
         self.writer.print("\x1b[{}m", .{@enumToInt(@as(Style, s))})
@@ -251,15 +265,21 @@ pub const CmdLineReporter = struct {
     if (self.do_style) self.writer.writeAll("\x1b[m") catch unreachable;
   }
 
-  fn renderError(self: *CmdLineReporter, comptime fmt: []const u8,
-                 args: anytype) void {
+  fn renderError(
+    self: *CmdLineReporter,
+    comptime fmt: []const u8,
+    args: anytype,
+  ) void {
     self.style(.{.bold, .fg_red}, "[error] ", .{});
     self.style(.{.bold}, fmt, args);
     self.writer.writeByte('\n') catch unreachable;
   }
 
-  fn renderInfo(self: *CmdLineReporter, comptime fmt: []const u8,
-                args: anytype) void {
+  fn renderInfo(
+    self: *CmdLineReporter,
+    comptime fmt: []const u8,
+    args: anytype,
+  ) void {
     self.style(.{.bold, .fg_white}, "[info] ", .{});
     self.style(.{.bold}, fmt, args);
     self.writer.writeByte('\n') catch unreachable;
@@ -271,8 +291,11 @@ pub const CmdLineReporter = struct {
     self.renderError("(lex) {s}", .{@tagName(id)});
   }
 
-  fn parserError(reporter: *Reporter, id: GenericParserError,
-                 pos: model.Position) void {
+  fn parserError(
+    reporter: *Reporter,
+    id: GenericParserError,
+    pos: model.Position,
+  ) void {
     const self = @fieldParentPtr(CmdLineReporter, "reporter", reporter);
     self.style(.{.bold}, "{s}", .{pos});
     self.renderError("(parse) {s}", .{@tagName(id)});
@@ -282,7 +305,8 @@ pub const CmdLineReporter = struct {
     reporter: *Reporter,
     _: WrongItemError, // TODO
     pos: model.Position,
-    expected: []const WrongItemError.ItemDescr, got: WrongItemError.ItemDescr
+    expected: []const WrongItemError.ItemDescr,
+    got: WrongItemError.ItemDescr,
   ) void {
     const self = @fieldParentPtr(CmdLineReporter, "reporter", reporter);
     self.style(.{.bold}, "{s}", .{pos});
@@ -291,8 +315,12 @@ pub const CmdLineReporter = struct {
     self.renderError("wrong token: expected {?}, got {}", .{arr, single});
   }
 
-  fn unknownError(reporter: *Reporter, id: UnknownError, pos: model.Position,
-                  name: []const u8) void {
+  fn unknownError(
+    reporter: *Reporter,
+    id: UnknownError,
+    pos: model.Position,
+    name: []const u8,
+  ) void {
     const self = @fieldParentPtr(CmdLineReporter, "reporter", reporter);
     self.style(.{.bold}, "{s}", .{pos});
     const entity: []const u8 = switch (id) {
@@ -304,8 +332,13 @@ pub const CmdLineReporter = struct {
   }
 
   fn wrongIdError(
-      reporter: *Reporter, id: WrongIdError, pos: model.Position,
-      expected: []const u8, got: []const u8, defined_at: model.Position) void {
+    reporter: *Reporter,
+    id: WrongIdError,
+    pos: model.Position,
+    expected: []const u8,
+    got: []const u8,
+    defined_at: model.Position,
+  ) void {
     const self = @fieldParentPtr(CmdLineReporter, "reporter", reporter);
     self.style(.{.bold}, "{s}", .{pos});
     self.renderError("{s} id: expected '{s}', got '{s}'",
@@ -315,8 +348,12 @@ pub const CmdLineReporter = struct {
   }
 
   fn previousOccurence(
-      reporter: *Reporter, id: PreviousOccurenceError, repr: []const u8,
-      pos: model.Position, previous: model.Position) void {
+    reporter: *Reporter,
+    id: PreviousOccurenceError,
+    repr: []const u8,
+    pos: model.Position,
+    previous: model.Position,
+  ) void {
     const self = @fieldParentPtr(CmdLineReporter, "reporter", reporter);
     self.style(.{.bold}, "{s}", .{pos});
     self.renderError("{s} '{s}'{s}", .{id.entityName(), repr, id.errorMsg()});
@@ -325,8 +362,26 @@ pub const CmdLineReporter = struct {
       catch unreachable;
   }
 
-  fn wrongTypeError(reporter: *Reporter, id: WrongTypeError,
-                    pos: model.Position, types: []const model.Type) void {
+  fn posChain(
+    reporter: *Reporter,
+    id: PositionChainError,
+    pos: model.Position,
+    referenced: []model.Position,
+  ) void {
+    const self = @fieldParentPtr(CmdLineReporter, "reporter", reporter);
+    self.style(.{.bold}, "{s}", .{pos});
+    self.renderError("{s}", .{@tagName(id)});
+    for (referenced) |ref| {
+      self.writer.print("  {s} referenced here\n", .{ref}) catch unreachable;
+    }
+  }
+
+  fn wrongTypeError(
+    reporter: *Reporter,
+    id: WrongTypeError,
+    pos: model.Position,
+    types: []const model.Type,
+  ) void {
     const self = @fieldParentPtr(CmdLineReporter, "reporter", reporter);
     self.style(.{.bold}, "{s}", .{pos});
     switch (id) {
@@ -371,8 +426,12 @@ pub const CmdLineReporter = struct {
   }
 
   fn constructionError(
-      reporter: *Reporter, id: ConstructionError, pos: model.Position,
-      t: model.Type, repr: []const u8) void {
+    reporter: *Reporter,
+    id: ConstructionError,
+    pos: model.Position,
+    t: model.Type,
+    repr: []const u8,
+  ) void {
     const self = @fieldParentPtr(CmdLineReporter, "reporter", reporter);
     self.style(.{.bold}, "{s}", .{pos});
     const t_fmt = t.formatter();
@@ -391,8 +450,13 @@ pub const CmdLineReporter = struct {
     }
   }
 
-  fn fileError(reporter: *Reporter, id: FileError, pos: model.Position,
-               path: []const u8, message: []const u8) void {
+  fn fileError(
+    reporter: *Reporter,
+    id: FileError,
+    pos: model.Position,
+    path: []const u8,
+    message: []const u8,
+  ) void {
     const self = @fieldParentPtr(CmdLineReporter, "reporter", reporter);
     self.style(.{.bold}, "{s}", .{pos});
     switch (id) {

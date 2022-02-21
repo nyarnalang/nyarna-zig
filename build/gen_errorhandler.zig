@@ -71,6 +71,16 @@ pub fn main() !void {
     \\
     );
   }
+  inline for (@typeInfo(errors.PositionChainError).Enum.fields) |f| {
+    _ = try eh.write("  pub fn " ++ f.name ++
+    \\(self: *@This(), pos: model.Position, referenced: []model.Position) void {
+    \\    self.count += 1;
+    \\    self.reporter.posChainFn(self.reporter, .
+    ++ f.name ++ \\, pos, referenced);
+    \\  }
+    \\
+    );
+  }
   inline for (@typeInfo(errors.WrongIdError).Enum.fields) |f| {
     _ = try eh.write("  pub fn " ++ f.name ++
     \\(self: *@This(), pos: model.Position, expected: []const u8,

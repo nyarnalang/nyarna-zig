@@ -242,6 +242,28 @@ pub const Evaluator = struct {
           return ret orelse try self.ctx.values.void(expr.pos);
         }
       },
+      .varargs => |*varargs| {
+        const list = try self.ctx.values.list(
+          expr.pos, &expr.expected_type.structural.list);
+        for (varargs.items) |*item| {
+          const val = try self.evaluate(item.expr);
+          if (item.direct) {
+            switch (val.data) {
+              .poison => {},
+              .list => |*inner| {
+                for (inner.content.items) |inner_item| {
+                  try list.content.append(inner_item);
+                }
+              },
+              else => unreachable,
+            }
+          } else switch (val.data) {
+            .poison => {},
+            else => try list.content.append(val),
+          }
+        }
+        return list.value();
+      },
       .var_retrieval => |*var_retr| return var_retr.variable.curPtr().*,
       .poison => return self.ctx.values.poison(expr.pos),
       .void => return self.ctx.values.void(expr.pos),

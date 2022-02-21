@@ -171,21 +171,55 @@ pub const SignatureMapper = struct {
     };
   }
 
+  fn addToVarargs(
+    self: *SignatureMapper,
+    index: usize,
+    t: model.Type,
+    arg: *model.Node,
+    direct: bool,
+  ) !void {
+    const vnode = if (self.filled[index]) blk: {
+      const cur_arg = self.args[index];
+      switch (cur_arg.data) {
+        .varargs => |*varargs| break :blk varargs,
+        else => {
+          const varargs = try self.intpr.node_gen.varargs(cur_arg.pos, t);
+          try varargs.content.append(self.intpr.allocator, .{
+            .direct = true,
+            .node = cur_arg,
+          });
+          self.args[index] = varargs.node();
+          break :blk varargs;
+        }
+      }
+    } else blk: {
+      const varargs = try self.intpr.node_gen.varargs(arg.pos, t);
+      self.args[index] = varargs.node();
+      self.filled[index] = true;
+      break :blk varargs;
+    };
+    try vnode.content.append(
+      self.intpr.allocator, .{.direct = direct, .node = arg});
+    vnode.node().pos = vnode.node().pos.span(arg.pos);
+  }
+
   fn push(mapper: *Mapper, at: Mapper.Cursor, content: *model.Node)
       nyarna.Error!void {
     const self = @fieldParentPtr(SignatureMapper, "mapper", mapper);
     const param = &self.signature.parameters[at.param.index];
     const target_type =
       if (at.direct) param.ptype
-      else if (self.varmapAt(at.param.index)) unreachable
+      else if (self.varmapAt(at.param.index)) param.ptype.structural.map.value
       else switch (param.capture) {
-      .varargs => unreachable,
+      .varargs => param.ptype.structural.list.inner,
       else => param.ptype,
     };
     const arg = if (target_type.is(.ast_node)) blk: {
-      defer self.cur_container = null;
-      break :blk try self.intpr.genValueNode(
-        (try self.intpr.ctx.values.ast(content, self.cur_container)).value());
+      if (at.direct or param.capture != .varargs) {
+        defer self.cur_container = null;
+        break :blk try self.intpr.genValueNode(
+          (try self.intpr.ctx.values.ast(content, self.cur_container)).value());
+      } else break :blk content;
     } else blk: {
       std.debug.assert(self.cur_container == null);
       if (try self.intpr.associate(
@@ -196,14 +230,21 @@ pub const SignatureMapper = struct {
     };
     if (self.varmapAt(at.param.index)) unreachable
     else switch (param.capture) {
-      .varargs => unreachable,
+      .varargs => {
+        try self.addToVarargs(at.param.index, param.ptype, arg, false);
+        return;
+      },
       else => {}
     }
-    if (self.filled[at.param.index])
-      self.intpr.ctx.logger.DuplicateParameterArgument(
-        self.signature.parameters[at.param.index].name, content.pos,
-        self.args[at.param.index].pos)
-    else {
+    if (self.filled[at.param.index]) {
+      if (param.capture == .varargs) {
+        try self.addToVarargs(at.param.index, param.ptype, arg, true);
+      } else {
+        self.intpr.ctx.logger.DuplicateParameterArgument(
+          self.signature.parameters[at.param.index].name, content.pos,
+          self.args[at.param.index].pos);
+      }
+    } else {
       self.args[at.param.index] = arg;
       self.filled[at.param.index] = true;
     }
@@ -244,6 +285,17 @@ pub const SignatureMapper = struct {
           continue;
         };
       }
+      if (param.capture == .varargs) switch (param.ptype) {
+        .structural => |strct| switch (strct.*) {
+          .list => |*list| if (list.inner.is(.ast_node)) {
+            const content = self.args[i];
+            self.args[i] = try self.intpr.genValueNode(
+              (try self.intpr.ctx.values.ast(content, null)).value());
+          },
+          else => {},
+        },
+        else => {},
+      };
     }
     return if (missing_param) try self.intpr.node_gen.poison(pos) else
       (try self.intpr.node_gen.rcall(pos, .{

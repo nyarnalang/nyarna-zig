@@ -29,6 +29,7 @@ fn subjectIsType(uacc: *model.Node.UnresolvedAccess, t: model.Type) bool {
 const TypeResolver = struct {
   ctx: graph.ResolutionContext,
   dres: *DeclareResolution,
+  worklist: std.ArrayListUnmanaged(*model.Node) = .{},
 
   fn init(dres: *DeclareResolution) TypeResolver {
     return .{
@@ -55,6 +56,7 @@ const TypeResolver = struct {
       .unresolved_symref => |*uref| {
         for (self.dres.defs) |def| {
           if (std.mem.eql(u8, def.name.content, uref.name)) {
+            try self.process(def.content);
             switch (def.content.data) {
               .gen_concat => |*gc| return uStruct(gc),
               .gen_intersection => |*gi| return uStruct(gi),
@@ -69,6 +71,8 @@ const TypeResolver = struct {
                 self.dres.intpr.ctx.logger.NotAType(item.pos);
                 return graph.ResolutionContext.Result.failed;
               },
+              .poison, .expression =>
+                return graph.ResolutionContext.Result.failed,
               else => unreachable,
             }
           }
@@ -80,6 +84,23 @@ const TypeResolver = struct {
   }
 
   fn process(self: *TypeResolver, node: *model.Node) !void {
+    switch (node.data) {
+      .expression, .poison, .gen_record, .funcgen => return,
+      else => {},
+    }
+    for (self.worklist.items) |wli, index| if (wli == node) {
+      const pos_list = try self.dres.intpr.allocator.alloc(
+        model.Position, self.worklist.items.len - index - 1);
+      for (pos_list) |*item, pindex| {
+        item.* = self.worklist.items[self.worklist.items.len - 1 - pindex].pos;
+      }
+      self.dres.intpr.ctx.logger.CircularType(node.pos, pos_list);
+      node.data = .poison;
+      return;
+    };
+    try self.worklist.append(self.dres.intpr.allocator, node);
+    defer _ = self.worklist.pop();
+
     if (try self.dres.intpr.tryInterpret(node,
         .{.kind = .final, .resolve = &self.ctx})) |expr| {
       node.data = .{.expression = expr};
@@ -250,11 +271,19 @@ pub const DeclareResolution = struct {
         return sym;
       },
       .poison => return try self.genSym(name, .poison, publish),
-      else => unreachable,
+      else => {
+        self.intpr.ctx.logger.EntityCannotBeNamed(value.origin);
+        return try self.genSym(name, .poison, publish);
+      },
     }
   }
 
   pub fn execute(self: *DeclareResolution) !void {
+    const ns_data = switch (self.in) {
+      .ns => |index| self.intpr.namespace(index),
+      .t => |t| try self.intpr.type_namespace(t),
+    };
+
     try self.processor.firstStep();
     try self.processor.secondStep(self.intpr.allocator);
     // third step: process components in reverse topological order.
@@ -271,19 +300,72 @@ pub const DeclareResolution = struct {
       // default expressions) has been resolved.
       for (defs) |def| {
         switch (def.content.data) {
-          .gen_concat => |*gc| try self.createStructural(gc),
-          .gen_enum, .gen_float => unreachable,
-          .gen_intersection => |*gi| try self.createStructural(gi),
-          .gen_list => |*gl| try self.createStructural(gl),
-          .gen_map => |*gm| try self.createStructural(gm),
-          .gen_numeric => unreachable,
-          .gen_optional => |*go| try self.createStructural(go),
-          .gen_paragraphs => |*gp| try self.createStructural(gp),
-          .gen_record => |*gr| try self.createInstantiated(gr),
-          .gen_textual => unreachable,
-          .funcgen => {},
+          .unresolved_call, .unresolved_symref => {
+            // could be function defined in a previous component (that would be
+            // fine). Try resolving.
+            if (
+              try self.intpr.tryInterpret(def.content, .{.kind = .intermediate})
+            ) |expr| {
+              def.content.data = .{.expression = expr};
+            } else switch (def.content.data) {
+              .unresolved_call, .unresolved_symref => {
+                // still unresolved => cannot be resolved.
+                // force error generation.
+                const res = try self.intpr.interpret(def.content);
+                def.content.data = .{.expression = res};
+              },
+              else => {},
+            }
+          },
           else => {},
         }
+
+        switch (def.content.data) {
+          .gen_concat => |*gc| {
+            try self.createStructural(gc); continue;
+          },
+          .gen_enum, .gen_float => unreachable,
+          .gen_intersection => |*gi| {
+            try self.createStructural(gi); continue;
+          },
+          .gen_list => |*gl| {
+            try self.createStructural(gl); continue;
+          },
+          .gen_map => |*gm| {
+            try self.createStructural(gm); continue;
+          },
+          .gen_numeric => unreachable,
+          .gen_optional => |*go| {
+            try self.createStructural(go); continue;
+          },
+          .gen_paragraphs => |*gp| {
+            try self.createStructural(gp); continue;
+          },
+          .gen_record => |*gr| {
+            try self.createInstantiated(gr); continue;
+          },
+          .gen_textual => unreachable,
+          .funcgen => continue,
+          .poison => {},
+          // anything that is an expression is already finished and can
+          // immediately be established.
+          // actually, if we encounter this, it is guaranteed to be the sole
+          // entry in this component.
+          .expression => |expr| switch (expr.data) {
+            .poison => {},
+            .value => |value| {
+              const sym = try self.genSymFromValue(def.name, value, def.public);
+              _ = try ns_data.tryRegister(self.intpr, sym);
+              continue;
+            },
+            else => self.intpr.ctx.logger.EntityCannotBeNamed(def.content.pos),
+          },
+          else => self.intpr.ctx.logger.EntityCannotBeNamed(def.content.pos),
+        }
+        // establish poison symbols
+        const sym = try self.genSym(def.name, .poison, def.public);
+        _ = try ns_data.tryRegister(self.intpr, sym);
+        def.content.data = .poison;
       }
 
       // resolve all references to other types in the generated types'
@@ -310,6 +392,8 @@ pub const DeclareResolution = struct {
                     fgen, .{.kind = .final, .resolve = &tr.ctx}, t),
                 };
                 if (!success) {
+                  const sym = try self.genSym(def.name, .poison, def.public);
+                  _ = try ns_data.tryRegister(self.intpr, sym);
                   def.content.data = .poison;
                   continue;
                 }
@@ -357,6 +441,8 @@ pub const DeclareResolution = struct {
             .funcgen => |*fgen| if (try fc.probe(fgen)) {
               self.intpr.ctx.logger.FailedToCalculateReturnType(
                 def.content.pos);
+              const sym = try self.genSym(def.name, .poison, def.public);
+              _ = try ns_data.tryRegister(self.intpr, sym);
               def.content.data = .poison;
             },
             else => {},
@@ -366,10 +452,6 @@ pub const DeclareResolution = struct {
 
       // establish model.Function symbols with fully resolved signatures, and
       // all other symbols that can be constructed by now.
-      const ns_data = switch (self.in) {
-        .ns => |index| self.intpr.namespace(index),
-        .t => |t| try self.intpr.type_namespace(t),
-      };
       for (defs) |def| {
         switch (def.content.data) {
           .funcgen => |*fgen| blk: {
@@ -384,19 +466,8 @@ pub const DeclareResolution = struct {
             _ = try ns_data.tryRegister(self.intpr, sym);
             continue;
           },
-          .poison => {},
-          .expression => |expr| {
-            const value = try self.intpr.ctx.evaluator().evaluate(expr);
-            _ = try ns_data.tryRegister(self.intpr,
-              try self.genSymFromValue(def.name, value, def.public));
-            continue;
-          },
-          else => continue,
+          else => {},
         }
-        // also establish poison symbols
-        const sym = try self.genSym(def.name, .poison, def.public);
-        _ = try ns_data.tryRegister(self.intpr, sym);
-        def.content.data = .poison;
       }
 
       // interpret function bodies and generate symbols for records

@@ -664,8 +664,16 @@ pub const Intrinsics = Provider.Wrapper(struct {
   }
 
   fn @"Intersection"(intpr: *Interpreter, pos: model.Position,
-                     input_types: []*model.Node) nyarna.Error!*model.Node {
-    return (try intpr.node_gen.tgIntersection(pos, input_types)).node();
+                     input_types: *model.Node) nyarna.Error!*model.Node {
+    const given_types = switch (input_types.data) {
+      .varargs => |*va| va.content.items,
+      else => blk: {
+        const arr = try intpr.allocator.alloc(model.Node.Varargs.Item, 1);
+        arr[0] = .{.direct = true, .node = input_types};
+        break :blk arr;
+      }
+    };
+    return (try intpr.node_gen.tgIntersection(pos, given_types)).node();
   }
 
   fn @"Textual"(intpr: *Interpreter, pos: model.Position,
@@ -1067,7 +1075,7 @@ pub fn intrinsicModule(ctx: Context) !*model.Module {
   // Intersection
   b = try types.SigBuilder.init(ctx, 1, .{.intrinsic = .ast_node}, false);
   try b.push((try ctx.values.intLocation("types", (try ctx.types().list(
-    .{.intrinsic = .@"type"})).?)).withVarargs(model.Position.intrinsic()));
+    .{.intrinsic = .ast_node})).?)).withVarargs(model.Position.intrinsic()));
   ctx.types().constructors.prototypes.intersection = try
     prototypeConstructor(ctx, &ip.provider, "Intersection", b.finish());
   ret.symbols[index] =

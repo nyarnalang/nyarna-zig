@@ -414,6 +414,16 @@ const AstEmitter = struct {
       },
       .unresolved_symref => |u|
         try self.emitLine("=SYMREF [{}]{s}", .{u.ns, u.name}),
+      .varargs => |va| {
+        const varargs = try self.push("VARARGS");
+        for (va.content.items) |item| {
+          try self.emitLine(">ITEM {s}", .{
+            if (item.direct) @as([]const u8, "direct") else "indirect",
+          });
+          try self.process(item.node);
+        }
+        try varargs.pop();
+      },
       .vt_setter => |vs| {
         const setter = try self.push("VT_SETTER");
         try self.emitLine("=VARIABLE {s}", .{vs.v.sym().name});
@@ -475,6 +485,16 @@ const AstEmitter = struct {
           try self.processExpr(para.content);
         }
         try p.pop();
+      },
+      .varargs => |va| {
+        const varargs = try self.push("VARARGS");
+        for (va.items) |item| {
+          try self.emitLine(">ITEM {s}", .{
+            if (item.direct) @as([]const u8, "direct") else "indirect",
+          });
+          try self.processExpr(item.expr);
+        }
+        try varargs.pop();
       },
       .var_retrieval => |v| {
         try self.emitLine("=GETVAR {s}", .{v.variable.sym().name});
@@ -608,15 +628,16 @@ const ErrorEmitter = struct {
   fn init(handler: *Checker) ErrorEmitter {
     return .{
       .api = .{
-        .lexerErrorFn = lexerError,
-        .parserErrorFn = parserError,
-        .wrongItemErrorFn = wrongItemError,
-        .unknownErrorFn = unknownError,
-        .wrongIdErrorFn = wrongIdError,
+        .lexerErrorFn        = lexerError,
+        .parserErrorFn       = parserError,
+        .wrongItemErrorFn    = wrongItemError,
+        .unknownErrorFn      = unknownError,
+        .wrongIdErrorFn      = wrongIdError,
         .previousOccurenceFn = previousOccurence,
-        .wrongTypeErrorFn = wrongTypeError,
+        .posChainFn          = posChain,
+        .wrongTypeErrorFn    = wrongTypeError,
         .constructionErrorFn = constructionError,
-        .fileErrorFn = fileError,
+        .fileErrorFn         = fileError,
       },
       .handler = handler,
     };
@@ -711,6 +732,17 @@ const ErrorEmitter = struct {
     self.forwardError(id, pos);
     self.forwardArg("repr", "{s}", repr);
     self.forwardArg("previous", "{s}", previous);
+  }
+
+  fn posChain(
+    reporter: *errors.Reporter,
+    id: errors.PositionChainError,
+    pos: model.Position,
+    referenced: []model.Position,
+  ) void {
+    const self = @fieldParentPtr(ErrorEmitter, "api", reporter);
+    self.forwardError(id, pos);
+    for (referenced) |ref| self.forwardArg("referenced", "{s}", ref);
   }
 
   fn wrongTypeError(

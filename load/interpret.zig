@@ -921,6 +921,46 @@ pub const Interpreter = struct {
     return null;
   }
 
+  fn tryInterpretVarargs(
+    self: *Interpreter,
+    va: *model.Node.Varargs,
+    stage: Stage,
+  ) nyarna.Error!?*model.Expression {
+    var seen_poison = false;
+    var seen_unfinished = false;
+    for (va.content.items) |item| {
+      if (try self.tryInterpret(item.node, stage)) |expr| {
+        if (expr.expected_type.is(.poison)) seen_poison = true;
+        item.node.data = .{.expression = expr};
+      } else seen_unfinished = true;
+    }
+    if (seen_unfinished) {
+      return if (stage.kind == .keyword or stage.kind == .final)
+        try self.ctx.createValueExpr(
+          try self.ctx.values.poison(va.node().pos))
+      else null;
+    } else if (seen_poison) {
+      return try self.ctx.createValueExpr(
+        try self.ctx.values.poison(va.node().pos));
+    }
+    const items = try self.ctx.global().alloc(
+      model.Expression.Varargs.Item, va.content.items.len);
+    for (va.content.items) |item, index| {
+      items[index] =
+        .{.direct = item.direct, .expr = item.node.data.expression};
+    }
+
+    const vexpr = try self.ctx.global().create(model.Expression);
+    vexpr.* = .{
+      .pos = va.node().pos,
+      .expected_type = va.t,
+      .data = .{.varargs = .{
+        .items = items,
+      }},
+    };
+    return vexpr;
+  }
+
   fn tryInterpretVarTypeSetter(
       self: *Interpreter, vs: *model.Node.VarTypeSetter, stage: Stage)
       nyarna.Error!?*model.Expression {
@@ -940,7 +980,7 @@ pub const Interpreter = struct {
       !TypeResult {
     const val = while (true) switch (node.data) {
       .unresolved_symref => |*usym| {
-        var expr = (try self.tryInterpretURef(usym, stage))
+        var expr = (try self.tryInterpretURef(usym, .{.kind = .intermediate}))
           orelse if (stage.resolve) |r|
             switch (try r.probeSibling(self.allocator, node)) {
               .unfinished_function => {
@@ -948,11 +988,11 @@ pub const Interpreter = struct {
                 return TypeResult.failed;
               },
               .unfinished_type => |t| return TypeResult{.unfinished = t},
-              .known => return TypeResult.unavailable,
-              .failed => {
+              .known => if (stage.kind == .keyword or stage.kind == .final) {
                 self.ctx.logger.UnknownSymbol(node.pos, usym.name);
                 return TypeResult.failed;
-              },
+              } else return TypeResult.unavailable,
+              .failed => return TypeResult.failed,
               .variable => |v| return TypeResult{.finished = v.t},
             } else return TypeResult.unavailable;
         break try self.ctx.evaluator().evaluate(expr);
@@ -1020,66 +1060,104 @@ pub const Interpreter = struct {
     _ = self; _ = gf; _ = stage; unreachable;
   }
 
-  fn tryGenIntersection(
-      self: *Interpreter, gi: *model.Node.tg.Intersection, stage: Stage)
-      nyarna.Error!?*model.Expression {
-    var scalar: ?struct {
+  const IntersectionChecker = struct {
+    const Result = struct {
+      scalar: ?model.Type = null,
+      append: ?[]const model.Type = null,
+      failed: bool = false,
+    };
+
+    intpr: *Interpreter,
+    builder: *types.IntersectionTypeBuilder,
+    scalar: ?struct {
       pos: model.Position,
       t: model.Type,
-    } = null;
-    var builder = try types.IntersectionTypeBuilder.init(
-      gi.types.len + 1, self.allocator);
-    var failed_some = false;
-    var poison = false;
-    for (gi.types) |node| {
-      var unfinished_other_inter = false;
-      const inner = switch (try self.tryGetType(node, stage)) {
-        .finished => |t| t,
-        .unfinished => |t| blk: {
-          unfinished_other_inter = t.isStructural(.intersection);
-          break :blk t;
-        },
-        .unavailable => {
-          failed_some = true;
-          continue;
-        },
-        .failed => {
-          poison = true;
-          continue;
-        },
-      };
-      const Check = struct {
-        scalar: ?model.Type = null,
-        append: ?[]const model.Type = null,
-        failed: bool = false,
-      };
-      const result = switch (inner) {
+    } = null,
+
+    fn push(self: *@This(), t: model.Type, pos: model.Position) void {
+      const result: Result = switch (t) {
         .structural => |strct| switch (strct.*) {
-          .intersection => |*ci| Check{.scalar = ci.scalar, .append = ci.types},
-          else => Check{.failed = true},
+          .intersection => |*ci| Result{
+            .scalar = ci.scalar, .append = ci.types,
+          },
+          else => Result{.failed = true},
         },
         .intrinsic => |i| switch (i) {
-          .space, .literal, .raw => Check{.scalar = inner},
-          else => Check{.failed = true},
+          .space, .literal, .raw => Result{.scalar = t},
+          else => Result{.failed = true},
         },
         .instantiated => |inst| switch (inst.data) {
-          .textual => Check{.scalar = inner},
-          .numeric, .float, .tenum => Check{.scalar = .{.intrinsic = .raw}},
-          .record => Check{.append = @ptrCast([*]const model.Type, &inner)[0..1]},
+          .textual => Result{.scalar = t},
+          .numeric, .float, .tenum => Result{.scalar = .{.intrinsic = .raw}},
+          .record => Result{.append = @ptrCast([*]const model.Type, &t)[0..1]},
         },
       };
       if (result.scalar) |s| {
-        if (scalar) |prev| {
+        if (self.scalar) |prev| {
           if (!s.eql(prev.t)) {
-            self.ctx.logger.MultipleScalarTypesInIntersection(
-              "TODO", node.pos, prev.pos);
+            self.intpr.ctx.logger.MultipleScalarTypesInIntersection(
+              "TODO", pos, prev.pos);
           }
-        } else scalar = .{.pos = node.pos, .t = s};
+        } else self.scalar = .{.pos = pos, .t = s};
       }
-      if (result.append) |append| builder.push(append);
+      if (result.append) |append| self.builder.push(append);
       if (result.failed) {
-        self.ctx.logger.InvalidInnerIntersectionType(
-          node.pos, &[_]model.Type{inner});
+        self.intpr.ctx.logger.InvalidInnerIntersectionType(
+          pos, &[_]model.Type{t});
+      }
+    }
+  };
+
+  fn tryGenIntersection(
+      self: *Interpreter, gi: *model.Node.tg.Intersection, stage: Stage)
+      nyarna.Error!?*model.Expression {
+    var failed_some = false;
+    var poison = false;
+    var type_count: usize = 0;
+    for (gi.types) |item| {
+      if (item.direct) {
+        if (try self.tryInterpret(item.node, stage)) |expr| {
+          const val = try self.ctx.evaluator().evaluate(expr);
+          switch (val.data) {
+            .poison => poison = true,
+            .list => |*list| type_count += list.content.items.len,
+            else => unreachable,
+          }
+          item.node.data = .{.expression = try self.ctx.createValueExpr(val)};
+        }
+      } else type_count += 1;
+    }
+
+    var builder = try types.IntersectionTypeBuilder.init(
+      type_count + 1, self.allocator);
+    var checker = IntersectionChecker{.builder = &builder, .intpr = self};
+
+    for (gi.types) |item| {
+      if (item.direct) {
+        const val = item.node.data.expression.data.value;
+        switch (val.data) {
+          .list => |*list| {
+            for (list.content.items) |list_item| {
+              checker.push(list_item.data.@"type".t, list_item.origin);
+            }
+          },
+          .poison => {},
+          else => unreachable,
+        }
+      } else {
+        const inner = switch (try self.tryGetType(item.node, stage)) {
+          .finished => |t| t,
+          .unfinished => |t| t,
+          .unavailable => {
+            failed_some = true;
+            continue;
+          },
+          .failed => {
+            poison = true;
+            continue;
+          },
+        };
+        checker.push(inner, item.node.pos);
       }
     }
     if (poison) {
@@ -1087,7 +1165,7 @@ pub const Interpreter = struct {
         try self.ctx.values.poison(gi.node().pos));
     }
     if (failed_some) return null;
-    if (scalar) |found_scalar| {
+    if (checker.scalar) |found_scalar| {
       builder.push(@ptrCast([*]const model.Type, &found_scalar.t)[0..1]);
     }
     const t = try builder.finish(self.ctx.types());
@@ -1197,6 +1275,7 @@ pub const Interpreter = struct {
       .unresolved_access => |*ua| self.tryInterpretUAccess(ua, stage),
       .unresolved_call   => |*uc| self.tryInterpretUCall(uc, stage),
       .unresolved_symref => |*us| self.tryInterpretURef(us, stage),
+      .varargs           => |*va| self.tryInterpretVarargs(va, stage),
       .vt_setter         => |*vs| self.tryInterpretVarTypeSetter(vs, stage),
       .void, .poison => {
         const expr = try self.ctx.global().create(model.Expression);
@@ -1431,6 +1510,7 @@ pub const Interpreter = struct {
           return expr.expected_type;
         } else return null;
       },
+      .varargs => |*varargs| return varargs.t,
       .void => return model.Type{.intrinsic = .void},
       .poison => return model.Type{.intrinsic = .poison},
     }
@@ -1544,7 +1624,7 @@ pub const Interpreter = struct {
       .assign, .definition, .funcgen, .import, .location, .resolved_access,
       .resolved_symref, .resolved_call, .gen_concat, .gen_enum, .gen_float,
       .gen_intersection, .gen_list, .gen_map, .gen_numeric, .gen_optional,
-      .gen_paragraphs, .gen_record, .gen_textual => {
+      .gen_paragraphs, .gen_record, .gen_textual, .varargs => {
         if (try self.tryInterpret(input, stage)) |expr| {
           if (types.containedScalar(expr.expected_type)) |scalar_type| {
             if (self.ctx.types().lesserEqual(scalar_type, t)) return expr;

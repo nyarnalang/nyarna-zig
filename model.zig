@@ -310,11 +310,11 @@ pub const Locator = struct {
     return if (self.resolver) |res| Locator{
       .repr = self.repr[0..res.len + 2 + end],
       .resolver = res,
-      .path = self.path[0..end]
+      .path = self.path[0..end],
     } else Locator{
       .repr = self.repr[0..end],
       .resolver = null,
-      .path = self.path[0..end]
+      .path = self.path[0..end],
     };
   }
 };
@@ -597,6 +597,22 @@ pub const Node = struct {
       return self.node().pos.trimFrontChar(self.nschar_len);
     }
   };
+
+  /// collects the multiple arguments given to a varargs parameter.
+  pub const Varargs = struct {
+    pub const Item = struct {
+      direct: bool = false,
+      node: *Node,
+    };
+
+    t: Type,
+    content: std.ArrayListUnmanaged(Item) = .{},
+
+    pub inline fn node(self: *@This()) *Node {
+      return Node.parent(self);
+    }
+  };
+
   /// special node for the sole purpose of setting a variable's type later.
   /// variables must be established immediately so that references to their
   /// symbol can be resolved before the symbol goes out of scope. However, the
@@ -639,7 +655,7 @@ pub const Node = struct {
       pub inline fn node(self: *@This()) *Node {return Node.parent(self);}
     };
     pub const Intersection = struct {
-      types: []*Node,
+      types: []Varargs.Item,
       generated: ?*Type.Structural = null,
       pub inline fn node(self: *@This()) *Node {return Node.parent(self);}
     };
@@ -712,6 +728,7 @@ pub const Node = struct {
     unresolved_access: UnresolvedAccess,
     unresolved_call  : UnresolvedCall,
     unresolved_symref: UnresolvedSymref,
+    varargs          : Varargs,
     vt_setter        : VarTypeSetter,
     poison,
     void,
@@ -750,6 +767,7 @@ pub const Node = struct {
       UnresolvedAccess => offset(Data, "unresolved_access"),
       UnresolvedCall   => offset(Data, "unresolved_call"),
       UnresolvedSymref => offset(Data, "unresolved_symref"),
+      Varargs          => offset(Data, "varargs"),
       VarTypeSetter    => offset(Data, "vt_setter"),
       else => unreachable
     };
@@ -1408,6 +1426,17 @@ pub const Expression = struct {
   };
   pub const Paragraphs = []Paragraph;
 
+  /// used to enclose arguments given to a varargs parameter.
+  /// expected_type will be a List(T).
+  pub const Varargs = struct {
+    pub const Item = struct {
+      direct: bool,
+      expr: *Expression,
+    };
+
+    items: []Item,
+  };
+
   pub const Data = union(enum) {
     access: Access,
     assignment: Assignment,
@@ -1417,6 +1446,7 @@ pub const Expression = struct {
     paragraphs: Paragraphs,
     var_retrieval: VarRetrieval,
     value: *Value,
+    varargs: Varargs,
     poison, void,
   };
 
@@ -1429,9 +1459,14 @@ pub const Expression = struct {
   fn parent(it: anytype) *Expression {
     const t = @typeInfo(@TypeOf(it)).Pointer.child;
     const addr = @ptrToInt(it) - switch (t) {
-      Call => offset(Data, "call"),
-      Assignment => offset(Data, "assignment"),
-      Access => offset(Data, "access"),
+      Access        => offset(Data, "access"),
+      Assignment    => offset(Data, "assignment"),
+      Branches      => offset(Data, "branches"),
+      Call          => offset(Data, "call"),
+      Concatenation => offset(Data, "concatenation"),
+      Paragraphs    => offset(Data, "paragraphs"),
+      VarRetrieval  => offset(Data, "var_retrieval"),
+      Varargs       => offset(Data, "varargs"),
       else => unreachable
     };
     return @fieldParentPtr(Expression, "data", @intToPtr(*Data, addr));
@@ -1933,8 +1968,11 @@ pub const NodeGenerator = struct {
       pos, .{.gen_float = .{.precision = precision}})).data.gen_float;
   }
 
-  pub inline fn tgIntersection(self: *Self, pos: Position, types: []*Node)
-      !*Node.tg.Intersection {
+  pub inline fn tgIntersection(
+    self: *Self,
+    pos: Position,
+    types: []Node.Varargs.Item
+  ) !*Node.tg.Intersection {
     return &(try self.node(
       pos, .{.gen_intersection = .{.types = types}})).data.gen_intersection;
   }
@@ -2017,6 +2055,11 @@ pub const NodeGenerator = struct {
   ) !*Node.UnresolvedSymref {
     return &(try self.node(
       pos, .{.unresolved_symref = content})).data.unresolved_symref;
+  }
+
+  pub inline fn varargs(self: *Self, pos: Position, t: Type) !*Node.Varargs {
+    return &(try self.node(
+      pos, .{.varargs = .{.t = t}})).data.varargs;
   }
 
   pub inline fn vtSetter(self: *Self, v: *Symbol.Variable, n: *Node) !*Node {
