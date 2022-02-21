@@ -170,64 +170,117 @@ pub const Intrinsics = Provider.Wrapper(struct {
   fn declare(intpr: *Interpreter, pos: model.Position, ns: u15,
              parent: ?model.Type, public: *model.Node, private: *model.Node)
       nyarna.Error!*model.Node {
-    var def_count: usize = 0;
-    for ([_]*model.Node{public, private}) |node| switch (node.data) {
-      .void, .poison => {},
-      .definition => def_count += 1,
-      .concat => |*con| def_count += con.items.len,
-      else => {
-        const expr = (try intpr.associate(
-          node, (try intpr.ctx.types().concat(
-            model.Type{.intrinsic = .definition})).?, .{.kind = .keyword}))
-          orelse {
-            node.data = .void;
-            continue;
-          };
-        const value = try intpr.ctx.evaluator().evaluate(expr);
-        if (value.data == .poison) {
-          node.data = .poison;
-          continue;
+    const DefCollector = struct {
+      count: usize = 0,
+      defs: []*model.Node.Definition = undefined,
+
+      fn collect(self: *@This(), node: *model.Node, ip: *Interpreter) !void {
+        switch (node.data) {
+          .void, .poison => {},
+          .definition => self.count += 1,
+          .concat => |*con| self.count += con.items.len,
+          else => {
+            const expr = (try ip.associate(
+              node, (try ip.ctx.types().concat(
+                model.Type{.intrinsic = .definition})).?, .{.kind = .keyword}))
+              orelse {
+                node.data = .void;
+                return;
+              };
+            const value = try ip.ctx.evaluator().evaluate(expr);
+            if (value.data == .poison) {
+              node.data = .poison;
+              return;
+            }
+            self.count += value.data.concat.content.items.len;
+            expr.data = .{.value = value};
+            node.data = .{.expression = expr};
+          }
         }
-        def_count += value.data.concat.content.items.len;
-        expr.data = .{.value = value};
-        node.data = .{.expression = expr};
+      }
+
+      fn allocate(self: *@This(), allocator: std.mem.Allocator) !void {
+        self.defs = try allocator.alloc(*model.Node.Definition, self.count);
+        self.count = 0;
+      }
+
+      fn checkName(
+        self: *@This(),
+        name: []const u8,
+        name_pos: model.Position,
+        ip: *Interpreter,
+      ) bool {
+        var i: usize = 0; while (i < self.count) : (i += 1) {
+          if (std.mem.eql(u8, self.defs[i].name.content, name)) {
+            ip.ctx.logger.DuplicateSymbolName(
+              name, name_pos, self.defs[i].name.node().pos);
+            return false;
+          }
+        }
+        return true;
+      }
+
+      fn append(
+        self: *@This(),
+        node: *model.Node,
+        ip: *Interpreter,
+        pdef: bool,
+      ) nyarna.Error!void {
+        switch (node.data) {
+          .void, .poison => {},
+          .definition => |*def| {
+            if (self.checkName(def.name.content, def.name.node().pos, ip)) {
+              if (pdef) def.public = true;
+              self.defs[self.count] = def;
+              self.count += 1;
+            }
+          },
+          .concat => |*con| for (con.items) |item| {
+            try self.append(item, ip, pdef);
+          },
+          .expression => |expr| {
+            for (expr.data.value.data.concat.content.items) |item| {
+              const def = &item.data.definition;
+              if (self.checkName(
+                def.name.content,
+                def.name.value().origin,
+                ip)
+              ) {
+                const def_node = try ip.node_gen.definition(item.origin, .{
+                  .name = try ip.node_gen.literal(def.name.value().origin, .{
+                    .kind = .text, .content = def.name.content,
+                  }),
+                  .root = def.root,
+                  .content = try ip.node_gen.expression(
+                    try ip.ctx.createValueExpr(def.content)
+                  ),
+                  .public = pdef,
+                });
+                self.defs[self.count] = def_node;
+                self.count += 1;
+              }
+            }
+          },
+          else => unreachable,
+        }
+      }
+
+      fn finish(self: *@This()) []*model.Node.Definition {
+        return self.defs[0..self.count];
       }
     };
 
-    var defs = try intpr.allocator.alloc(*model.Node.Definition, def_count);
-    def_count = 0;
-    for ([_]*model.Node{public, private}) |node, i| switch (node.data) {
-      .void, .poison => {},
-      .definition => |*def| {
-        if (i == 0) def.public = true;
-        defs[def_count] = def;
-        def_count += 1;
-      },
-      .concat => |*con| for (con.items) |item| {
-        // TODO: check for definition
-        const def = &item.data.definition;
-        if (i == 0) def.public = true;
-        defs[def_count] = def;
-        def_count += 1;
-      },
-      .expression => |expr| {
-        for (expr.data.value.data.concat.content.items) |item| {
-          const def = &item.data.definition;
-          defs[def_count] = try intpr.node_gen.definition(item.origin, .{
-            .name = try intpr.node_gen.literal(def.name.value().origin, .{
-              .kind = .text, .content = def.name.content,
-            }),
-            .root = def.root,
-            .content = try intpr.node_gen.expression(
-              try intpr.ctx.createValueExpr(def.content)),
-            .public = i == 0,
-          });
-          def_count += 1;
-        }
-      },
-      else => unreachable,
-    };
-    var res = try algo.DeclareResolution.create(intpr, defs, ns, parent);
+    var collector = DefCollector{};
+    for ([_]*model.Node{public, private}) |node| {
+      try collector.collect(node, intpr);
+    }
+    try collector.allocate(intpr.allocator);
+
+    for ([_]*model.Node{public, private}) |node, i| {
+      try collector.append(node, intpr, i == 0);
+    }
+    var res = try algo.DeclareResolution.create(
+      intpr, collector.finish(), ns, parent);
     try res.execute();
     return intpr.node_gen.@"void"(pos);
   }
