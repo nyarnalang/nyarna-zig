@@ -956,21 +956,22 @@ pub const Parser = struct {
               const start = self.cur_start;
               self.lexer.readBlockHeader();
               const value = try self.intpr().ctx.global().create(model.Value);
-              value.data = .{.block_header = undefined};
+              value.data = .{.block_header = .{}};
               const bh = &value.data.block_header;
 
               self.advance();
-              const check_swallow = if (self.cur == .diamond_open) blk: {
-                bh.config = @as(model.BlockConfig, undefined);
-                try self.readBlockConfig(&bh.config.?,
-                  self.intpr().ctx.global());
-                if (self.cur == .blocks_sep) {
-                  self.advance();
-                  break :blk true;
-                } else break :blk false;
-              } else true;
-              if (check_swallow) {
-                bh.swallow_depth = self.checkSwallow();
+              const check_swallow: ?model.Position =
+                if (self.cur == .diamond_open) blk: {
+                  bh.config = @as(model.BlockConfig, undefined);
+                  try self.readBlockConfig(&bh.config.?,
+                    self.intpr().ctx.global());
+                  if (self.cur == .blocks_sep) {
+                    defer self.advance();
+                    break :blk self.lexer.walker.posFrom(self.cur_start);
+                  } else break :blk null;
+                } else self.lexer.walker.source.between(start, self.cur_start);
+              if (check_swallow) |colon_pos| {
+                bh.swallow_depth = self.checkSwallow(colon_pos);
               }
 
               value.origin = self.intpr().input.between(start, self.cur_start);
@@ -1196,6 +1197,8 @@ pub const Parser = struct {
   ///     explicit block config.
   fn processBlockHeader(self: *Parser, pb_exists: ?*PrimaryBlockExists) !bool {
     const parent = self.curLevel();
+    // position of the colon *after* a block header, for additional swallow
+    var colon_start: ?model.Position = null;
     const check_swallow = if (self.cur == .diamond_open) blk: {
       try self.readBlockConfig(&self.config_buffer, self.allocator());
       const pos = self.intpr().input.at(self.cur_start);
@@ -1207,12 +1210,13 @@ pub const Parser = struct {
       }
       try self.applyBlockConfig(pos, &self.config_buffer);
       if (self.cur == .blocks_sep) {
+        colon_start = self.lexer.walker.posFrom(self.cur_start);
         self.advance();
         break :blk true;
       } else break :blk false;
     } else true;
     if (check_swallow) {
-      if (self.checkSwallow()) |swallow_depth| {
+      if (self.checkSwallow(colon_start)) |swallow_depth| {
         if (pb_exists) |ind| {
           if (ind.* == .unknown) {
             parent.command.pushPrimary(
@@ -1301,26 +1305,34 @@ pub const Parser = struct {
     return false;
   }
 
-  fn checkSwallow(self: *Parser) ?u21 {
-    return switch (self.cur) {
-      .swallow_depth => blk: {
+  /// if colon_pos is given, assumes that swallowing *must* occur and issues an
+  /// error using the colon_pos if non occurs.
+  fn checkSwallow(self: *Parser, colon_pos: ?model.Position) ?u21 {
+    switch (self.cur) {
+      .swallow_depth => {
         const swallow_depth = self.lexer.code_point;
+        const start = self.cur_start;
         self.advance();
         if (self.cur == .diamond_close) {
           self.advance();
         } else {
           self.logger().SwallowDepthWithoutDiamondClose(
-            self.intpr().input.at(self.cur_start));
-          break :blk null;
+            self.lexer.walker.source.between(start, self.cur_start));
+          return null;
         }
-        break :blk swallow_depth;
+        return swallow_depth;
       },
-      .diamond_close => blk: {
+      .diamond_close => {
         self.advance();
-        break :blk 0;
+        return 0;
       },
-      else => null,
-    };
+      else => {
+        if (colon_pos) |pos| {
+          self.intpr().ctx.logger.IllegalColon(pos);
+        }
+        return null;
+      }
+    }
   }
 
   fn applyBlockConfig(self: *Parser, pos: model.Position,

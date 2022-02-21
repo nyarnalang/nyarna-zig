@@ -613,8 +613,9 @@ pub const Lexer = struct {
             return .diamond_close;
           },
           '0'...'9' => {
-            l.readNumber(&cur);
+            l.readNumber(&cur); // assigns to l.cur_stored
             l.state = .after_depth;
+            l.recent_end = l.walker.before;
             return .swallow_depth;
           },
           else => l.state = if (l.level.special == .disabled) .at_header

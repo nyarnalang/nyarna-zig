@@ -1638,8 +1638,8 @@ pub const Value = struct {
   /// This value type is used to read in block headers within SpecialSyntax,
   /// e.g. the default block configuration of function parameters.
   pub const BlockHeader = struct {
-    config: ?BlockConfig,
-    swallow_depth: ?u21,
+    config: ?BlockConfig = null,
+    swallow_depth: ?u21 = null,
 
     pub inline fn value(self: *@This()) *Value {
       return Value.parent(self);
