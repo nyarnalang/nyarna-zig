@@ -324,7 +324,7 @@ const AstEmitter = struct {
       },
       .gen_intersection => |gi| {
         const gen = try self.pushWithKey("TGEN", "Intersection", null);
-        for (gi.types) |item| try self.process(item);
+        for (gi.types) |item| try self.process(item.node);
         try gen.pop();
       },
       .gen_list => |gl| {
