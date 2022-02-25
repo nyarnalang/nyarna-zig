@@ -4,4 +4,4 @@
   bar
 \end(if)
 --- errors:expr
-3:13 - 3:16 IllegalContentAfterColon
+3:13 - 3:16 IllegalContentAtHeader

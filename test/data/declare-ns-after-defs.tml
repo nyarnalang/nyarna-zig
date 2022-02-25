@@ -1,0 +1,21 @@
+=== declare namespace after definitions
+--- input
+\declare:
+  breakfast = \func:
+    cereal, milk : \Raw
+  :body:
+    \cereal\milk
+  \end(func)
+:namespace:
+  \Raw
+\end(declare)
+
+\Raw::breakfast(wheat, soy)
+--- expr
++CALL
+  =FUNCREF .doc.input.breakfast
+  >ARG cereal
+  =TEXT raw "wheat"
+  >ARG milk
+  =TEXT raw "soy"
+-CALL

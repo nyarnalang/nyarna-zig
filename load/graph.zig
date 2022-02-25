@@ -2,23 +2,50 @@ const std = @import("std");
 
 const nyarna = @import("../nyarna.zig");
 const model = nyarna.model;
+const interpret = @import("interpret.zig");
+const Interpreter = interpret.Interpreter;
 
 /// Used for resolution of cyclical references inside \declare and templates.
 /// If given to Interpreter.probeType, probeSibling will be called on unresolved
 /// calls and symbol references.
 pub const ResolutionContext = struct {
   pub const Result = union(enum) {
+    /// The symbol resolves to an unfinished function. The returned type may be
+    /// used to calculate the type of calls to this function.
     unfinished_function: model.Type,
+    /// The symbol has been resolved to a type which has not yet been finalized.
+    /// The returned type may be used as inner type to construct another type,
+    /// but must not be used for anything else since it is unfinished.
     unfinished_type: model.Type,
+    /// The symbol's name has been resolved to the given variable.
     variable: *model.Symbol.Variable,
-    known: ?u21,
+    /// The symbol's name can be resolved to a sibling symbol but no type
+    /// information is currently available. The value is the index of the
+    /// target sibling node. It is used when building up a dependency graph
+    /// between items in a \declare command, it creates a dependency edge
+    /// between the current node and the node at the given index.
+    known: u21,
+    /// return this if the name cannot be resolved but may be later. This is
+    /// used when discovering cross-function references because there may be
+    /// variables yet unresolved that should not lead to an error.
+    unknown,
+    /// The referenced symbol is unknown altogether and the caller must assume
+    /// this reference cannot be resolved in future steps. Returning .failed
+    /// implies that an appropriate error has been logged.
     failed,
   };
   pub const StrippedResult = union(enum) {
     unfinished_function: model.Type,
     unfinished_type: model.Type,
     variable: *model.Symbol.Variable,
-    known, failed,
+    /// subject *may* be resolvable in the future but currently isn't.
+    unknown,
+    /// subject is guaranteed to be poison and an error message has been logged.
+    poison,
+  };
+  pub const AccessData = struct {
+    result: StrippedResult,
+    is_prefix: bool,
   };
 
   pub const Target = union(enum) {
@@ -26,31 +53,17 @@ pub const ResolutionContext = struct {
     t: model.Type,
   };
 
-  /// must only be called on unresolved calls or symbol references. returns
-  ///   .unfinished_function
-  ///     during type inference for calls that form cycles back to the currently
-  ///     processed function body. Implies that the returned type should be used
-  ///     to calculate the containing entity's type. The returned index is the
-  ///     index of the called entity, used for building the dependency graph.
-  ///   .unfinished_type
-  ///     if the node has been resolved to a type which has not yet been
-  ///     finalized. The returned type may be used as inner type to construct
-  ///     another type, but must not be used for anything else since it is
-  ///     unfinished.
-  ///   .known
-  ///     if the reference's name can be resolved to a sibling symbol but no
-  ///     type information is currently available. The value is the index of the
-  ///     target sibling node, or null in case of unresolved_call. It is used
-  ///     when building up a dependency graph between items in a \declare
-  ///     command, it creates a dependency edge between the current node and the
-  ///     node at the given index.
-  ///   .variable
-  ///     if the reference's name has been resolved to a variable.
-  ///   .failed
-  ///     when the referenced symbol is unknown altogether and the caller must
-  ///     assume this reference cannot be resolved in future steps.
-  resolveInSiblingDefinitions: fn(ctx: *ResolutionContext, item: *model.Node)
-                                 nyarna.Error!Result,
+  /// try to resolve an unresolved name in the current context.
+  /// this function is called when the name originates in a symref in the
+  /// correct namespace (if context is namespace-based) or in an access on the
+  /// correct type or an expression of the correct type
+  /// (if context is type-based).
+  resolveNameFn: fn(
+    ctx: *ResolutionContext,
+    name: []const u8,
+    name_pos: model.Position,
+  ) nyarna.Error!Result,
+
   /// registers all links to sibling nodes that are encountered.
   /// will be set during graph processing and is not to be set by the caller.
   dependencies: std.ArrayListUnmanaged(usize) = undefined,
@@ -58,26 +71,84 @@ pub const ResolutionContext = struct {
   /// reside. either a command character namespace or a type.
   target: Target,
 
-  fn addDep(ctx: *ResolutionContext, local: std.mem.Allocator,
-            index: usize) !void {
-    for (ctx.dependencies.items) |item| if (item == index) return;
-    try ctx.dependencies.append(local, index);
-  }
-
-  pub fn probeSibling(ctx: *ResolutionContext, local: std.mem.Allocator,
-                      item: *model.Node)
-      !StrippedResult {
-    const res = try ctx.resolveInSiblingDefinitions(ctx, item);
+  fn strip(
+    ctx: *ResolutionContext,
+    local: std.mem.Allocator,
+    res: Result
+  ) !StrippedResult {
     return switch (res) {
       .unfinished_function => |t| StrippedResult{.unfinished_function = t},
       .unfinished_type => |t| StrippedResult{.unfinished_type = t},
       .variable => |v| StrippedResult{.variable = v},
-      .known => |value| blk: {
-        if (value) |index| try ctx.addDep(local, index);
-        break :blk .known;
+      .known => |index| {
+        for (ctx.dependencies.items) |item| {
+          if (item == index) return StrippedResult.unknown;
+        }
+        try ctx.dependencies.append(local, index);
+        return StrippedResult.unknown;
       },
-      .failed => .failed,
+      .unknown => StrippedResult.unknown,
+      .failed => StrippedResult.poison,
     };
+  }
+
+  /// try to resolve an unresolved symbol reference in the context.
+  pub fn resolveSymbol(
+    ctx: *ResolutionContext,
+    intpr: *Interpreter,
+    item: *model.Node.UnresolvedSymref,
+  ) !StrippedResult {
+    switch (ctx.target) {
+      .ns => |ns| if (ns == item.ns) {
+        const res = try ctx.resolveNameFn(ctx, item.name, item.node().pos);
+        return try ctx.strip(intpr.allocator, res);
+      },
+      .t => {},
+    }
+    return StrippedResult.unknown;
+  }
+
+  /// try to resolved an unresolved access node in the context.
+  pub fn resolveAccess(
+    ctx: *ResolutionContext,
+    intpr: *Interpreter,
+    item: *model.Node.UnresolvedAccess,
+    stage: interpret.Stage,
+  ) !AccessData {
+    switch (ctx.target) {
+      .ns => {},
+      .t => |t| {
+        switch (item.subject.data) {
+          .resolved_symref => |*rsym| switch (rsym.sym.data) {
+            .@"type" => |st| if (t.eql(st)) return AccessData{
+              .result = try ctx.strip(intpr.allocator,
+                try ctx.resolveNameFn(ctx, item.id, item.id_pos)),
+              .is_prefix = false,
+            },
+            else => {},
+          },
+          else => {},
+        }
+        const pt = (try intpr.probeType(item.subject, stage)) orelse {
+          // typically means that we hit a variable in a function body. If so,
+          // we just assume that this variable has the \declare type.
+          // This means we'll resolve the name of this access in our defs to
+          // discover dependencies.
+          // This will overreach but we accept that for now.
+          // we ignore the result and return .unknown to avoid linking to a
+          // possibly wrong function.
+          _ = try ctx.strip(
+            intpr.allocator, try ctx.resolveNameFn(ctx, item.id, item.id_pos));
+          return AccessData{.result = .unknown, .is_prefix = true};
+        };
+        if (t.eql(pt)) return AccessData{
+          .result = try ctx.strip(
+            intpr.allocator, try ctx.resolveNameFn(ctx, item.id, item.id_pos)),
+          .is_prefix = true,
+        };
+      }
+    }
+    return AccessData{.result = .unknown, .is_prefix = false};
   }
 };
 

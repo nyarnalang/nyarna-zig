@@ -9,4 +9,7 @@
 
 \foo()
 --- errors:expr
-8:1 - 8:13 WrongEndSubject
+8:6 - 8:12 WrongCallId
+  expected = declare
+  got = declar
+  defined_at = input(3:1)

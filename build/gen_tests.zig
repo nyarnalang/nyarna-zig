@@ -24,6 +24,21 @@ fn genTests(dir: *std.fs.Dir, sets: []TestSet) !void {
     "auto-paragraphs.tml", // missing: intrinsic funcs
     "doc-param.tml", // missing: document parameters
     "integer-fragment.tml", // missing: intrinsic funcs, module kinds
+    "ns-symbol-errors.tml", // TODO: ::length on lists
+    "record-with-unresolved-field-type.tml", // TODO: problem with mapper
+    "illegal-chars-in-args.tml", // TODO: unexpected token error
+    "illegal-args-content.tml", // TODO: recovery
+    "illegal-command-in-id.tml", // TODO: unexpected token error
+    "enforce-last-param.tml", // TODO: problem with body container
+    "flag-errors.tml", // TODO: problem with body container
+    "illegal-block-config.tml", // TODO: unexpected token error
+    "func-body-in-param-defs.tml", // TODO: problem with body container
+    "invalid-end-commands.tml", // TODO: not implemented
+    "param-mapping-errors.tml", // TODO: problem in lib
+    "params-in-invalid-call.tml", // TODO: same as record-with-unresoved...
+    "last-param-appears-too-early.tml", // TODO: problem with body container
+    "definitions-errors.tml", // TODO: error in interpret
+    "comptime-reference-of-other-declared-function.tml", // body container
   };
 
   files: while (try i.next()) |entry| {

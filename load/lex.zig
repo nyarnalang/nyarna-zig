@@ -1240,4 +1240,11 @@ pub const Lexer = struct {
     std.debug.assert(l.state == .special_syntax);
     l.state = .after_blocks_colon;
   }
+
+  /// block headers are aborted on the first error, to avoid parsing large
+  /// chunks of code as block header if it's not properly closed.
+  pub fn abortBlockHeader(l: *Lexer) void {
+    l.state =
+      if (l.level.special == .disabled) .at_header else .special_syntax;
+  }
 };

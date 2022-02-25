@@ -3,6 +3,7 @@ const std = @import("std");
 const graph = @import("graph.zig");
 const nyarna = @import("../nyarna.zig");
 const model = nyarna.model;
+const chains = @import("chains.zig");
 const Interpreter = @import("interpret.zig").Interpreter;
 
 fn isPrototype(ef: *model.Symbol.ExtFunc) bool {
@@ -35,7 +36,7 @@ const TypeResolver = struct {
     return .{
       .dres = dres,
       .ctx = .{
-        .resolveInSiblingDefinitions = linkTypes,
+        .resolveNameFn = linkTypes,
         .target = dres.in,
       },
     };
@@ -45,42 +46,36 @@ const TypeResolver = struct {
     return .{.unfinished_type = .{.structural = gen.generated.?}};
   }
 
-  fn linkTypes(ctx: *graph.ResolutionContext, item: *model.Node)
-      nyarna.Error!graph.ResolutionContext.Result {
+  fn linkTypes(
+    ctx: *graph.ResolutionContext,
+    name: []const u8,
+    name_pos: model.Position,
+  ) nyarna.Error!graph.ResolutionContext.Result {
     const self = @fieldParentPtr(TypeResolver, "ctx", ctx);
-    switch (item.data) {
-      .unresolved_call => {
-        self.dres.intpr.ctx.logger.UnfinishedCallInTypeArg(item.pos);
-        return .failed;
-      },
-      .unresolved_symref => |*uref| {
-        for (self.dres.defs) |def| {
-          if (std.mem.eql(u8, def.name.content, uref.name)) {
-            try self.process(def.content);
-            switch (def.content.data) {
-              .gen_concat => |*gc| return uStruct(gc),
-              .gen_intersection => |*gi| return uStruct(gi),
-              .gen_list => |*gl| return uStruct(gl),
-              .gen_map => |*gm| return uStruct(gm),
-              .gen_optional => |*go| return uStruct(go),
-              .gen_paragraphs => |*gp| return uStruct(gp),
-              .gen_record => |*gr| return graph.ResolutionContext.Result{
-                .unfinished_type = .{.instantiated = gr.generated.?},
-              },
-              .funcgen => {
-                self.dres.intpr.ctx.logger.NotAType(item.pos);
-                return graph.ResolutionContext.Result.failed;
-              },
-              .poison, .expression =>
-                return graph.ResolutionContext.Result.failed,
-              else => unreachable,
-            }
-          }
+    for (self.dres.defs) |def| {
+      if (std.mem.eql(u8, def.name.content, name)) {
+        try self.process(def.content);
+        switch (def.content.data) {
+          .gen_concat => |*gc| return uStruct(gc),
+          .gen_intersection => |*gi| return uStruct(gi),
+          .gen_list => |*gl| return uStruct(gl),
+          .gen_map => |*gm| return uStruct(gm),
+          .gen_optional => |*go| return uStruct(go),
+          .gen_paragraphs => |*gp| return uStruct(gp),
+          .gen_record => |*gr| return graph.ResolutionContext.Result{
+            .unfinished_type = .{.instantiated = gr.generated.?},
+          },
+          .funcgen => {
+            self.dres.intpr.ctx.logger.NotAType(name_pos);
+            return graph.ResolutionContext.Result.failed;
+          },
+          .poison, .expression =>
+            return graph.ResolutionContext.Result.failed,
+          else => unreachable,
         }
-        return graph.ResolutionContext.Result{.known = null};
-      },
-      else => unreachable,
+      }
     }
+    return graph.ResolutionContext.Result.unknown;
   }
 
   fn process(self: *TypeResolver, node: *model.Node) !void {
@@ -118,67 +113,38 @@ const FixpointContext = struct {
     return .{
       .dres = dres,
       .ctx = .{
-        .resolveInSiblingDefinitions = funcReturns,
+        .resolveNameFn = funcReturns,
         .target = dres.in,
       },
     };
   }
 
-  fn funcReturns(ctx: *graph.ResolutionContext, item: *model.Node)
-      nyarna.Error!graph.ResolutionContext.Result {
+  fn funcReturns(
+    ctx: *graph.ResolutionContext,
+    name: []const u8,
+    name_pos: model.Position,
+  ) nyarna.Error!graph.ResolutionContext.Result {
     const self = @fieldParentPtr(TypeResolver, "ctx", ctx);
-    switch (item.data) {
-      .unresolved_access => {
-        // TODO: function or type could be used as value.
-        return graph.ResolutionContext.Result.failed;
-      },
-      .unresolved_call => |*ucall| {
-        const name = switch (self.dres.in) {
-          .ns => ucall.target.data.unresolved_symref.name,
-          .t => |t| blk: {
-            const uacc = &ucall.target.data.unresolved_access;
-            // TODO: deeper access chain
-            if (subjectIsType(uacc, t)) {
-              break :blk uacc.id;
-            } else {
-              const subject_type = (try self.dres.intpr.probeType(
-                uacc.subject, .{.kind = .intermediate, .resolve = ctx})) orelse
-                return graph.ResolutionContext.Result.failed;
-              if (subject_type.eql(t)) {
-                break :blk uacc.id;
-              } else return graph.ResolutionContext.Result.failed;
-            }
-          }
-        };
-
-        // TODO: make chains support partial resolution and use that here
-        for (self.dres.defs) |def| {
-          if (std.mem.eql(u8, def.name.content, name)) {
-            switch (def.content.data) {
-              .gen_record => |*gr| return graph.ResolutionContext.Result{
-                .unfinished_function = .{.instantiated = gr.generated.?},
-              },
-              .funcgen => |*fgen| {
-                return graph.ResolutionContext.Result{
-                  .unfinished_function = fgen.cur_returns,
-                };
-              },
-              // types other than gen_record are guaranteed to have been
-              // constructed at this point since they can't contain default
-              // expressions which would reference sibling functions.
-              else => unreachable,
-            }
-          }
+    for (self.dres.defs) |def| {
+      if (std.mem.eql(u8, def.name.content, name)) {
+        switch (def.content.data) {
+          .gen_record => |*gr| return graph.ResolutionContext.Result{
+            .unfinished_function = .{.instantiated = gr.generated.?},
+          },
+          .funcgen => |*fgen| {
+            return graph.ResolutionContext.Result{
+              .unfinished_function = fgen.cur_returns,
+            };
+          },
+          // types other than gen_record are guaranteed to have been
+          // constructed at this point since they can't contain default
+          // expressions which would reference sibling functions.
+          else => unreachable,
         }
-        unreachable;
-      },
-      .unresolved_symref => |usym| {
-        // TODO: function could be used as value.
-        self.dres.intpr.ctx.logger.UnknownSymbol(item.pos, usym.name);
-        return graph.ResolutionContext.Result.failed;
-      },
-      else => unreachable,
+      }
     }
+    self.dres.intpr.ctx.logger.UnknownSymbol(name_pos, name);
+    return graph.ResolutionContext.Result.failed;
   }
 
   fn probe(fc: *FixpointContext, fgen: *model.Node.Funcgen) !bool {
@@ -191,7 +157,15 @@ const FixpointContext = struct {
         else => unreachable,
       }
     } else (try fc.dres.intpr.probeType(
-        fgen.body, .{.kind = .intermediate, .resolve = &fc.ctx})).?;
+        fgen.body, .{.kind = .intermediate, .resolve = &fc.ctx})) orelse blk: {
+          // this happens if there are still unknown symbols in the function
+          // body. These are errors since everything resolvable has been
+          // resolved at this point. we call interpret solely for issuing error
+          // messages.
+          _ = try fc.dres.intpr.interpret(fgen.body);
+          fgen.body.data = .poison;
+          break :blk model.Type{.intrinsic = .poison};
+        };
     if (new_type.eql(fgen.cur_returns)) return false
     else {
       fgen.cur_returns = new_type;
@@ -219,7 +193,7 @@ pub const DeclareResolution = struct {
       .defs = defs,
       .processor = try Processor.init(intpr.allocator, res),
       .dep_discovery_ctx = .{
-        .resolveInSiblingDefinitions = discoverDependencies,
+        .resolveNameFn = discoverDependencies,
         .target = in,
       },
       .intpr = intpr,
@@ -517,47 +491,17 @@ pub const DeclareResolution = struct {
   //----------------------------
 
   fn discoverDependencies(
-      ctx: *graph.ResolutionContext, item: *model.Node)
-      nyarna.Error!graph.ResolutionContext.Result {
+    ctx: *graph.ResolutionContext,
+    name: []const u8,
+    _: model.Position,
+  ) nyarna.Error!graph.ResolutionContext.Result {
     const self = @fieldParentPtr(DeclareResolution, "dep_discovery_ctx", ctx);
-    switch (item.data) {
-      .unresolved_access => |*uacc| {
-        const res = try self.intpr.probeType(
-          uacc.subject, .{.kind = .intermediate, .resolve = ctx});
-        switch (self.in) {
-          .ns => {},
-          .t => if (res == null) {
-            // typically means that we hit a variable in a function body. If so,
-            // we just assume that this variable has the \declare type.
-            // This means we'll resolve the name of this access in our defs to
-            // discover dependencies.
-            // This will overreach in rare cases but we accept that for now.
-            for (self.defs) |def, i| {
-              if (std.mem.eql(u8, def.name.content, uacc.id)) {
-                return graph.ResolutionContext.Result{
-                  .known = @intCast(u21, i)};
-              }
-            }
-          },
-        }
-      },
-      .unresolved_call => |*uc| {
-        _ = try self.intpr.probeType(
-          uc.target, .{.kind = .intermediate, .resolve = ctx});
-        for (uc.proto_args) |*arg| {
-          _ = try self.intpr.probeType(
-            arg.content, .{.kind = .intermediate, .resolve = ctx});
-        }
-      },
-      .unresolved_symref => |*ur| {
-        for (self.defs) |def, i| if (std.mem.eql(u8, def.name.content, ur.name))
-          return graph.ResolutionContext.Result{.known = @intCast(u21, i)};
-      },
-      else => unreachable,
-    }
+    for (self.defs) |def, i| if (std.mem.eql(u8, def.name.content, name)) {
+      return graph.ResolutionContext.Result{.known = @intCast(u21, i)};
+    };
     // we don't know whether this is actually known but it would be a
     // function variable, so we'll leave reporting a potential error to later
     // steps.
-    return graph.ResolutionContext.Result{.known = null};
+    return graph.ResolutionContext.Result.unknown;
   }
 };

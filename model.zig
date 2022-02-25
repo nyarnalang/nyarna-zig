@@ -522,6 +522,7 @@ pub const Node = struct {
     base: *Node,
     path: []const usize,
     last_name_pos: Position,
+    ns: u15,
 
     pub inline fn node(self: *@This()) *Node {
       return Node.parent(self);
@@ -550,6 +551,7 @@ pub const Node = struct {
     subject: *Node,
     id: []const u8,
     id_pos: Position,
+    ns: u15,
 
     pub inline fn node(self: *@This()) *Node {
       return Node.parent(self);
@@ -1927,11 +1929,13 @@ pub const NodeGenerator = struct {
     base: *Node,
     path: []const usize,
     last_name_pos: Position,
+    ns: u15,
   ) !*Node.ResolvedAccess {
     return &(try self.node(pos, .{.resolved_access = .{
       .base = base,
       .path = path,
       .last_name_pos = last_name_pos,
+      .ns = ns,
     }})).data.resolved_access;
   }
 

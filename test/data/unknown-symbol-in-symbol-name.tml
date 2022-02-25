@@ -13,7 +13,12 @@
 
 Lorem ipsum
 --- errors:expr
-4:3 - 4:7 UnknownSymbol
-  identifier is "foo"
-8:5 - 8:9 UnknownSymbol
-  identifier is "bar"
+4:3 - 4:7 IllegalItem
+  expected = {identifier}
+  got = <node>
+4:8 - 4:8 MissingToken
+  expected = {identifier}
+  got = '='
+8:5 - 8:9 IllegalItem
+  expected = {',', '{', '='}
+  got = <node>

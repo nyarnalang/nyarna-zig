@@ -8,4 +8,7 @@
 
 \foo()
 --- errors:expr
-7:1 - 7:14 SkippingEndSubject
+7:6 - 7:13 SkippingCallId
+  expected = func
+  got = declare
+  defined_at = input(4:9)

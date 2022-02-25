@@ -1,12 +1,12 @@
 === Invalid Call Target
 --- input
 \declare:
-  foo = \record:
+  foo = \Record:
     a : \Integer
-    b : \Text
-  \end(record)
+    b : \Raw
+  \end(Record)
 
-  bar = \intersection(\Text, \foo)
+  bar = \Intersection(\Raw, \foo)
 \end(declare)
 
 \bar(true)

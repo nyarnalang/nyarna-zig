@@ -6,8 +6,6 @@
   \foo:,bar
 \end(func)(Um)
 --- errors:expr
-4:15 - 4:18 IllegalCommand
-4:18 - 4:23 InvalidTextualCharacter
-  identifier is "("
-4:25 - 4:33 InvalidTextualCharacter
-  identifier is ")"
+4:15 - 4:33 IllegalItem
+  expected = {identifier, '}'}
+  got = <node>

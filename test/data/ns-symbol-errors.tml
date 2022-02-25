@@ -1,24 +1,18 @@
 === Namespace symbol errors
 --- input:foo
-\library:>
 \declare:
   bar = \func:
-    input : \Text
+    input : \Raw
   :body:
     \input::length()
   \end(func)
 \end(declare)
 --- input
-\import(foo, %)
-
-\block:<\ to %>
-  %block:
-    ipsum
-  %end(block)
-\end(block)
-
-\block:<@ to $>
-  Lorem
+\block:<map \ %, csym @>
+  %import(foo)
+  \block:<map @ %, map ? @>
+    lorem ipsum
+  \end(block)
 \end(block)
 --- errors:expr
 14:7 - 14:16 OccupiedNamespaceSymbol

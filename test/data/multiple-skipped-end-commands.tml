@@ -17,9 +17,11 @@
       42
 \end(foo)
 --- errors:expr
-11:1 - 11:14 SkippingEndSubject
-11:1 - 11:14 SkippingEndSubject
-18:1 - 18:10 SkippingEndSubject
-18:1 - 18:10 SkippingEndSubject
-15:7 - 18:10 MissingArgumentForParameter
-  193:5 - 193:10 defined here
+11:6 - 11:13 SkippingCallId
+  expected = if
+  got = declare
+  defined_at = input(7:5)
+18:1 - 18:10 SkippingCallId
+  expected = if
+  got = foo
+  defined_at = input(16:9)

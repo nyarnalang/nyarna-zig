@@ -641,7 +641,8 @@ pub const Parser = struct {
                 self.intpr(), self.cur_start, self.curLevel().fullast);
             },
             else => std.debug.panic(
-                "unexpected token in default: {s}\n", .{@tagName(self.cur)}),
+                "unexpected token in default: {s} at {}\n",
+                .{@tagName(self.cur), self.cur_start.formatter()}),
           }
         },
         .textual => {
@@ -760,6 +761,7 @@ pub const Parser = struct {
                   .subject = lvl.command.info.unknown,
                   .id = self.lexer.recent_id,
                   .id_pos = self.lexer.walker.posFrom(start),
+                  .ns = self.lexer.ns,
                 })).node();
               self.advance();
             },
@@ -1150,7 +1152,12 @@ pub const Parser = struct {
         }
         while (!self.getNext()) {}
       }
-      if (!recover) while (self.cur != .comma and self.cur != .diamond_close and
+      if (recover) {
+        // skip over the error token, which might not be processable in default
+        // context.
+        self.lexer.abortBlockHeader();
+        self.advance();
+      } else while (self.cur != .comma and self.cur != .diamond_close and
           self.cur != .end_source) : (while (!self.getNext()) {}) {
         if (self.cur != .space) {
           self.logger().ExpectedXGotY(self.lexer.walker.posFrom(self.cur_start),
@@ -1160,7 +1167,7 @@ pub const Parser = struct {
           recover = true;
           break;
         }
-      };
+      }
       if (recover) break;
     }
     if (self.cur == .diamond_close) {

@@ -6,11 +6,11 @@
   \foo
 \end(func)(42)
 --- errors:expr
-3:6 - 3:7 IllegalControlCharacter
-3:8 - 3:9 IllegalControlCharacter
-4:8 - 4:9 IllegalControlCharacter
-4:18 - 4:19 IllegalControlCharacter
-5:2 - 5:3 IllegalControlCharacter
+3:6 - 3:7 IllegalCodePoint
+3:8 - 3:9 IllegalCodePoint
+4:8 - 4:9 IllegalCodePoint
+4:18 - 4:19 IllegalCodePoint
+5:2 - 5:3 IllegalCodePoint
 5:1 - 5:8 IllegalBlockNameAtRootBlock
 6:3 - 6:7 UnknownSymbol
   identifier is "foo"
