@@ -1282,7 +1282,16 @@ pub const Interpreter = struct {
         return null;
       } else self.tryProbeAndInterpret(input, stage),
       .definition => |*def| self.tryInterpretDef(def, stage),
-      .expression => |expr| expr,
+      .expression => |expr| {
+        if (stage.kind == .resolve) switch (expr.data) {
+          .value => |value| switch (value.data) {
+            .ast => |*ast| _ = try self.tryInterpret(ast.root, stage),
+            else => {},
+          },
+          else => {},
+        };
+        return expr;
+      },
       .funcgen => |*func| blk: {
         const val = (try self.tryInterpretFunc(func, stage))
           orelse break :blk null;
