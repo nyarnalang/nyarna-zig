@@ -1248,9 +1248,9 @@ pub const IntersectionTypeBuilder = struct {
     var input = self.sources[0..self.filled];
     while (true) {
       var cur_type: ?model.Type = null;
-      for (input) |list| {
-        if (list.len > 0) {
-          const next = list[0];
+      for (input) |list, index| {
+        if (list.len > self.indexes[index]) {
+          const next = list[self.indexes[index]];
           if (cur_type) |previous| {
             if (total_order_less(undefined, next, previous)) cur_type = next;
           } else cur_type = next;

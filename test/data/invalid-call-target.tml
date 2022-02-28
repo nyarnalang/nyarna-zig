@@ -11,4 +11,4 @@
 
 \bar(true)
 --- errors:expr
-12:1 - 12:5 NotACallableValue
+12:1 - 12:5 CantBeCalled

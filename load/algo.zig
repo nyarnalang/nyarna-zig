@@ -4,7 +4,8 @@ const graph = @import("graph.zig");
 const nyarna = @import("../nyarna.zig");
 const model = nyarna.model;
 const chains = @import("chains.zig");
-const Interpreter = @import("interpret.zig").Interpreter;
+const interpret = @import("interpret.zig");
+const Interpreter = interpret.Interpreter;
 
 fn isPrototype(ef: *model.Symbol.ExtFunc) bool {
   return ef.callable.kind == .prototype;
@@ -31,14 +32,16 @@ const TypeResolver = struct {
   ctx: graph.ResolutionContext,
   dres: *DeclareResolution,
   worklist: std.ArrayListUnmanaged(*model.Node) = .{},
+  ns_data: *interpret.Namespace,
 
-  fn init(dres: *DeclareResolution) TypeResolver {
+  fn init(dres: *DeclareResolution, ns: *interpret.Namespace) TypeResolver {
     return .{
       .dres = dres,
       .ctx = .{
         .resolveNameFn = linkTypes,
         .target = dres.in,
       },
+      .ns_data = ns,
     };
   }
 
@@ -54,7 +57,7 @@ const TypeResolver = struct {
     const self = @fieldParentPtr(TypeResolver, "ctx", ctx);
     for (self.dres.defs) |def| {
       if (std.mem.eql(u8, def.name.content, name)) {
-        try self.process(def.content);
+        try self.process(def);
         switch (def.content.data) {
           .gen_concat => |*gc| return uStruct(gc),
           .gen_intersection => |*gi| return uStruct(gi),
@@ -69,8 +72,26 @@ const TypeResolver = struct {
             self.dres.intpr.ctx.logger.NotAType(name_pos);
             return graph.ResolutionContext.Result.failed;
           },
-          .poison, .expression =>
-            return graph.ResolutionContext.Result.failed,
+          .expression => |expr| switch (expr.data) {
+            .poison => return graph.ResolutionContext.Result.failed,
+            .value => |value| switch (value.data) {
+              .poison => return graph.ResolutionContext.Result.failed,
+              .@"type" => |vt| {
+                return graph.ResolutionContext.Result{
+                  .unfinished_type = vt.t,
+                };
+              },
+              else => {
+                self.dres.intpr.ctx.logger.ExpectedExprOfTypeXGotY(
+                  name_pos, &[_]model.Type{
+                    .{.intrinsic = .@"type"}, expr.expected_type,
+                  });
+                return graph.ResolutionContext.Result.failed;
+              }
+            },
+            else => unreachable,
+          },
+          .poison => return graph.ResolutionContext.Result.failed,
           else => unreachable,
         }
       }
@@ -78,30 +99,47 @@ const TypeResolver = struct {
     return graph.ResolutionContext.Result.unknown;
   }
 
-  fn process(self: *TypeResolver, node: *model.Node) !void {
-    switch (node.data) {
+  fn process(self: *TypeResolver, def: *model.Node.Definition) !void {
+    switch (def.content.data) {
       .expression, .poison, .gen_record, .funcgen => return,
-      else => {},
+      .gen_concat, .gen_intersection, .gen_list, .gen_map, .gen_optional,
+      .gen_paragraphs => {},
+      else => unreachable,
     }
-    for (self.worklist.items) |wli, index| if (wli == node) {
+    for (self.worklist.items) |wli, index| if (wli == def.content) {
       const pos_list = try self.dres.intpr.allocator.alloc(
         model.Position, self.worklist.items.len - index - 1);
       for (pos_list) |*item, pindex| {
         item.* = self.worklist.items[self.worklist.items.len - 1 - pindex].pos;
       }
-      self.dres.intpr.ctx.logger.CircularType(node.pos, pos_list);
-      node.data = .poison;
+      self.dres.intpr.ctx.logger.CircularType(def.content.pos, pos_list);
+      def.content.data = .poison;
       return;
     };
-    try self.worklist.append(self.dres.intpr.allocator, node);
+    try self.worklist.append(self.dres.intpr.allocator, def.content);
     defer _ = self.worklist.pop();
 
-    if (try self.dres.intpr.tryInterpret(node,
-        .{.kind = .final, .resolve = &self.ctx})) |expr| {
-      node.data = .{.expression = expr};
-    } else {
-      node.data = .poison;
-    }
+    const sym = if (try self.dres.intpr.tryInterpret(def.content,
+        .{.kind = .final, .resolve = &self.ctx})) |expr| blk: {
+      const value = try self.dres.intpr.ctx.evaluator().evaluate(expr);
+      switch (value.data) {
+        .poison => {
+          def.content.data = .poison;
+          break :blk try self.dres.genSym(def.name, .poison, def.public);
+        },
+        .@"type" => {
+          def.content.data = .{
+            .expression = try self.dres.intpr.ctx.createValueExpr(value),
+          };
+          break :blk try self.dres.genSymFromValue(def.name, value, def.public);
+        },
+        else => unreachable,
+      }
+    } else blk: {
+      def.content.data = .poison;
+      break :blk try self.dres.genSym(def.name, .poison, def.public);
+    };
+    _ = try self.ns_data.tryRegister(self.dres.intpr, sym);
   }
 };
 
@@ -346,15 +384,21 @@ pub const DeclareResolution = struct {
       // arguments. this leaves only nodes defining default values for record
       // fields unresolved, and only if the field type is explicitly given.
       {
-        var tr = TypeResolver.init(self);
+        var tr = TypeResolver.init(self, ns_data);
         for (defs) |def| {
           switch (def.content.data) {
             .gen_concat, .gen_intersection, .gen_list, .gen_map, .gen_optional,
-            .gen_paragraphs =>
-              try tr.process(def.content),
+            .gen_paragraphs => try tr.process(def),
             .gen_record => |*rgen| {
               for (rgen.fields) |field| {
-                if (field.@"type") |tnode| try tr.process(tnode);
+                if (field.@"type") |tnode| {
+                  if (
+                    try self.intpr.tryInterpret(def.content,
+                      .{.kind = .final, .resolve = &tr.ctx})
+                  ) |expr| {
+                    tnode.data = .{.expression = expr};
+                  } else tnode.data = .poison;
+                }
               }
             },
             .funcgen => |*fgen| {
