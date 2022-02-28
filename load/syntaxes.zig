@@ -150,13 +150,15 @@ pub const SymbolDefs = struct {
           },
           .special_char => |c| switch (c) {
             '=', '{' => {
-              self.logger().MissingToken(pos,
-                  &[_]errors.WrongItemError.ItemDescr{.{.token = .identifier}},
-                  .{.character = c});
+              self.logger().MissingToken(
+                pos.before(),
+                &[_]errors.WrongItemError.ItemDescr{.{.token = .identifier}},
+                .{.character = c});
               self.state = .after_name;
             },
             ':' => if (self.variant == .locs) {
-              self.logger().MissingToken(pos,
+              self.logger().MissingToken(
+                pos.before(),
                 &[_]errors.WrongItemError.ItemDescr{.{.token = .identifier}},
                 .{.character = c});
               self.state = .after_name;
@@ -198,12 +200,12 @@ pub const SymbolDefs = struct {
           .space => return .none,
           .literal => {
             self.logger().MissingToken(
-              pos, self.afterNameItems(), .{.token = .identifier});
+              pos.before(), self.afterNameItems(), .{.token = .identifier});
             self.state = .names;
           },
           .escaped => {
             self.logger().IllegalItem(
-              pos, self.afterNameItems(), .{.token = .escape});
+              pos.before(), self.afterNameItems(), .{.token = .escape});
             return .none;
           },
           .special_char => |c| switch (c) {
@@ -584,7 +586,7 @@ pub const SymbolDefs = struct {
   fn finishLine(self: *SymbolDefs, pos: model.Position) nyarna.Error!void {
     defer self.reset();
     if (self.names.items.len == 0) {
-      self.logger().MissingSymbolName(pos);
+      // we reported this as error in the syntax
       return;
     }
     if (self.variant == .defs and self.expr == null) {

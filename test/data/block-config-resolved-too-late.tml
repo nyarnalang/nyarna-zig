@@ -2,13 +2,13 @@
 --- input
 \declare:
   warbl = \func:
-    content : \Text {primary}:<nocomment>
+    content : \Raw {primary}:<off #>
   :body:
     \content
   \end(func)
 
   wirbl = \func:
-    inner : \Text
+    inner : \Raw
   :body:
     \warbl:
       \inner#
@@ -20,5 +20,5 @@
   \end(func)
 \end(declare)
 --- errors:expr
-14:7 - 14:13 ParamWithBlockConfigResolvedTooLate
-18:7 - 18:10 ParamWithBlockConfigResolvedTooLate
+14:7 - 14:13 BlockNeedsConfig
+18:7 - 18:10 BlockNeedsConfig

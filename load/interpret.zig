@@ -230,7 +230,7 @@ pub const Interpreter = struct {
         }
       },
       .sym_ref => |ref| {
-        if (ref.preliminary) return null;
+        if (ref.preliminary or stage.kind == .resolve) return null;
         const value = if (ref.prefix != null) blk: {
           self.ctx.logger.PrefixedSymbolMustBeCalled(node.pos);
           break :blk try self.ctx.values.poison(node.pos);
@@ -372,8 +372,12 @@ pub const Interpreter = struct {
     return self.interpretWithTargetScalar(input, scalar_type, stage);
   }
 
-  fn tryInterpretSymref(self: *Interpreter, ref: *model.Node.ResolvedSymref)
-      nyarna.Error!?*model.Expression {
+  fn tryInterpretSymref(
+    self: *Interpreter,
+    ref: *model.Node.ResolvedSymref,
+    stage: Stage,
+  ) nyarna.Error!?*model.Expression {
+    if (stage.kind == .resolve) return null;
     switch (ref.sym.data) {
       .func => |func| return self.ctx.createValueExpr(
         (try self.ctx.values.funcRef(ref.node().pos, func)).value()),
@@ -934,9 +938,20 @@ pub const Interpreter = struct {
 
   fn tryInterpretUCall(self: *Interpreter, uc: *model.Node.UnresolvedCall,
                        stage: Stage) nyarna.Error!?*model.Expression {
-    if (stage.kind == .intermediate) return null;
-    return self.interpretCallToChain(
-      uc, try chains.Resolver.init(self, stage).resolve(uc.target), stage);
+    switch (stage.kind) {
+      .intermediate => return null,
+      .resolve => {
+        _ = try chains.Resolver.init(self, stage).resolve(uc.target);
+        for (uc.proto_args) |arg| {
+          if (try self.tryInterpret(arg.content, stage)) |expr| {
+            arg.content.data = .{.expression = expr};
+          }
+        }
+        return null;
+      },
+      else => return self.interpretCallToChain(
+      uc, try chains.Resolver.init(self, stage).resolve(uc.target), stage),
+    }
   }
 
   fn tryInterpretVarargs(
@@ -1268,15 +1283,16 @@ pub const Interpreter = struct {
       },
       .import => unreachable, // this must always be handled directly
                               // by the parser.
-      .literal => |lit|
-        // TODO: delay this until stage.kind == .final?
-        try self.ctx.createValueExpr(
-        (try self.ctx.values.textScalar(input.pos,
-          .{.intrinsic = if (lit.kind == .space) .space else .literal},
-          try self.ctx.global().dupe(u8, lit.content))).value()),
+      .literal => |lit| return switch (stage.kind) {
+        .keyword, .final => try self.ctx.createValueExpr(
+          (try self.ctx.values.textScalar(input.pos,
+            .{.intrinsic = if (lit.kind == .space) .space else .literal},
+           try self.ctx.global().dupe(u8, lit.content))).value()),
+        else => null,
+      },
       .location          => |*lo| self.tryInterpretLoc(lo, stage),
       .resolved_access   => |*ra| self.tryInterpretRAccess(ra, stage),
-      .resolved_symref   => |*rs| self.tryInterpretSymref(rs),
+      .resolved_symref   => |*rs| self.tryInterpretSymref(rs, stage),
       .resolved_call     => |*rc| self.tryInterpretCall(rc, stage),
       .gen_concat        => |*gc| self.tryGenConcat(gc, stage),
       .gen_enum          => |*ge| self.tryGenEnum(ge, stage),
@@ -1505,7 +1521,10 @@ pub const Interpreter = struct {
           .runtime_chain => |*rc| rc.t,
           .sym_ref => |*sr| self.typeFromSymbol(sr.sym),
           .failed, .function_returning => null,
-          .poison => model.Type{.intrinsic = .poison},
+          .poison => blk: {
+            node.data = .poison;
+            break :blk model.Type{.intrinsic = .poison};
+          },
         };
       },
       .varargs => |*varargs| return varargs.t,
@@ -1760,7 +1779,7 @@ pub const Interpreter = struct {
       }
       // TODO: semantic conversions here
       self.ctx.logger.ExpectedExprOfTypeXGotY(
-        node.pos, &[_]model.Type{expr.expected_type, t});
+        node.pos, &[_]model.Type{t, expr.expected_type});
       expr.data = .{.value = try self.ctx.values.poison(expr.pos)};
       break :blk expr;
     } else null;

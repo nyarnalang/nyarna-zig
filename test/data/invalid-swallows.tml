@@ -6,6 +6,7 @@
   \input\input
 \end(func):>
 --- errors:expr
-7:11 - 7:11 CannotMapUnnamedBlock
-3:6 - 8:1 MissingArgumentForParameter
-  4:3 - 4:8 defined here
+7:13 - 7:13 UnexpectedPrimaryBlock
+3:1 - 7:13 MissingParameterArgument
+  repr = input
+  previous = input(4:3)

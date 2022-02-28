@@ -130,9 +130,14 @@ pub const Resolver = struct {
   fn resolveSymref(self: Resolver, rs: *model.Node.ResolvedSymref) Resolution {
     switch (rs.sym.data) {
       .poison => return Resolution.poison,
-      .variable => |*v| if (v.t.is(.every)) {
-        std.debug.assert(self.stage.kind == .intermediate);
-        return Resolution{.failed = rs.ns};
+      .variable => |*v| {
+        if (v.t.is(.every)) {
+          std.debug.assert(self.stage.kind == .intermediate);
+          return Resolution{.failed = rs.ns};
+        } else {
+          return Resolution.chain(
+            rs.ns, rs.node(), .{}, v.t, rs.name_pos, false);
+        }
       },
       else => {},
     }

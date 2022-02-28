@@ -22,3 +22,6 @@ Lorem ipsum
 8:5 - 8:9 IllegalItem
   expected = {',', '{', '='}
   got = <node>
+8:11 - 8:11 MissingToken
+  expected = {',', '{', '='}
+  got = identifier

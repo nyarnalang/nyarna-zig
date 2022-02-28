@@ -78,6 +78,14 @@ pub const Position = struct {
     };
   }
 
+  /// returns the zero-length position at the start of the given
+  /// position.
+  pub fn before(self: Position) Position {
+    return .{
+      .source = self.source, .start = self.start, .end = self.start,
+    };
+  }
+
   /// formats the position in the form
   ///
   ///   <path/to/file>(<start> - <end>)

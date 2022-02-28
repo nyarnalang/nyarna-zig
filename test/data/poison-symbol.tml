@@ -8,8 +8,14 @@
 \spam::bar
 \foo:=(bar)
 --- errors:expr
+5:10 - 5:11 IllegalItem
+  expected = {<node>}
+  got = '1'
+5:11 - 6:1 PrematureToken
+  expected = {<node>}
+  got = ws_break
+5:11 - 6:1 MissingSymbolEntity
 4:9 - 4:13 UnknownSymbol
-  identifier is "bar"
-5:10 - 5:11 NotAValidDeclarationValue
+  name = bar
 8:1 - 8:6 UnknownSymbol
-  identifier is "spam"
+  name = spam

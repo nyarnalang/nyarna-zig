@@ -1,13 +1,12 @@
 === Param Flag Errors
 --- input
 \func:
-  foo : \Raw {eager, ast}
-  bar : \Text {lazy, lazy}
+  foo : \Raw {primary}
+  bar : \Raw {primary}
 :body:
   \foo\bar
 \end(func)(one, two)
 --- errors:expr
-4:22 - 4:25 MultipleEvaluationModes
-  4:15 - 4:20 previous value defined here
-5:22 - 5:26 DuplicateFlag
-  5:16 - 5:20 previous value defined here
+5:15 - 5:22 DuplicateFlag
+  repr = primary
+  previous = input(4:3)
