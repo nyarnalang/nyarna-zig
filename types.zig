@@ -29,7 +29,7 @@ const InnerIntend = enum {
   fn concat(t: model.Type) InnerIntend {
     return switch (t) {
       .intrinsic => |i| switch (i) {
-        .prototype, .schema, .extension, .ast_node =>
+        .prototype, .schema, .extension, .ast_node, .frame_root =>
           InnerIntend.forbidden,
         .space, .literal, .raw, .void, .poison => InnerIntend.collapse,
         else => InnerIntend.allowed,
@@ -597,7 +597,8 @@ pub const Lattice = struct {
     return switch (intr) {
       .void =>
         (try self.optional(other)) orelse model.Type{.intrinsic = .poison},
-      .prototype, .schema, .extension, .ast_node => .{.intrinsic = .poison},
+      .prototype, .schema, .extension, .ast_node, .frame_root =>
+        .{.intrinsic = .poison},
       .space, .literal, .raw => switch (other) {
         .intrinsic => |other_intr| switch (other_intr) {
           .every => model.Type{.intrinsic = intr},
@@ -746,7 +747,9 @@ pub const Lattice = struct {
       .funcref => |*fr| fr.func.callable.typedef(),
       .location => .{.intrinsic = .location},
       .definition => .{.intrinsic = .definition},
-      .ast => .{.intrinsic = .ast_node},
+      .ast => |ast| .{
+        .intrinsic = if (ast.container == null) .ast_node else .frame_root,
+      },
       .block_header => .{.intrinsic = .block_header},
       .void => .{.intrinsic = .void},
       .poison => .{.intrinsic = .poison},

@@ -381,8 +381,10 @@ pub const Resolver = struct {
       chain.data = .{.expression = expr};
       return Resolution.chain(
         undefined, chain, .{}, expr.expected_type, last_name_pos, false);
-    } else return if (self.stage.kind == .intermediate)
-      Resolution{.failed = ns} else Resolution.poison;
+    } else return switch (self.stage.kind) {
+      .intermediate, .resolve => Resolution{.failed = ns},
+      else => Resolution.poison,
+    };
   }
 };
 

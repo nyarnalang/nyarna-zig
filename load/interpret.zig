@@ -406,9 +406,17 @@ pub const Interpreter = struct {
 
   fn tryInterpretCall(self: *Interpreter, rc: *model.Node.ResolvedCall,
                       stage: Stage) nyarna.Error!?*model.Expression {
+    if (stage.kind == .resolve) {
+      _ = try chains.Resolver.init(self, stage).resolve(rc.target);
+      for (rc.args) |arg| {
+        if (try self.tryInterpret(arg, stage)) |expr| {
+          arg.data = .{.expression = expr};
+        }
+      }
+      return null;
+    }
     const target = (try self.tryInterpret(rc.target, stage)) orelse
       return null;
-    if (stage.kind == .resolve) return null;
     const is_keyword = rc.sig.returns.is(.ast_node);
     const cur_allocator = if (is_keyword) self.allocator
                           else self.ctx.global();
@@ -907,7 +915,7 @@ pub const Interpreter = struct {
         var sm = try mapper.SignatureMapper.init(
           self, k.target, k.ns, k.signature);
         if (k.first_arg) |prefix| {
-          if (sm.mapper.map(prefix.pos, .position, .flow)) |cursor| {
+          if (try sm.mapper.map(prefix.pos, .position, .flow)) |cursor| {
             try sm.mapper.push(cursor, prefix);
           }
         }
@@ -917,7 +925,7 @@ pub const Interpreter = struct {
             if (arg.had_explicit_block_config) break :flag .block_with_config;
             break :flag .block_no_config;
           };
-          if (sm.mapper.map(arg.content.pos, arg.kind, flag)) |cursor| {
+          if (try sm.mapper.map(arg.content.pos, arg.kind, flag)) |cursor| {
             if (flag == .block_no_config and sm.mapper.config(cursor) != null) {
               self.ctx.logger.BlockNeedsConfig(arg.content.pos);
             }
@@ -1437,7 +1445,7 @@ pub const Interpreter = struct {
       .poison => return model.Type{.intrinsic = .poison},
     };
     // references to keywords must not be used as standalone values.
-    std.debug.assert(!callable.sig.returns.is(.ast_node));
+    std.debug.assert(!callable.sig.isKeyword());
     return callable.typedef();
   }
 

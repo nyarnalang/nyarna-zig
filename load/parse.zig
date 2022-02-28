@@ -66,10 +66,16 @@ pub const Parser = struct {
     /// when a parent scope ends.
     swallow_depth: ?u21 = null,
 
-    fn pushName(c: *Command, pos: model.Position, name: []const u8,
-                direct: bool, flag: mapper.Mapper.ProtoArgFlag) void {
-      c.cur_cursor = if (c.mapper.map(pos,
-          if (direct) .{.direct = name} else .{.named = name}, flag)
+    fn pushName(
+      c: *Command,
+      pos: model.Position,
+      name: []const u8,
+      direct: bool,
+      flag: mapper.Mapper.ProtoArgFlag,
+    ) !void {
+      c.cur_cursor = if (
+        try c.mapper.map(
+          pos, if (direct) .{.direct = name} else .{.named = name}, flag)
       ) |mapped| .{
         .mapped = mapped,
       } else .failed;
@@ -80,24 +86,31 @@ pub const Parser = struct {
       const cursor = switch (c.cur_cursor) {
         .mapped => |val| val,
         .failed => return,
-        .not_pushed => c.mapper.map(arg.pos, .position, .flow) orelse return,
+        .not_pushed =>
+          (try c.mapper.map(arg.pos, .position, .flow)) orelse return,
       };
       try c.mapper.push(cursor, arg);
     }
 
-    fn pushPrimary(c: *Command, pos: model.Position, config: bool) void {
-      c.cur_cursor = if (c.mapper.map(pos, .primary,
-          if (config) .block_with_config else .block_no_config)) |cursor| .{
-            .mapped = cursor,
-          } else .failed;
+    fn pushPrimary(c: *Command, pos: model.Position, config: bool) !void {
+      c.cur_cursor = if (
+        try c.mapper.map(pos, .primary,
+          if (config) .block_with_config else .block_no_config
+      )) |cursor| .{
+        .mapped = cursor,
+      } else .failed;
     }
 
-    fn shift(c: *Command, ip: *Interpreter, end: model.Cursor,
-             fullast: bool) !void {
+    fn shift(
+      c: *Command,
+      ip: *Interpreter,
+      end: model.Cursor,
+      fullast: bool,
+    ) !void {
       const newNode = try c.mapper.finalize(ip.input.between(c.start, end));
       switch (newNode.data) {
         .resolved_call => |*rcall| {
-          if (rcall.sig.returns.is(.ast_node)) {
+          if (rcall.sig.isKeyword()) {
             if (fullast) {
               switch (rcall.target.data) {
                 .resolved_symref => |*rsym| {
@@ -155,7 +168,9 @@ pub const Parser = struct {
     fn choseAstNodeParam(c: *Command) bool {
       return switch (c.cur_cursor) {
         .mapped => |cursor|
-          if (c.mapper.paramType(cursor)) |t| t.is(.ast_node) else false,
+          if (c.mapper.paramType(cursor)) |t| (
+            t.is(.ast_node) or t.is(.frame_root)
+          ) else false,
         else => false,
       };
     }
@@ -241,13 +256,8 @@ pub const Parser = struct {
       };
     }
 
-    fn finalize(level: *ContentLevel, p: *Parser, parent: *Command)
-        !*model.Node {
-      if (level.block_config) |c| {
-        if (try p.revertBlockConfig(c)) |container| {
-          try parent.mapper.pushContainer(container);
-        }
-      }
+    fn finalize(level: *ContentLevel, p: *Parser) !*model.Node {
+      if (level.block_config) |c| try p.revertBlockConfig(c);
       const ip = p.intpr();
       while (ip.variables.items.len > level.variable_start) {
         const av = ip.variables.pop();
@@ -508,7 +518,7 @@ pub const Parser = struct {
   fn leaveLevel(self: *Parser) !void {
     var lvl = self.curLevel();
     const parent = &self.levels.items[self.levels.items.len - 2];
-    const lvl_node = try lvl.finalize(self, &parent.command);
+    const lvl_node = try lvl.finalize(self);
     try parent.command.pushArg(lvl_node);
     _ = self.levels.pop();
   }
@@ -561,9 +571,7 @@ pub const Parser = struct {
                   self.intpr(), self.cur_start, parent.fullast);
                 try parent.append(self.intpr(), parent.command.info.unknown);
               }
-              // the root level has no parent level. It is also no 'varhead'
-              // block, so the parent value is never used an can be undefined.
-              return self.levels.items[0].finalize(self, undefined);
+              return self.levels.items[0].finalize(self);
             },
             .symref => {
               self.curLevel().command = .{
@@ -707,7 +715,7 @@ pub const Parser = struct {
               if (lvl.nodes.items.len > 0) {
                 unreachable; // TODO: error: equals not allowed here
               }
-              self.levels.items[self.levels.items.len - 2].command.pushName(
+              try self.levels.items[self.levels.items.len - 2].command.pushName(
                 pos, content.items,
                 pos.end.byte_offset - pos.start.byte_offset == 2, .flow);
               while (true) {
@@ -851,7 +859,7 @@ pub const Parser = struct {
                 .unknown => {},
                 .maybe => {
                   const lvl = self.levels.pop();
-                  if (lvl.block_config) |c| _ = try self.revertBlockConfig(c);
+                  if (lvl.block_config) |c| try self.revertBlockConfig(c);
                 },
                 .yes => try self.leaveLevel(),
               }
@@ -897,7 +905,7 @@ pub const Parser = struct {
               self.logger().MissingBlockNameEnd(
                 self.intpr().input.at(self.cur_start));
             }
-            parent.command.pushName(name_pos, name, false,
+            try parent.command.pushName(name_pos, name, false,
               if (self.cur == .diamond_open) .block_with_config
               else .block_no_config);
           } else {
@@ -991,7 +999,7 @@ pub const Parser = struct {
   }
 
   const ConfigItemKind = enum {
-    csym, empty, fullast, map, off,syntax, varhead, unknown,
+    csym, empty, fullast, map, off,syntax, unknown,
   };
 
   fn readBlockConfig(self: *Parser, into: *model.BlockConfig,
@@ -1003,7 +1011,6 @@ pub const Parser = struct {
       .off_colon = null,
       .off_comment = null,
       .full_ast = null,
-      .var_head = null,
       .map = undefined,
     };
     var first = true;
@@ -1031,7 +1038,6 @@ pub const Parser = struct {
         std.hash.Adler32.hash("map") => .map,
         std.hash.Adler32.hash("off") => .off,
         std.hash.Adler32.hash("fullast") => .fullast,
-        std.hash.Adler32.hash("varhead") => .varhead,
         std.hash.Adler32.hash("") => .empty,
         else => blk: {
           self.logger().UnknownConfigDirective(
@@ -1141,10 +1147,6 @@ pub const Parser = struct {
             into.full_ast = self.lexer.walker.posFrom(self.cur_start);
             break :consume_next;
           },
-          .varhead => {
-            into.var_head = self.lexer.walker.posFrom(self.cur_start);
-            break :consume_next;
-          },
           .empty => {
             self.logger().ExpectedXGotY(
                 self.lexer.walker.posFrom(self.cur_start),
@@ -1215,7 +1217,7 @@ pub const Parser = struct {
       try self.readBlockConfig(&self.config_buffer, self.allocator());
       const pos = self.intpr().input.at(self.cur_start);
       if (pb_exists) |ind| {
-        parent.command.pushPrimary(pos, true);
+        try parent.command.pushPrimary(pos, true);
         try self.pushLevel(if (parent.command.choseAstNodeParam()) false
                            else parent.fullast);
         ind.* = .yes;
@@ -1231,7 +1233,7 @@ pub const Parser = struct {
       if (self.checkSwallow(colon_start)) |swallow_depth| {
         if (pb_exists) |ind| {
           if (ind.* == .unknown) {
-            parent.command.pushPrimary(
+            try parent.command.pushPrimary(
               self.intpr().input.at(self.cur_start), false);
             try self.pushLevel(if (parent.command.choseAstNodeParam()) false
                                else parent.fullast);
@@ -1282,7 +1284,7 @@ pub const Parser = struct {
             while (i > target_level) : (i -= 1) {
               const cur_parent = &self.levels.items[i - 1];
               try cur_parent.command.pushArg(
-                try self.levels.items[i].finalize(self, &cur_parent.command));
+                try self.levels.items[i].finalize(self));
               try cur_parent.command.shift(
                 self.intpr(), end_cursor, cur_parent.fullast);
               try cur_parent.append(
@@ -1303,7 +1305,7 @@ pub const Parser = struct {
         return true;
       } else if (pb_exists) |ind| {
         if (ind.* == .unknown) {
-          parent.command.pushPrimary(
+          try parent.command.pushPrimary(
             self.intpr().input.at(self.cur_start), false);
           if (parent.implicitBlockConfig()) |c| {
             ind.* = .maybe;
@@ -1456,25 +1458,10 @@ pub const Parser = struct {
 
     if (config.full_ast != null) lvl.fullast = true;
 
-    if (config.var_head != null) {
-      const ip = self.intpr();
-      const container = try ip.ctx.global().create(model.VariableContainer);
-      container.* = .{
-        .num_values = 0,
-      };
-      try ip.var_containers.append(ip.allocator, .{
-        .offset = ip.variables.items.len,
-        .container = container,
-      });
-    }
-
     lvl.block_config = config;
   }
 
-  /// returns the VariableContainer of the variables inside the block if the
-  /// block config had 'varhead'.
-  fn revertBlockConfig(self: *Parser, config: *const model.BlockConfig)
-      !?*model.VariableContainer {
+  fn revertBlockConfig(self: *Parser, config: *const model.BlockConfig) !void {
     // config.syntax does not need to be reversed, this happens automatically by
     // leaving the level.
 
@@ -1545,9 +1532,5 @@ pub const Parser = struct {
 
     // off_colon, off_comment, and special syntax are reversed automatically by
     // the lexer. full_ast is automatically reversed by leaving the level.
-
-    return if (config.var_head != null)
-      self.intpr().var_containers.pop().container
-    else null;
   }
 };

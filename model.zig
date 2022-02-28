@@ -362,10 +362,6 @@ pub const BlockConfig = struct {
   /// this requires the block being used in a context where it can return an
   /// Ast value.
   full_ast: ?Position,
-  /// whether this block functions as a head for variable declarations. This
-  /// means that all variables declared herein refer to a VariableContainer
-  /// created for this block.
-  var_head: ?Position,
 
   pub fn empty() BlockConfig {
     return .{
@@ -1225,7 +1221,7 @@ pub const Type = union(enum) {
 
   /// unique types predefined by Nyarna
   intrinsic: enum {
-    void, prototype, schema, extension, ast_node, block_header,
+    void, prototype, schema, extension, ast_node, frame_root, block_header,
     @"type", space, literal, raw,
     location, definition, backend,
     poison, every

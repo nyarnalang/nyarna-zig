@@ -509,7 +509,8 @@ pub const Intrinsics = Provider.Wrapper(struct {
           !?*model.Node {
         return switch (t) {
           .intrinsic => |intr| switch (intr) {
-            .ast_node, .void, .every => try self.ip.node_gen.void(vpos),
+            .ast_node, .frame_root, .void, .every =>
+              try self.ip.node_gen.void(vpos),
             .space, .literal, .raw =>
               (try self.ip.node_gen.literal(vpos, .{
                 .kind = .space,
@@ -917,7 +918,6 @@ pub fn intrinsicModule(ctx: Context) !*model.Module {
       .off_colon = null,
       .off_comment = null,
       .full_ast = null,
-      .var_head = null,
     }, null);
 
   const def_syntax = // zig 0.9.0 crashes when inlining this
@@ -929,17 +929,6 @@ pub fn intrinsicModule(ctx: Context) !*model.Module {
       .off_colon = null,
       .off_comment = null,
       .full_ast = model.Position.intrinsic(),
-      .var_head = null,
-    }, null);
-
-  const body_block = try ctx.values.blockHeader(
-    model.Position.intrinsic(), model.BlockConfig{
-      .syntax = null,
-      .map = &.{},
-      .off_colon = null,
-      .off_comment = null,
-      .full_ast = null,
-      .var_head = model.Position.intrinsic(),
     }, null);
 
   //-------------
@@ -1154,8 +1143,7 @@ pub fn intrinsicModule(ctx: Context) !*model.Module {
     "params", .{.intrinsic = .ast_node})).withPrimary(
       model.Position.intrinsic()).withHeader(location_block));
   try b.push(
-    (try ctx.values.intLocation("body", .{.intrinsic = .ast_node})).withHeader(
-      body_block));
+    (try ctx.values.intLocation("body", .{.intrinsic = .frame_root})));
   ret.symbols[index] =
     try extFuncSymbol(ctx, "func", true, b.finish(), &ip.provider);
   index += 1;
@@ -1167,8 +1155,7 @@ pub fn intrinsicModule(ctx: Context) !*model.Module {
     "params", .{.intrinsic = .ast_node})).withPrimary(
       model.Position.intrinsic()).withHeader(location_block));
   try b.push(
-    (try ctx.values.intLocation("body", .{.intrinsic = .ast_node})).withHeader(
-      body_block));
+    (try ctx.values.intLocation("body", .{.intrinsic = .frame_root})));
   ret.symbols[index] =
     try extFuncSymbol(ctx, "method", true, b.finish(), &ip.provider);
   index += 1;

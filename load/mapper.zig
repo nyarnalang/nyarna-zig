@@ -24,18 +24,16 @@ pub const Mapper = struct {
   const ArgKind = model.Node.UnresolvedCall.ArgKind;
 
   mapFn: fn(self: *Self, pos: model.Position, input: ArgKind,
-            flag: ProtoArgFlag) ?Cursor,
+            flag: ProtoArgFlag) nyarna.Error!?Cursor,
   pushFn: fn(self: *Self, at: Cursor, content: *model.Node) nyarna.Error!void,
   configFn: fn(self: *Self, at: Cursor) ?*model.BlockConfig,
   paramTypeFn: fn(self: *Self, at: Cursor) ?model.Type,
   finalizeFn: fn(self: *Self, pos: model.Position) nyarna.Error!*model.Node,
-  pushContainerFn: ?fn(self: *Self, container: *model.VariableContainer)
-    nyarna.Error!void = null,
 
   subject_pos: model.Position,
 
   pub fn map(self: *Self, pos: model.Position, input: ArgKind,
-             flag: ProtoArgFlag) ?Cursor {
+             flag: ProtoArgFlag) nyarna.Error!?Cursor {
     return self.mapFn(self, pos, input, flag);
   }
 
@@ -49,10 +47,6 @@ pub const Mapper = struct {
 
   pub fn push(self: *Self, at: Cursor, content: *model.Node) !void {
     try self.pushFn(self, at, content);
-  }
-
-  pub fn pushContainer(self: *Self, container: *model.VariableContainer) !void {
-    if (self.pushContainerFn) |f| try f(self, container);
   }
 
   pub fn finalize(self: *Self, pos: model.Position) nyarna.Error!*model.Node {
@@ -69,7 +63,6 @@ pub const SignatureMapper = struct {
   filled: []bool,
   intpr: *Interpreter,
   ns: u15,
-  cur_container: ?*model.VariableContainer = null,
 
   pub fn init(
     intpr: *Interpreter,
@@ -83,7 +76,6 @@ pub const SignatureMapper = struct {
         .configFn = SignatureMapper.config,
         .paramTypeFn = SignatureMapper.paramType,
         .pushFn = SignatureMapper.push,
-        .pushContainerFn = SignatureMapper.pushContainer,
         .finalizeFn = SignatureMapper.finalize,
         .subject_pos = subject.lastIdPos(),
       },
@@ -104,8 +96,24 @@ pub const SignatureMapper = struct {
     return if (self.signature.varmap) |vm| vm == index else false;
   }
 
-  fn map(mapper: *Mapper, pos: model.Position,
-         input: Mapper.ArgKind, flag: Mapper.ProtoArgFlag) ?Mapper.Cursor {
+  fn checkFrameRoot(self: *SignatureMapper, t: model.Type) !void {
+    if (t.is(.frame_root)) {
+      const container =
+        try self.intpr.ctx.global().create(model.VariableContainer);
+      container.* = .{.num_values = 0};
+      try self.intpr.var_containers.append(self.intpr.allocator, .{
+        .offset = self.intpr.variables.items.len,
+        .container = container,
+      });
+    }
+  }
+
+  fn map(
+    mapper: *Mapper,
+    pos: model.Position,
+    input: Mapper.ArgKind,
+    flag: Mapper.ProtoArgFlag,
+  ) nyarna.Error!?Mapper.Cursor {
     // TODO: process ProtoArgFlag (?)
     const self = @fieldParentPtr(SignatureMapper, "mapper", mapper);
 
@@ -116,6 +124,7 @@ pub const SignatureMapper = struct {
           const index = @intCast(u21, i);
           if ((!self.varmapAt(index) or input == .direct) and
               std.mem.eql(u8, name, p.name)) {
+            try self.checkFrameRoot(p.ptype);
             return Mapper.Cursor{.param = .{.index = index},
               .config = flag == .block_with_config, .direct = input == .named};
           }
@@ -126,6 +135,7 @@ pub const SignatureMapper = struct {
       .primary => {
         self.cur_pos = null;
         if (self.signature.primary) |index| {
+          try self.checkFrameRoot(self.signature.parameters[index].ptype);
           return Mapper.Cursor{
             .param = .{.index = index},
             .config = flag == .block_with_config, .direct = true};
@@ -140,6 +150,7 @@ pub const SignatureMapper = struct {
             if (self.signature.parameters[index].capture != .varargs) {
               self.cur_pos = index + 1;
             }
+            try self.checkFrameRoot(self.signature.parameters[index].ptype);
             return Mapper.Cursor{.param = .{.index = index},
               .config = flag == .block_with_config, .direct = false};
           } else {
@@ -214,14 +225,16 @@ pub const SignatureMapper = struct {
       .varargs => param.ptype.structural.list.inner,
       else => param.ptype,
     };
-    const arg = if (target_type.is(.ast_node)) blk: {
+    const arg = if (
+      target_type.is(.ast_node) or target_type.is(.frame_root)
+    ) blk: {
       if (at.direct or param.capture != .varargs) {
-        defer self.cur_container = null;
+        const container = if (target_type.is(.frame_root))
+          self.intpr.var_containers.pop().container else null;
         break :blk try self.intpr.genValueNode(
-          (try self.intpr.ctx.values.ast(content, self.cur_container)).value());
+          (try self.intpr.ctx.values.ast(content, container)).value());
       } else break :blk content;
     } else blk: {
-      std.debug.assert(self.cur_container == null);
       if (try self.intpr.associate(
           content, param.ptype, .{.kind = .intermediate})) |expr| {
         content.data = .{.expression = expr};
@@ -250,13 +263,6 @@ pub const SignatureMapper = struct {
     }
   }
 
-  fn pushContainer(mapper: *Mapper, container: *model.VariableContainer)
-      nyarna.Error!void {
-    const self = @fieldParentPtr(SignatureMapper, "mapper", mapper);
-    std.debug.assert(self.cur_container == null);
-    self.cur_container = container;
-  }
-
   fn finalize(mapper: *Mapper, pos: model.Position) nyarna.Error!*model.Node {
     const self = @fieldParentPtr(SignatureMapper, "mapper", mapper);
     var missing_param = false;
@@ -265,16 +271,13 @@ pub const SignatureMapper = struct {
         self.args[i] = switch (param.ptype) {
           .intrinsic => |intr| switch (intr) {
             .void => try self.intpr.node_gen.@"void"(pos),
-            .ast_node => blk: {
-              var container: ?*model.VariableContainer = null;
-              if (param.config) |block_cfg| {
-                if (block_cfg.var_head != null) {
-                  const tmp = try
-                    self.intpr.ctx.global().create(model.VariableContainer);
-                  tmp.* = .{.num_values = 0};
-                  container = tmp;
-                }
-              }
+            .ast_node => try self.intpr.genValueNode(
+              (try self.intpr.ctx.values.ast(
+                try self.intpr.node_gen.@"void"(pos), null)).value()),
+            .frame_root => blk: {
+              const container = try
+                self.intpr.ctx.global().create(model.VariableContainer);
+              container.* = .{.num_values = 0};
               break :blk try self.intpr.genValueNode(
                 (try self.intpr.ctx.values.ast(
                   try self.intpr.node_gen.@"void"(pos), container)).value());
@@ -341,8 +344,12 @@ pub const CollectingMapper = struct {
     };
   }
 
-  fn map(mapper: *Mapper, _: model.Position,
-         input: Mapper.ArgKind, flag: Mapper.ProtoArgFlag) ?Mapper.Cursor {
+  fn map(
+    mapper: *Mapper,
+    _: model.Position,
+    input: Mapper.ArgKind,
+    flag: Mapper.ProtoArgFlag,
+  ) nyarna.Error!?Mapper.Cursor {
     const self = @fieldParentPtr(CollectingMapper, "mapper", mapper);
     if (flag != .flow and self.first_block == null) {
       self.first_block = self.items.items.len;
@@ -406,8 +413,12 @@ pub const AssignmentMapper = struct {
     };
   }
 
-  pub fn map(mapper: *Mapper, pos: model.Position,
-             input: Mapper.ArgKind, flag: Mapper.ProtoArgFlag) ?Mapper.Cursor {
+  pub fn map(
+    mapper: *Mapper,
+    pos: model.Position,
+    input: Mapper.ArgKind,
+    flag: Mapper.ProtoArgFlag,
+  ) nyarna.Error!?Mapper.Cursor {
     const self = @fieldParentPtr(AssignmentMapper, "mapper", mapper);
     if (input == .named or input == .direct) {
       self.intpr.ctx.logger.InvalidNamedArgInAssign(pos);
