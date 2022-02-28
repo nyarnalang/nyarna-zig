@@ -266,9 +266,18 @@ pub const SignatureMapper = struct {
           .intrinsic => |intr| switch (intr) {
             .void => try self.intpr.node_gen.@"void"(pos),
             .ast_node => blk: {
+              var container: ?*model.VariableContainer = null;
+              if (param.config) |block_cfg| {
+                if (block_cfg.var_head != null) {
+                  const tmp = try
+                    self.intpr.ctx.global().create(model.VariableContainer);
+                  tmp.* = .{.num_values = 0};
+                  container = tmp;
+                }
+              }
               break :blk try self.intpr.genValueNode(
                 (try self.intpr.ctx.values.ast(
-                  try self.intpr.node_gen.@"void"(pos), null)).value());
+                  try self.intpr.node_gen.@"void"(pos), container)).value());
             },
             else => null,
           },

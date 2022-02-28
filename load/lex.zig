@@ -634,9 +634,9 @@ pub const Lexer = struct {
           l.recent_end = l.walker.before;
           if (res.token) |t| {
             return switch (t) {
-              .space, .ws_break => .space,
-              .comment => .comment,
-              else => .illegal_content_at_header
+              .space, .comment, .end_source, .illegal_code_point => t,
+              .ws_break => .space,
+              else => .illegal_content_at_header,
             };
           } else {
             cur = l.cur_stored catch {
@@ -1194,6 +1194,10 @@ pub const Lexer = struct {
           },
         }
       },
+      0...3, 5...8, 11...12, 14...31 => {
+        l.cur_stored = l.walker.nextInline();
+        return .illegal_code_point;
+      },
       else => {
         return null;
       }
@@ -1232,7 +1236,8 @@ pub const Lexer = struct {
   pub fn enableSpecialSyntax(l: *Lexer, comments_include_newline: bool) void {
     l.level.special = if (comments_include_newline) .standard_comments
                       else .comments_without_newline;
-    std.debug.assert(l.state == .check_indent);
+    std.debug.assert(l.state == .check_indent or
+                     (l.cur_stored catch 0) == 4);
     l.state = .special_syntax_check_indent;
   }
 
