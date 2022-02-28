@@ -702,7 +702,7 @@ pub const Lexer = struct {
           } else {
             l.recent_expected_id = l.level.id;
             var i = @enumToInt(res) + 1;
-            while (i > @enumToInt(Token.skipping_call_id)) : (i = i - 1) {
+            while (i >= @enumToInt(Token.skipping_call_id)) : (i = i - 1) {
               l.level = l.levels.pop();
             }
           }

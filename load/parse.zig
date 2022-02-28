@@ -507,7 +507,7 @@ pub const Parser = struct {
 
   fn leaveLevel(self: *Parser) !void {
     var lvl = self.curLevel();
-    var parent = &self.levels.items[self.levels.items.len - 2];
+    const parent = &self.levels.items[self.levels.items.len - 2];
     const lvl_node = try lvl.finalize(self, &parent.command);
     try parent.command.pushArg(lvl_node);
     _ = self.levels.pop();
@@ -622,9 +622,14 @@ pub const Parser = struct {
                     self.lexer.walker.posFrom(self.cur_start),
                     self.lexer.recent_expected_id, self.lexer.recent_id,
                     self.intpr().input.at(cmd_start));
-                  var i = @as(u32, 0);
-                  while (i < model.Token.numSkippedEnds(self.cur)): (i += 1) {
+                  const num_skipped = model.Token.numSkippedEnds(self.cur);
+                  var i: u32 = 0; while (i < num_skipped) : (i += 1) {
                     try self.leaveLevel();
+                    const lvl = self.curLevel();
+                    try lvl.command.shift(
+                      self.intpr(), self.cur_start, lvl.fullast);
+                    try lvl.append(
+                      self.intpr(), lvl.command.info.unknown);
                   }
                 },
               }

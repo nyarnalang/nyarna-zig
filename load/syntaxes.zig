@@ -540,8 +540,11 @@ pub const SymbolDefs = struct {
   }
 
   fn finish(p: *Processor, pos: model.Position)
-      std.mem.Allocator.Error!*model.Node {
+      nyarna.Error!*model.Node {
     const self = @fieldParentPtr(SymbolDefs, "proc", p);
+    if (self.state != .initial) {
+      _ = try p.push(p, pos, SpecialSyntax.Item{.newlines = 1});
+    }
     return (try self.intpr.node_gen.concat(
       pos, .{.items = self.produced.items})).node();
   }

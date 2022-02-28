@@ -39,6 +39,7 @@ fn genTests(dir: *std.fs.Dir, sets: []TestSet) !void {
     "last-param-appears-too-early.tml", // TODO: problem with body container
     "definitions-errors.tml", // TODO: error in interpret
     "comptime-reference-of-other-declared-function.tml", // body container
+    "invalid-comptime-call-in-declare.tml", // TODO: can user define comptime fn
   };
 
   files: while (try i.next()) |entry| {
