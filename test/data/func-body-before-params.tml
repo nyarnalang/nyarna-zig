@@ -1,0 +1,9 @@
+=== Func Body Before Params
+--- input
+\func(body=foo):
+  bar : \Raw
+\end(func)()
+--- errors:expr
+3:1 - 5:13 MissingParameterArgument
+  repr = bar
+  previous = input(4:3)

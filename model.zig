@@ -78,11 +78,17 @@ pub const Position = struct {
     };
   }
 
-  /// returns the zero-length position at the start of the given
-  /// position.
+  /// returns the zero-length position at the start of the given position.
   pub fn before(self: Position) Position {
     return .{
       .source = self.source, .start = self.start, .end = self.start,
+    };
+  }
+
+  /// returns the zero-length position at the end of the given position.
+  pub fn after(self: Position) Position {
+    return .{
+      .source = self.source, .start = self.end, .end = self.end,
     };
   }
 

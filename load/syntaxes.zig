@@ -41,6 +41,7 @@ pub const SymbolDefs = struct {
   state: State,
   produced: std.ArrayListUnmanaged(*model.Node),
   variant: Variant,
+  last_item: model.Position,
   // ----- current line ------
   start: model.Cursor,
   names: std.ArrayListUnmanaged(*model.Node.Literal),
@@ -95,6 +96,7 @@ pub const SymbolDefs = struct {
     ret.names = .{};
     ret.produced = .{};
     ret.variant = variant;
+    ret.last_item = model.Position.intrinsic();
     ret.reset();
     return &ret.proc;
   }
@@ -127,10 +129,23 @@ pub const SymbolDefs = struct {
   fn push(p: *Processor, pos: model.Position,
           item: SpecialSyntax.Item) nyarna.Error!Processor.Action {
     const self = @fieldParentPtr(SymbolDefs, "proc", p);
+    self.last_item = pos;
     self.state = while (true) {
       switch (self.state) {
         .initial => switch (item) {
           .space, .newlines => return .none,
+          .node => {
+            self.logger().IllegalItem(pos,
+                &[_]errors.WrongItemError.ItemDescr{.{.token = .identifier}},
+                .node);
+            return .none;
+          },
+          .escaped => {
+            self.logger().IllegalItem(pos,
+                &[_]errors.WrongItemError.ItemDescr{.{.token = .identifier}},
+                .{.token = .escape});
+            return .none;
+          },
           else => {
             self.start = pos.start;
             self.state = .names;
@@ -569,7 +584,8 @@ pub const SymbolDefs = struct {
       nyarna.Error!*model.Node {
     const self = @fieldParentPtr(SymbolDefs, "proc", p);
     if (self.state != .initial) {
-      _ = try p.push(p, pos, SpecialSyntax.Item{.newlines = 1});
+      _ = try p.push(
+        p, self.last_item.after(), SpecialSyntax.Item{.newlines = 1});
     }
     return (try self.intpr.node_gen.concat(
       pos, .{.items = self.produced.items})).node();

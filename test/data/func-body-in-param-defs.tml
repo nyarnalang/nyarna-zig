@@ -1,16 +1,13 @@
 === Func Body in Param Defs
 --- input
 \declare(\Integer):
-  double = \func:
+  double = \method:
     \this::mult(2)
-  \end(func)
+  \end(method)
 \end(declare)
 
 \Integer(42)::double()
 --- errors:expr
-5:10 - 5:19 CannotAssignXToY
-  source type is `Integer`
-  target type is `Identifier`
-5:19 - 5:19 MissingLocationType
-4:17 - 6:13 MissingArgumentForParameter
-  151:5 - 151:9 defined here
+5:5 - 5:19 IllegalItem
+  expected = {identifier}
+  got = <node>
