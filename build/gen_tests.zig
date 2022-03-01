@@ -29,7 +29,7 @@ fn genTests(dir: *std.fs.Dir, sets: []TestSet) !void {
     "illegal-chars-in-args.tml", // TODO: unexpected token error
     "illegal-args-content.tml", // TODO: recovery
     "illegal-command-in-id.tml", // TODO: unexpected token error
-    "flag-errors.tml", // TODO: problem with body container
+    "flag-errors.tml", // TODO: integer functions
     "illegal-block-config.tml", // TODO: unexpected token error
     "func-body-in-param-defs.tml", // TODO: problem with body container
     "invalid-end-commands.tml", // TODO: not implemented

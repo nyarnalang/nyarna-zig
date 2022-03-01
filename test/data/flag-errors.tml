@@ -7,15 +7,22 @@
   \foo::add(\bar)
 \end(func)(1, 2)
 \func:
-  baz : \Text {
+  baz : \Raw {
 --- errors:expr
-4:19 - 4:31 InvalidTextualCharacter
-  identifier is " "
-4:32 - 4:46 IllegalContentAfterFlags
+4:27 - 4:31 IllegalItem
+  expected = {',', '}'}
+  got = identifier
+4:32 - 4:46 IllegalItem
+  expected = {'=', ';', ':', ws_break}
+  got = identifier
 5:19 - 5:23 UnknownFlag
-5:28 - 5:37 IllegalContentAfterFlags
-10:16 - 10:16 MissingEndFlags
-10:16 - 10:16 MissingEndCommand
-  9:6 call started here
-9:6 - 10:16 MissingArgumentForParameter
-  151:5 - 151:9 defined here
+  name = derp
+5:28 - 5:37 SurplusFlags
+10:15 - 11:1 PrematureToken
+  expected = {identifier, '}'}
+  got = ws_break
+9:2 - 9:6 MissingEndCommand
+  repr = func
+  previous = input(11:1)
+9:1 - 11:1 IncompatibleTypes
+  types = [function] () -> void, poison, space

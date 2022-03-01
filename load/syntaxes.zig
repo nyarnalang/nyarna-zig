@@ -52,6 +52,7 @@ pub const SymbolDefs = struct {
   header: ?*model.Value.BlockHeader,
   @"type": ?*model.Node,
   expr: ?*model.Node,
+  surplus_flags_start: ?model.Position, // more than on {…} in line.
   // -------------------------
 
   const after_name_items_arr = [_]errors.WrongItemError.ItemDescr{
@@ -119,6 +120,7 @@ pub const SymbolDefs = struct {
     l.root = null;
     l.@"type" = null;
     l.expr = null;
+    l.surplus_flags_start = null;
     l.names.clearRetainingCapacity();
   }
 
@@ -309,20 +311,22 @@ pub const SymbolDefs = struct {
         .flags => switch (item) {
           .space => return .none,
           .literal => |id| {
-            const target = switch (std.hash.Adler32.hash(id)) {
-              std.hash.Adler32.hash("primary") => &self.primary,
-              std.hash.Adler32.hash("varargs") => &self.varargs,
-              std.hash.Adler32.hash("mutable") => &self.mutable,
-              std.hash.Adler32.hash("varmap") => &self.varmap,
-              std.hash.Adler32.hash("root") => &self.root,
-              else => {
-                self.logger().UnknownFlag(pos, id);
-                return .none;
-              }
-            };
-            if (target.*) |prev| {
-              self.logger().DuplicateFlag(id, pos, prev);
-            } else target.* = pos;
+            if (self.surplus_flags_start == null) {
+              const target = switch (std.hash.Adler32.hash(id)) {
+                std.hash.Adler32.hash("primary") => &self.primary,
+                std.hash.Adler32.hash("varargs") => &self.varargs,
+                std.hash.Adler32.hash("mutable") => &self.mutable,
+                std.hash.Adler32.hash("varmap") => &self.varmap,
+                std.hash.Adler32.hash("root") => &self.root,
+                else => {
+                  self.logger().UnknownFlag(pos, id);
+                  return .none;
+                }
+              };
+              if (target.*) |prev| {
+                self.logger().DuplicateFlag(id, pos, prev);
+              } else target.* = pos;
+            }
             break .after_flag;
           },
           .escaped => {
@@ -417,44 +421,64 @@ pub const SymbolDefs = struct {
           },
           .block_header => unreachable,
         },
-        .after_flags => switch (item) {
-          .space => return .none,
-          .literal => {
-            self.logger().IllegalItem(
-              pos, &after_flags_items_arr, .{.token = .identifier});
-            return .none;
-          },
-          .escaped => {
-            self.logger().IllegalItem(
-              pos, &after_flags_items_arr, .{.token = .escape});
-            return .none;
-          },
-          .special_char => |c| switch (c) {
-            '=' => break .expr,
-            ';' => self.state = .at_end,
-            '{' => break .flags,
-            ':' => {
-              self.state = .block_header;
-              return .read_block_header;
-            },
-            else => {
+        .after_flags => {
+          if (self.surplus_flags_start) |start| blk: {
+            switch (item) {
+              .special_char => |c| switch (c) {
+                ':' => break :blk,
+                else => {},
+              },
+              else => {},
+            }
+            self.intpr.ctx.logger.SurplusFlags(model.Position{
+              .source = start.source, .start = start.start, .end = pos.start,
+            });
+            self.surplus_flags_start = null;
+          }
+          switch (item) {
+            .space => return .none,
+            .literal => {
               self.logger().IllegalItem(
-                pos, &after_flags_items_arr, .{.character = c});
+                pos, &after_flags_items_arr, .{.token = .identifier});
               return .none;
             },
-          },
-          .node => {
-            self.logger().IllegalItem(pos, &after_flags_items_arr, .node);
-            return .none;
-          },
-          .newlines => self.state = .at_end,
-          .block_header => unreachable,
+            .escaped => {
+              self.logger().IllegalItem(
+                pos, &after_flags_items_arr, .{.token = .escape});
+              return .none;
+            },
+            .special_char => |c| switch (c) {
+              '=' => break .expr,
+              ';' => self.state = .at_end,
+              '{' => {
+                self.surplus_flags_start = pos;
+                break .flags;
+              },
+              ':' => {
+                self.state = .block_header;
+                return .read_block_header;
+              },
+              else => {
+                self.logger().IllegalItem(
+                  pos, &after_flags_items_arr, .{.character = c});
+                return .none;
+              },
+            },
+            .node => {
+              self.logger().IllegalItem(pos, &after_flags_items_arr, .node);
+              return .none;
+            },
+            .newlines => self.state = .at_end,
+            .block_header => unreachable,
+          }
         },
         .block_header => {
-          if (self.header != null) {
-            self.logger().DuplicateBlockHeader(
-              "block header", pos, item.block_header.value().origin);
-          } else self.header = item.block_header;
+          if (self.surplus_flags_start == null) {
+            if (self.header != null) {
+              self.logger().DuplicateBlockHeader(
+                "block header", pos, item.block_header.value().origin);
+            } else self.header = item.block_header;
+          }
           break .after_flags;
         },
         .expr => switch (item) {

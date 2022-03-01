@@ -19,6 +19,7 @@ pub const GenericParserError = enum {
   CantCallUnfinished, FailedToCalculateReturnType, FieldAccessWithoutInstance,
   MethodOutsideDeclare, CannotResolveLocator, ImportIllegalInFullast,
   MissingInitialValue, IllegalNumericInterval, EntityCannotBeNamed,
+  SurplusFlags,
 };
 
 pub const WrongItemError = enum {
