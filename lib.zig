@@ -928,7 +928,7 @@ pub fn intrinsicModule(ctx: Context) !*model.Module {
       .map = &.{},
       .off_colon = null,
       .off_comment = null,
-      .full_ast = model.Position.intrinsic(),
+      .full_ast = null,
     }, null);
 
   //-------------

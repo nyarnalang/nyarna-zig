@@ -814,6 +814,7 @@ pub fn containedScalar(t: model.Type) ?model.Type {
         }
         break :blk null;
       },
+      .intersection => |*inter| inter.scalar,
       else => null,
     },
     .instantiated => |inst| switch (inst.data) {
@@ -1288,6 +1289,7 @@ pub const IntersectionTypeBuilder = struct {
         .types = try lattice.allocator.alloc(model.Type, tcount),
       };
       var target_index = @as(usize, 0);
+      for (input) |_, index| self.indexes[index] = 0;
       while (true) {
         var cur_type: ?model.Type = null;
         for (input) |vals, index| {
@@ -1301,7 +1303,8 @@ pub const IntersectionTypeBuilder = struct {
         }
         if (cur_type) |next_type| {
           for (self.sources) |vals, index| {
-            if (vals[self.indexes[index]].eql(next_type)) {
+            const list_index = self.indexes[index];
+            if (list_index < vals.len and vals[list_index].eql(next_type)) {
               self.indexes[index] += 1;
             }
           }

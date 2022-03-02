@@ -108,7 +108,7 @@ pub const ResolutionContext = struct {
     return StrippedResult.unknown;
   }
 
-  /// try to resolved an unresolved access node in the context.
+  /// try to resolve an unresolved access node in the context.
   pub fn resolveAccess(
     ctx: *ResolutionContext,
     intpr: *Interpreter,
@@ -236,6 +236,7 @@ pub fn GraphProcessor(comptime Graph: type) type {
         self.stack[self.stack_top] = v;
         self.stack_top += 1;
         v.on_stack = true;
+        defer v.on_stack = false;
 
         for (v.edges) |w_graph_index| {
           const w = self.proc.node_data[w_graph_index].reverse_lookup;

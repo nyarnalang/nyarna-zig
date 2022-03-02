@@ -1,12 +1,19 @@
 === Comptime reference of other declared function
 --- input
 \declare:
-  foo = \func(body=\Type)
+  Empty = \Record()
+  foo = \func(body=\Empty)
   idem = \func:
-    in : \intersection(\Raw, \foo())
+    in : \Intersection(\Raw, \foo())
   :body:
     \in
   \end(func)
 \end(declare)
---- errors:expr
-6:23 - 6:37 ComptimeCallMayNotReferenceUnfinishedSymbols
+
+\idem(spam)
+--- expr
++CALL
+  =FUNCREF .doc.input.idem
+  >ARG in
+  =TEXT raw "spam"
+-CALL

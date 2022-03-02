@@ -30,7 +30,7 @@ pub const Evaluator = struct {
   fn resetParameterStackFrame(self: *Evaluator, frame_ptr: *?[*]model.StackItem,
                               sig: *const model.Type.Signature) void {
     frame_ptr.* = frame_ptr.*.?[0].frame_ref;
-    self.ctx.data.stack_ptr -= sig.parameters.len - 1;
+    self.ctx.data.stack_ptr -= sig.parameters.len + 1;
   }
 
   fn fillParameterStackFrame(self: *Evaluator, exprs: []*model.Expression,

@@ -408,8 +408,9 @@ pub const Interpreter = struct {
                       stage: Stage) nyarna.Error!?*model.Expression {
     if (stage.kind == .resolve) {
       _ = try chains.Resolver.init(self, stage).resolve(rc.target);
-      for (rc.args) |arg| {
+      for (rc.args) |arg, index| {
         if (try self.tryInterpret(arg, stage)) |expr| {
+          expr.expected_type = rc.sig.parameters[index].ptype;
           arg.data = .{.expression = expr};
         }
       }
@@ -485,6 +486,19 @@ pub const Interpreter = struct {
   fn tryInterpretLoc(
       self: *Interpreter, loc: *model.Node.Location, stage: Stage)
       nyarna.Error!?*model.Expression {
+    if (stage.kind == .resolve) {
+      if (loc.@"type") |node| {
+        if (try self.tryInterpret(node, stage)) |expr| {
+          node.data = .{.expression = expr};
+        }
+      }
+      if (loc.default) |node| {
+        if (try self.tryInterpret(node, stage)) |expr| {
+          node.data = .{.expression = expr};
+        }
+      }
+      return null;
+    }
     std.debug.assert(stage.kind != .resolve); // TODO
     var incomplete = false;
     var t = if (loc.@"type") |node| blk: {
@@ -727,8 +741,11 @@ pub const Interpreter = struct {
     }
     // refuse params creation if this is a \method and the \this type is not yet
     // available.
-    if (func.needs_this_inject and this_type == null and
-        stage.kind == .intermediate) return false;
+    switch (stage.kind) {
+      .intermediate, .resolve =>
+        if (func.needs_this_inject and this_type == null) return false,
+      else => {},
+    }
     var locs = std.ArrayList(model.Node.Funcgen.LocRef).init(self.allocator);
     if (func.needs_this_inject) {
       if (this_type) |t| {
@@ -863,7 +880,18 @@ pub const Interpreter = struct {
   pub fn tryInterpretFunc(
       self: *Interpreter, func: *model.Node.Funcgen, stage: Stage)
       nyarna.Error!?*model.Function {
-    std.debug.assert(stage.kind != .resolve); // TODO
+    if (stage.kind == .resolve) {
+      switch (func.params) {
+        .unresolved => |node| _ = try self.tryInterpret(node, stage),
+        .resolved => |*res| for (res.locations) |*lref| switch (lref.*) {
+          .node => |lnode| _ = try self.tryInterpretLoc(lnode, stage),
+          .value => {},
+        },
+        .pregen => {},
+      }
+      _ = try self.tryInterpret(func.body, stage);
+      return null;
+    }
     if (func.returns) |rnode| {
       const ret_val = try self.ctx.evaluator().evaluate(
         (try self.associate(rnode, .{.intrinsic = .@"type"},
@@ -1205,7 +1233,7 @@ pub const Interpreter = struct {
         try self.ctx.values.poison(gi.node().pos));
     }
     if (failed_some) return null;
-    if (checker.scalar) |found_scalar| {
+    if (checker.scalar) |*found_scalar| {
       builder.push(@ptrCast([*]const model.Type, &found_scalar.t)[0..1]);
     }
     const t = try builder.finish(self.ctx.types());
@@ -1470,7 +1498,6 @@ pub const Interpreter = struct {
   /// to poison being returned if stage.kind != .intermediate.
   pub fn probeType(self: *Interpreter, node: *model.Node, stage: Stage)
       nyarna.Error!?model.Type {
-    std.debug.assert(stage.kind != .resolve);
     switch (node.data) {
       .assign, .import, .funcgen, .gen_concat, .gen_enum, .gen_float,
       .gen_intersection, .gen_list, .gen_map, .gen_numeric, .gen_optional,

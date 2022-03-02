@@ -310,7 +310,7 @@ pub const DeclareResolution = struct {
       // allocate all types and create their symbols. This allows referring to
       // them even when not all information (record field types, inner types,
       // default expressions) has been resolved.
-      for (defs) |def| {
+      alloc_types: for (defs) |def| {
         switch (def.content.data) {
           .unresolved_call, .unresolved_symref => {
             // could be function defined in a previous component (that would be
@@ -332,48 +332,54 @@ pub const DeclareResolution = struct {
           else => {},
         }
 
-        switch (def.content.data) {
+        while (true) switch (def.content.data) {
           .gen_concat => |*gc| {
-            try self.createStructural(gc); continue;
+            try self.createStructural(gc); continue :alloc_types;
           },
           .gen_enum, .gen_float => unreachable,
           .gen_intersection => |*gi| {
-            try self.createStructural(gi); continue;
+            try self.createStructural(gi); continue :alloc_types;
           },
           .gen_list => |*gl| {
-            try self.createStructural(gl); continue;
+            try self.createStructural(gl); continue :alloc_types;
           },
           .gen_map => |*gm| {
-            try self.createStructural(gm); continue;
+            try self.createStructural(gm); continue :alloc_types;
           },
           .gen_numeric => unreachable,
           .gen_optional => |*go| {
-            try self.createStructural(go); continue;
+            try self.createStructural(go); continue :alloc_types;
           },
           .gen_paragraphs => |*gp| {
-            try self.createStructural(gp); continue;
+            try self.createStructural(gp); continue :alloc_types;
           },
           .gen_record => |*gr| {
-            try self.createInstantiated(gr); continue;
+            try self.createInstantiated(gr); continue :alloc_types;
           },
           .gen_textual => unreachable,
-          .funcgen => continue,
-          .poison => {},
+          .funcgen => continue :alloc_types,
+          .poison => break,
           // anything that is an expression is already finished and can
           // immediately be established.
           // actually, if we encounter this, it is guaranteed to be the sole
           // entry in this component.
           .expression => |expr| switch (expr.data) {
-            .poison => {},
+            .poison => break,
             .value => |value| {
               const sym = try self.genSymFromValue(def.name, value, def.public);
               _ = try ns_data.tryRegister(self.intpr, sym);
-              continue;
+              continue :alloc_types;
             },
-            else => self.intpr.ctx.logger.EntityCannotBeNamed(def.content.pos),
+            else => {
+              const value = try self.intpr.ctx.evaluator().evaluate(expr);
+              expr.data = .{.value = value};
+            },
           },
-          else => self.intpr.ctx.logger.EntityCannotBeNamed(def.content.pos),
-        }
+          else => {
+            const expr = try self.intpr.interpret(def.content);
+            def.content.data = .{.expression = expr};
+          }
+        };
         // establish poison symbols
         const sym = try self.genSym(def.name, .poison, def.public);
         _ = try ns_data.tryRegister(self.intpr, sym);
@@ -498,9 +504,15 @@ pub const DeclareResolution = struct {
               try self.genSymFromValue(def.name, value, def.public));
           },
           .funcgen => |*fgen| {
-            const func = &fgen.params.pregen.data.ny;
-            func.body = (try self.intpr.tryInterpretFuncBody(
+            const func = fgen.params.pregen;
+            func.data.ny.body = (try self.intpr.tryInterpretFuncBody(
               fgen, fgen.cur_returns, .{.kind = .final})).?;
+            // so that following components can call it
+            def.content.data = .{.expression =
+              try self.intpr.ctx.createValueExpr(
+                (try self.intpr.ctx.values.funcRef(def.content.pos, func)
+                ).value()),
+            };
           },
           else => {}
         }
@@ -519,8 +531,10 @@ pub const DeclareResolution = struct {
   pub fn collectDeps(self: *DeclareResolution, index: usize,
                      edges: *[]usize) !void {
     self.dep_discovery_ctx.dependencies = .{};
-    _ = try self.intpr.probeType(self.defs[index].content,
-      .{.kind = .intermediate, .resolve = &self.dep_discovery_ctx});
+    if (try self.intpr.tryInterpret(self.defs[index].content,
+      .{.kind = .resolve, .resolve = &self.dep_discovery_ctx})) |expr| {
+     self.defs[index].content.data = .{.expression = expr};
+    }
     edges.* = self.dep_discovery_ctx.dependencies.items;
   }
 
