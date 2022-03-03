@@ -214,6 +214,25 @@ pub const SignatureMapper = struct {
     vnode.node().pos = vnode.node().pos.span(arg.pos);
   }
 
+  const ArgBehavior = enum {
+    normal, ast_node, frame_root,
+
+    fn calc(t: model.Type) ArgBehavior {
+      return switch (t) {
+        .intrinsic => |intr| switch (intr) {
+          .ast_node => ArgBehavior.ast_node,
+          .frame_root => .frame_root,
+          else => .normal,
+        },
+        .structural => |strct| switch (strct.*) {
+          .optional => |*opt| calc(opt.inner),
+          else => .normal,
+        },
+        .instantiated => .normal,
+      };
+    }
+  };
+
   fn push(mapper: *Mapper, at: Mapper.Cursor, content: *model.Node)
       nyarna.Error!void {
     const self = @fieldParentPtr(SignatureMapper, "mapper", mapper);
@@ -225,11 +244,10 @@ pub const SignatureMapper = struct {
       .varargs => param.ptype.structural.list.inner,
       else => param.ptype,
     };
-    const arg = if (
-      target_type.is(.ast_node) or target_type.is(.frame_root)
-    ) blk: {
+    const behavior = ArgBehavior.calc(target_type);
+    const arg = if (behavior == .ast_node or behavior == .frame_root) blk: {
       if (at.direct or param.capture != .varargs) {
-        const container = if (target_type.is(.frame_root))
+        const container = if (behavior == .frame_root)
           self.intpr.var_containers.pop().container else null;
         break :blk try self.intpr.genValueNode(
           (try self.intpr.ctx.values.ast(content, container)).value());
@@ -277,9 +295,6 @@ pub const SignatureMapper = struct {
               missing_param = true;
               continue;
             },
-            .ast_node => try self.intpr.genValueNode(
-              (try self.intpr.ctx.values.ast(
-                try self.intpr.node_gen.@"void"(pos), null)).value()),
             .frame_root => blk: {
               const container = try
                 self.intpr.ctx.global().create(model.VariableContainer);

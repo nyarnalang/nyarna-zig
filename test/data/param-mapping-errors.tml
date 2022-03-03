@@ -5,7 +5,7 @@
 :elst:
   Dolor Sit Amet
 \end(if)
-\import(warbl=wirbl):<nocomment>
+\import(warbl=wirbl):<off #>
   something
 #\end(import)
 \func(comptime=true,generics=T):
@@ -14,16 +14,24 @@
   \in\in
 \end(func)(a)
 --- errors:expr
-3:15 - 3:19 UnnamedParamAfterNamedParam
-4:3 - 4:14 MultipleArgumentsForParameter
-  3:10 - 3:13 previous value defined here
-5:1 - 5:7 UnknownParameterName
-3:4 - 7:9 MissingArgumentForParameter
-  215:5 - 215:14 defined here
-8:9 - 8:15 UnknownParameterName
-8:23 - 10:2 CannotMapUnnamedBlock
-8:8 - 10:14 MissingArgumentForParameter
-  202:5 - 202:9 defined here
-11:21 - 11:31 FirstParameterAssignedTooLate
+3:15 - 3:19 InvalidPositionalArgument
+4:3 - 4:14 DuplicateParameterArgument
+  repr = then
+  previous = input(3:10)
+5:2 - 5:6 UnknownParameter
+  name = elst
+3:1 - 7:9 MissingParameterArgument
+  repr = condition
+  previous = <intrinsic>(0:0)
+8:9 - 8:14 UnknownParameter
+  name = warbl
+8:29 - 8:29 UnexpectedPrimaryBlock
+8:1 - 10:14 MissingParameterArgument
+  repr = locator
+  previous = <intrinsic>(0:0)
+11:7 - 11:15 UnknownParameter
+  name = comptime
+11:21 - 11:29 UnknownParameter
+  name = generics
 12:7 - 12:9 UnknownSymbol
-  identifier is "T"
+  name = T

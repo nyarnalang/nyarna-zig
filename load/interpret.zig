@@ -708,7 +708,6 @@ pub const Interpreter = struct {
         if (loc.@"type") |tnode| {
           const expr = (try self.associate(
             tnode, .{.intrinsic = .@"type"}, .{.kind = .assumed})).?;
-          if (expr.expected_type.is(.poison)) return;
           tnode.data = .{.expression = expr};
         } else if ((try self.probeType(
             loc.default.?, .{.kind = .assumed})).?.is(.poison)) return;
@@ -791,7 +790,11 @@ pub const Interpreter = struct {
           .data = .{
             .variable = .{
               .t = if (nl.@"type") |lt|
-                lt.data.expression.data.value.data.@"type".t
+                switch (lt.data.expression.data.value.data) {
+                  .@"type" => |vt| vt.t,
+                  .poison => model.Type{.intrinsic = .poison},
+                  else => unreachable,
+                }
               else (try self.probeType(nl.default.?, stage)).?,
               .container = func.variables,
               .offset = func.variables.num_values + @intCast(u15, index),
@@ -1595,9 +1598,11 @@ pub const Interpreter = struct {
           else => model.Type{.intrinsic = .@"type"},
         },
         .instantiated => |it| switch (it.data) {
-          .textual, .float, .tenum => unreachable, // TODO
-          .numeric => |nm| return nm.typedef(),
-          .record => |rt| return rt.typedef(),
+          .textual => |*txt| return txt.constructor.typedef(),
+          .float => |*fl| return fl.constructor.typedef(),
+          .tenum => |*en| return en.constructor.typedef(),
+          .numeric => |*nm| return nm.typedef(),
+          .record => |*rt| return rt.typedef(),
         },
       },
       .prototype => |pt| return @as(?model.Type, switch (pt) {

@@ -167,9 +167,14 @@ pub const Intrinsics = Provider.Wrapper(struct {
   // keywords
   //---------
 
-  fn declare(intpr: *Interpreter, pos: model.Position, ns: u15,
-             parent: ?model.Type, public: *model.Node, private: *model.Node)
-      nyarna.Error!*model.Node {
+  fn declare(
+    intpr: *Interpreter,
+    pos: model.Position,
+    ns: u15,
+    parent: ?model.Type,
+    public: ?*model.Node,
+    private: ?*model.Node,
+  ) nyarna.Error!*model.Node {
     const DefCollector = struct {
       count: usize = 0,
       defs: []*model.Node.Definition = undefined,
@@ -271,26 +276,29 @@ pub const Intrinsics = Provider.Wrapper(struct {
     };
 
     var collector = DefCollector{};
-    for ([_]*model.Node{public, private}) |node| {
-      try collector.collect(node, intpr);
+    for ([_]?*model.Node{public, private}) |item| {
+      if (item) |node| try collector.collect(node, intpr);
     }
     try collector.allocate(intpr.allocator);
 
-    for ([_]*model.Node{public, private}) |node, i| {
-      try collector.append(node, intpr, i == 0);
-    }
+    if (public) |pnode| try collector.append(pnode, intpr, true);
+    if (private) |pnode| try collector.append(pnode, intpr, false);
     var res = try algo.DeclareResolution.create(
       intpr, collector.finish(), ns, parent);
     try res.execute();
     return intpr.node_gen.@"void"(pos);
   }
 
-  fn @"if"(intpr: *Interpreter, pos: model.Position,
-           condition: *model.Node, then: *model.Node,
-           @"else": *model.Node) nyarna.Error!*model.Node {
+  fn @"if"(
+    intpr: *Interpreter,
+    pos: model.Position,
+    condition: *model.Node,
+    then: ?*model.Node,
+    @"else": ?*model.Node,
+  ) nyarna.Error!*model.Node {
     const nodes = try intpr.allocator.alloc(*model.Node, 2);
-    nodes[1] = then;
-    nodes[0] = @"else";
+    nodes[1] = then orelse try intpr.node_gen.void(pos);
+    nodes[0] = @"else" orelse try intpr.node_gen.void(pos);
 
     const ret = try intpr.allocator.create(model.Node);
     ret.* = .{
@@ -307,7 +315,7 @@ pub const Intrinsics = Provider.Wrapper(struct {
 
   fn import(intpr: *Interpreter, pos: model.Position, ns: u15,
             locator: *model.Node) nyarna.Error!*model.Node {
-    const expr = (try intpr.interpretWithTargetScalar(
+    const expr = (try intpr.associate(
       locator, .{.intrinsic = .raw}, .{.kind = .keyword})) orelse
       return try intpr.node_gen.poison(pos);
     const value = try intpr.ctx.evaluator().evaluate(expr);
@@ -323,28 +331,32 @@ pub const Intrinsics = Provider.Wrapper(struct {
     }
   }
 
-  fn func(intpr: *Interpreter, pos: model.Position, ns: u15,
-          @"return": *model.Node, params: *model.Node, body: *model.Value.Ast)
-      nyarna.Error!*model.Node {
-    const returns_node: ?*model.Node = switch (@"return".data) {
-      .poison, .void => null,
-      else => @"return",
-    };
+  fn func(
+    intpr: *Interpreter,
+    pos: model.Position,
+    ns: u15,
+    @"return": ?*model.Node,
+    params: ?*model.Node,
+    body: *model.Value.Ast,
+  ) nyarna.Error!*model.Node {
+    const pnode = params orelse try intpr.node_gen.void(pos);
     // TODO: can body.container be null here?
     return (try intpr.node_gen.funcgen(
-      pos, returns_node, params, ns, body.root, body.container.?, false
+      pos, @"return", pnode, ns, body.root, body.container.?, false
     )).node();
   }
 
-  fn method(intpr: *Interpreter, pos: model.Position, ns: u15,
-            @"return": *model.Node, params: *model.Node, body: *model.Value.Ast)
-      nyarna.Error!*model.Node {
-    const returns_node: ?*model.Node = switch (@"return".data) {
-      .poison, .void => null,
-      else => @"return",
-    };
+  fn method(
+    intpr: *Interpreter,
+    pos: model.Position,
+    ns: u15,
+    @"return": ?*model.Node,
+    params: ?*model.Node,
+    body: *model.Value.Ast,
+  ) nyarna.Error!*model.Node {
+    const pnode = params orelse try intpr.node_gen.void(pos);
     return (try intpr.node_gen.funcgen(
-      pos, returns_node, params, ns, body.root, body.container.?, true)).node();
+      pos, @"return", pnode, ns, body.root, body.container.?, true)).node();
   }
 
   fn @"var"(intpr: *Interpreter, pos: model.Position, ns: u15,
@@ -635,8 +647,9 @@ pub const Intrinsics = Provider.Wrapper(struct {
   }
 
   fn @"Record"(intpr: *Interpreter, pos: model.Position,
-            fields: *model.Node) nyarna.Error!*model.Node {
-    return (try intpr.node_gen.tgRecord(pos, fields)).node();
+            fields: ?*model.Node) nyarna.Error!*model.Node {
+    const fnode = fields orelse try (intpr.node_gen.void(pos));
+    return (try intpr.node_gen.tgRecord(pos, fnode)).node();
   }
 
   fn @"Intersection"(intpr: *Interpreter, pos: model.Position,
@@ -658,8 +671,8 @@ pub const Intrinsics = Provider.Wrapper(struct {
     return (try intpr.node_gen.tgTextual(pos, cats, include, exclude)).node();
   }
 
-  fn @"Numeric"(intpr: *Interpreter, pos: model.Position, min: *model.Node,
-                max: *model.Node, decimals: *model.Node)
+  fn @"Numeric"(intpr: *Interpreter, pos: model.Position, min: ?*model.Node,
+                max: ?*model.Node, decimals: ?*model.Node)
       nyarna.Error!*model.Node {
     return (try intpr.node_gen.tgNumeric(pos, min, max, decimals)).node();
   }
@@ -1028,7 +1041,8 @@ pub fn intrinsicModule(ctx: Context) !*model.Module {
   // Record
   b = try types.SigBuilder.init(ctx, 1, .{.intrinsic = .ast_node}, false);
   // TODO: allow record to extend other record (?)
-  try b.push((try ctx.values.intLocation("fields", .{.intrinsic = .ast_node}
+  try b.push((try ctx.values.intLocation("fields",
+    (try ctx.types().optional(.{.intrinsic = .ast_node})).?
     )).withHeader(location_block).withPrimary(model.Position.intrinsic()));
   ctx.types().constructors.prototypes.record = try
     prototypeConstructor(ctx, &ip.provider, "Record", b.finish());
@@ -1057,9 +1071,12 @@ pub fn intrinsicModule(ctx: Context) !*model.Module {
 
   // Numeric
   b = try types.SigBuilder.init(ctx, 3, .{.intrinsic = .ast_node}, false);
-  try b.push(try ctx.values.intLocation("min", .{.intrinsic = .ast_node}));
-  try b.push(try ctx.values.intLocation("max", .{.intrinsic = .ast_node}));
-  try b.push(try ctx.values.intLocation("decimals", .{.intrinsic = .ast_node}));
+  try b.push(try ctx.values.intLocation(
+    "min", (try ctx.types().optional(.{.intrinsic = .ast_node})).?));
+  try b.push(try ctx.values.intLocation(
+    "max", (try ctx.types().optional(.{.intrinsic = .ast_node})).?));
+  try b.push(try ctx.values.intLocation(
+    "decimals", (try ctx.types().optional(.{.intrinsic = .ast_node})).?));
   ctx.types().constructors.prototypes.numeric = try
     prototypeConstructor(ctx, &ip.provider, "Numeric", b.finish());
   ret.symbols[index] = try prototypeSymbol(ctx, "Numeric", .numeric);
@@ -1090,10 +1107,12 @@ pub fn intrinsicModule(ctx: Context) !*model.Module {
   b = try types.SigBuilder.init(ctx, 3, .{.intrinsic = .ast_node}, false);
   try b.push(try ctx.values.intLocation("namespace", (try ctx.types().optional(
       .{.intrinsic = .@"type"})).?));
-  try b.push((try ctx.values.intLocation("public", .{.intrinsic = .ast_node})
-    ).withPrimary(model.Position.intrinsic()).withHeader(definition_block));
-  try b.push((try ctx.values.intLocation("private", .{.intrinsic = .ast_node})
-    ).withHeader(definition_block));
+  try b.push((try ctx.values.intLocation(
+    "public", (try ctx.types().optional(.{.intrinsic = .ast_node})).?
+  )).withPrimary(model.Position.intrinsic()).withHeader(definition_block));
+  try b.push((try ctx.values.intLocation(
+    "private", (try ctx.types().optional(.{.intrinsic = .ast_node})).?
+  )).withHeader(definition_block));
   ret.symbols[index] =
     try extFuncSymbol(ctx, "declare", true, b.finish(), &ip.provider);
   index += 1;
@@ -1101,21 +1120,23 @@ pub fn intrinsicModule(ctx: Context) !*model.Module {
   // if
   b = try types.SigBuilder.init(ctx, 3, .{.intrinsic = .ast_node}, false);
   try b.push(try ctx.values.intLocation(
-    "condition", .{.intrinsic = .ast_node}));
+    "condition",  .{.intrinsic = .ast_node}));
   try b.push((try ctx.values.intLocation(
-    "then", .{.intrinsic = .ast_node})).withPrimary(
-      model.Position.intrinsic()));
-  try b.push(try ctx.values.intLocation("else", .{.intrinsic = .ast_node}));
+    "then", (try ctx.types().optional(.{.intrinsic = .ast_node})).?
+  )).withPrimary(model.Position.intrinsic()));
+  try b.push(try ctx.values.intLocation(
+    "else", (try ctx.types().optional(.{.intrinsic = .ast_node})).?));
   ret.symbols[index] =
     try extFuncSymbol(ctx, "if", false, b.finish(), &ip.provider);
   index += 1;
 
   // func
   b = try types.SigBuilder.init(ctx, 3, .{.intrinsic = .ast_node}, false);
-  try b.push(try ctx.values.intLocation("return", .{.intrinsic = .ast_node}));
+  try b.push(try ctx.values.intLocation("return",
+    (try ctx.types().optional(.{.intrinsic = .ast_node})).?));
   try b.push((try ctx.values.intLocation(
-    "params", .{.intrinsic = .ast_node})).withPrimary(
-      model.Position.intrinsic()).withHeader(location_block));
+    "params", (try ctx.types().optional(.{.intrinsic = .ast_node})).?
+  )).withPrimary(model.Position.intrinsic()).withHeader(location_block));
   try b.push(
     (try ctx.values.intLocation("body", .{.intrinsic = .frame_root})));
   ret.symbols[index] =
@@ -1124,10 +1145,11 @@ pub fn intrinsicModule(ctx: Context) !*model.Module {
 
   // method
   b = try types.SigBuilder.init(ctx, 3, .{.intrinsic = .ast_node}, false);
-  try b.push(try ctx.values.intLocation("return", .{.intrinsic = .ast_node}));
+  try b.push(try ctx.values.intLocation("return",
+    (try ctx.types().optional(.{.intrinsic = .ast_node})).?));
   try b.push((try ctx.values.intLocation(
-    "params", .{.intrinsic = .ast_node})).withPrimary(
-      model.Position.intrinsic()).withHeader(location_block));
+    "params", (try ctx.types().optional(.{.intrinsic = .ast_node})).?
+  )).withPrimary(model.Position.intrinsic()).withHeader(location_block));
   try b.push(
     (try ctx.values.intLocation("body", .{.intrinsic = .frame_root})));
   ret.symbols[index] =

@@ -22,23 +22,38 @@
     >ARG public
     +AST
       +DEF Data
-        +TYPE record
-          +PARAM a
-            =TYPE raw
-          -PARAM
-          +PARAM b
-            =TYPE raw
-          -PARAM
-        -TYPE
+        +RCALL
+          =SYMREF <intrinsic>.Record
+          >ARG fields
+          +AST
+            +LOC a
+              +TYPE
+                =SYMREF <intrinsic>.Raw
+              -TYPE
+            -LOC
+            +LOC b
+              +TYPE
+                =SYMREF <intrinsic>.Raw
+              -TYPE
+            -LOC
+          -AST
+        -RCALL
       -DEF
       +DEF foo
-        +FUNC
-          +LOC data
-            +TYPE
-              =SYMREF [0]Data
-            -TYPE
-          -LOC
-          +BODY
+        +RCALL
+          =SYMREF <intrinsic>.func
+          >ARG return
+          =VOID
+          >ARG params
+          +AST
+            +LOC data
+              +TYPE
+                =SYMREF [0]Data
+              -TYPE
+            -LOC
+          -AST
+          >ARG body
+          +AST
             =LIT text "("
             +ACCESS
               +SUBJECT
@@ -54,14 +69,12 @@
               =ID "b"
             -ACCESS
             =LIT text ")"
-          -BODY
-        -FUNC
+          -AST
+        -RCALL
       -DEF
     -AST
     >ARG private
-    +AST
-      =VOID
-    -AST
+    =VOID
   -RCALL
 -PARA
 +PARA

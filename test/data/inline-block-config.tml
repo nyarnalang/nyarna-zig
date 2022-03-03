@@ -61,9 +61,7 @@
           =LIT text "but this is"
         -AST
         >ARG else
-        +AST
-          =VOID
-        -AST
+        =VOID
       -RCALL
     -PROTO
   -UCALL

@@ -20,9 +20,7 @@
     =LIT text "foo"
   -AST
   >ARG else
-  +AST
-    =VOID
-  -AST
+  =VOID
 -RCALL
 =LIT space "\n"
 +RCALL

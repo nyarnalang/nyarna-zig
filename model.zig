@@ -2019,17 +2019,17 @@ pub const NodeGenerator = struct {
       pos, .{.gen_map = .{.key = key, .value = value}})).data.gen_map;
   }
 
-  fn nullIfVoid(n: *Node) ?*Node {
-    return if (n.data == .void) null else n;
-  }
-
-  pub inline fn tgNumeric(self: *Self, pos: Position, min: *Node, max: *Node,
-                          decimals: *Node) !*Node.tg.Numeric {
+  pub inline fn tgNumeric(
+    self: *Self,
+    pos: Position,
+    min: ?*Node, max: ?*Node,
+    decimals: ?*Node,
+  ) !*Node.tg.Numeric {
     return &(try self.node(
       pos, .{.gen_numeric = .{
-        .min = nullIfVoid(min),
-        .max = nullIfVoid(max),
-        .decimals = nullIfVoid(decimals),
+        .min = min,
+        .max = max,
+        .decimals = decimals,
       }},
     )).data.gen_numeric;
   }

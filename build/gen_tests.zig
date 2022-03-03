@@ -31,8 +31,6 @@ fn genTests(dir: *std.fs.Dir, sets: []TestSet) !void {
     "flag-errors.tml", // TODO: integer functions
     "illegal-block-config.tml", // TODO: unexpected token error
     "invalid-end-commands.tml", // TODO: not implemented
-    "param-mapping-errors.tml", // TODO: problem in lib
-    "params-in-invalid-call.tml", // TODO: same as record-with-unresoved...
     "definitions-errors.tml", // TODO: error in interpret
     "invalid-comptime-call-in-declare.tml", // TODO: can user define comptime fn
   };

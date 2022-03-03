@@ -14,9 +14,7 @@ foo
     =LIT text "foo"
   -AST
   >ARG else
-  +AST
-    =VOID
-  -AST
+  =VOID
 -RCALL
 --- expr
 +BRANCHES
