@@ -629,12 +629,18 @@ pub const SymbolDefs = struct {
       // we reported this as error in the syntax
       return;
     }
-    if (self.variant == .defs and self.expr == null) {
+    switch (self.variant) {
+      .defs => if (self.expr == null) {
         self.logger().MissingSymbolEntity(pos);
-      return;
+        return;
+      },
+      .locs => if (self.@"type" == null and self.expr == null) {
+        self.logger().MissingSymbolType(pos);
+        return;
+      }
     }
-    const line_pos = self.intpr.input.between(self.start, pos.end);
 
+    const line_pos = self.intpr.input.between(self.start, pos.end);
     for (self.names.items) |name| {
       const node = try switch (self.variant) {
         .locs => blk: {

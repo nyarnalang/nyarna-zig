@@ -1907,9 +1907,19 @@ pub const NodeGenerator = struct {
     return &(try self.node(pos, .{.literal = content})).data.literal;
   }
 
-  pub inline fn location(self: *Self, pos: Position, content: Node.Location)
-      !*Node.Location {
-    return &(try self.node(pos, .{.location = content})).data.location;
+  pub inline fn location(
+    self: *Self,
+    pos: Position,
+    name: *Node.Literal,
+    @"type": ?*Node,
+    default: ?*Node,
+    additionals: ?*Node.Location.Additionals,
+  ) !*Node.Location {
+    std.debug.assert(@"type" != null or default != null);
+    return &(try self.node(pos, .{.location = .{
+      .name = name, .@"type" = @"type", .default = default,
+      .additionals = additionals,
+    }})).data.location;
   }
 
   pub fn locationFromValue(

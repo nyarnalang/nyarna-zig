@@ -13,13 +13,26 @@
   sausage = \func:
     spam : \end(declare)
 --- errors:expr
-4:3 - 4:3 MissingSymbolName
-5:10 - 5:10 MissingCommaBetweenNames
-5:13 - 5:13 MissingLocationType
-9:6 - 9:6 MissingDefinitionValue
+4:3 - 4:4 ExpectedXGotY
+  expected = {identifier}
+  got = ','
+5:10 - 5:10 MissingToken
+  expected = {',', '{', '=', ':'}
+  got = identifier
+5:13 - 6:3 MissingSymbolType
+9:6 - 10:1 MissingSymbolEntity
 10:1 - 10:5 InvalidEndCommand
-14:12 - 14:12 MissingSemicolon
-14:11 - 14:11 MissingLocationType
-14:12 - 14:25 SkippingEndSubject
-13:18 - 14:25 MissingArgumentForParameter
-  151:5 - 151:9 defined here
+14:17 - 14:24 SkippingCallId
+  expected = func
+  got = declare
+  defined_at = input(13:13)
+14:12 - 14:12 PrematureToken
+  expected = {<node>}
+  got = ws_break
+14:12 - 14:12 MissingSymbolType
+12:1 - 14:25 IllegalItem
+  expected = {identifier}
+  got = <node>
+3:2 - 3:9 MissingEndCommand
+  repr = declare
+  previous = input(15:1)
