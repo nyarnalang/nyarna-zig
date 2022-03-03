@@ -656,6 +656,11 @@ pub const Parser = struct {
               try self.curLevel().command.shift(
                 self.intpr(), self.cur_start, self.curLevel().fullast);
             },
+            .name_sep => {
+              self.logger().IllegalEquals(
+                self.lexer.walker.posFrom(self.cur_start));
+              self.advance();
+            },
             else => std.debug.panic(
                 "unexpected token in default: {s} at {}\n",
                 .{@tagName(self.cur), self.cur_start.formatter()}),
