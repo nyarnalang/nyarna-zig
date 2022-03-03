@@ -268,9 +268,15 @@ pub const SignatureMapper = struct {
     var missing_param = false;
     for (self.signature.parameters) |param, i| {
       if (!self.filled[i]) {
-        self.args[i] = switch (param.ptype) {
+        self.args[i] = if (param.default) |dexpr|
+          try self.intpr.node_gen.expression(dexpr)
+        else switch (param.ptype) {
           .intrinsic => |intr| switch (intr) {
             .void => try self.intpr.node_gen.@"void"(pos),
+            .poison => {
+              missing_param = true;
+              continue;
+            },
             .ast_node => try self.intpr.genValueNode(
               (try self.intpr.ctx.values.ast(
                 try self.intpr.node_gen.@"void"(pos), null)).value()),

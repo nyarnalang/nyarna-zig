@@ -377,6 +377,38 @@ pub const BlockConfig = struct {
   }
 };
 
+/// Locations can be both given in <syntax locations> where they may contain
+/// initially unresolved references, and as Locations values. Keywords that
+/// take either use the types defined herein to store those.
+pub const locations = struct {
+  /// reference to a location given either as node or as value
+  pub const Ref = union(enum) {
+    node: *Node.Location,
+    value: *Value.Location,
+  };
+
+  /// a list of locations.
+  fn List(comptime Pregen: type) type {
+    return union(enum) {
+      /// This is whatever the input gave, with no checking whether it is a
+      /// structure that can be associated to Concat(Location). That check only
+      /// happens when interpreting the Funcgen Node, either directly or
+      /// step-by-step within \declare.
+      unresolved: *Node,
+      /// the result of associating the original node with Concat(Location).
+      /// the association is made at Node level, allowing unresolved nodes in
+      /// the locations' default values.
+      resolved: struct {
+        locations: []Ref,
+      },
+      /// during \declare resolution, the target entity constructed from the
+      /// location list will at some point be generated and contain the
+      /// locations. at that point, the locations will be available in here.
+      pregen: *Pregen,
+    };
+  }
+};
+
 /// a node in the AST. Nodes are interpreted into Expressions by the
 /// interpreter. A Node can transition through multiple states before being
 /// interpreter, e.g. an UnresolvedCall may become a ResolvedCall before being
@@ -429,32 +461,14 @@ pub const Node = struct {
       return Node.parent(self);
     }
   };
+
   /// Funcgen nodes define functions. Just like type generator nodes, they may
   /// need multiple passes to be processed.
   pub const Funcgen = struct {
-    pub const LocRef = union(enum) {
-      node: *Location,
-      value: *Value.Location,
-    };
-
     /// params are initially unresolved. Trying to interpret the Funcgen may
     /// successfully resolve the params while failing to interpret the body
     /// completely.
-    params: union(enum) {
-      /// This is whatever the input gave, with no checking whether it is a
-      /// structure that can be associated to Concat(Location). That check only
-      /// happens when interpreting the Funcgen Node, either directly or
-      /// step-by-step within \declare.
-      unresolved: *Node,
-      /// the result of associating the original node with Concat(Location).
-      /// used when the params are fully resolvable but the body isn't yet.
-      resolved: struct {
-        locations: []LocRef,
-      },
-      // Function has already been constructed, but body and proper return type
-      // have not been filled / interpreted yet.
-      pregen: *Function,
-    },
+    params: locations.List(Function),
     params_ns: u15,
     returns: ?*Node,
     body: *Node,
@@ -469,8 +483,6 @@ pub const Node = struct {
     /// used during fixpoint iteration for type inference.
     /// unused if `returns` is set.
     cur_returns: Type = .{.intrinsic = .every},
-    /// used during fixpoint iteration.
-    partial: *Function = undefined,
 
     pub inline fn node(self: *@This()) *Node {
       return Node.parent(self);
@@ -700,7 +712,7 @@ pub const Node = struct {
       pub inline fn node(self: *@This()) *Node {return Node.parent(self);}
     };
     pub const Record = struct {
-      fields: []*Location,
+      fields: locations.List(void),
       generated: ?*Type.Instantiated = null,
       pub inline fn node(self: *@This()) *Node {return Node.parent(self);}
     };
@@ -1115,7 +1127,7 @@ pub const Type = union(enum) {
     constructor: *Callable,
     min: i64,
     max: i64,
-    decimals: u32,
+    decimals: u8,
 
     pub inline fn pos(self: *@This()) Position {
       return Instantiated.pos(self);
@@ -1183,6 +1195,10 @@ pub const Type = union(enum) {
 
     pub inline fn typedef(self: *const @This()) Type {
      return Instantiated.typedef(self);
+    }
+
+    pub inline fn instantiated(self: *const @This()) *Instantiated {
+      return Instantiated.parent(self);
     }
   };
 
@@ -2003,10 +2019,18 @@ pub const NodeGenerator = struct {
       pos, .{.gen_map = .{.key = key, .value = value}})).data.gen_map;
   }
 
+  fn nullIfVoid(n: *Node) ?*Node {
+    return if (n.data == .void) null else n;
+  }
+
   pub inline fn tgNumeric(self: *Self, pos: Position, min: *Node, max: *Node,
                           decimals: *Node) !*Node.tg.Numeric {
     return &(try self.node(
-      pos, .{.gen_numeric = .{.min = min, .max = max, .decimals = decimals}}
+      pos, .{.gen_numeric = .{
+        .min = nullIfVoid(min),
+        .max = nullIfVoid(max),
+        .decimals = nullIfVoid(decimals),
+      }},
     )).data.gen_numeric;
   }
 
@@ -2023,10 +2047,14 @@ pub const NodeGenerator = struct {
     )).data.gen_paragraphs;
   }
 
-  pub inline fn tgRecord(self: *Self, pos: Position, fields: []*Value.Location)
-      !*Node.tg.Record {
-    return &(try self.node(
-      pos, .{.gen_record = .{.fields = fields}})).data.gen_record;
+  pub inline fn tgRecord(
+    self: *Self,
+    pos: Position,
+    fields: *Node,
+  ) !*Node.tg.Record {
+    return &(try self.node(pos, .{.gen_record = .{
+      .fields = .{.unresolved = fields},
+    }})).data.gen_record;
   }
 
   pub inline fn tgTextual(

@@ -641,6 +641,10 @@ pub const Lattice = struct {
     return &self.boolean.data.tenum;
   }
 
+  pub fn getInteger(self: *Self) *const model.Type.Numeric {
+    return &self.integer.data.numeric;
+  }
+
   pub fn optional(self: *Self, t: model.Type) !?model.Type {
     switch (InnerIntend.optional(t)) {
       .forbidden => return null,
@@ -989,11 +993,13 @@ pub const CallableReprFinder = struct {
   pub const Result = struct {
     found: *?*model.Type.Structural,
     needs_different_repr: bool,
+    num_items: usize,
   };
   const Self = @This();
 
   iter: Lattice.TreeNode(bool).Iter,
   needs_different_repr: bool,
+  count: usize,
 
   pub fn init(lattice: *Lattice) CallableReprFinder {
     return .{
@@ -1002,21 +1008,24 @@ pub const CallableReprFinder = struct {
         .lattice = lattice,
       },
       .needs_different_repr = false,
+      .count = 0,
     };
   }
 
   pub fn push(self: *Self, loc: *model.Value.Location) !void {
+    self.count += 1;
     try self.iter.descend(loc.tloc, loc.mutable != null);
     if (loc.default != null or loc.primary != null or loc.varargs != null or
         loc.varmap != null or loc.header != null)
       self.needs_different_repr = true;
   }
 
-  pub fn finish (self: *Self, returns: model.Type, is_type: bool) !Result {
+  pub fn finish(self: *Self, returns: model.Type, is_type: bool) !Result {
     try self.iter.descend(returns, is_type);
     return Result{
       .found = &self.iter.cur.value,
       .needs_different_repr = self.needs_different_repr,
+      .num_items = self.count,
     };
   }
 };
@@ -1147,15 +1156,19 @@ pub const NumericTypeBuilder = struct {
     self.ret.max = value;
   }
 
-  pub fn decimals(self: *Self, value: i64) void {
-    self.ret.decimals = value;
+  pub fn decimals(self: *Self, value: i64, pos: model.Position) void {
+    if (value > 32 or value < 0) {
+      // TODO: type and decimal repr
+      self.ctx.logger.OutOfRange(pos, undefined, undefined);
+      self.ret.decimals = 33;
+    } else self.ret.decimals = @intCast(u8, value);
   }
 
   pub fn finish(self: *Self) !?*model.Type.Numeric {
     if (self.ret.min > self.ret.max) {
       self.ctx.logger.IllegalNumericInterval(self.pos);
       return null;
-    }
+    } else if (self.ret.decimals > 32) return null;
     var sb = try SigBuilder.init(
       self.ctx, 1, self.ret.typedef(), true);
     try sb.push((try self.ctx.values.location(

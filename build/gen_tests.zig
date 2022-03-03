@@ -25,7 +25,6 @@ fn genTests(dir: *std.fs.Dir, sets: []TestSet) !void {
     "doc-param.tml", // missing: document parameters
     "integer-fragment.tml", // missing: intrinsic funcs, module kinds
     "ns-symbol-errors.tml", // TODO: ::length on lists
-    "record-with-unresolved-field-type.tml", // TODO: problem with mapper
     "illegal-chars-in-args.tml", // TODO: unexpected token error
     "illegal-args-content.tml", // TODO: recovery
     "illegal-command-in-id.tml", // TODO: unexpected token error

@@ -407,6 +407,9 @@ pub const Parser = struct {
   }
 
   fn pushLevel(self: *Parser, fullast: bool) !void {
+    if (self.levels.items.len > 0) {
+      std.debug.assert(self.curLevel().command.info != .unknown);
+    }
     try self.levels.append(self.allocator(), ContentLevel{
       .start = self.lexer.recent_end,
       .changes = null,
@@ -922,7 +925,7 @@ pub const Parser = struct {
           // initialize level with fullast according to chosen param type.
           // may be overridden by block config in following processBlockHeader.
           try self.pushLevel(if (parent.command.choseAstNodeParam()) false
-                             else parent.fullast);
+                            else parent.fullast);
           if (!(try self.processBlockHeader(null))) {
             if (parent.implicitBlockConfig()) |c| {
               try self.applyBlockConfig(
@@ -1210,7 +1213,9 @@ pub const Parser = struct {
   ///     level has been pushed and command entered its primary param due to
   ///     explicit block config.
   fn processBlockHeader(self: *Parser, pb_exists: ?*PrimaryBlockExists) !bool {
-    const parent = self.curLevel();
+    // on named blocks, the new level has already been pushed
+    const parent = &self.levels.items[
+      self.levels.items.len - if (pb_exists == null) @as(usize, 2) else 1];
     // position of the colon *after* a block header, for additional swallow
     var colon_start: ?model.Position = null;
     const check_swallow = if (self.cur == .diamond_open) blk: {
@@ -1243,8 +1248,7 @@ pub const Parser = struct {
             }
           }
           ind.* = .yes;
-        } else try self.pushLevel(if (parent.command.choseAstNodeParam()) false
-                                  else parent.fullast);
+        }
         parent.command.swallow_depth = swallow_depth;
         if (swallow_depth != 0) {
           // now close all commands that have a swallow depth equal or greater
@@ -1293,10 +1297,24 @@ pub const Parser = struct {
             // target_level's command has now been closed. therefore it is safe
             // to assign it to the previous parent's command
             // (which has not been touched).
-            self.levels.items[target_level].command = parent.command;
+            const tl = &self.levels.items[target_level];
+            tl.command = parent.command;
+            tl.command.mapper = switch (tl.command.info) {
+              .resolved_call => |*sm| &sm.mapper,
+              .unresolved_call => |*uc| &uc.mapper,
+              .assignment => |*as| &as.mapper,
+              .unknown => unreachable,
+            };
             // finally, shift the new level on top of the target_level
             self.levels.items[target_level + 1] = last(self.levels.items).*;
-            try self.levels.resize(self.allocator(), target_level + 1);
+            const ll = &self.levels.items[target_level + 1];
+            ll.command.mapper = switch (ll.command.info) {
+              .resolved_call => |*sm| &sm.mapper,
+              .unresolved_call => |*uc| &uc.mapper,
+              .assignment => |*as| &as.mapper,
+              .unknown => unreachable,
+            };
+            try self.levels.resize(self.allocator(), target_level + 2);
           }
         }
 

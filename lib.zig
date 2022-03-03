@@ -635,33 +635,8 @@ pub const Intrinsics = Provider.Wrapper(struct {
   }
 
   fn @"Record"(intpr: *Interpreter, pos: model.Position,
-            fields: *model.Value.Concat) nyarna.Error!*model.Node {
-    var res = try intpr.ctx.global().create(model.Type.Instantiated);
-    res.* = .{
-      .at = pos,
-      .name = null,
-      .data = .{
-        .record = undefined,
-      },
-    };
-    const res_type = model.Type{.instantiated = res};
-
-    var finder = types.CallableReprFinder.init(intpr.ctx.types());
-    for (fields.content.items) |field| try finder.push(&field.data.location);
-    const finder_result = try finder.finish(res_type, true);
-    std.debug.assert(finder_result.found.* == null);
-
-    var b = try types.SigBuilder.init(intpr.ctx, fields.content.items.len,
-      res_type, finder_result.needs_different_repr);
-    for (fields.content.items) |field| try b.push(&field.data.location);
-    const builder_res = b.finish();
-
-    res.data.record = .{
-      .constructor =
-        try builder_res.createCallable(intpr.ctx.global(), .@"type"),
-    };
-    return try intpr.genValueNode(
-      (try intpr.ctx.values.@"type"(pos, res_type)).value());
+            fields: *model.Node) nyarna.Error!*model.Node {
+    return (try intpr.node_gen.tgRecord(pos, fields)).node();
   }
 
   fn @"Intersection"(intpr: *Interpreter, pos: model.Position,
@@ -1053,9 +1028,8 @@ pub fn intrinsicModule(ctx: Context) !*model.Module {
   // Record
   b = try types.SigBuilder.init(ctx, 1, .{.intrinsic = .ast_node}, false);
   // TODO: allow record to extend other record (?)
-  try b.push((try ctx.values.intLocation("fields", (try ctx.types().concat(
-    model.Type{.intrinsic = .location})).?)).withHeader(
-      location_block).withPrimary(model.Position.intrinsic()));
+  try b.push((try ctx.values.intLocation("fields", .{.intrinsic = .ast_node}
+    )).withHeader(location_block).withPrimary(model.Position.intrinsic()));
   ctx.types().constructors.prototypes.record = try
     prototypeConstructor(ctx, &ip.provider, "Record", b.finish());
   ret.symbols[index] = try prototypeSymbol(ctx, "Record", .record);

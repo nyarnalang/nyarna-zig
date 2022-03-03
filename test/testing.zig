@@ -370,7 +370,14 @@ const AstEmitter = struct {
       },
       .gen_record => |gr| {
         const gen = try self.pushWithKey("TGEN", "Record", null);
-        for (gr.fields) |field| try self.process(field.node());
+        switch (gr.fields) {
+          .unresolved => |node| try self.process(node),
+          .resolved => |*res| for (res.locations) |loc| switch (loc) {
+            .node => |lnode| try self.process(lnode.node()),
+            .value => |lval| try self.processValue(lval.value()),
+          },
+          .pregen => try self.processType(.{.instantiated = gr.generated.?}),
+        }
         try gen.pop();
       },
       .gen_textual => |gt| {
@@ -438,8 +445,21 @@ const AstEmitter = struct {
 
   pub fn processExpr(self: *Self, e: *model.Expression) anyerror!void {
     switch (e.data) {
-      .access => |_| {
-        unreachable;
+      .access => |acc| {
+        var builder = std.ArrayList(u8).init(std.testing.allocator);
+        defer builder.deinit();
+        var t = acc.subject.expected_type;
+        for (acc.path) |descend, index| {
+          if (index > 0) try builder.appendSlice("::");
+          const param =
+            &t.instantiated.data.record.constructor.sig.parameters[descend];
+          t = param.ptype;
+          try builder.appendSlice(param.name);
+        }
+
+        const a = try self.pushWithKey("ACCESS", builder.items, null);
+        try self.processExpr(acc.subject);
+        try a.pop();
       },
       .assignment => |ass| {
         const a = try self.push("ASSIGNMENT");
@@ -525,7 +545,6 @@ const AstEmitter = struct {
             .record => |*rec| {
               for (rec.constructor.sig.parameters) |*param| {
                 const p = try self.pushWithKey("PARAM", param.name, null);
-                try self.emitLine("=PARAM {s}", .{param.name});
                 try self.processType(param.ptype);
                 if (param.default) |default| try self.processExpr(default);
                 try p.pop();

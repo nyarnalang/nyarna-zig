@@ -1,0 +1,47 @@
+=== Record fields with default values
+--- input
+\declare:
+  OneToTen = \Numeric(min=1, max=10)
+  TwoNumbers = \Record:
+    first = \OneToTen(1)
+    second = \OneToTen(10)
+  \end(Record)
+\end(declare)
+
+\var:
+  val = \TwoNumbers()
+\end(var)
+
+\val::first
+\val::second
+--- expr
++PARAGRAPHS
+  >PARA 2
+  +ASSIGNMENT
+    =TARGET val
+    >EXPR
+    +CALL
+      =TYPE record .doc.input.TwoNumbers
+      >ARG first
+      +CALL
+        =TYPE numeric .doc.input.OneToTen
+        >ARG input
+        =NUMBER OneToTen 1
+      -CALL
+      >ARG second
+      +CALL
+        =TYPE numeric .doc.input.OneToTen
+        >ARG input
+        =NUMBER OneToTen 10
+      -CALL
+    -CALL
+  -ASSIGNMENT
+  >PARA 0
+  +ACCESS first
+    =GETVAR val
+  -ACCESS
+  =TEXT raw "\n"
+  +ACCESS second
+    =GETVAR val
+  -ACCESS
+-PARAGRAPHS

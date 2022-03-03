@@ -244,10 +244,6 @@ pub const DeclareResolution = struct {
     gen.generated = try self.intpr.ctx.global().create(model.Type.Structural);
   }
 
-  inline fn createInstantiated(self: *DeclareResolution, gen: anytype) !void {
-    gen.generated = try self.intpr.ctx.global().create(model.Type.Instantiated);
-  }
-
   inline fn genSym(self: *DeclareResolution, name: *model.Node.Literal,
                    content: model.Symbol.Data, publish: bool) !*model.Symbol {
     const sym = try self.intpr.ctx.global().create(model.Symbol);
@@ -354,7 +350,15 @@ pub const DeclareResolution = struct {
             try self.createStructural(gp); continue :alloc_types;
           },
           .gen_record => |*gr| {
-            try self.createInstantiated(gr); continue :alloc_types;
+            const inst =
+              try self.intpr.ctx.global().create(model.Type.Instantiated);
+            inst.* = .{
+              .at = def.content.pos,
+              .name = null,
+              .data = .{.record = .{.constructor = undefined}},
+            };
+            gr.generated = inst;
+            continue :alloc_types;
           },
           .gen_textual => unreachable,
           .funcgen => continue :alloc_types,
@@ -396,15 +400,13 @@ pub const DeclareResolution = struct {
             .gen_concat, .gen_intersection, .gen_list, .gen_map, .gen_optional,
             .gen_paragraphs => try tr.process(def),
             .gen_record => |*rgen| {
-              for (rgen.fields) |field| {
-                if (field.@"type") |tnode| {
-                  if (
-                    try self.intpr.tryInterpret(def.content,
-                      .{.kind = .final, .resolve = &tr.ctx})
-                  ) |expr| {
-                    tnode.data = .{.expression = expr};
-                  } else tnode.data = .poison;
-                }
+              if (
+                !(try self.intpr.tryInterpretRecordParams(
+                  rgen, .{.kind = .final, .resolve = &tr.ctx}))
+              ) {
+                const sym = try self.genSym(def.name, .poison, def.public);
+                _ = try ns_data.tryRegister(self.intpr, sym);
+                def.content.data = .poison;
               }
             },
             .funcgen => |*fgen| {

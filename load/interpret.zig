@@ -484,8 +484,10 @@ pub const Interpreter = struct {
   }
 
   fn tryInterpretLoc(
-      self: *Interpreter, loc: *model.Node.Location, stage: Stage)
-      nyarna.Error!?*model.Expression {
+    self: *Interpreter,
+    loc: *model.Node.Location,
+    stage: Stage,
+  ) nyarna.Error!?*model.Expression {
     if (stage.kind == .resolve) {
       if (loc.@"type") |node| {
         if (try self.tryInterpret(node, stage)) |expr| {
@@ -667,8 +669,11 @@ pub const Interpreter = struct {
     return expr;
   }
 
-  fn locationsCanGenVars(self: *Interpreter, node: *model.Node, stage: Stage)
-      nyarna.Error!bool {
+  fn locationsCanGenVars(
+    self: *Interpreter,
+    node: *model.Node,
+    stage: Stage,
+  ) nyarna.Error!bool {
     switch (node.data) {
       .location => |*loc| {
         if (loc.@"type") |tnode| {
@@ -693,9 +698,11 @@ pub const Interpreter = struct {
     }
   }
 
-  fn collectLocations(self: *Interpreter, node: *model.Node,
-                      collector: *std.ArrayList(model.Node.Funcgen.LocRef))
-      nyarna.Error!void {
+  fn collectLocations(
+    self: *Interpreter,
+    node: *model.Node,
+    collector: *std.ArrayList(model.locations.Ref),
+  ) nyarna.Error!void {
     switch (node.data) {
       .location => |*loc| {
         if (loc.@"type") |tnode| {
@@ -727,6 +734,20 @@ pub const Interpreter = struct {
     }
   }
 
+  pub fn tryInterpretRecordParams(
+    self: *Interpreter,
+    rec: *model.Node.tg.Record,
+    stage: Stage,
+  ) !bool {
+    if (!(try self.locationsCanGenVars(rec.fields.unresolved, stage))) {
+      return false;
+    }
+    var locs = std.ArrayList(model.locations.Ref).init(self.allocator);
+    try self.collectLocations(rec.fields.unresolved, &locs);
+    rec.fields = .{.resolved = .{.locations = locs.items}};
+    return true;
+  }
+
   /// Tries to change func.params.unresolved to func.params.resolved.
   /// returns true if that transition was successful. A return value of false
   /// implies that there is at least one yet unresolved reference in the params.
@@ -734,8 +755,11 @@ pub const Interpreter = struct {
   /// On success, this function also resolves all unresolved references to the
   /// variables in the function's body.
   pub fn tryInterpretFuncParams(
-      self: *Interpreter, func: *model.Node.Funcgen, stage: Stage,
-      this_type: ?model.Type) !bool {
+    self: *Interpreter,
+    func: *model.Node.Funcgen,
+    stage: Stage,
+    this_type: ?model.Type,
+  ) !bool {
     if (!(try self.locationsCanGenVars(func.params.unresolved, stage))) {
       return false;
     }
@@ -746,7 +770,7 @@ pub const Interpreter = struct {
         if (func.needs_this_inject and this_type == null) return false,
       else => {},
     }
-    var locs = std.ArrayList(model.Node.Funcgen.LocRef).init(self.allocator);
+    var locs = std.ArrayList(model.locations.Ref).init(self.allocator);
     if (func.needs_this_inject) {
       if (this_type) |t| {
         try locs.append(.{.value = try self.ctx.values.location(
@@ -805,34 +829,27 @@ pub const Interpreter = struct {
     return true;
   }
 
-  pub fn tryPregenFunc(
-      self: *Interpreter, func: *model.Node.Funcgen, ret_type: model.Type,
-      stage: Stage) nyarna.Error!?*model.Function {
-    switch (func.params) {
-      .unresolved => if (!try self.tryInterpretFuncParams(func, stage, null))
-        return null,
-      .resolved => {},
-      .pregen => |pregen| return pregen,
-    }
-    const params = &func.params.resolved;
-
+  fn processLocations(
+    self: *Interpreter,
+    locs: *[]model.locations.Ref,
+    stage: Stage,
+  ) nyarna.Error!?types.CallableReprFinder {
     var finder = types.CallableReprFinder.init(self.ctx.types());
     var index: usize = 0;
-    while (index < params.locations.len) {
-      const loc = params.locations[index];
+    while (index < locs.len) {
+      const loc = locs.*[index];
       const lval = switch (loc) {
         .node => |nl| blk: {
           const expr = (try self.tryInterpretLoc(nl, stage)) orelse return null;
           const val = try self.ctx.evaluator().evaluate(expr);
           if (val.data == .poison) {
-            std.mem.copy(model.Node.Funcgen.LocRef,
-              params.locations[index..params.locations.len-1],
-              params.locations[index+1..params.locations.len]);
-            params.locations =
-              params.locations[0..params.locations.len - 1];
+            std.mem.copy(model.locations.Ref,
+              locs.*[index..locs.len-1],
+              locs.*[index+1..locs.len]);
+            locs.* = locs.*[0..locs.len - 1];
             continue;
           }
-          params.locations[index] = .{.value = &val.data.location};
+          locs.*[index] = .{.value = &val.data.location};
           break :blk &val.data.location;
         },
         .value => |vl| vl,
@@ -840,7 +857,24 @@ pub const Interpreter = struct {
       try finder.push(lval);
       index += 1;
     }
+    return finder;
+  }
 
+  pub fn tryPregenFunc(
+    self: *Interpreter,
+    func: *model.Node.Funcgen,
+    ret_type: model.Type,
+    stage: Stage,
+  ) nyarna.Error!?*model.Function {
+    switch (func.params) {
+      .unresolved => if (!try self.tryInterpretFuncParams(func, stage, null))
+        return null,
+      .resolved => {},
+      .pregen => |pregen| return pregen,
+    }
+    const params = &func.params.resolved;
+    var finder = (try self.processLocations(&params.locations, stage))
+      orelse return null;
     const finder_res = try finder.finish(ret_type, false);
     var b = try types.SigBuilder.init(self.ctx, params.locations.len,
       ret_type, finder_res.needs_different_repr);
@@ -1251,9 +1285,56 @@ pub const Interpreter = struct {
     _ = self; _ = gm; _ = stage; unreachable;
   }
 
-  fn tryGenNumeric(self: *Interpreter, gn: *model.Node.tg.Numeric, stage: Stage)
-      nyarna.Error!?*model.Expression {
-    _ = self; _ = gn; _ = stage; unreachable;
+  fn getNumberFrom(
+    self: *Interpreter,
+    expr: *model.Expression,
+  ) nyarna.Error!?i64 {
+    const value = try self.ctx.evaluator().evaluate(expr);
+    if (value.data == .poison) return null;
+    return value.data.number.content;
+  }
+
+  fn tryGenNumeric(
+    self: *Interpreter,
+    gn: *model.Node.tg.Numeric,
+    stage: Stage,
+  ) nyarna.Error!?*model.Expression {
+    var seen_poison = false;
+    var seen_unfinished = false;
+    var nb = try types.NumericTypeBuilder.init(self.ctx, gn.node().pos);
+    for ([_]?*model.Node{gn.min, gn.max, gn.decimals}) |entry, index| {
+      if (entry) |item| {
+        if (
+          try self.associate(item, self.ctx.types().getInteger().typedef(), stage)
+        ) |expr| {
+          if (expr.expected_type.is(.poison)) seen_poison = true;
+          item.data = .{.expression = expr};
+          switch (index) {
+            0 => nb.min((try self.getNumberFrom(expr)) orelse {
+              seen_poison = true;
+              continue;
+            }),
+            1 => nb.max((try self.getNumberFrom(expr)) orelse {
+              seen_poison = true;
+              continue;
+            }),
+            2 => nb.decimals((try self.getNumberFrom(expr)) orelse {
+              seen_poison = true;
+              continue;
+            }, item.pos),
+            else => unreachable,
+          }
+        } else seen_unfinished = true;
+      }
+    }
+    if (seen_unfinished) return null;
+    const ret: ?*model.Type.Numeric =
+      if (seen_poison) null else try nb.finish();
+    if (ret) |numeric| {
+      return try self.ctx.createValueExpr((try self.ctx.values.@"type"(
+        gn.node().pos, .{.instantiated = numeric.instantiated()})).value());
+    } else return try self.ctx.createValueExpr(
+      try self.ctx.values.poison(gn.node().pos));
   }
 
   fn tryGenOptional(
@@ -1271,7 +1352,56 @@ pub const Interpreter = struct {
 
   fn tryGenRecord(self: *Interpreter, gr: *model.Node.tg.Record, stage: Stage)
       nyarna.Error!?*model.Expression {
-    _ = self; _ = gr; _ = stage; unreachable;
+    if (stage.kind == .resolve) {
+      switch (gr.fields) {
+        .unresolved => |node| _ = try self.tryInterpret(node, stage),
+        .resolved => |*res| for (res.locations) |*lref| switch (lref.*) {
+          .node => |lnode| _ = try self.tryInterpretLoc(lnode, stage),
+          .value => {},
+        },
+        .pregen => {},
+      }
+      return null;
+    }
+    var failed_parts = false;
+    while (!failed_parts) switch (gr.fields) {
+      .unresolved => {
+        if (!try self.tryInterpretRecordParams(gr, stage)) {
+          failed_parts = true;
+        }
+      },
+      .resolved => |*res| {
+        var finder = (try self.processLocations(&res.locations, stage))
+          orelse return null;
+        const target = &(gr.generated orelse blk: {
+          const inst = try self.ctx.global().create(model.Type.Instantiated);
+          inst.* = .{
+            .at = gr.node().pos,
+            .name = null,
+            .data = .{.record = .{.constructor = undefined}},
+          };
+          gr.generated = inst;
+          break :blk inst;
+        }).data.record;
+        const target_type = model.Type{.instantiated = target.instantiated()};
+        const finder_res = try finder.finish(target_type, true);
+        std.debug.assert(finder_res.found.* == null);
+        var b = try types.SigBuilder.init(self.ctx, res.locations.len,
+          target_type, finder_res.needs_different_repr);
+        for (res.locations) |loc| try b.push(loc.value);
+        const builder_res = b.finish();
+        target.constructor =
+          try builder_res.createCallable(self.ctx.global(), .@"type");
+        gr.fields = .pregen;
+      },
+      .pregen => {
+        return try self.ctx.createValueExpr(
+          (try self.ctx.values.@"type"(gr.node().pos, .{
+            .instantiated = gr.generated.?,
+          })).value());
+      }
+    };
+    return null;
   }
 
   fn tryGenTextual(self: *Interpreter, gt: *model.Node.tg.Textual, stage: Stage)
@@ -1809,8 +1939,11 @@ pub const Interpreter = struct {
   /// null is returned if the association cannot be made currently because of
   /// unresolved symbols.
   pub fn associate(
-      self: *Interpreter, node: *model.Node, t: model.Type, stage: Stage)
-      !?*model.Expression {
+    self: *Interpreter,
+    node: *model.Node,
+    t: model.Type,
+    stage: Stage,
+  ) !?*model.Expression {
     const scalar_type = types.containedScalar(t) orelse
       (try self.probeForScalarType(node, stage)) orelse return null;
 
@@ -1825,6 +1958,7 @@ pub const Interpreter = struct {
       self.ctx.logger.ExpectedExprOfTypeXGotY(
         node.pos, &[_]model.Type{t, expr.expected_type});
       expr.data = .{.value = try self.ctx.values.poison(expr.pos)};
+      expr.expected_type = .{.intrinsic = .poison};
       break :blk expr;
     } else null;
   }
