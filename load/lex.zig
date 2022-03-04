@@ -849,9 +849,9 @@ pub const Lexer = struct {
       .block_name => {},
       else => if (l.intpr.command_characters.get(cur.*)) |ns| {
         l.ns = ns;
-        return l.genCommand(cur);
+        return l.genCommand(cur, ctx != .args);
       } else if (cur.* == l.level.end_char and l.checkEndCommand()) {
-        return l.genCommand(cur);
+        return l.genCommand(cur, ctx != .args);
       },
     }
     return ContentResult{.token =
@@ -931,7 +931,7 @@ pub const Lexer = struct {
     l.cur_stored = cur.*;
   }
 
-  inline fn genCommand(l: *Lexer, cur: *u21) ContentResult {
+  inline fn genCommand(l: *Lexer, cur: *u21, end_allowed: bool) ContentResult {
     l.code_point = cur.*;
     cur.* = l.walker.nextInline() catch |e| {
       l.cur_stored = e;
@@ -941,8 +941,23 @@ pub const Lexer = struct {
       if (std.mem.eql(u8, l.recent_id, "end")) {
         if (cur.* == '(') {
           l.cur_stored = l.walker.nextInline();
-          l.state = .before_end_id;
-          return .{.token = .block_end_open};
+          if (end_allowed) {
+            l.state = .before_end_id;
+            return .{.token = .block_end_open};
+          } else {
+            cur.* = l.cur_stored catch return .{.token = .invalid_end_command};
+            while (
+              cur.* == ' ' or cur.* == '\t' or
+              unicode.L.contains(unicode.category(cur.*))
+            ) {
+              cur.* = l.walker.nextInline() catch |e| {
+                l.cur_stored = e;
+                return .{.token = .invalid_end_command};
+              };
+            }
+            l.cur_stored = if (cur.* == ')') l.walker.nextInline() else cur.*;
+            return .{.token = .invalid_end_command};
+          }
         } else {
           return .{.token = .invalid_end_command};
         }

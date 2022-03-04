@@ -505,7 +505,7 @@ pub const Parser = struct {
       .mixed_indentation => errors.Handler.MixedIndentation,
       .illegal_indentation => errors.Handler.IllegalIndentation,
       .illegal_content_at_header => errors.Handler.IllegalContentAtHeader,
-      .invalid_end_command => unreachable,
+      .invalid_end_command => errors.Handler.InvalidEndCommand,
       .wrong_call_id => unreachable,
       .skipping_call_id => unreachable,
       else => |t| {
@@ -657,7 +657,7 @@ pub const Parser = struct {
                 self.intpr(), self.cur_start, self.curLevel().fullast);
             },
             .name_sep => {
-              self.logger().IllegalEquals(
+              self.logger().IllegalNameSep(
                 self.lexer.walker.posFrom(self.cur_start));
               self.advance();
             },
@@ -720,15 +720,22 @@ pub const Parser = struct {
           };
           if (content.items.len > 0) {
             if (self.cur == .name_sep) {
-              if (lvl.nodes.items.len > 0) {
-                unreachable; // TODO: error: equals not allowed here
-              }
-              try self.levels.items[self.levels.items.len - 2].command.pushName(
-                pos, content.items,
-                pos.end.byte_offset - pos.start.byte_offset == 2, .flow);
-              while (true) {
+              const parent = &self.levels.items[self.levels.items.len - 2];
+              if (
+                lvl.nodes.items.len > 0 or
+                parent.command.cur_cursor != .not_pushed
+              ) {
+                self.logger().IllegalNameSep(
+                  self.lexer.walker.posFrom(self.cur_start));
                 self.advance();
-                if (self.cur != .space) break;
+              } else {
+                try parent.command.pushName(
+                  pos, content.items,
+                  pos.end.byte_offset - pos.start.byte_offset == 2, .flow);
+                while (true) {
+                  self.advance();
+                  if (self.cur != .space) break;
+                }
               }
             } else {
               const node = (try self.intpr().node_gen.literal(pos, .{
@@ -787,6 +794,7 @@ pub const Parser = struct {
               self.advance();
             },
             .assign => {
+              const start = self.lexer.recent_end;
               self.advance();
               switch (self.cur) {
                 .list_start => {
@@ -795,7 +803,24 @@ pub const Parser = struct {
                 .blocks_sep => {
                   self.state = .after_blocks_start;
                 },
-                else => unreachable // TODO: recover
+                .closer => {
+                  self.logger().AssignmentWithoutExpression(
+                    self.lexer.walker.posFrom(lvl.command.info.unknown.pos.start
+                  ));
+                  self.state = .default;
+                  self.advance();
+                  continue;
+                },
+                else => {
+                  const pos = model.Position{
+                    .source = self.lexer.walker.source.meta,
+                    .start = lvl.command.info.unknown.pos.start,
+                    .end = start,
+                  };
+                  self.logger().AssignmentWithoutExpression(pos);
+                  self.state = .default;
+                  continue;
+                }
               }
               lvl.command.startAssignment(self.intpr());
               self.advance();
