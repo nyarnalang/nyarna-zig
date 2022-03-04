@@ -26,7 +26,6 @@ fn genTests(dir: *std.fs.Dir, sets: []TestSet) !void {
     "integer-fragment.tml", // missing: intrinsic funcs, module kinds
     "ns-symbol-errors.tml", // TODO: ::length on lists
     "flag-errors.tml", // TODO: integer functions
-    "illegal-block-config.tml", // TODO: unexpected token error
     "invalid-comptime-call-in-declare.tml", // TODO: can user define comptime fn
   };
 

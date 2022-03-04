@@ -8,12 +8,31 @@
   baz
 \end(block)
 
+\block:<map \ b>
+\end(block)
 \block:<\if
 --- errors:expr
-3:9 - 3:12 InvalidBlockDirective
-3:13 - 3:13 MissingBlockConfigEnd
-7:9 - 7:15 InvalidBlockDirective
-11:9 - 11:12 InvalidBlockDirective
-11:12 - 11:12 MissingBlockConfigEnd
-11:12 - 11:12 MissingEndCommand
-  11:7 call started here
+3:9 - 3:12 UnknownConfigDirective
+7:9 - 7:10 ExpectedXGotY
+  expected = {identifier}
+  got = ns_sym
+7:11 - 7:13 IllegalContentAtHeader
+7:14 - 7:16 IllegalContentAtHeader
+11:15 - 11:16 ExpectedXGotY
+  expected = {ns_sym}
+  got = literal
+13:9 - 13:10 ExpectedXGotY
+  expected = {identifier}
+  got = ns_sym
+13:10 - 13:12 IllegalContentAtHeader
+13:2 - 13:7 MissingEndCommand
+  repr = block
+  previous = input(13:12)
+3:1 - 3:7 UnknownSymbol
+  name = block
+7:1 - 7:7 UnknownSymbol
+  name = block
+11:1 - 11:7 UnknownSymbol
+  name = block
+13:1 - 13:7 UnknownSymbol
+  name = block

@@ -1234,7 +1234,10 @@ pub const Parser = struct {
             recover = true;
             break :consume_next;
           },
-          .unknown => break :consume_next,
+          .unknown => {
+            recover = true;
+            break :consume_next;
+          },
         }
         while (!self.getNext()) {}
       }
