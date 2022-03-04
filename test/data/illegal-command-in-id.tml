@@ -8,12 +8,17 @@
 \end(foo)
 \block(=spam
 --- errors:expr
-3:9 - 3:12 IllegalCommand
-3:12 - 3:13 IllegalOpeningParenthesis
-3:13 - 3:16 IllegalContentAfterCommandId
-3:23 - 3:26 TooManyParameters
-5:1 - 5:12 InvalidEndCommand
-6:13 - 6:16 IllegalContentAfterCommandId
-9:13 - 9:13 MissingClosingParenthesis
-9:7 - 9:13 MissingArgumentForParameter
-  233:5 - 233:12 defined here
+3:9 - 3:9 MissingId
+3:9 - 3:12 IllegalContentAfterId
+3:13 - 3:16 NotInEnum
+  t = Boolean
+  repr = foo
+6:13 - 6:16 IllegalContentAfterId
+9:13 - 10:1 IllegalContentAfterId
+10:1 - 10:1 MissingClosingParenthesis
+3:1 - 3:7 UnknownSymbol
+  name = block
+6:1 - 6:7 UnknownSymbol
+  name = block
+9:1 - 9:7 UnknownSymbol
+  name = block

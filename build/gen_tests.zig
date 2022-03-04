@@ -25,10 +25,8 @@ fn genTests(dir: *std.fs.Dir, sets: []TestSet) !void {
     "doc-param.tml", // missing: document parameters
     "integer-fragment.tml", // missing: intrinsic funcs, module kinds
     "ns-symbol-errors.tml", // TODO: ::length on lists
-    "illegal-command-in-id.tml", // TODO: unexpected token error
     "flag-errors.tml", // TODO: integer functions
     "illegal-block-config.tml", // TODO: unexpected token error
-    "invalid-end-commands.tml", // TODO: not implemented
     "invalid-comptime-call-in-declare.tml", // TODO: can user define comptime fn
   };
 

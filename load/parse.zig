@@ -337,6 +337,10 @@ pub const Parser = struct {
     /// This state reads in a block name, possibly a block configuration, and
     /// then pushes a level to read the block content.
     block_name,
+    /// This state expects a .call_id and then transitions to .after_id
+    before_id,
+    /// emits an error if anything but space occurs before ',' or ')'
+    after_id,
     /// This state passes lexer tokens to the special syntax processor.
     special,
   };
@@ -563,12 +567,17 @@ pub const Parser = struct {
                 const parent = self.curLevel();
                 if (parent.command.swallow_depth == null) {
                   const spos = parent.command.mapper.subject_pos;
-                  const name =
-                    if (spos.end.byte_offset - spos.start.byte_offset > 0)
-                      self.lexer.walker.contentIn(spos) else "<unnamed>";
-                  self.intpr().ctx.logger.MissingEndCommand(
-                    name, parent.command.mapper.subject_pos,
-                    self.lexer.walker.posFrom(self.cur_start));
+                  if (self.lexer.paren_depth > 0) {
+                    self.logger().MissingClosingParenthesis(
+                      self.lexer.walker.posFrom(self.cur_start));
+                  } else {
+                    const name =
+                      if (spos.end.byte_offset - spos.start.byte_offset > 0)
+                        self.lexer.walker.contentIn(spos) else "<unnamed>";
+                    self.intpr().ctx.logger.MissingEndCommand(
+                      name, parent.command.mapper.subject_pos,
+                      self.lexer.walker.posFrom(self.cur_start));
+                  }
                 }
                 try parent.command.shift(
                   self.intpr(), self.cur_start, parent.fullast);
@@ -659,6 +668,10 @@ pub const Parser = struct {
             .name_sep => {
               self.logger().IllegalNameSep(
                 self.lexer.walker.posFrom(self.cur_start));
+              self.advance();
+            },
+            .id_set => {
+              self.state = .before_id;
               self.advance();
             },
             else => std.debug.panic(
@@ -966,6 +979,39 @@ pub const Parser = struct {
           self.state = if (
             self.curLevel().syntax_proc != null
           ) .special else .default;
+        },
+        .before_id => {
+          while (self.cur == .space) self.advance();
+          if (self.cur == .call_id) {
+            self.advance();
+          } else {
+            self.logger().MissingId(
+              self.lexer.walker.posFrom(self.cur_start).before());
+          }
+          self.state = .after_id;
+        },
+        .after_id => {
+          while (self.cur == .space) self.advance();
+          switch (self.cur) {
+            .comma => {
+              self.state = .start;
+              self.advance();
+              _ = self.levels.pop();
+            },
+            .list_end => {
+              self.state = .after_list;
+              self.advance();
+              _ = self.levels.pop();
+            },
+            .end_source => self.state = .default,
+            else => {
+              self.logger().IllegalContentAfterId(
+                self.lexer.walker.posFrom(self.cur_start));
+              const parent = &self.levels.items[self.levels.items.len - 2];
+              parent.command.cur_cursor = .failed;
+              self.state = .default;
+            }
+          }
         },
         .special => {
           const proc = self.curLevel().syntax_proc.?;
