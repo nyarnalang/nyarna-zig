@@ -85,9 +85,12 @@ pub const Globals = struct {
   /// set to true if any module encountered errors
   seen_error: bool = false,
 
-  pub fn create(backing_allocator: std.mem.Allocator,
-                reporter: *errors.Reporter, stack_size: usize,
-                resolvers: []ResolverEntry) !*Globals {
+  pub fn create(
+    backing_allocator: std.mem.Allocator,
+    reporter: *errors.Reporter,
+    stack_size: usize,
+    resolvers: []ResolverEntry,
+  ) !*Globals {
     const ret = try backing_allocator.create(Globals);
     ret.* = .{
       .reporter = reporter,
@@ -206,8 +209,11 @@ pub const Context = struct {
 
   /// search a referenced module. must only be called while interpreting,
   /// otherwise leads to undefined behavior.
-  pub inline fn searchModule(self: *const Context, pos: model.Position,
-                             locator: model.Locator) !?usize {
+  pub inline fn searchModule(
+    self: *const Context,
+    pos: model.Position,
+    locator: model.Locator,
+  ) !?usize {
     return @fieldParentPtr(ModuleLoader, "logger", self.logger).searchModule(
       pos, locator);
   }
@@ -236,7 +242,9 @@ pub const Context = struct {
   }
 
   pub inline fn createValueExpr(
-      self: *const Context, content: *model.Value) !*model.Expression {
+    self: *const Context,
+    content: *model.Value,
+  ) !*model.Expression {
     const e = try self.global().create(model.Expression);
     e.* = .{
       .pos = content.origin,
@@ -252,8 +260,12 @@ pub const Context = struct {
 
   /// Create an enum value from a given text. If unsuccessful, logs error and
   /// returns null.
-  pub fn enumFrom(self: *const Context, pos: model.Position, text: []const u8,
-                  t: *const model.Type.Enum) !?*model.Value.Enum {
+  pub fn enumFrom(
+    self: *const Context,
+    pos: model.Position,
+    text: []const u8,
+    t: *const model.Type.Enum,
+  ) !?*model.Value.Enum {
     const index = t.values.getIndex(text) orelse {
       self.logger.NotInEnum(pos, t.typedef(), text);
       return null;
@@ -261,9 +273,12 @@ pub const Context = struct {
     return try self.values.@"enum"(pos, t, index);
   }
 
-  pub fn numberFrom(self: *const Context, pos: model.Position,
-                    text: []const u8, t: *const model.Type.Numeric)
-      !?*model.Value.Number {
+  pub fn numberFrom(
+    self: *const Context,
+    pos: model.Position,
+    text: []const u8,
+    t: *const model.Type.Numeric,
+  ) !?*model.Value.Number {
     var val: i64 = 0;
     var neg = false;
     var rest = switch (if (text.len == 0) @as(u8, 0) else text[0]) {
@@ -298,8 +313,10 @@ pub const Context = struct {
         self.logger.NotANumber(pos, t.typedef(), text);
         return null;
       } else {
-        if (@mulWithOverflow(i64, val, 10, &val) or
-            @addWithOverflow(i64, val, cur[0] - '0', &val)) {
+        if (
+          @mulWithOverflow(i64, val, 10, &val) or
+          @addWithOverflow(i64, val, cur[0] - '0', &val)
+        ) {
           self.logger.NumberTooLarge(pos, t.typedef(), text);
           return null;
         }
@@ -354,8 +371,11 @@ pub const Processor = struct {
 
   const Self = @This();
 
-  pub fn init(allocator: std.mem.Allocator, stack_size: usize,
-              reporter: *errors.Reporter) !Processor {
+  pub fn init(
+    allocator: std.mem.Allocator,
+    stack_size: usize,
+    reporter: *errors.Reporter,
+  ) !Processor {
     var ret = Processor{
       .allocator = allocator, .stack_size = stack_size, .reporter = reporter,
     };
@@ -378,13 +398,16 @@ pub const Processor = struct {
   /// (but can finalize()).
   ///
   /// This is used for testing.
-  pub fn initMainModule(self: *Self, doc_resolver: *resolve.Resolver,
-                        main_module: []const u8, fullast: bool)
-      !MainLoader {
+  pub fn initMainModule(
+    self: *Self,
+    doc_resolver: *resolve.Resolver,
+    main_module: []const u8,
+    fullast: bool,
+  ) !MainLoader {
     self.resolvers.items[0].resolver = doc_resolver;
     var ret = MainLoader{
-      .globals = try Globals.create(self.allocator, self.reporter,
-                                    self.stack_size, self.resolvers.items),
+      .globals = try Globals.create(
+        self.allocator, self.reporter, self.stack_size, self.resolvers.items),
     };
     errdefer ret.globals.destroy();
     var logger = errors.Handler{.reporter = self.reporter};
@@ -415,8 +438,11 @@ pub const Processor = struct {
   /// use the returned MainLoader's finalize() to finish loading.
   ///
   /// caller must either deinit() or finalize() the returned MainLoader.
-  pub fn startLoading(self: *Self, doc_resolver: *resolve.Resolver,
-                      main_module: []const u8) !MainLoader {
+  pub fn startLoading(
+    self: *Self,
+    doc_resolver: *resolve.Resolver,
+    main_module: []const u8,
+  ) !MainLoader {
     const ret = try self.initMainModule(doc_resolver, main_module, false);
     try ret.globals.work();
     return ret;

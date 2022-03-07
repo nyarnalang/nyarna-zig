@@ -73,12 +73,12 @@ pub const WrongItemError = enum {
     }
   };
 
-  ExpectedXGotY, MissingToken, PrematureToken, IllegalItem
+  ExpectedXGotY, MissingToken, PrematureToken, IllegalItem,
 };
 
 pub const UnknownError = enum {
-  UnknownFlag, UnknownSyntax, UnknownParameter, UnknownSymbol,
-  UnknownField, UnknownResolver,
+  UnknownFlag, UnknownSyntax, UnknownParameter, UnknownSymbol, UnknownField,
+  UnknownResolver,
 };
 
 pub const WrongIdError = enum {
@@ -181,35 +181,70 @@ pub const FileError = enum {
 };
 
 pub const Reporter = struct {
-  lexerErrorFn:
-    fn(reporter: *Reporter, id: LexerError, pos: model.Position) void,
-  parserErrorFn:
-    fn(reporter: *Reporter, id: GenericParserError, pos: model.Position) void,
-  wrongItemErrorFn:
-    fn(reporter: *Reporter, id: WrongItemError, pos: model.Position,
-       expected: []const WrongItemError.ItemDescr,
-       got: WrongItemError.ItemDescr) void,
-  unknownErrorFn:
-    fn(reporter: *Reporter, id: UnknownError, pos: model.Position,
-       name: []const u8) void,
-  wrongIdErrorFn:
-    fn(reporter: *Reporter, id: WrongIdError, pos: model.Position,
-       expected: []const u8, got: []const u8, defined_at: model.Position) void,
-  previousOccurenceFn:
-    fn(reporter: *Reporter, id: PreviousOccurenceError, repr: []const u8,
-       pos: model.Position, previous: model.Position) void,
-  posChainFn:
-    fn(reporter: *Reporter, id: PositionChainError, pos: model.Position,
-       references: []model.Position) void,
-  wrongTypeErrorFn:
-    fn(reporter: *Reporter, id: WrongTypeError, pos: model.Position,
-       types: []const model.Type) void,
-  constructionErrorFn:
-    fn(reporter: *Reporter, id: ConstructionError, pos: model.Position,
-       t: model.Type, repr: []const u8) void,
-  fileErrorFn:
-    fn(reporter: *Reporter, id: FileError, pos: model.Position,
-       path: []const u8, message: []const u8) void,
+  lexerErrorFn: fn(
+    reporter: *Reporter,
+    id: LexerError,
+    pos: model.Position,
+  ) void,
+  parserErrorFn: fn(
+    reporter: *Reporter,
+    id: GenericParserError,
+    pos: model.Position,
+  ) void,
+  wrongItemErrorFn: fn(
+    reporter: *Reporter,
+    id: WrongItemError,
+    pos: model.Position,
+    expected: []const WrongItemError.ItemDescr,
+    got: WrongItemError.ItemDescr,
+  ) void,
+  unknownErrorFn: fn(
+    reporter: *Reporter,
+    id: UnknownError,
+    pos: model.Position,
+    name: []const u8,
+  ) void,
+  wrongIdErrorFn: fn(
+    reporter: *Reporter,
+    id: WrongIdError,
+    pos: model.Position,
+    expected: []const u8,
+    got: []const u8,
+    defined_at: model.Position,
+  ) void,
+  previousOccurenceFn: fn(
+    reporter: *Reporter,
+    id: PreviousOccurenceError,
+    repr: []const u8,
+    pos: model.Position,
+    previous: model.Position,
+  ) void,
+  posChainFn: fn(
+    reporter: *Reporter,
+    id: PositionChainError,
+    pos: model.Position,
+    references: []model.Position,
+  ) void,
+  wrongTypeErrorFn: fn(
+    reporter: *Reporter,
+    id: WrongTypeError,
+    pos: model.Position,
+    types: []const model.Type,
+  ) void,
+  constructionErrorFn: fn(
+    reporter: *Reporter,
+    id: ConstructionError,
+    pos: model.Position,
+    t: model.Type,
+    repr: []const u8,
+  ) void,
+  fileErrorFn: fn(
+    reporter: *Reporter,
+    id: FileError,
+    pos: model.Position,
+    path: []const u8,
+    message: []const u8,
+  ) void,
 };
 
 pub const CmdLineReporter = struct {

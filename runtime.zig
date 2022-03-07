@@ -12,13 +12,18 @@ pub const Evaluator = struct {
   target_type: model.Type = undefined,
 
   fn setupParameterStackFrame(
-      self: *Evaluator, sig: *const model.Type.Signature, ns_dependent: bool,
-      prev_frame: ?[*]model.StackItem) ![*]model.StackItem {
+    self: *Evaluator,
+    sig: *const model.Type.Signature,
+    ns_dependent: bool,
+    prev_frame: ?[*]model.StackItem,
+  ) ![*]model.StackItem {
     const data = self.ctx.data;
     const num_params =
       sig.parameters.len + if (ns_dependent) @as(usize, 1) else 0;
-    if ((@ptrToInt(data.stack_ptr) - @ptrToInt(data.stack.ptr))
-        / @sizeOf(model.StackItem) + num_params > data.stack.len) {
+    if (
+      (@ptrToInt(data.stack_ptr) - @ptrToInt(data.stack.ptr))
+      / @sizeOf(model.StackItem) + num_params > data.stack.len
+    ) {
       return nyarna.Error.nyarna_stack_overflow;
     }
     const ret = data.stack_ptr;
@@ -27,14 +32,20 @@ pub const Evaluator = struct {
     return ret;
   }
 
-  fn resetParameterStackFrame(self: *Evaluator, frame_ptr: *?[*]model.StackItem,
-                              sig: *const model.Type.Signature) void {
+  fn resetParameterStackFrame(
+    self: *Evaluator,
+    frame_ptr: *?[*]model.StackItem,
+    sig: *const model.Type.Signature,
+  ) void {
     frame_ptr.* = frame_ptr.*.?[0].frame_ref;
     self.ctx.data.stack_ptr -= sig.parameters.len + 1;
   }
 
-  fn fillParameterStackFrame(self: *Evaluator, exprs: []*model.Expression,
-                             frame: [*]model.StackItem) !bool {
+  fn fillParameterStackFrame(
+    self: *Evaluator,
+    exprs: []*model.Expression,
+    frame: [*]model.StackItem,
+  ) !bool {
     var seen_poison = false;
     for (exprs) |expr, i| {
       const val = try self.evaluate(expr);
@@ -60,8 +71,11 @@ pub const Evaluator = struct {
     };
   }
 
-  fn registeredFnForCtx(self: *Evaluator, comptime ImplCtx: type, index: usize)
-      FnTypeForCtx(ImplCtx) {
+  fn registeredFnForCtx(
+    self: *Evaluator,
+    comptime ImplCtx: type,
+    index: usize,
+  ) FnTypeForCtx(ImplCtx) {
     return switch (ImplCtx) {
       *Evaluator => self.ctx.data.builtin_registry.items[index],
       *Interpreter => self.ctx.data.keyword_registry.items[index],
@@ -69,8 +83,10 @@ pub const Evaluator = struct {
     };
   }
 
-  fn poison(impl_ctx: anytype, pos: model.Position)
-      nyarna.Error!RetTypeForCtx(@TypeOf(impl_ctx)) {
+  fn poison(
+    impl_ctx: anytype,
+    pos: model.Position,
+  ) nyarna.Error!RetTypeForCtx(@TypeOf(impl_ctx)) {
     switch (@TypeOf(impl_ctx)) {
       *Evaluator => return try impl_ctx.ctx.values.poison(pos),
       *Interpreter => return impl_ctx.node_gen.poison(pos),
@@ -78,9 +94,12 @@ pub const Evaluator = struct {
     }
   }
 
-  fn callConstructor(self: *Evaluator, impl_ctx: anytype,
-      call: *model.Expression.Call, constr: nyarna.types.Constructor)
-      nyarna.Error!RetTypeForCtx(@TypeOf(impl_ctx)) {
+  fn callConstructor(
+    self: *Evaluator,
+    impl_ctx: anytype,
+    call: *model.Expression.Call,
+    constr: nyarna.types.Constructor,
+  ) nyarna.Error!RetTypeForCtx(@TypeOf(impl_ctx)) {
     const target_impl =
       self.registeredFnForCtx(@TypeOf(impl_ctx), constr.impl_index);
     std.debug.assert(
@@ -95,8 +114,10 @@ pub const Evaluator = struct {
   }
 
   fn evaluateCall(
-      self: *Evaluator, impl_ctx: anytype, call: *model.Expression.Call)
-      nyarna.Error!RetTypeForCtx(@TypeOf(impl_ctx)) {
+    self: *Evaluator,
+    impl_ctx: anytype,
+    call: *model.Expression.Call,
+  ) nyarna.Error!RetTypeForCtx(@TypeOf(impl_ctx)) {
     const target = try self.evaluate(call.target);
     switch (target.data) {
       .funcref => |fr| {
@@ -167,14 +188,19 @@ pub const Evaluator = struct {
     }
   }
 
-  pub fn evaluateKeywordCall(self: *Evaluator, intpr: *Interpreter,
-                             call: *model.Expression.Call) !*model.Node {
+  pub fn evaluateKeywordCall(
+    self: *Evaluator,
+    intpr: *Interpreter,
+    call: *model.Expression.Call,
+  ) !*model.Node {
     return self.evaluateCall(intpr, call);
   }
 
   /// actual evaluation of expressions.
-  fn doEvaluate(self: *Evaluator, expr: *model.Expression)
-      nyarna.Error!*model.Value {
+  fn doEvaluate(
+    self: *Evaluator,
+    expr: *model.Expression,
+  ) nyarna.Error!*model.Value {
     switch (expr.data) {
       .access => |*access| {
         var cur = try self.evaluate(access.subject);
@@ -274,8 +300,11 @@ pub const Evaluator = struct {
     return std.fmt.allocPrint(self.ctx.global(), "{}", .{input});
   }
 
-  fn coerce(self: *Evaluator, value: *model.Value, expected_type: model.Type)
-      std.mem.Allocator.Error!*model.Value {
+  fn coerce(
+    self: *Evaluator,
+    value: *model.Value,
+    expected_type: model.Type,
+  ) std.mem.Allocator.Error!*model.Value {
     const value_type = self.ctx.types().valueType(value);
     if (value_type.eql(expected_type)) return value;
     switch (expected_type) {
@@ -342,8 +371,10 @@ pub const Evaluator = struct {
 
   /// evaluate the expression, and coerce the resulting value according to the
   /// expression's expected type [8.3].
-  pub fn evaluate(self: *Evaluator, expr: *model.Expression)
-      nyarna.Error!*model.Value {
+  pub fn evaluate(
+    self: *Evaluator,
+    expr: *model.Expression,
+  ) nyarna.Error!*model.Value {
     const res = try self.doEvaluate(expr);
     const expected_type = self.ctx.types().expectedType(
       self.ctx.types().valueType(res), expr.expected_type);
@@ -370,8 +401,11 @@ const ConcatBuilder = struct {
     more_text: MoreText,
   },
 
-  fn init(ctx: nyarna.Context, pos: model.Position,
-          expected_type: model.Type) ConcatBuilder {
+  fn init(
+    ctx: nyarna.Context,
+    pos: model.Position,
+    expected_type: model.Type,
+  ) ConcatBuilder {
     return .{
       .cur = null,
       .cur_items = null,
@@ -390,8 +424,10 @@ const ConcatBuilder = struct {
       self.pos, &self.expected_type.structural.concat);
   }
 
-  fn concatWith(self: *ConcatBuilder, first_val: *model.Value)
-      !*model.Value.Concat {
+  fn concatWith(
+    self: *ConcatBuilder,
+    first_val: *model.Value,
+  ) !*model.Value.Concat {
     const cval = try self.emptyConcat();
     try cval.content.append(first_val);
     return cval;
@@ -515,8 +551,11 @@ const ParagraphsBuilder = struct {
     try self.t_builder.push(item_type);
   }
 
-  pub fn push(self: *@This(), value: *model.Value, lf_after: usize)
-      nyarna.Error!void {
+  pub fn push(
+    self: *@This(),
+    value: *model.Value,
+    lf_after: usize,
+  ) nyarna.Error!void {
     switch (value.data) {
       .para => |*children| {
         for (children.content.items) |*item| {

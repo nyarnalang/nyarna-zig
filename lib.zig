@@ -98,12 +98,17 @@ pub const Provider = struct {
         };
       }
 
-      fn SingleWrapper(comptime FirstArg: type,
-                       comptime decl: std.builtin.TypeInfo.Declaration,
-                       comptime Ret: type) type {
+      fn SingleWrapper(
+        comptime FirstArg: type,
+        comptime decl: std.builtin.TypeInfo.Declaration,
+        comptime Ret: type,
+      ) type {
         return struct {
-          fn wrapper(ctx: FirstArg, pos: model.Position,
-                     stack_frame: [*]model.StackItem) nyarna.Error!*Ret {
+          fn wrapper(
+            ctx: FirstArg,
+            pos: model.Position,
+            stack_frame: [*]model.StackItem,
+          ) nyarna.Error!*Ret {
             var unwrapped: Params(@typeInfo(decl.data.Fn.fn_type).Fn) =
               undefined;
             inline for (@typeInfo(@TypeOf(unwrapped)).Struct.fields)
@@ -130,8 +135,10 @@ pub const Provider = struct {
                   "(expected only fn decls): {s}", .{@tagName(decl.data)});
                 unreachable;
               }
-              if (@typeInfo(decl.data.Fn.fn_type).Fn.args[0].arg_type.? !=
-                  FirstArg) continue;
+              if (
+                @typeInfo(decl.data.Fn.fn_type).Fn.args[0].arg_type.? !=
+                FirstArg
+              ) continue;
               if (std.hash_map.eqlString(name, decl.name)) {
                 return SingleWrapper(FirstArg, decl,
                   if (keyword) model.Node else model.Value).wrapper;
@@ -185,8 +192,8 @@ pub const Intrinsics = Provider.Wrapper(struct {
           .definition => self.count += 1,
           .concat => |*con| self.count += con.items.len,
           else => {
-            const expr = (try ip.associate(
-              node, (try ip.ctx.types().concat(
+            const expr = (
+              try ip.associate(node, (try ip.ctx.types().concat(
                 model.Type{.intrinsic = .definition})).?, .{.kind = .keyword}))
               orelse {
                 node.data = .void;
@@ -313,8 +320,12 @@ pub const Intrinsics = Provider.Wrapper(struct {
     return ret;
   }
 
-  fn import(intpr: *Interpreter, pos: model.Position, ns: u15,
-            locator: *model.Node) nyarna.Error!*model.Node {
+  fn import(
+    intpr: *Interpreter,
+    pos: model.Position,
+    ns: u15,
+    locator: *model.Node,
+  ) nyarna.Error!*model.Node {
     const expr = (try intpr.associate(
       locator, .{.intrinsic = .raw}, .{.kind = .keyword})) orelse
       return try intpr.node_gen.poison(pos);
@@ -359,8 +370,12 @@ pub const Intrinsics = Provider.Wrapper(struct {
       pos, @"return", pnode, ns, body.root, body.container.?, true)).node();
   }
 
-  fn @"var"(intpr: *Interpreter, pos: model.Position, ns: u15,
-            defs: *model.Node) nyarna.Error!*model.Node {
+  fn @"var"(
+    intpr: *Interpreter,
+    pos: model.Position,
+    ns: u15,
+    defs: *model.Node,
+  ) nyarna.Error!*model.Node {
     const Proc = struct {
       ip: *Interpreter,
       keyword_pos: model.Position,
@@ -369,8 +384,11 @@ pub const Intrinsics = Provider.Wrapper(struct {
       namespace: *interpret.Namespace,
       ns_index: u15,
 
-      fn init(ip: *Interpreter, index: u15, keyword_pos: model.Position)
-          !@This() {
+      fn init(
+        ip: *Interpreter,
+        index: u15,
+        keyword_pos: model.Position,
+      ) !@This() {
         return @This(){
           .ip = ip,
           .keyword_pos = keyword_pos,
@@ -517,8 +535,11 @@ pub const Intrinsics = Provider.Wrapper(struct {
         } else return try self.empty();
       }
 
-      fn defaultValue(self: *@This(), t: model.Type, vpos: model.Position)
-          !?*model.Node {
+      fn defaultValue(
+        self: *@This(),
+        t: model.Type,
+        vpos: model.Position,
+      ) !?*model.Node {
         return switch (t) {
           .intrinsic => |intr| switch (intr) {
             .ast_node, .frame_root, .void, .every =>
@@ -574,8 +595,11 @@ pub const Intrinsics = Provider.Wrapper(struct {
   // prototype constructors
   //-----------------------
 
-  fn @"Optional"(intpr: *Interpreter, pos: model.Position,
-                 inner: *model.Node) nyarna.Error!*model.Node {
+  fn @"Optional"(
+    intpr: *Interpreter,
+    pos: model.Position,
+    inner: *model.Node,
+  ) nyarna.Error!*model.Node {
     return if (switch (inner.data) {
       .void => blk: {
         intpr.ctx.logger.MissingParameterArgument(
@@ -588,8 +612,11 @@ pub const Intrinsics = Provider.Wrapper(struct {
       (try intpr.node_gen.tgOptional(pos, inner)).node();
   }
 
-  fn @"Concat"(intpr: *Interpreter, pos: model.Position,
-               inner: *model.Node) nyarna.Error!*model.Node {
+  fn @"Concat"(
+    intpr: *Interpreter,
+    pos: model.Position,
+    inner: *model.Node,
+  ) nyarna.Error!*model.Node {
     return if (switch (inner.data) {
       .void => blk: {
         intpr.ctx.logger.MissingParameterArgument(
@@ -602,8 +629,11 @@ pub const Intrinsics = Provider.Wrapper(struct {
       (try intpr.node_gen.tgConcat(pos, inner)).node();
   }
 
-  fn @"List"(intpr: *Interpreter, pos: model.Position,
-             inner: *model.Node) nyarna.Error!*model.Node {
+  fn @"List"(
+    intpr: *Interpreter,
+    pos: model.Position,
+    inner: *model.Node,
+  ) nyarna.Error!*model.Node {
     return if (switch (inner.data) {
       .void => blk: {
         intpr.ctx.logger.MissingParameterArgument(
@@ -616,14 +646,21 @@ pub const Intrinsics = Provider.Wrapper(struct {
       try intpr.node_gen.tgList(pos, inner)).node();
   }
 
-  fn @"Paragraphs"(intpr: *Interpreter, pos: model.Position,
-                   inners: []*model.Node, auto: ?*model.Node)
-      nyarna.Error!*model.Node {
+  fn @"Paragraphs"(
+    intpr: *Interpreter,
+    pos: model.Position,
+    inners: []*model.Node,
+    auto: ?*model.Node,
+  ) nyarna.Error!*model.Node {
     return (try intpr.node_gen.tgParagraphs(pos, inners, auto)).node();
   }
 
-  fn @"Map"(intpr: *Interpreter, pos: model.Position,
-            key: *model.Node, value: *model.Node) nyarna.Error!*model.Node {
+  fn @"Map"(
+    intpr: *Interpreter,
+    pos: model.Position,
+    key: *model.Node,
+    value: *model.Node,
+  ) nyarna.Error!*model.Node {
     var invalid = switch (key.data) {
       .void => blk: {
         intpr.ctx.logger.MissingParameterArgument(
@@ -646,14 +683,20 @@ pub const Intrinsics = Provider.Wrapper(struct {
     else (try intpr.node_gen.tgMap(pos, key,value)).node();
   }
 
-  fn @"Record"(intpr: *Interpreter, pos: model.Position,
-            fields: ?*model.Node) nyarna.Error!*model.Node {
+  fn @"Record"(
+    intpr: *Interpreter,
+    pos: model.Position,
+    fields: ?*model.Node,
+  ) nyarna.Error!*model.Node {
     const fnode = fields orelse try (intpr.node_gen.void(pos));
     return (try intpr.node_gen.tgRecord(pos, fnode)).node();
   }
 
-  fn @"Intersection"(intpr: *Interpreter, pos: model.Position,
-                     input_types: *model.Node) nyarna.Error!*model.Node {
+  fn @"Intersection"(
+    intpr: *Interpreter,
+    pos: model.Position,
+    input_types: *model.Node,
+  ) nyarna.Error!*model.Node {
     const given_types = switch (input_types.data) {
       .varargs => |*va| va.content.items,
       else => blk: {
@@ -665,25 +708,39 @@ pub const Intrinsics = Provider.Wrapper(struct {
     return (try intpr.node_gen.tgIntersection(pos, given_types)).node();
   }
 
-  fn @"Textual"(intpr: *Interpreter, pos: model.Position,
-                cats: []*model.Node, include: *model.Node,
-                exclude: *model.Node) nyarna.Error!*model.Node {
+  fn @"Textual"(
+    intpr: *Interpreter,
+    pos: model.Position,
+    cats: []*model.Node,
+    include: *model.Node,
+    exclude: *model.Node,
+  ) nyarna.Error!*model.Node {
     return (try intpr.node_gen.tgTextual(pos, cats, include, exclude)).node();
   }
 
-  fn @"Numeric"(intpr: *Interpreter, pos: model.Position, min: ?*model.Node,
-                max: ?*model.Node, decimals: ?*model.Node)
-      nyarna.Error!*model.Node {
+  fn @"Numeric"(
+    intpr: *Interpreter,
+    pos: model.Position,
+    min: ?*model.Node,
+    max: ?*model.Node,
+    decimals: ?*model.Node,
+  ) nyarna.Error!*model.Node {
     return (try intpr.node_gen.tgNumeric(pos, min, max, decimals)).node();
   }
 
-  fn @"Float"(intpr: *Interpreter, pos: model.Position, precision: *model.Node)
-      nyarna.Error!*model.Node {
+  fn @"Float"(
+    intpr: *Interpreter,
+    pos: model.Position,
+    precision: *model.Node,
+  ) nyarna.Error!*model.Node {
     return (try intpr.node_gen.tgFloat(pos, precision)).node();
   }
 
-  fn @"Enum"(intpr: *Interpreter, pos: model.Position, values: []*model.Node)
-      nyarna.Error!*model.Node {
+  fn @"Enum"(
+    intpr: *Interpreter,
+    pos: model.Position,
+    values: []*model.Node,
+  ) nyarna.Error!*model.Node {
     return (try intpr.node_gen.tgEnum(pos, values)).node();
   }
 
@@ -691,17 +748,26 @@ pub const Intrinsics = Provider.Wrapper(struct {
   // type constructors
   //------------------
 
-  fn constrRaw(_: *Evaluator, _: model.Position,
-            input: *model.Value.TextScalar) nyarna.Error!*model.Value {
+  fn constrRaw(
+    _: *Evaluator,
+    _: model.Position,
+    input: *model.Value.TextScalar,
+  ) nyarna.Error!*model.Value {
     return input.value();
   }
 
   fn constrLocation(
-      intpr: *Interpreter, pos: model.Position, name: *model.Value.TextScalar,
-      t: ?model.Type, primary: *model.Value.Enum, varargs: *model.Value.Enum,
-      varmap: *model.Value.Enum, mutable: *model.Value.Enum,
-      header: ?*model.Value.BlockHeader, default: ?*model.Value.Ast)
-      nyarna.Error!*model.Node {
+    intpr: *Interpreter,
+    pos: model.Position,
+    name: *model.Value.TextScalar,
+    t: ?model.Type,
+    primary: *model.Value.Enum,
+    varargs: *model.Value.Enum,
+    varmap: *model.Value.Enum,
+    mutable: *model.Value.Enum,
+    header: ?*model.Value.BlockHeader,
+    default: ?*model.Value.Ast,
+  ) nyarna.Error!*model.Node {
     var expr = if (default) |node| blk: {
       var val = try intpr.interpret(node.root);
       if (val.expected_type.is(.poison))
@@ -752,9 +818,12 @@ pub const Intrinsics = Provider.Wrapper(struct {
   }
 
   fn constrDefinition(
-      intpr: *Interpreter, pos: model.Position, name: *model.Value.TextScalar,
-      root: *model.Value.Enum, node: *model.Value.Ast)
-      nyarna.Error!*model.Node {
+    intpr: *Interpreter,
+    pos: model.Position,
+    name: *model.Value.TextScalar,
+    root: *model.Value.Enum,
+    node: *model.Value.Ast,
+  ) nyarna.Error!*model.Node {
     const expr = try intpr.interpret(node.root);
     if (expr.expected_type.is(.poison)) {
       return intpr.genValueNode(try intpr.ctx.values.poison(pos));
@@ -767,35 +836,51 @@ pub const Intrinsics = Provider.Wrapper(struct {
     return intpr.genValueNode(def_val.value());
   }
 
-  fn constrTextual(eval: *Evaluator, pos: model.Position,
-                   input: *model.Value.TextScalar) nyarna.Error!*model.Value {
+  fn constrTextual(
+    eval: *Evaluator,
+    pos: model.Position,
+    input: *model.Value.TextScalar,
+  ) nyarna.Error!*model.Value {
     _ = eval; _ = pos; _ = input;
     unreachable; // TODO
   }
 
-  fn constrNumeric(eval: *Evaluator, pos: model.Position,
-                   input: *model.Value.TextScalar) nyarna.Error!*model.Value {
+  fn constrNumeric(
+    eval: *Evaluator,
+    pos: model.Position,
+    input: *model.Value.TextScalar,
+  ) nyarna.Error!*model.Value {
     return if (try eval.ctx.numberFrom(input.value().origin, input.content,
       &eval.target_type.instantiated.data.numeric)) |nv| nv.value()
     else try eval.ctx.values.poison(pos);
   }
 
-  fn constrFloat(eval: *Evaluator, pos: model.Position,
-                 input: *model.Value.TextScalar) nyarna.Error!*model.Value {
+  fn constrFloat(
+    eval: *Evaluator,
+    pos: model.Position,
+    input: *model.Value.TextScalar,
+  ) nyarna.Error!*model.Value {
     _ = eval; _ = pos; _ = input;
     unreachable; // TODO
   }
 
-  fn constrEnum(eval: *Evaluator, pos: model.Position,
-                input: *model.Value.TextScalar) nyarna.Error!*model.Value {
+  fn constrEnum(
+    eval: *Evaluator,
+    pos: model.Position,
+    input: *model.Value.TextScalar,
+  ) nyarna.Error!*model.Value {
     return if (try eval.ctx.enumFrom(input.value().origin, input.content,
       &eval.target_type.instantiated.data.tenum)) |ev| ev.value()
     else try eval.ctx.values.poison(pos);
   }
 });
 
-fn registerExtImpl(ctx: Context, p: *const Provider, name: []const u8,
-                   bres: types.SigBuilderResult) !usize {
+fn registerExtImpl(
+  ctx: Context,
+  p: *const Provider,
+  name: []const u8,
+  bres: types.SigBuilderResult,
+) !usize {
   return if (bres.sig.isKeyword()) blk: {
     const impl = p.getKeyword(name) orelse
       std.debug.panic("don't know keyword: {s}\n", .{name});
@@ -809,16 +894,24 @@ fn registerExtImpl(ctx: Context, p: *const Provider, name: []const u8,
   };
 }
 
-fn registerGenericImpl(ctx: Context, p: *const Provider, name: []const u8)
-    !usize {
+fn registerGenericImpl(
+  ctx: Context,
+  p: *const Provider,
+  name: []const u8,
+) !usize {
   const impl = p.getBuiltin(name) orelse
     std.debug.panic("don't know generic builtin: {s}\n", .{name});
   try ctx.data.builtin_registry.append(ctx.global(), impl);
   return ctx.data.builtin_registry.items.len - 1;
 }
 
-fn extFunc(ctx: Context, name: *model.Symbol, bres: types.SigBuilderResult,
-           ns_dependent: bool, p: *const Provider) !*model.Function {
+fn extFunc(
+  ctx: Context,
+  name: *model.Symbol,
+  bres: types.SigBuilderResult,
+  ns_dependent: bool,
+  p: *const Provider,
+) !*model.Function {
   const container = try ctx.global().create(model.VariableContainer);
   container.* = .{
     .num_values = @intCast(u15, bres.sig.parameters.len),
@@ -839,8 +932,13 @@ fn extFunc(ctx: Context, name: *model.Symbol, bres: types.SigBuilderResult,
   return ret;
 }
 
-fn extFuncSymbol(ctx: Context, name: []const u8, ns_dependent: bool,
-                 bres: types.SigBuilderResult, p: *Provider) !*model.Symbol {
+fn extFuncSymbol(
+  ctx: Context,
+  name: []const u8,
+  ns_dependent: bool,
+  bres: types.SigBuilderResult,
+  p: *Provider,
+) !*model.Symbol {
   const ret = try ctx.global().create(model.Symbol);
   ret.defined_at = model.Position.intrinsic();
   ret.name = name;
@@ -848,8 +946,11 @@ fn extFuncSymbol(ctx: Context, name: []const u8, ns_dependent: bool,
   return ret;
 }
 
-fn typeSymbol(ctx: Context, name: []const u8, t: model.Type)
-    !*model.Symbol {
+fn typeSymbol(
+  ctx: Context,
+  name: []const u8,
+  t: model.Type,
+) !*model.Symbol {
   const ret = try ctx.global().create(model.Symbol);
   ret.* = model.Symbol{
     .defined_at = model.Position.intrinsic(),
@@ -860,8 +961,11 @@ fn typeSymbol(ctx: Context, name: []const u8, t: model.Type)
   return ret;
 }
 
-fn prototypeSymbol(ctx: Context, name: []const u8, pt: model.Prototype)
-    !*model.Symbol {
+fn prototypeSymbol(
+  ctx: Context,
+  name: []const u8,
+  pt: model.Prototype,
+) !*model.Symbol {
   const ret = try ctx.global().create(model.Symbol);
   ret.* = model.Symbol{
     .defined_at = model.Position.intrinsic(),
@@ -872,16 +976,24 @@ fn prototypeSymbol(ctx: Context, name: []const u8, pt: model.Prototype)
   return ret;
 }
 
-fn typeConstructor(ctx: Context, p: *Provider, name: []const u8,
-                   bres: types.SigBuilderResult) !types.Constructor {
+fn typeConstructor(
+  ctx: Context,
+  p: *Provider,
+  name: []const u8,
+  bres: types.SigBuilderResult,
+) !types.Constructor {
   return types.Constructor{
     .callable = try bres.createCallable(ctx.global(), .@"type"),
     .impl_index = try registerExtImpl(ctx, p, name, bres),
   };
 }
 
-fn prototypeConstructor(ctx: Context, p: *Provider, name: []const u8,
-                        bres: types.SigBuilderResult) !types.Constructor {
+fn prototypeConstructor(
+  ctx: Context,
+  p: *Provider,
+  name: []const u8,
+  bres: types.SigBuilderResult,
+) !types.Constructor {
   return types.Constructor{
     .callable = try bres.createCallable(ctx.global(), .prototype),
     .impl_index = try registerExtImpl(ctx, p, name, bres),

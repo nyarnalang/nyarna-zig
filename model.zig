@@ -1310,8 +1310,12 @@ pub const Type = union(enum) {
   }
 
   fn formatParameterized(
-      comptime fmt: []const u8, opt: std.fmt.FormatOptions, name: []const u8,
-      inners: []const Type, writer: anytype) @TypeOf(writer).Error!void {
+    comptime fmt: []const u8,
+    opt: std.fmt.FormatOptions,
+    name: []const u8,
+    inners: []const Type,
+    writer: anytype,
+  ) @TypeOf(writer).Error!void {
     try writer.writeAll(name);
     try writer.writeByte('<');
     for (inners) |inner, index| {
@@ -1766,8 +1770,11 @@ pub const Value = struct {
   origin: Position,
   data: Data,
 
-  pub inline fn create(allocator: std.mem.Allocator, pos: Position,
-                       content: anytype) !*Value {
+  pub inline fn create(
+    allocator: std.mem.Allocator,
+    pos: Position,
+    content: anytype,
+  ) !*Value {
     var ret = try allocator.create(Value);
     ret.origin = pos;
     ret.data = switch (@TypeOf(content)) {
@@ -1858,35 +1865,55 @@ pub const NodeGenerator = struct {
     return ret;
   }
 
-  pub inline fn assign(self: *Self, pos: Position, content: Node.Assign)
-      !*Node.Assign {
+  pub inline fn assign(
+    self: *Self,
+    pos: Position,
+    content: Node.Assign,
+  ) !*Node.Assign {
     return &(try self.node(pos, .{.assign = content})).data.assign;
   }
 
-  pub inline fn branches(self: *Self, pos: Position, content: Node.Branches)
-      !*Node.Branches {
+  pub inline fn branches(
+    self: *Self,
+    pos: Position,
+    content: Node.Branches,
+  ) !*Node.Branches {
     return &(try self.node(pos, .{.branches = content})).data.branches;
   }
 
-  pub inline fn concat(self: *Self, pos: Position, content: Node.Concat)
-      !*Node.Concat {
+  pub inline fn concat(
+    self: *Self,
+    pos: Position,
+    content: Node.Concat,
+  ) !*Node.Concat {
     return &(try self.node(pos, .{.concat = content})).data.concat;
   }
 
-  pub inline fn definition(self: *Self, pos: Position,
-                           content: Node.Definition) !*Node.Definition {
+  pub inline fn definition(
+    self: *Self,
+    pos: Position,
+    content: Node.Definition,
+  ) !*Node.Definition {
     return &(try self.node(pos, .{.definition = content})).data.definition;
   }
 
-  pub inline fn expression(self: *Self, content: *Expression)
-      !*Node {
+  pub inline fn expression(
+    self: *Self,
+    content: *Expression,
+  ) !*Node {
     return self.node(content.pos, .{.expression = content});
   }
 
-  pub inline fn funcgen(self: *Self, pos: Position, returns: ?*Node,
-                        params: *Node, params_ns: u15, body: *Node,
-                        variables: *VariableContainer, inject_this: bool)
-      !*Node.Funcgen {
+  pub inline fn funcgen(
+    self: *Self,
+    pos: Position,
+    returns: ?*Node,
+    params: *Node,
+    params_ns: u15,
+    body: *Node,
+    variables: *VariableContainer,
+    inject_this: bool,
+  ) !*Node.Funcgen {
     return &(try self.node(pos, .{.funcgen = .{
       .returns = returns, .params = .{.unresolved = params},
       .params_ns = params_ns, .body = body, .needs_this_inject = inject_this,
@@ -1894,16 +1921,23 @@ pub const NodeGenerator = struct {
     }})).data.funcgen;
   }
 
-  pub inline fn import(self: *Self, pos: Position, ns_index: u15,
-                       module_index: usize) !*Node.Import {
+  pub inline fn import(
+    self: *Self,
+    pos: Position,
+    ns_index: u15,
+    module_index: usize,
+  ) !*Node.Import {
     return &(try self.node(
       pos, .{.import = .{
         .ns_index = ns_index, .module_index = module_index,
       }})).data.import;
   }
 
-  pub inline fn literal(self: *Self, pos: Position, content: Node.Literal)
-      !*Node.Literal {
+  pub inline fn literal(
+    self: *Self,
+    pos: Position,
+    content: Node.Literal,
+  ) !*Node.Literal {
     return &(try self.node(pos, .{.literal = content})).data.literal;
   }
 
@@ -1954,8 +1988,11 @@ pub const NodeGenerator = struct {
     return loc_node;
   }
 
-  pub inline fn paras(self: *Self, pos: Position, content: Node.Paras)
-      !*Node.Paras {
+  pub inline fn paras(
+    self: *Self,
+    pos: Position,
+    content: Node.Paras,
+  ) !*Node.Paras {
     return &(try self.node(pos, .{.paras = content})).data.paras;
   }
 
@@ -1975,8 +2012,11 @@ pub const NodeGenerator = struct {
     }})).data.resolved_access;
   }
 
-  pub inline fn rcall(self: *Self, pos: Position, content: Node.ResolvedCall)
-      !*Node.ResolvedCall {
+  pub inline fn rcall(
+    self: *Self,
+    pos: Position,
+    content: Node.ResolvedCall,
+  ) !*Node.ResolvedCall {
     return &(try self.node(
       pos, .{.resolved_call = content})).data.resolved_call;
   }
@@ -1990,20 +2030,29 @@ pub const NodeGenerator = struct {
       pos, .{.resolved_symref = content})).data.resolved_symref;
   }
 
-  pub inline fn tgConcat(self: *Self, pos: Position, inner: *Node)
-      !*Node.tg.Concat {
+  pub inline fn tgConcat(
+    self: *Self,
+    pos: Position,
+    inner: *Node,
+  ) !*Node.tg.Concat {
     return &(try self.node(
       pos, .{.gen_concat = .{.inner = inner}})).data.gen_concat;
   }
 
-  pub inline fn tgEnum(self: *Self, pos: Position, values: []*Node)
-      !*Node.tg.Enum {
+  pub inline fn tgEnum(
+    self: *Self,
+    pos: Position,
+    values: []*Node,
+  ) !*Node.tg.Enum {
     return &(try self.node(
       pos, .{.gen_enum = .{.values = values}})).data.gen_enum;
   }
 
-  pub inline fn tgFloat(self: *Self, pos: Position, precision: *Node)
-      !*Node.tg.Float {
+  pub inline fn tgFloat(
+    self: *Self,
+    pos: Position,
+    precision: *Node,
+  ) !*Node.tg.Float {
     return &(try self.node(
       pos, .{.gen_float = .{.precision = precision}})).data.gen_float;
   }
@@ -2017,14 +2066,21 @@ pub const NodeGenerator = struct {
       pos, .{.gen_intersection = .{.types = types}})).data.gen_intersection;
   }
 
-  pub inline fn tgList(self: *Self, pos: Position, inner: *Node)
-      !*Node.tg.List {
+  pub inline fn tgList(
+    self: *Self,
+    pos: Position,
+    inner: *Node,
+  ) !*Node.tg.List {
     return &(try self.node(
       pos, .{.gen_list = .{.inner = inner}})).data.gen_list;
   }
 
-  pub inline fn tgMap(self: *Self, pos: Position, key: *Node, value: *Node)
-      !*Node.tg.Map {
+  pub inline fn tgMap(
+    self: *Self,
+    pos: Position,
+    key: *Node,
+    value: *Node,
+  ) !*Node.tg.Map {
     return &(try self.node(
       pos, .{.gen_map = .{.key = key, .value = value}})).data.gen_map;
   }
@@ -2044,14 +2100,21 @@ pub const NodeGenerator = struct {
     )).data.gen_numeric;
   }
 
-  pub inline fn tgOptional(self: *Self, pos: Position, inner: *Node)
-      !*Node.tg.Optional {
+  pub inline fn tgOptional(
+    self: *Self,
+    pos: Position,
+    inner: *Node,
+  ) !*Node.tg.Optional {
     return &(try self.node(
       pos, .{.gen_optional = .{.inner = inner}})).data.gen_optional;
   }
 
-  pub inline fn tgParagraphs(self: *Self, pos: Position, inners: []*Node,
-                             auto: ?*Node) !*Node.tg.Paragraphs {
+  pub inline fn tgParagraphs(
+    self: *Self,
+    pos: Position,
+    inners: []*Node,
+    auto: ?*Node,
+  ) !*Node.tg.Paragraphs {
     return &(try self.node(
       pos, .{.gen_paragraphs = .{.inners = inners, .auto = auto}}
     )).data.gen_paragraphs;
@@ -2142,8 +2205,11 @@ pub const ValueGenerator = struct {
     return self.allocator().create(Value);
   }
 
-  pub inline fn value(self: *const Self, pos: Position, data: Value.Data)
-      !*Value {
+  pub inline fn value(
+    self: *const Self,
+    pos: Position,
+    data: Value.Data,
+  ) !*Value {
     const ret = try self.create();
     ret.* = .{.origin = pos, .data = data};
     return ret;
@@ -2189,8 +2255,11 @@ pub const ValueGenerator = struct {
       pos, .{.@"enum" = .{.t = t, .index = index}})).data.@"enum";
   }
 
-  pub inline fn record(self: *const Self, pos: Position, t: *const Type.Record)
-      !*Value.Record {
+  pub inline fn record(
+    self: *const Self,
+    pos: Position,
+    t: *const Type.Record,
+  ) !*Value.Record {
     const fields =
       try self.allocator().alloc(*Value, t.callable.sig.parameters.len);
     errdefer self.allocator().free(fields);
@@ -2198,8 +2267,11 @@ pub const ValueGenerator = struct {
       pos, .{.record = .{.t = t, .fields = fields}})).data.record;
   }
 
-  pub inline fn concat(self: *const Self, pos: Position, t: *const Type.Concat)
-      !*Value.Concat {
+  pub inline fn concat(
+    self: *const Self,
+    pos: Position,
+    t: *const Type.Concat,
+  ) !*Value.Concat {
     return &(try self.value(pos, .{
       .concat = .{
         .t = t,
@@ -2221,8 +2293,11 @@ pub const ValueGenerator = struct {
     })).data.para;
   }
 
-  pub inline fn list(self: *const Self, pos: Position, t: *const Type.List)
-      !*Value.List {
+  pub inline fn list(
+    self: *const Self,
+    pos: Position,
+    t: *const Type.List,
+  ) !*Value.List {
     return &(try self.value(pos, .{
       .list = .{
         .t = t,
@@ -2231,8 +2306,11 @@ pub const ValueGenerator = struct {
     })).data.list;
   }
 
-  pub inline fn map(self: *const Self, pos: Position, t: *const Type.Map)
-      !*Value.Map {
+  pub inline fn map(
+    self: *const Self,
+    pos: Position,
+    t: *const Type.Map,
+  ) !*Value.Map {
     return &(try self.value(pos, .{
       .map = .{
         .t = t,
@@ -2241,20 +2319,29 @@ pub const ValueGenerator = struct {
     })).data.map;
   }
 
-  pub inline fn @"type"(self: *const Self, pos: Position, t: Type)
-      !*Value.TypeVal {
+  pub inline fn @"type"(
+    self: *const Self,
+    pos: Position,
+    t: Type,
+  ) !*Value.TypeVal {
     return &(try self.value(
       pos, .{.@"type" = .{.t = t}})).data.@"type";
   }
 
-  pub inline fn prototype(self: *const Self, pos: Position, pt: Prototype)
-      !*Value.PrototypeVal {
+  pub inline fn prototype(
+    self: *const Self,
+    pos: Position,
+    pt: Prototype,
+  ) !*Value.PrototypeVal {
     return &(try self.value(
       pos, .{.prototype = .{.pt = pt}})).data.prototype;
   }
 
-  pub inline fn funcRef(self: *const Self, pos: Position, func: *Function)
-      !*Value.FuncRef {
+  pub inline fn funcRef(
+    self: *const Self,
+    pos: Position,
+    func: *Function,
+  ) !*Value.FuncRef {
     return &(try self.value(
       pos, .{.funcref = .{.func = func}})).data.funcref;
   }
@@ -2271,8 +2358,11 @@ pub const ValueGenerator = struct {
 
   /// Generates an intrinsic location (contained positions are <intrinsic>).
   /// The given name must live at least as long as the Context.
-  pub inline fn intLocation(self: *const Self, name: []const u8, t: Type)
-      !*Value.Location {
+  pub inline fn intLocation(
+    self: *const Self,
+    name: []const u8,
+    t: Type,
+  ) !*Value.Location {
     const name_val = try self.textScalar(Position.intrinsic(),
       .{.intrinsic = .literal}, name);
     return self.location(Position.intrinsic(), name_val, t);

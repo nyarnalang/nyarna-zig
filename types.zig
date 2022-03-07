@@ -369,8 +369,10 @@ pub const Lattice = struct {
     };
   }
 
-  pub fn prototypeConstructor(self: *const Self, pt: model.Prototype)
-      Constructor {
+  pub fn prototypeConstructor(
+    self: *const Self,
+    pt: model.Prototype,
+  ) Constructor {
     return switch (pt) {
       .optional     => self.constructors.prototypes.optional,
       .concat       => self.constructors.prototypes.concat,
@@ -402,8 +404,11 @@ pub const Lattice = struct {
     return self.greaterEqual(right, left);
   }
 
-  pub fn sup(self: *Self, t1: model.Type, t2: model.Type)
-      std.mem.Allocator.Error!model.Type {
+  pub fn sup(
+    self: *Self,
+    t1: model.Type,
+    t2: model.Type,
+  ) std.mem.Allocator.Error!model.Type {
     if (t1.eql(t2)) return t1;
     // defer structural and intrinsic cases to their respective functions
     const types = [_]model.Type{t1, t2};
@@ -476,16 +481,20 @@ pub const Lattice = struct {
     }};
   }
 
-  fn concatFromParagraphs(self: *Self, p: *model.Type.Structural.Paragraphs)
-      !model.Type {
+  fn concatFromParagraphs(
+    self: *Self,
+    p: *model.Type.Structural.Paragraphs,
+  ) !model.Type {
     var res = model.Type{.intrinsic = .space};
     for (p.inner) |t| res = try self.sup(res, t);
     return res;
   }
 
   fn supWithStructure(
-      self: *Self, struc: *model.Type.Structural, other: model.Type)
-      !model.Type {
+    self: *Self,
+    struc: *model.Type.Structural,
+    other: model.Type,
+  ) !model.Type {
     switch (other) {
       .intrinsic => |other_in| switch (other_in) {
         .every => return model.Type{.structural = struc},
@@ -592,8 +601,10 @@ pub const Lattice = struct {
   }
 
   fn supWithIntrinsic(
-      self: *Self, intr: @typeInfo(model.Type).Union.fields[0].field_type,
-      other: model.Type) !model.Type {
+    self: *Self,
+    intr: @typeInfo(model.Type).Union.fields[0].field_type,
+    other: model.Type,
+  ) !model.Type {
     return switch (intr) {
       .void =>
         (try self.optional(other)) orelse model.Type{.intrinsic = .poison},
@@ -673,8 +684,10 @@ pub const Lattice = struct {
     return true;
   }
 
-  pub fn concat(self: *Self, t: model.Type)
-      std.mem.Allocator.Error!?model.Type {
+  pub fn concat(
+    self: *Self,
+    t: model.Type,
+  ) std.mem.Allocator.Error!?model.Type {
     switch (InnerIntend.concat(t)) {
       .forbidden => return null,
       .exalt => return try self.concat(t.structural.optional.inner),
@@ -763,8 +776,11 @@ pub const Lattice = struct {
   /// given the actual type of a value and the target type of an expression,
   /// calculate the expected type in E_(target) to which the value is to be
   /// coerced [8.3].
-  pub fn expectedType(self: *Lattice, actual: model.Type, target: model.Type)
-      model.Type {
+  pub fn expectedType(
+    self: *Lattice,
+    actual: model.Type,
+    target: model.Type,
+  ) model.Type {
     if (actual.eql(target)) return target;
     return switch (target) {
       .intrinsic => |intr| switch (intr) {
@@ -849,8 +865,10 @@ pub const SigBuilderResult = struct {
   repr: ?*model.Type.Signature,
 
   pub fn createCallable(
-      self: *const @This(), allocator: std.mem.Allocator,
-      kind: model.Type.Callable.Kind) !*model.Type.Callable {
+    self: *const @This(),
+    allocator: std.mem.Allocator,
+    kind: model.Type.Callable.Kind,
+  ) !*model.Type.Callable {
     const strct = try allocator.create(model.Type.Structural);
     errdefer allocator.destroy(strct);
     strct.* = .{
@@ -892,8 +910,12 @@ pub const SigBuilder = struct {
   ///
   /// if build_repr is true, a second signature will be built to be the
   /// signature of the repr Callable in the type lattice.
-  pub fn init(ctx: nyarna.Context, num_params: usize,
-              returns: model.Type, build_repr: bool) !Self {
+  pub fn init(
+    ctx: nyarna.Context,
+    num_params: usize,
+    returns: model.Type,
+    build_repr: bool,
+  ) !Self {
     var ret = Self{
       .val = try ctx.global().create(model.Type.Signature),
       .repr = if (build_repr)
@@ -1224,8 +1246,10 @@ pub const IntersectionTypeBuilder = struct {
   filled: usize,
   allocator: ?std.mem.Allocator,
 
-  pub fn init(max_sources: usize, allocator: std.mem.Allocator)
-      !IntersectionTypeBuilder {
+  pub fn init(
+    max_sources: usize,
+    allocator: std.mem.Allocator,
+  ) !IntersectionTypeBuilder {
     return IntersectionTypeBuilder{
       .sources = try allocator.alloc([]const model.Type, max_sources),
       .indexes = try allocator.alloc(usize, max_sources),

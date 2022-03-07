@@ -1,8 +1,10 @@
 const std = @import("std");
 const Builder = std.build.Builder;
 
-fn testEmitOption(emit_bin: bool, name: []const u8)
-    std.build.LibExeObjStep.EmitOption {
+fn testEmitOption(
+  emit_bin: bool,
+  name: []const u8,
+) std.build.LibExeObjStep.EmitOption {
   return if (!emit_bin) std.build.LibExeObjStep.EmitOption.default else
     std.build.LibExeObjStep.EmitOption{.emit_to = name};
 }
