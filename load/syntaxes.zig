@@ -29,10 +29,12 @@ pub const SpecialSyntax = struct {
 };
 
 pub const SymbolDefs = struct {
-  const State = enum {
-    initial, names, after_name, ltype, after_ltype, flags, after_flag,
-    after_flags, block_header, expr, at_end
-  };
+  const State = fn(
+    self: *SymbolDefs,
+    pos: model.Position,
+    item: SpecialSyntax.Item,
+  ) std.mem.Allocator.Error!?Processor.Action;
+
   const Variant = enum {locs, defs};
   const Processor = SpecialSyntax.Processor;
 
@@ -84,15 +86,17 @@ pub const SymbolDefs = struct {
     };
   }
 
-  fn init(intpr: *Interpreter, variant: Variant)
-      std.mem.Allocator.Error!*Processor {
+  fn init(
+    intpr: *Interpreter,
+    variant: Variant,
+  ) std.mem.Allocator.Error!*Processor {
     const ret = try intpr.allocator.create(SymbolDefs);
     ret.intpr = intpr;
     ret.proc = .{
       .push = SymbolDefs.push,
       .finish = SymbolDefs.finish,
     };
-    ret.state = .initial;
+    ret.state = initial;
     ret.names = .{};
     ret.produced = .{};
     ret.variant = variant;
@@ -126,464 +130,604 @@ pub const SymbolDefs = struct {
     l.names.clearRetainingCapacity();
   }
 
-  fn push(p: *Processor, pos: model.Position,
-          item: SpecialSyntax.Item) nyarna.Error!Processor.Action {
-    const self = @fieldParentPtr(SymbolDefs, "proc", p);
-    self.last_item = pos;
-    self.state = while (true) {
-      switch (self.state) {
-        .initial => switch (item) {
-          .space, .newlines => return .none,
-          .node => {
-            self.logger().IllegalItem(pos,
-                &[_]errors.WrongItemError.ItemDescr{.{.token = .identifier}},
-                .node);
-            return .none;
-          },
-          .escaped => {
-            self.logger().IllegalItem(pos,
-                &[_]errors.WrongItemError.ItemDescr{.{.token = .identifier}},
-                .{.token = .escape});
-            return .none;
-          },
-          else => {
-            self.start = pos.start;
-            self.state = .names;
-          },
+  fn initial(
+    self: *SymbolDefs,
+    pos: model.Position,
+    item: SpecialSyntax.Item,
+  ) std.mem.Allocator.Error!?Processor.Action {
+    switch (item) {
+      .space, .newlines => return .none,
+      .node => {
+        self.logger().IllegalItem(pos,
+          &[_]errors.WrongItemError.ItemDescr{.{.token = .identifier}}, .node);
+        return .none;
+      },
+      .escaped => {
+        self.logger().IllegalItem(pos,
+          &[_]errors.WrongItemError.ItemDescr{.{.token = .identifier}},
+          .{.token = .escape});
+        return .none;
+      },
+      else => {
+        self.start = pos.start;
+        self.state = names;
+        return null;
+      },
+    }
+  }
+
+  fn names(
+    self: *SymbolDefs,
+    pos: model.Position,
+    item: SpecialSyntax.Item,
+  ) std.mem.Allocator.Error!?Processor.Action {
+    switch (item) {
+      .space => return .none,
+      .literal => |name| {
+        try self.names.append(self.intpr.allocator,
+          try self.intpr.node_gen.literal(
+            pos, .{.kind = .text, .content = name}));
+        self.state = afterName;
+        return .none;
+      },
+      .escaped => {
+        self.logger().IllegalItem(pos,
+          &[_]errors.WrongItemError.ItemDescr{.{.token = .identifier}},
+          .{.token = .escape});
+        return .none;
+      },
+      .special_char => |c| switch (c) {
+        '=', '{' => {
+          self.logger().MissingToken(
+            pos.before(),
+            &[_]errors.WrongItemError.ItemDescr{.{.token = .identifier}},
+            .{.character = c});
+          self.state = afterName;
+          return null;
         },
-        .names => switch (item) {
-          .space => return .none,
-          .literal => |name| {
-            try self.names.append(self.intpr.allocator,
-              try self.intpr.node_gen.literal(
-                pos, .{.kind = .text, .content = name}));
-            break .after_name;
-          },
-          .escaped => {
-            self.logger().IllegalItem(pos,
-                &[_]errors.WrongItemError.ItemDescr{.{.token = .identifier}},
-                .{.token = .escape});
-            return .none;
-          },
-          .special_char => |c| switch (c) {
-            '=', '{' => {
-              self.logger().MissingToken(
-                pos.before(),
-                &[_]errors.WrongItemError.ItemDescr{.{.token = .identifier}},
-                .{.character = c});
-              self.state = .after_name;
-            },
-            ':' => if (self.variant == .locs) {
-              self.logger().MissingToken(
-                pos.before(),
-                &[_]errors.WrongItemError.ItemDescr{.{.token = .identifier}},
-                .{.character = c});
-              self.state = .after_name;
-            } else {
-              self.logger().ExpectedXGotY(pos,
-                &[_]errors.WrongItemError.ItemDescr{.{.token = .identifier}},
-                .{.character = c});
-              return .none;
-            },
-            ';' => {
-              self.logger().PrematureToken(pos,
-                  &[_]errors.WrongItemError.ItemDescr{.{.token = .identifier}},
-                  .{.character = ';'});
-              self.state = .at_end;
-            },
-            else => {
-              self.logger().ExpectedXGotY(pos,
-                  &[_]errors.WrongItemError.ItemDescr{.{.token = .identifier}},
-                  .{.character = c});
-              return .none;
-            },
-          },
-          .node => {
-            self.logger().IllegalItem(pos,
-                &[_]errors.WrongItemError.ItemDescr{.{.token = .identifier}},
-                .node);
-            return .none;
-          },
-          .newlines => {
-            self.logger().PrematureToken(pos,
-                &[_]errors.WrongItemError.ItemDescr{.{.token = .identifier}},
-                .{.token = .ws_break});
-            self.reset();
-            return .none;
-          },
-          .block_header => unreachable,
+        ':' => if (self.variant == .locs) {
+          self.logger().MissingToken(
+            pos.before(),
+            &[_]errors.WrongItemError.ItemDescr{.{.token = .identifier}},
+            .{.character = c});
+          self.state = afterName;
+          return null;
+        } else {
+          self.logger().ExpectedXGotY(pos,
+            &[_]errors.WrongItemError.ItemDescr{.{.token = .identifier}},
+            .{.character = c});
+          return .none;
         },
-        .after_name => switch (item) {
-          .space => return .none,
-          .literal => {
-            self.logger().MissingToken(
-              pos.before(), self.afterNameItems(), .{.token = .identifier});
-            self.state = .names;
-          },
-          .escaped => {
-            self.logger().IllegalItem(
-              pos.before(), self.afterNameItems(), .{.token = .escape});
-            return .none;
-          },
-          .special_char => |c| switch (c) {
-            ',' => break .names,
-            ':' => {
-              if (self.variant == .locs) break .ltype;
-              self.logger().IllegalItem(
-                pos, self.afterNameItems(), .{.character = c});
-            },
-            '{' => break .flags,
-            '=' => break .expr,
-            ';' => self.state = .at_end,
-            else => {
-              self.logger().IllegalItem(
-                pos, self.afterNameItems(), .{.character = c});
-              return .none;
-            },
-          },
-          .node => {
-            self.logger().IllegalItem(pos, self.afterNameItems(), .node);
-            return .none;
-          },
-          .newlines => self.state = .at_end,
-          .block_header => unreachable,
+        ';' => {
+          self.logger().PrematureToken(pos,
+            &[_]errors.WrongItemError.ItemDescr{.{.token = .identifier}},
+            .{.character = ';'});
+          self.state = atEnd;
+          return null;
         },
-        .ltype => switch (item) {
-          .space => return .none,
-          .literal => {
-            self.logger().IllegalItem(pos,
-              &[_]errors.WrongItemError.ItemDescr{.node}, .{.token = .literal});
-            return .none;
-          },
-          .escaped => {
-            self.logger().IllegalItem(pos,
-                &[_]errors.WrongItemError.ItemDescr{.node},
-                .{.token = .escape});
-            return .none;
-          },
-          .special_char => |c| switch (c) {
-            '{', '=', ';' => {
-              self.logger().PrematureToken(
-                pos, &[_]errors.WrongItemError.ItemDescr{.node},
-                .{.character = c});
-              self.state = .after_ltype;
-            },
-            else => {
-              self.logger().IllegalItem(
-                pos, &[_]errors.WrongItemError.ItemDescr{.node},
-                .{.character = c});
-              return .none;
-            },
-          },
-          .node => |n| {
-            self.@"type" = n;
-            break .after_ltype;
-          },
-          .newlines => {
-            self.logger().PrematureToken(
-              pos, &[_]errors.WrongItemError.ItemDescr{.node},
-              .{.token = .ws_break});
-            self.state = .after_ltype;
-          },
-          .block_header => unreachable,
+        else => {
+          self.logger().ExpectedXGotY(pos,
+            &[_]errors.WrongItemError.ItemDescr{.{.token = .identifier}},
+            .{.character = c});
+          return .none;
         },
-        .after_ltype => switch (item) {
-          .space => return .none,
-          .literal => {
-            self.logger().IllegalItem(pos, &[_]errors.WrongItemError.ItemDescr{
-                .{.character = '='}, .{.character = ';'}, .{.token = .ws_break},
-              }, .{.token = .identifier});
-            return .none;
-          },
-          .escaped => {
-            self.logger().IllegalItem(pos, &[_]errors.WrongItemError.ItemDescr{
-                .{.character = '='}, .{.character = ';'}, .{.token = .ws_break},
-              }, .{.token = .escape});
-            return .none;
-          },
-          .special_char => |c| switch (c) {
-            '{' => break .flags,
-            '=' => break .expr,
-            ';' => self.state = .at_end,
-            else => {
-              self.logger().IllegalItem(
-                pos, &[_]errors.WrongItemError.ItemDescr{
-                  .{.character = '='}, .{.character = ';'},
-                  .{.token = .ws_break},
-                }, .{.character = c});
-              return .none;
-            },
-          },
-          .node => {
-            self.logger().IllegalItem(pos, &[_]errors.WrongItemError.ItemDescr{
-                .{.character = '='}, .{.character = ';'}, .{.token = .ws_break},
-              }, .node);
-            return .none;
-          },
-          .newlines => self.state = .at_end,
-          .block_header => unreachable,
+      },
+      .node => {
+        self.logger().IllegalItem(pos,
+          &[_]errors.WrongItemError.ItemDescr{.{.token = .identifier}}, .node);
+        return .none;
+      },
+      .newlines => {
+        self.logger().PrematureToken(pos,
+          &[_]errors.WrongItemError.ItemDescr{.{.token = .identifier}},
+          .{.token = .ws_break});
+        self.reset();
+        return .none;
+      },
+      .block_header => unreachable,
+    }
+  }
+
+  fn afterName(
+    self: *SymbolDefs,
+    pos: model.Position,
+    item: SpecialSyntax.Item,
+  ) std.mem.Allocator.Error!?Processor.Action {
+    switch (item) {
+      .space => return .none,
+      .literal => {
+        self.logger().MissingToken(
+          pos.before(), self.afterNameItems(), .{.token = .identifier});
+        self.state = names;
+        return null;
+      },
+      .escaped => {
+        self.logger().IllegalItem(
+          pos.before(), self.afterNameItems(), .{.token = .escape});
+        return .none;
+      },
+      .special_char => |c| switch (c) {
+        ',' => {
+          self.state = names;
+          return .none;
         },
-        .flags => switch (item) {
-          .space => return .none,
-          .literal => |id| {
-            if (self.surplus_flags_start == null) {
-              const target = switch (std.hash.Adler32.hash(id)) {
-                std.hash.Adler32.hash("primary") => &self.primary,
-                std.hash.Adler32.hash("varargs") => &self.varargs,
-                std.hash.Adler32.hash("mutable") => &self.mutable,
-                std.hash.Adler32.hash("varmap") => &self.varmap,
-                std.hash.Adler32.hash("root") => &self.root,
-                else => {
-                  self.logger().UnknownFlag(pos, id);
-                  return .none;
-                }
-              };
-              if (target.*) |prev| {
-                self.logger().DuplicateFlag(id, pos, prev);
-              } else target.* = pos;
-            }
-            break .after_flag;
-          },
-          .escaped => {
-            self.logger().IllegalItem(pos, &[_]errors.WrongItemError.ItemDescr{
-                .{.token = .identifier}, .{.character = '}'},
-              }, .{.token = .escape});
+        ':' => {
+          if (self.variant == .locs) {
+            self.state = ltype;
             return .none;
-          },
-          .special_char => |c| switch (c) {
-            '}' => break .after_flags,
-            ',' => {
-              self.logger().MissingToken(
-                pos, &[_]errors.WrongItemError.ItemDescr{
-                  .{.token = .identifier}, .{.character = '}'},
-                }, .{.character = ','});
-              return .none;
-            },
-            ';' => {
-              self.logger().PrematureToken(
-                pos, &[_]errors.WrongItemError.ItemDescr{
-                  .{.token = .identifier}, .{.character = '}'},
-                }, .{.character = ';'});
-              self.state = .at_end;
-            },
-            else => {
-              self.logger().IllegalItem(
-                pos, &[_]errors.WrongItemError.ItemDescr{
-                  .{.token = .identifier}, .{.character = '}'},
-                }, .{.character = c});
-              return .none;
-            }
-          },
-          .node => {
-            self.logger().IllegalItem(pos, &[_]errors.WrongItemError.ItemDescr{
-                .{.token = .identifier}, .{.character = '}'},
-              }, .node);
-            break .after_flag;
-          },
-          .newlines => {
-            self.logger().PrematureToken(
-              pos, &[_]errors.WrongItemError.ItemDescr{
-                .{.token = .identifier}, .{.character = '}'},
-              }, .{.token = .ws_break});
-            self.state = .at_end;
-          },
-          .block_header => unreachable,
-        },
-        .after_flag => switch (item) {
-          .space => return .none,
-          .literal => {
-            self.logger().IllegalItem(pos, &[_]errors.WrongItemError.ItemDescr{
-                .{.character = ','}, .{.character = '}'},
-              }, .{.token = .identifier});
-            return .none;
-          },
-          .escaped => {
-            self.logger().IllegalItem(pos, &[_]errors.WrongItemError.ItemDescr{
-                .{.character = ','}, .{.character = '}'}
-              }, .{.token = .escape});
-            return .none;
-          },
-          .special_char => |c| switch (c) {
-            ',' => break .flags,
-            '}' => break .after_flags,
-            ';' => {
-              self.logger().PrematureToken(
-                pos, &[_]errors.WrongItemError.ItemDescr{
-                  .{.character = ','}, .{.character = '}'}
-                }, .{.character = ';'});
-              self.state = .at_end;
-            },
-            else => {
-              self.logger().IllegalItem(
-                pos, &[_]errors.WrongItemError.ItemDescr{
-                  .{.character = ','}, .{.character = '}'}
-                }, .{.character = c});
-              return .none;
-            }
-          },
-          .node => {
-            self.logger().IllegalItem(pos, &[_]errors.WrongItemError.ItemDescr{
-                .{.character = ','}, .{.character = '}'}
-              }, .node);
-            return .none;
-          },
-          .newlines => {
-            self.logger().PrematureToken(
-              pos, &[_]errors.WrongItemError.ItemDescr{
-                .{.character = ','}, .{.character = '}'}
-              }, .{.character = ';'});
-            self.state = .at_end;
-          },
-          .block_header => unreachable,
-        },
-        .after_flags => {
-          if (self.surplus_flags_start) |start| blk: {
-            switch (item) {
-              .special_char => |c| switch (c) {
-                ':' => break :blk,
-                else => {},
-              },
-              else => {},
-            }
-            self.intpr.ctx.logger.SurplusFlags(model.Position{
-              .source = start.source, .start = start.start, .end = pos.start,
-            });
-            self.surplus_flags_start = null;
           }
-          switch (item) {
-            .space => return .none,
-            .literal => {
-              self.logger().IllegalItem(
-                pos, &after_flags_items_arr, .{.token = .identifier});
-              return .none;
-            },
-            .escaped => {
-              self.logger().IllegalItem(
-                pos, &after_flags_items_arr, .{.token = .escape});
-              return .none;
-            },
-            .special_char => |c| switch (c) {
-              '=' => break .expr,
-              ';' => self.state = .at_end,
-              '{' => {
-                self.surplus_flags_start = pos;
-                break .flags;
-              },
-              ':' => {
-                self.state = .block_header;
-                return .read_block_header;
-              },
-              else => {
-                self.logger().IllegalItem(
-                  pos, &after_flags_items_arr, .{.character = c});
-                return .none;
-              },
-            },
-            .node => {
-              self.logger().IllegalItem(pos, &after_flags_items_arr, .node);
-              return .none;
-            },
-            .newlines => self.state = .at_end,
-            .block_header => unreachable,
-          }
+          self.logger().IllegalItem(
+            pos, self.afterNameItems(), .{.character = c});
+          return .none;
         },
-        .block_header => {
-          if (self.surplus_flags_start == null) {
-            if (self.header != null) {
-              self.logger().DuplicateBlockHeader(
-                "block header", pos, item.block_header.value().origin);
-            } else self.header = item.block_header;
-          }
-          break .after_flags;
+        '{' => {
+          self.state = flags;
+          return .none;
         },
-        .expr => switch (item) {
-          .space => return .none,
-          .literal => {
-            self.logger().IllegalItem(
-              pos, &[_]errors.WrongItemError.ItemDescr{.node},
-              .{.token = .identifier});
-            return .none;
-          },
-          .escaped => {
-            self.logger().IllegalItem(
-              pos, &[_]errors.WrongItemError.ItemDescr{.node},
-              .{.token = .escape});
-            return .none;
-          },
-          .special_char => |c| switch (c) {
-            ';' => {
-              self.logger().PrematureToken(
-                pos, &[_]errors.WrongItemError.ItemDescr{.node},
-                .{.character = ';'});
-              self.state = .at_end;
-            },
+        '=' => {
+          self.state = atExpr;
+          return .none;
+        },
+        ';' => {
+          self.state = atEnd;
+          return null;
+        },
+        else => {
+          self.logger().IllegalItem(
+            pos, self.afterNameItems(), .{.character = c});
+          return .none;
+        },
+      },
+      .node => {
+        self.logger().IllegalItem(pos, self.afterNameItems(), .node);
+        return .none;
+      },
+      .newlines => {
+        self.state = atEnd;
+        return null;
+      },
+      .block_header => unreachable,
+    }
+  }
+
+  fn ltype(
+    self: *SymbolDefs,
+    pos: model.Position,
+    item: SpecialSyntax.Item,
+  ) std.mem.Allocator.Error!?Processor.Action {
+    switch (item) {
+      .space => return .none,
+      .literal => {
+        self.logger().IllegalItem(pos,
+          &[_]errors.WrongItemError.ItemDescr{.node}, .{.token = .literal});
+        return .none;
+      },
+      .escaped => {
+        self.logger().IllegalItem(pos,
+            &[_]errors.WrongItemError.ItemDescr{.node},
+            .{.token = .escape});
+        return .none;
+      },
+      .special_char => |c| switch (c) {
+        '{', '=', ';' => {
+          self.logger().PrematureToken(
+            pos, &[_]errors.WrongItemError.ItemDescr{.node},
+            .{.character = c});
+          self.state = afterLtype;
+          return null;
+        },
+        else => {
+          self.logger().IllegalItem(
+            pos, &[_]errors.WrongItemError.ItemDescr{.node},
+            .{.character = c});
+          return .none;
+        },
+      },
+      .node => |n| {
+        self.@"type" = n;
+        self.state = afterLtype;
+        return .none;
+      },
+      .newlines => {
+        self.logger().PrematureToken(
+          pos, &[_]errors.WrongItemError.ItemDescr{.node},
+          .{.token = .ws_break});
+        self.state = afterLtype;
+        return null;
+      },
+      .block_header => unreachable,
+    }
+  }
+
+  fn afterLtype(
+    self: *SymbolDefs,
+    pos: model.Position,
+    item: SpecialSyntax.Item,
+  ) std.mem.Allocator.Error!?Processor.Action {
+    switch (item) {
+      .space => return .none,
+      .literal => {
+        self.logger().IllegalItem(pos, &[_]errors.WrongItemError.ItemDescr{
+            .{.character = '='}, .{.character = ';'}, .{.token = .ws_break},
+          }, .{.token = .identifier});
+        return .none;
+      },
+      .escaped => {
+        self.logger().IllegalItem(pos, &[_]errors.WrongItemError.ItemDescr{
+            .{.character = '='}, .{.character = ';'}, .{.token = .ws_break},
+          }, .{.token = .escape});
+        return .none;
+      },
+      .special_char => |c| switch (c) {
+        '{' => {
+          self.state = flags;
+          return .none;
+        },
+        '=' => {
+          self.state = atExpr;
+          return .none;
+        },
+        ';' => {
+          self.state = atEnd;
+          return null;
+        },
+        else => {
+          self.logger().IllegalItem(
+            pos, &[_]errors.WrongItemError.ItemDescr{
+              .{.character = '='}, .{.character = ';'},
+              .{.token = .ws_break},
+            }, .{.character = c});
+          return .none;
+        },
+      },
+      .node => {
+        self.logger().IllegalItem(pos, &[_]errors.WrongItemError.ItemDescr{
+            .{.character = '='}, .{.character = ';'}, .{.token = .ws_break},
+          }, .node);
+        return .none;
+      },
+      .newlines => {
+        self.state = atEnd;
+        return null;
+      },
+      .block_header => unreachable,
+    }
+  }
+
+  fn flags(
+    self: *SymbolDefs,
+    pos: model.Position,
+    item: SpecialSyntax.Item,
+  ) std.mem.Allocator.Error!?Processor.Action {
+    switch (item) {
+      .space => return .none,
+      .literal => |id| {
+        if (self.surplus_flags_start == null) {
+          const target = switch (std.hash.Adler32.hash(id)) {
+            std.hash.Adler32.hash("primary") => &self.primary,
+            std.hash.Adler32.hash("varargs") => &self.varargs,
+            std.hash.Adler32.hash("mutable") => &self.mutable,
+            std.hash.Adler32.hash("varmap") => &self.varmap,
+            std.hash.Adler32.hash("root") => &self.root,
             else => {
-              self.logger().IllegalItem(
-                pos, &[_]errors.WrongItemError.ItemDescr{.node},
-                .{.character = c});
+              self.logger().UnknownFlag(pos, id);
               return .none;
-            },
-          },
-          .node => |n| {
-            self.expr = n;
-            break .at_end;
-          },
-          .newlines => {
-            self.logger().PrematureToken(
-              pos, &[_]errors.WrongItemError.ItemDescr{.node},
-              .{.token = .ws_break});
-            self.state = .at_end;
-          },
-          .block_header => unreachable,
+            }
+          };
+          if (target.*) |prev| {
+            self.logger().DuplicateFlag(id, pos, prev);
+          } else target.* = pos;
+        }
+        self.state = afterFlag;
+        return .none;
+      },
+      .escaped => {
+        self.logger().IllegalItem(pos, &[_]errors.WrongItemError.ItemDescr{
+            .{.token = .identifier}, .{.character = '}'},
+          }, .{.token = .escape});
+        return .none;
+      },
+      .special_char => |c| switch (c) {
+        '}' => {
+          self.state = afterFlags;
+          return .none;
         },
-        .at_end => switch (item) {
-          .space => return .none,
-          .literal => {
-            self.logger().IllegalItem(pos, &[_]errors.WrongItemError.ItemDescr{
-                .{.character = ';'}, .{.token = .ws_break}
-              }, .{.token = .identifier});
-            return .none;
-          },
-          .escaped => {
-            self.logger().IllegalItem(pos, &[_]errors.WrongItemError.ItemDescr{
-                .{.character = ';'}, .{.token = .ws_break}
-              }, .{.token = .escape});
-            return .none;
-          },
-          .special_char => |c| switch (c) {
-            ';' => {
-              try self.finishLine(pos);
-              break .initial;
-            },
-            else => {
-              self.logger().IllegalItem(
-                pos, &[_]errors.WrongItemError.ItemDescr{
-                  .{.character = ';'}, .{.token = .ws_break}
-                }, .{.character = c});
-              return .none;
-            },
-          },
-          .node => {
-            self.logger().IllegalItem(pos, &[_]errors.WrongItemError.ItemDescr{
-                .{.character = ';'}, .{.token = .ws_break}
-              }, .node);
-            return .none;
-          } ,
-          .newlines => {
-            try self.finishLine(pos);
-            break .initial;
-          },
-          .block_header => unreachable,
+        ',' => {
+          self.logger().MissingToken(
+            pos, &[_]errors.WrongItemError.ItemDescr{
+              .{.token = .identifier}, .{.character = '}'},
+            }, .{.character = ','});
+          return .none;
         },
+        ';' => {
+          self.logger().PrematureToken(
+            pos, &[_]errors.WrongItemError.ItemDescr{
+              .{.token = .identifier}, .{.character = '}'},
+            }, .{.character = ';'});
+          self.state = atEnd;
+          return null;
+        },
+        else => {
+          self.logger().IllegalItem(
+            pos, &[_]errors.WrongItemError.ItemDescr{
+              .{.token = .identifier}, .{.character = '}'},
+            }, .{.character = c});
+          return .none;
+        }
+      },
+      .node => {
+        self.logger().IllegalItem(pos, &[_]errors.WrongItemError.ItemDescr{
+            .{.token = .identifier}, .{.character = '}'},
+          }, .node);
+        self.state = afterFlag;
+        return .none;
+      },
+      .newlines => {
+        self.logger().PrematureToken(
+          pos, &[_]errors.WrongItemError.ItemDescr{
+            .{.token = .identifier}, .{.character = '}'},
+          }, .{.token = .ws_break});
+        self.state = atEnd;
+        return null;
+      },
+      .block_header => unreachable,
+    }
+  }
+
+  fn afterFlag(
+    self: *SymbolDefs,
+    pos: model.Position,
+    item: SpecialSyntax.Item,
+  ) std.mem.Allocator.Error!?Processor.Action {
+    switch (item) {
+      .space => return .none,
+      .literal => {
+        self.logger().IllegalItem(pos, &[_]errors.WrongItemError.ItemDescr{
+            .{.character = ','}, .{.character = '}'},
+          }, .{.token = .identifier});
+        return .none;
+      },
+      .escaped => {
+        self.logger().IllegalItem(pos, &[_]errors.WrongItemError.ItemDescr{
+            .{.character = ','}, .{.character = '}'}
+          }, .{.token = .escape});
+        return .none;
+      },
+      .special_char => |c| switch (c) {
+        ',' => {
+          self.state = flags;
+          return .none;
+        },
+        '}' => {
+          self.state = afterFlags;
+          return .none;
+        },
+        ';' => {
+          self.logger().PrematureToken(
+            pos, &[_]errors.WrongItemError.ItemDescr{
+              .{.character = ','}, .{.character = '}'}
+            }, .{.character = ';'});
+          self.state = atEnd;
+          return null;
+        },
+        else => {
+          self.logger().IllegalItem(
+            pos, &[_]errors.WrongItemError.ItemDescr{
+              .{.character = ','}, .{.character = '}'}
+            }, .{.character = c});
+          return .none;
+        }
+      },
+      .node => {
+        self.logger().IllegalItem(pos, &[_]errors.WrongItemError.ItemDescr{
+            .{.character = ','}, .{.character = '}'}
+          }, .node);
+        return .none;
+      },
+      .newlines => {
+        self.logger().PrematureToken(
+          pos, &[_]errors.WrongItemError.ItemDescr{
+            .{.character = ','}, .{.character = '}'}
+          }, .{.character = ';'});
+        self.state = atEnd;
+        return null;
+      },
+      .block_header => unreachable,
+    }
+  }
+
+  fn afterFlags(
+    self: *SymbolDefs,
+    pos: model.Position,
+    item: SpecialSyntax.Item,
+  ) std.mem.Allocator.Error!?Processor.Action {
+    if (self.surplus_flags_start) |start| blk: {
+      switch (item) {
+        .special_char => |c| switch (c) {
+          ':' => break :blk,
+          else => {},
+        },
+        else => {},
       }
-    } else unreachable;
+      self.intpr.ctx.logger.SurplusFlags(model.Position{
+        .source = start.source, .start = start.start, .end = pos.start,
+      });
+      self.surplus_flags_start = null;
+    }
+    switch (item) {
+      .space => return .none,
+      .literal => {
+        self.logger().IllegalItem(
+          pos, &after_flags_items_arr, .{.token = .identifier});
+        return .none;
+      },
+      .escaped => {
+        self.logger().IllegalItem(
+          pos, &after_flags_items_arr, .{.token = .escape});
+        return .none;
+      },
+      .special_char => |c| switch (c) {
+        '=' => {
+          self.state = atExpr;
+          return .none;
+        },
+        ';' => {
+          self.state = atEnd;
+          return null;
+        },
+        '{' => {
+          self.surplus_flags_start = pos;
+          self.state = flags;
+          return .none;
+        },
+        ':' => {
+          self.state = blockHeader;
+          return .read_block_header;
+        },
+        else => {
+          self.logger().IllegalItem(
+            pos, &after_flags_items_arr, .{.character = c});
+          return .none;
+        },
+      },
+      .node => {
+        self.logger().IllegalItem(pos, &after_flags_items_arr, .node);
+        return .none;
+      },
+      .newlines => {
+        self.state = atEnd;
+        return null;
+      },
+      .block_header => unreachable,
+    }
+  }
+
+  fn blockHeader(
+    self: *SymbolDefs,
+    pos: model.Position,
+    item: SpecialSyntax.Item,
+  ) std.mem.Allocator.Error!?Processor.Action {
+    if (self.surplus_flags_start == null) {
+      if (self.header != null) {
+        self.logger().DuplicateBlockHeader(
+          "block header", pos, item.block_header.value().origin);
+      } else self.header = item.block_header;
+    }
+    self.state = afterFlags;
     return .none;
   }
 
-  fn finish(p: *Processor, pos: model.Position)
-      nyarna.Error!*model.Node {
+  fn atExpr(
+    self: *SymbolDefs,
+    pos: model.Position,
+    item: SpecialSyntax.Item,
+  ) std.mem.Allocator.Error!?Processor.Action {
+    switch (item) {
+      .space => return .none,
+      .literal => {
+        self.logger().IllegalItem(
+          pos, &[_]errors.WrongItemError.ItemDescr{.node},
+          .{.token = .identifier});
+        return .none;
+      },
+      .escaped => {
+        self.logger().IllegalItem(
+          pos, &[_]errors.WrongItemError.ItemDescr{.node},
+          .{.token = .escape});
+        return .none;
+      },
+      .special_char => |c| switch (c) {
+        ';' => {
+          self.logger().PrematureToken(
+            pos, &[_]errors.WrongItemError.ItemDescr{.node},
+            .{.character = ';'});
+          self.state = atEnd;
+          return null;
+        },
+        else => {
+          self.logger().IllegalItem(
+            pos, &[_]errors.WrongItemError.ItemDescr{.node},
+            .{.character = c});
+          return .none;
+        },
+      },
+      .node => |n| {
+        self.expr = n;
+        self.state = atEnd;
+        return .none;
+      },
+      .newlines => {
+        self.logger().PrematureToken(
+          pos, &[_]errors.WrongItemError.ItemDescr{.node},
+          .{.token = .ws_break});
+        self.state = atEnd;
+        return null;
+      },
+      .block_header => unreachable,
+    }
+  }
+
+  fn atEnd(
+    self: *SymbolDefs,
+    pos: model.Position,
+    item: SpecialSyntax.Item,
+  ) std.mem.Allocator.Error!?Processor.Action {
+    switch (item) {
+      .space => return .none,
+      .literal => {
+        self.logger().IllegalItem(pos, &[_]errors.WrongItemError.ItemDescr{
+            .{.character = ';'}, .{.token = .ws_break}
+          }, .{.token = .identifier});
+        return .none;
+      },
+      .escaped => {
+        self.logger().IllegalItem(pos, &[_]errors.WrongItemError.ItemDescr{
+            .{.character = ';'}, .{.token = .ws_break}
+          }, .{.token = .escape});
+        return .none;
+      },
+      .special_char => |c| switch (c) {
+        ';' => {
+          try self.finishLine(pos);
+          self.state = initial;
+          return .none;
+        },
+        else => {
+          self.logger().IllegalItem(
+            pos, &[_]errors.WrongItemError.ItemDescr{
+              .{.character = ';'}, .{.token = .ws_break}
+            }, .{.character = c});
+          return .none;
+        },
+      },
+      .node => {
+        self.logger().IllegalItem(pos, &[_]errors.WrongItemError.ItemDescr{
+            .{.character = ';'}, .{.token = .ws_break}
+          }, .node);
+        return .none;
+      } ,
+      .newlines => {
+        try self.finishLine(pos);
+        self.state = initial;
+        return .none;
+      },
+      .block_header => unreachable,
+    }
+  }
+
+  fn push(
+    p: *Processor,
+    pos: model.Position,
+    item: SpecialSyntax.Item,
+  ) nyarna.Error!Processor.Action {
     const self = @fieldParentPtr(SymbolDefs, "proc", p);
-    if (self.state != .initial) {
+    self.last_item = pos;
+    while (true) if (try self.state(self, pos, item)) |action| return action;
+  }
+
+  fn finish(p: *Processor, pos: model.Position) nyarna.Error!*model.Node {
+    const self = @fieldParentPtr(SymbolDefs, "proc", p);
+    if (self.state != initial) {
       _ = try p.push(
         p, self.last_item.after(), SpecialSyntax.Item{.newlines = 1});
     }
@@ -592,11 +736,15 @@ pub const SymbolDefs = struct {
   }
 
   fn genLineNode(
-      self: *SymbolDefs, name: *model.Node.Literal, pos: model.Position,
-      comptime kind: []const u8, comptime content_field: []const u8,
-      comptime additionals_field: ?[]const u8,
-      comptime optional_pos_fields: []const []const u8,
-      comptime optional_node_fields: []const []const u8) !*model.Node {
+    self: *SymbolDefs,
+    name: *model.Node.Literal,
+    pos: model.Position,
+    comptime kind: []const u8,
+    comptime content_field: []const u8,
+    comptime additionals_field: ?[]const u8,
+    comptime optional_pos_fields: []const []const u8,
+    comptime optional_node_fields: []const []const u8,
+  ) !*model.Node {
     const ret = try self.intpr.allocator.create(model.Node);
     ret.pos = pos;
     ret.data = @unionInit(@TypeOf(ret.data), kind, undefined);
@@ -623,7 +771,10 @@ pub const SymbolDefs = struct {
     return ret;
   }
 
-  fn finishLine(self: *SymbolDefs, pos: model.Position) nyarna.Error!void {
+  fn finishLine(
+    self: *SymbolDefs,
+    pos: model.Position,
+  ) std.mem.Allocator.Error!void {
     defer self.reset();
     if (self.names.items.len == 0) {
       // we reported this as error in the syntax
@@ -651,11 +802,13 @@ pub const SymbolDefs = struct {
             &[_][]const u8{"type"});
         },
         .defs => blk: {
-          inline for (.{"primary", "varargs", "varmap", "mutable"}) |item|
+          inline for (.{"primary", "varargs", "varmap", "mutable"}) |item| {
             if (@field(self, item)) |p|
               self.logger().NonDefinitionFlag(p);
-          if (self.header) |bh|
+          }
+          if (self.header) |bh| {
             self.logger().BlockHeaderNotAllowedForDefinition(bh.value().origin);
+          }
           break :blk self.genLineNode(
             name, line_pos, "definition", "content", null,
             &[_][]const u8{"root"}, &[_][]const u8{});
@@ -665,8 +818,11 @@ pub const SymbolDefs = struct {
     }
   }
 
-  fn boolFrom(self: *SymbolDefs, pos: ?model.Position, at: model.Position)
-      !*model.Node {
+  fn boolFrom(
+    self: *SymbolDefs,
+    pos: ?model.Position,
+    at: model.Position,
+  ) !*model.Node {
     return self.intpr.genValueNode(self.intpr.ctx.values.@"enum"(
       pos orelse at, self.intpr.types().getBoolean(),
       if (pos == null) 0 else 1));
