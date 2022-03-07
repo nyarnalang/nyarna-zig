@@ -31,8 +31,11 @@ pub const File = struct {
     errors: Values,
   },
 
-  fn failWith(path: []const u8, comptime msg: []const u8, args: anytype)
-      ParseError {
+  fn failWith(
+    path: []const u8,
+    comptime msg: []const u8,
+    args: anytype,
+  ) ParseError {
     std.log.err("{s}: " ++ msg ++ "\n", .{path} ++ args);
     return ParseError.parsing_failed;
   }
@@ -50,8 +53,11 @@ pub const File = struct {
     return load(path, file_contents);
   }
 
-  pub fn loadFile(dir: *std.fs.Dir, path: []const u8, file: *std.fs.File)
-      !File {
+  pub fn loadFile(
+    dir: *std.fs.Dir,
+    path: []const u8,
+    file: *std.fs.File,
+  ) !File {
     const file_contents = try dir.readFileAlloc(
       std.testing.allocator, path, (try file.stat()).size + 1);
     defer std.testing.allocator.free(file_contents);
@@ -88,13 +94,13 @@ pub const File = struct {
 
     var line_available = true;
     while (line_available) {
-       const start = line_index;
-       const header = line[4..];
-       const name_end = std.mem.indexOfScalar(u8, header, ':');
-       const tag_start = std.mem.indexOfScalar(u8, header, '{');
-       var sub_name: []const u8 = "";
-       const item_name = std.mem.trim(u8, try ret.allocator().dupe(u8, blk: {
-         if (name_end) |val| {
+      const start = line_index;
+      const header = line[4..];
+      const name_end = std.mem.indexOfScalar(u8, header, ':');
+      const tag_start = std.mem.indexOfScalar(u8, header, '{');
+      var sub_name: []const u8 = "";
+      const item_name = std.mem.trim(u8, try ret.allocator().dupe(u8, blk: {
+        if (name_end) |val| {
           if (tag_start) |tval| {
             if (val > tval) return failWith(
               name, "`{{` before `:` in value header", .{});
@@ -186,7 +192,7 @@ pub const File = struct {
           return failWith(name, "unknown selector: `{s}`", .{item_name});
         }
       } else try ret.items.put(
-              item_name, .{.line_offset = start, .content = content});
+        item_name, .{.line_offset = start, .content = content});
     }
     return ret;
   }

@@ -28,8 +28,12 @@ pub const TestDataResolver = struct {
     self.source.deinit();
   }
 
-  fn resolve(res: *nyarna.Resolver, path: []const u8, _: model.Position,
-             _: *errors.Handler) !?*model.Source.Descriptor {
+  fn resolve(
+    res: *nyarna.Resolver,
+    path: []const u8,
+    _: model.Position,
+    _: *errors.Handler,
+  ) !?*model.Source.Descriptor {
     const self = @fieldParentPtr(TestDataResolver, "api", res);
     const item = if (std.mem.eql(u8, "input", path))
       self.source.items.getPtr(path) orelse {
@@ -63,9 +67,11 @@ pub const TestDataResolver = struct {
   }
 
   fn getSource(
-      res: *nyarna.Resolver, descriptor: *const model.Source.Descriptor,
-      allocator: std.mem.Allocator, _: *errors.Handler)
-      std.mem.Allocator.Error!?*model.Source {
+    res: *nyarna.Resolver,
+    descriptor: *const model.Source.Descriptor,
+    allocator: std.mem.Allocator,
+    _: *errors.Handler,
+  ) std.mem.Allocator.Error!?*model.Source {
     const self = @fieldParentPtr(TestDataResolver, "api", res);
     const test_desc = @fieldParentPtr(Descriptor, "api", descriptor);
     try test_desc.value.content.appendSlice(
@@ -83,13 +89,18 @@ pub const TestDataResolver = struct {
     return ret;
   }
 
-  pub fn valueLines(self: *TestDataResolver, name: []const u8)
-      std.mem.SplitIterator(u8) {
+  pub fn valueLines(
+    self: *TestDataResolver,
+    name: []const u8,
+  ) std.mem.SplitIterator(u8) {
     return std.mem.split(u8, self.source.items.get(name).?.content.items, "\n");
   }
 
-  pub fn paramLines(self: *TestDataResolver, comptime param: []const u8,
-                    name: []const u8) std.mem.SplitIterator(u8) {
+  pub fn paramLines(
+    self: *TestDataResolver,
+    comptime param: []const u8,
+    name: []const u8,
+  ) std.mem.SplitIterator(u8) {
     return std.mem.split(
       u8, @field(self.source.params, param).get(name).?.content.items, "\n");
   }

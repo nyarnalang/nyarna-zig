@@ -56,76 +56,91 @@ pub fn lexTest(data: *TestDataResolver) !void {
 const AdditionalsWithGlobal = struct {
   value: *const model.Node.Location.Additionals,
   data: *nyarna.Globals,
-};
 
-fn formatAdditionals(
-    a: AdditionalsWithGlobal, comptime fmt: []const u8,
-    options: std.fmt.FormatOptions, writer: anytype) !void {
-  try writer.writeByte('{');
-  var first = true;
-  inline for ([_][]const u8{"primary", "varargs", "varmap", "mutable"}) |f| {
-    if (@field(a.value, f) != null) {
-      if (first) first = false else try writer.writeAll(", ");
-      try writer.writeAll(f);
+  fn format(
+    self: AdditionalsWithGlobal,
+    comptime fmt: []const u8,
+    options: std.fmt.FormatOptions,
+    writer: anytype,
+  ) !void {
+    try writer.writeByte('{');
+    var first = true;
+    inline for ([_][]const u8{"primary", "varargs", "varmap", "mutable"}) |f| {
+      if (@field(self.value, f) != null) {
+        if (first) first = false else try writer.writeAll(", ");
+        try writer.writeAll(f);
+      }
     }
+    try writer.writeAll("}");
+    if (self.value.header) |h|
+      try (HeaderWithGlobal{.header = h, .data = self.data,}).format(
+        fmt, options, writer);
   }
-  try writer.writeAll("}");
-  if (a.value.header) |h|
-    try formatBlockHeader(
-      .{.header = h, .data = a.data}, fmt, options, writer);
-}
+
+  fn formatter(self: AdditionalsWithGlobal) std.fmt.Formatter(format) {
+    return .{.data = self};
+  }
+};
 
 const HeaderWithGlobal = struct {
   header: *const model.Value.BlockHeader,
   data: *nyarna.Globals,
-};
 
-fn formatBlockHeader(hc: HeaderWithGlobal, comptime _: []const u8,
-                     _: std.fmt.FormatOptions, writer: anytype) !void {
-  if (hc.header.config) |config| {
-    try writer.writeAll(":<");
-    var first = true;
-    for (config.map) |*item| {
-      if (item.to == 0) {
-        if (first) first = false else try writer.writeAll(", ");
-        const ec = nyarna.EncodedCharacter.init(item.from);
-        try writer.print("off {s}", .{ec.repr()});
+  fn format(
+    self: HeaderWithGlobal,
+    comptime _: []const u8,
+    _: std.fmt.FormatOptions,
+    writer: anytype,
+  ) !void {
+    if (self.header.config) |config| {
+      try writer.writeAll(":<");
+      var first = true;
+      for (config.map) |*item| {
+        if (item.to == 0) {
+          if (first) first = false else try writer.writeAll(", ");
+          const ec = nyarna.EncodedCharacter.init(item.from);
+          try writer.print("off {s}", .{ec.repr()});
+        }
       }
-    }
-    for (config.map) |*item| {
-      if (item.from == 0) {
-        if (first) first = false else try writer.writeAll(", ");
-        const ec = nyarna.EncodedCharacter.init(item.to);
-        try writer.print("csym {s}", .{ec.repr()});
+      for (config.map) |*item| {
+        if (item.from == 0) {
+          if (first) first = false else try writer.writeAll(", ");
+          const ec = nyarna.EncodedCharacter.init(item.to);
+          try writer.print("csym {s}", .{ec.repr()});
+        }
       }
-    }
-    for (config.map) |*item| {
-      if (item.from != 0 and item.to != 0) {
-        if (first) first = false else try writer.writeAll(", ");
-        const fc = nyarna.EncodedCharacter.init(item.from);
-        const tc = nyarna.EncodedCharacter.init(item.to);
-        try writer.print("map {s} {s}", .{fc.repr(), tc.repr()});
+      for (config.map) |*item| {
+        if (item.from != 0 and item.to != 0) {
+          if (first) first = false else try writer.writeAll(", ");
+          const fc = nyarna.EncodedCharacter.init(item.from);
+          const tc = nyarna.EncodedCharacter.init(item.to);
+          try writer.print("map {s} {s}", .{fc.repr(), tc.repr()});
+        }
       }
+      if (config.full_ast) |_| {
+        if (first) first = false else try writer.writeAll(", ");
+        try writer.writeAll("fullast");
+      }
+      if (config.syntax) |def| {
+        if (first) first = false else try writer.writeAll(", ");
+        // TODO: user-define syntaxes
+        try writer.print("syntax {s}", .{switch (def.index) {
+          0 => @as([]const u8, "locations"), 1 => "definitions",
+          else => unreachable
+        }});
+      }
+      try writer.writeByte('>');
     }
-    if (config.full_ast) |_| {
-      if (first) first = false else try writer.writeAll(", ");
-      try writer.writeAll("fullast");
-    }
-    if (config.syntax) |def| {
-      if (first) first = false else try writer.writeAll(", ");
-      // TODO: user-define syntaxes
-      try writer.print("syntax {s}", .{switch (def.index) {
-        0 => @as([]const u8, "locations"), 1 => "definitions",
-        else => unreachable
-      }});
-    }
-    try writer.writeByte('>');
+    if (self.header.swallow_depth) |swallow_depth| {
+      try if (swallow_depth > 0) writer.print(":{}>", .{swallow_depth})
+          else writer.writeAll(":>");
+    } else if (self.header.config == null) try writer.writeAll("null");
   }
-  if (hc.header.swallow_depth) |swallow_depth| {
-    try if (swallow_depth > 0) writer.print(":{}>", .{swallow_depth})
-        else writer.writeAll(":>");
-  } else if (hc.header.config == null) try writer.writeAll("null");
-}
+
+  fn formatter(self: HeaderWithGlobal) std.fmt.Formatter(format) {
+    return .{.data = self};
+  }
+};
 
 const AstEmitter = struct {
   const Self = @This();
@@ -150,8 +165,11 @@ const AstEmitter = struct {
       return ret;
     }
 
-    fn append(self: *LineBuilder, comptime fmt: []const u8, args: anytype)
-        !void {
+    fn append(
+      self: *LineBuilder,
+      comptime fmt: []const u8,
+      args: anytype,
+    ) !void {
       const ret = try std.fmt.bufPrint(self.buffer[self.i..], fmt, args);
       self.i += ret.len;
     }
@@ -181,8 +199,12 @@ const AstEmitter = struct {
     return Popper{.e = self, .name = name};
   }
 
-  fn pushWithKey(self: *Self, comptime name: []const u8,
-                  key: []const u8, value: ?[]const u8) !Popper {
+  fn pushWithKey(
+    self: *Self,
+    comptime name: []const u8,
+    key: []const u8,
+    value: ?[]const u8,
+  ) !Popper {
     if (value) |v| try self.emitLine("+{s} {s}=\"{s}\"", .{name, key, v})
     else try self.emitLine("+{s} {s}", .{name, key});
     self.depth += 1;
@@ -265,11 +287,13 @@ const AstEmitter = struct {
           try tnode.pop();
         }
         if (loc.additionals) |a| {
-          if (a.primary != null or a.varargs != null or a.varmap != null or
-              a.mutable != null or a.header != null) {
-            const fmt = std.fmt.Formatter(formatAdditionals){.data = .{
-              .value = a, .data = self.data,
-            }};
+          if (
+            a.primary != null or a.varargs != null or a.varmap != null or
+            a.mutable != null or a.header != null
+          ) {
+            const fmt = (
+              AdditionalsWithGlobal{.value = a, .data = self.data}
+            ).formatter();
             try self.emitLine("=FLAGS {}", .{fmt});
           }
         }
@@ -595,9 +619,10 @@ const AstEmitter = struct {
         const wrap = try self.pushWithKey("LOC", loc.name.content, null);
         try self.processType(loc.tloc);
         inline for ([_][]const u8{"primary", "varargs", "varmap", "mutable"})
-            |flag|
+            |flag| {
           if (@field(loc, flag) != null)
             try self.emitLine("=FLAG {s}", .{flag});
+        }
         if (loc.default) |defexpr| {
           const default = try self.push("DEFAULT");
           try self.processExpr(defexpr);
@@ -629,9 +654,8 @@ const AstEmitter = struct {
       .poison => try self.emitLine("=POISON", .{}),
       .void => try self.emitLine("=VOID", .{}),
       .block_header => |*h| {
-        const hf = std.fmt.Formatter(formatBlockHeader){
-          .data = .{.header = h, .data = self.data}
-        };
+        const hf =
+          (HeaderWithGlobal{.header = h, .data = self.data}).formatter();
         try self.emitLine("=HEADER {}", .{hf});
       },
     }
@@ -818,8 +842,10 @@ const Checker = struct {
     };
   }
 
-  fn initErrorChecker(data: *TestDataResolver, name_in_errors: []const u8)
-      Checker {
+  fn initErrorChecker(
+    data: *TestDataResolver,
+    name_in_errors: []const u8,
+  ) Checker {
     return Checker{
       .expected_iter = data.paramLines("errors", name_in_errors),
       .line = data.source.params.errors.get(name_in_errors).?.line_offset + 1,
