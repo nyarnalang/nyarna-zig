@@ -157,7 +157,7 @@ pub const ResolutionContext = struct {
 ///   fn length() usize => returns the number of nodes in the graph
 ///   fn swap(left: usize, right: usize) void
 ///     => swaps the two nodes with the given indexes
-pub fn GraphProcessor(comptime Graph: type) type {
+pub fn Processor(comptime Graph: type) type {
   return struct {
     const Self = @This();
     /// holds bookkeeping information necessary for computing the strongly

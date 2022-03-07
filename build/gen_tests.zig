@@ -12,7 +12,7 @@ fn genTests(dir: *std.fs.Dir, sets: []TestSet) !void {
   var i = dir.iterate();
 
   for (sets) |set| {
-    _ = try set.file.write(
+    try set.file.writeAll(
       \\const std = @import("std");
       \\const testing = @import("testing");
       \\
@@ -80,8 +80,8 @@ fn genTests(dir: *std.fs.Dir, sets: []TestSet) !void {
 }
 
 pub fn main() !void {
-  var datadir = try std.fs.cwd().openDir("data",
-      .{.access_sub_paths = true, .iterate = true, .no_follow = true});
+  var datadir = try std.fs.cwd().openDir(
+    "data", .{.access_sub_paths = true, .iterate = true, .no_follow = true});
   defer datadir.close();
   var sets = [_]TestSet{
     .{

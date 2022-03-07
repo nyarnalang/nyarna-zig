@@ -45,13 +45,21 @@ pub const Stage = struct {
   resolve: ?*graph.ResolutionContext = null,
 };
 
+/// An internal namespace that contains a set of symbols with unique names.
+/// This data type is optimized for quick symbol name lookup. In contrast, a
+/// module's external namespace is a simple list not supporting name lookup
+/// directly since it is only ever imported into internal namespaces, where
+/// symbols will be looked up.
 pub const Namespace = struct {
   pub const Mark = usize;
 
   data: std.StringArrayHashMapUnmanaged(*model.Symbol) = .{},
 
-  pub fn tryRegister(self: *Namespace, intpr: *Interpreter, sym: *model.Symbol)
-      !bool {
+  pub fn tryRegister(
+    self: *Namespace,
+    intpr: *Interpreter,
+    sym: *model.Symbol,
+  ) !bool {
     const res = try self.data.getOrPut(intpr.allocator, sym.name);
     if (res.found_existing) {
       intpr.ctx.logger.DuplicateSymbolName(
@@ -146,8 +154,11 @@ pub const Interpreter = struct {
 
   /// creates an interpreter.
   pub fn create(
-      ctx: nyarna.Context, allocator: std.mem.Allocator, source: *model.Source,
-      public_ns: *std.ArrayListUnmanaged(*model.Symbol)) !*Interpreter {
+    ctx: nyarna.Context,
+    allocator: std.mem.Allocator,
+    source: *model.Source,
+    public_ns: *std.ArrayListUnmanaged(*model.Symbol),
+  ) !*Interpreter {
     var ret = try allocator.create(Interpreter);
     ret.* = .{
       .input = source,
@@ -163,9 +174,7 @@ pub const Interpreter = struct {
     ret.node_gen = model.NodeGenerator.init(allocator);
     try ret.addNamespace('\\');
     const container = try ctx.global().create(model.VariableContainer);
-    container.* = .{
-      .num_values = 0,
-    };
+    container.* = .{.num_values = 0};
     try ret.var_containers.append(ret.allocator, .{
       .offset = 0, .container = container,
     });
@@ -192,8 +201,13 @@ pub const Interpreter = struct {
     return entry.value_ptr;
   }
 
-  pub fn importModuleSyms(self: *Interpreter, module: *const model.Module,
-                          ns_index: u15) !void {
+  /// imports all symbols in the external namespace of the given module into the
+  /// internal namespace given by ns_index.
+  pub fn importModuleSyms(
+    self: *Interpreter,
+    module: *const model.Module,
+    ns_index: u15,
+  ) !void {
     const ns = self.namespace(ns_index);
     for (module.symbols) |sym| {
       if (sym.parent_type) |ptype| {
@@ -272,8 +286,11 @@ pub const Interpreter = struct {
     return try self.tryInterpretChainEnd(uref.node(), stage);
   }
 
-  fn tryInterpretAss(self: *Interpreter, ass: *model.Node.Assign, stage: Stage)
-      nyarna.Error!?*model.Expression {
+  fn tryInterpretAss(
+    self: *Interpreter,
+    ass: *model.Node.Assign,
+    stage: Stage,
+  ) nyarna.Error!?*model.Expression {
     if (stage.kind == .resolve) {
       switch (ass.target) {
         .unresolved => |ures| _ = try self.tryInterpret(ures, stage),
@@ -365,8 +382,14 @@ pub const Interpreter = struct {
     return expr;
   }
 
-  fn tryProbeAndInterpret(self: *Interpreter, input: *model.Node, stage: Stage)
-      nyarna.Error!?*model.Expression {
+  /// probes the given node for its scalar type (if any), and then interprets
+  /// it using that type, so that any literal nodes will become expression of
+  /// that type.
+  fn tryProbeAndInterpret(
+    self: *Interpreter,
+    input: *model.Node,
+    stage: Stage,
+  ) nyarna.Error!?*model.Expression {
     const scalar_type = (try self.probeForScalarType(input, stage))
       orelse return null;
     return self.interpretWithTargetScalar(input, scalar_type, stage);
@@ -404,8 +427,11 @@ pub const Interpreter = struct {
     }
   }
 
-  fn tryInterpretCall(self: *Interpreter, rc: *model.Node.ResolvedCall,
-                      stage: Stage) nyarna.Error!?*model.Expression {
+  fn tryInterpretCall(
+    self: *Interpreter,
+    rc: *model.Node.ResolvedCall,
+    stage: Stage,
+  ) nyarna.Error!?*model.Expression {
     if (stage.kind == .resolve) {
       _ = try chains.Resolver.init(self, stage).resolve(rc.target);
       for (rc.args) |arg, index| {
@@ -431,13 +457,13 @@ pub const Interpreter = struct {
     // originate from calls of compile-time functions.
     for (rc.args) |*arg, i| {
       if (arg.*.data != .expression) {
-        arg.*.data =
-          if (try self.associate(arg.*, rc.sig.parameters[i].ptype,
-                                 arg_stage)) |e| .{.expression = e}
-          else {
-            args_failed_to_interpret = true;
-            continue;
-          };
+        arg.*.data = if (
+          try self.associate(arg.*, rc.sig.parameters[i].ptype, arg_stage)
+        ) |e| .{.expression = e}
+        else {
+          args_failed_to_interpret = true;
+          continue;
+        };
       }
     }
 
@@ -518,14 +544,13 @@ pub const Interpreter = struct {
       break :blk val.data.@"type".t;
     } else null;
 
-    var expr = if (loc.default) |node|
-      (if (t) |texpl| try self.associate(node, texpl, stage)
-       else try self.tryInterpret(node, stage))
-      orelse blk: {
-        incomplete = true;
-        break :blk null;
-      }
-    else null;
+    var expr: ?*model.Expression = null;
+    if (loc.default) |node| {
+      const res = if (t) |texpl|
+        try self.associate(node, texpl, stage)
+      else try self.tryInterpret(node, stage);
+      if (res) |rexpr| expr = rexpr else incomplete = true;
+    }
 
     if (!incomplete and t == null and expr == null) {
       self.ctx.logger.MissingSymbolType(loc.node().pos);
@@ -563,14 +588,19 @@ pub const Interpreter = struct {
     return try self.ctx.createValueExpr(loc_val.value());
   }
 
-  fn tryInterpretDef(self: *Interpreter, def: *model.Node.Definition,
-                     stage: Stage) nyarna.Error!?*model.Expression {
+  fn tryInterpretDef(
+    self: *Interpreter,
+    def: *model.Node.Definition,
+    stage: Stage,
+  ) nyarna.Error!?*model.Expression {
     std.debug.assert(stage.kind != .resolve); // TODO
     const expr = (try self.tryInterpret(def.content, stage))
       orelse return null;
-    if (!self.ctx.types().lesserEqual(
+    if (
+      !self.ctx.types().lesserEqual(
         expr.expected_type, model.Type{.intrinsic = .@"type"}) and
-        !expr.expected_type.isStructural(.callable)) {
+      !expr.expected_type.isStructural(.callable)
+    ) {
       self.ctx.logger.InvalidDefinitionValue(
         expr.pos, &.{expr.expected_type});
       return try self.ctx.createValueExpr(
@@ -586,8 +616,10 @@ pub const Interpreter = struct {
     return try self.ctx.createValueExpr(def_val.value());
   }
 
-  pub fn tryInterpretImport(self: *Interpreter, import: *model.Node.Import)
-      parse.Error!?*model.Expression {
+  pub fn tryInterpretImport(
+    self: *Interpreter,
+    import: *model.Node.Import,
+  ) parse.Error!?*model.Expression {
     const me = &self.ctx.data.known_modules.values()[import.module_index];
     switch (me) {
       .loaded => |module| {
@@ -607,9 +639,11 @@ pub const Interpreter = struct {
     }
   }
 
-
-  fn ensureResolved(self: *Interpreter, node: *model.Node, stage: Stage)
-      nyarna.Error!?*model.Node {
+  fn ensureResolved(
+    self: *Interpreter,
+    node: *model.Node,
+    stage: Stage,
+  ) nyarna.Error!?*model.Node {
     switch (node.data) {
       .unresolved_call, .unresolved_symref => {
         if (stage.kind == .final or stage.kind == .keyword) {
@@ -650,8 +684,11 @@ pub const Interpreter = struct {
     }
   }
 
-  fn tryInterpretRAccess(self: *Interpreter, racc: *model.Node.ResolvedAccess,
-      stage: Stage) nyarna.Error!?*model.Expression {
+  fn tryInterpretRAccess(
+    self: *Interpreter,
+    racc: *model.Node.ResolvedAccess,
+    stage: Stage,
+  ) nyarna.Error!?*model.Expression {
     std.debug.assert(racc.base != racc.node());
     const base = (try self.tryInterpret(racc.base, stage)) orelse return null;
     var t = base.expected_type;
@@ -870,8 +907,8 @@ pub const Interpreter = struct {
     stage: Stage,
   ) nyarna.Error!?*model.Function {
     switch (func.params) {
-      .unresolved => if (!try self.tryInterpretFuncParams(func, stage, null))
-        return null,
+      .unresolved =>
+        if (!try self.tryInterpretFuncParams(func, stage, null)) return null,
       .resolved => {},
       .pregen => |pregen| return pregen,
     }
@@ -898,9 +935,12 @@ pub const Interpreter = struct {
     return ret;
   }
 
-  pub fn tryInterpretFuncBody(self: *Interpreter, func: *model.Node.Funcgen,
-                              expected_type: ?model.Type, stage: Stage)
-      nyarna.Error!?*model.Expression {
+  pub fn tryInterpretFuncBody(
+    self: *Interpreter,
+    func: *model.Node.Funcgen,
+    expected_type: ?model.Type,
+    stage: Stage,
+  ) nyarna.Error!?*model.Expression {
     switch (func.body.data) {
       .expression => |expr| return expr,
       else => {},
@@ -915,8 +955,10 @@ pub const Interpreter = struct {
   }
 
   pub fn tryInterpretFunc(
-      self: *Interpreter, func: *model.Node.Funcgen, stage: Stage)
-      nyarna.Error!?*model.Function {
+    self: *Interpreter,
+    func: *model.Node.Funcgen,
+    stage: Stage,
+  ) nyarna.Error!?*model.Function {
     if (stage.kind == .resolve) {
       switch (func.params) {
         .unresolved => |node| _ = try self.tryInterpret(node, stage),
@@ -944,8 +986,8 @@ pub const Interpreter = struct {
           return null;
         };
       const ny = &ret.data.ny;
-      ny.body = (try self.tryInterpretFuncBody(
-        func, returns, stage)) orelse return null;
+      ny.body = (try self.tryInterpretFuncBody(func, returns, stage))
+        orelse return null;
       return ret;
     } else {
       var failed_parts = false;
@@ -1009,8 +1051,11 @@ pub const Interpreter = struct {
     }
   }
 
-  fn tryInterpretUCall(self: *Interpreter, uc: *model.Node.UnresolvedCall,
-                       stage: Stage) nyarna.Error!?*model.Expression {
+  fn tryInterpretUCall(
+    self: *Interpreter,
+    uc: *model.Node.UnresolvedCall,
+    stage: Stage,
+  ) nyarna.Error!?*model.Expression {
     switch (stage.kind) {
       .intermediate => return null,
       .resolve => {
@@ -1068,8 +1113,10 @@ pub const Interpreter = struct {
   }
 
   fn tryInterpretVarTypeSetter(
-      self: *Interpreter, vs: *model.Node.VarTypeSetter, stage: Stage)
-      nyarna.Error!?*model.Expression {
+    self: *Interpreter,
+    vs: *model.Node.VarTypeSetter,
+    stage: Stage,
+  ) nyarna.Error!?*model.Expression {
     if (try self.tryInterpret(vs.content, stage)) |expr| {
       vs.v.t = expr.expected_type;
       return expr;
@@ -1082,8 +1129,11 @@ pub const Interpreter = struct {
     unavailable, failed,
   };
 
-  fn tryGetType(self: *Interpreter, node: *model.Node, stage: Stage)
-      !TypeResult {
+  fn tryGetType(
+    self: *Interpreter,
+    node: *model.Node,
+    stage: Stage,
+  ) !TypeResult {
     const val = while (true) switch (node.data) {
       .unresolved_symref => |*usym| {
         if (stage.resolve) |r| {
@@ -1114,10 +1164,14 @@ pub const Interpreter = struct {
   }
 
   /// try to generate a structural type with one inner type.
-  fn tryGenUnary(self: *Interpreter, comptime name: []const u8,
-                 comptime register_name: []const u8,
-                 comptime error_name: []const u8, input: anytype, stage: Stage)
-      nyarna.Error!?*model.Expression {
+  fn tryGenUnary(
+    self: *Interpreter,
+    comptime name: []const u8,
+    comptime register_name: []const u8,
+    comptime error_name: []const u8,
+    input: anytype,
+    stage: Stage,
+  ) nyarna.Error!?*model.Expression {
     const inner = switch (try self.tryGetType(input.inner, stage)) {
       .finished => |t| t,
       .unfinished => |t| t,
@@ -1149,19 +1203,28 @@ pub const Interpreter = struct {
       else try self.ctx.values.poison(input.node().pos));
   }
 
-  fn tryGenConcat(self: *Interpreter, gc: *model.Node.tg.Concat, stage: Stage)
-      nyarna.Error!?*model.Expression {
+  fn tryGenConcat(
+    self: *Interpreter,
+    gc: *model.Node.tg.Concat,
+    stage: Stage,
+  ) nyarna.Error!?*model.Expression {
     return self.tryGenUnary(
       "concat", "registerConcat", "InvalidInnerConcatType", gc, stage);
   }
 
-  fn tryGenEnum(self: *Interpreter, ge: *model.Node.tg.Enum, stage: Stage)
-      nyarna.Error!?*model.Expression {
+  fn tryGenEnum(
+    self: *Interpreter,
+    ge: *model.Node.tg.Enum,
+    stage: Stage,
+  ) nyarna.Error!?*model.Expression {
     _ = self; _ = ge; _ = stage; unreachable;
   }
 
-  fn tryGenFloat(self: *Interpreter, gf: *model.Node.tg.Float, stage: Stage)
-      nyarna.Error!?*model.Expression {
+  fn tryGenFloat(
+    self: *Interpreter,
+    gf: *model.Node.tg.Float,
+    stage: Stage,
+  ) nyarna.Error!?*model.Expression {
     _ = self; _ = gf; _ = stage; unreachable;
   }
 
@@ -1214,8 +1277,10 @@ pub const Interpreter = struct {
   };
 
   fn tryGenIntersection(
-      self: *Interpreter, gi: *model.Node.tg.Intersection, stage: Stage)
-      nyarna.Error!?*model.Expression {
+    self: *Interpreter,
+    gi: *model.Node.tg.Intersection,
+    stage: Stage,
+  ) nyarna.Error!?*model.Expression {
     var failed_some = false;
     var poison = false;
     var type_count: usize = 0;
@@ -1278,13 +1343,19 @@ pub const Interpreter = struct {
       (try self.ctx.values.@"type"(gi.node().pos, t)).value());
   }
 
-  fn tryGenList(self: *Interpreter, gl: *model.Node.tg.List, stage: Stage)
-      nyarna.Error!?*model.Expression {
+  fn tryGenList(
+    self: *Interpreter,
+    gl: *model.Node.tg.List,
+    stage: Stage,
+  ) nyarna.Error!?*model.Expression {
     _ = self; _ = gl; _ = stage; unreachable;
   }
 
-  fn tryGenMap(self: *Interpreter, gm: *model.Node.tg.Map, stage: Stage)
-      nyarna.Error!?*model.Expression {
+  fn tryGenMap(
+    self: *Interpreter,
+    gm: *model.Node.tg.Map,
+    stage: Stage,
+  ) nyarna.Error!?*model.Expression {
     _ = self; _ = gm; _ = stage; unreachable;
   }
 
@@ -1308,7 +1379,8 @@ pub const Interpreter = struct {
     for ([_]?*model.Node{gn.min, gn.max, gn.decimals}) |entry, index| {
       if (entry) |item| {
         if (
-          try self.associate(item, self.ctx.types().getInteger().typedef(), stage)
+          try self.associate(
+            item, self.ctx.types().getInteger().typedef(), stage)
         ) |expr| {
           if (expr.expected_type.is(.poison)) seen_poison = true;
           item.data = .{.expression = expr};
@@ -1341,20 +1413,27 @@ pub const Interpreter = struct {
   }
 
   fn tryGenOptional(
-      self: *Interpreter, go: *model.Node.tg.Optional, stage: Stage)
-      nyarna.Error!?*model.Expression {
+    self: *Interpreter,
+    go: *model.Node.tg.Optional,
+    stage: Stage,
+  ) nyarna.Error!?*model.Expression {
     return self.tryGenUnary(
       "optional", "registerOptional", "InvalidInnerOptionalType", go, stage);
   }
 
   fn tryGenParagraphs(
-      self: *Interpreter, gp: *model.Node.tg.Paragraphs, stage: Stage)
-      nyarna.Error!?*model.Expression {
+    self: *Interpreter,
+    gp: *model.Node.tg.Paragraphs,
+    stage: Stage,
+  ) nyarna.Error!?*model.Expression {
     _ = self; _ = gp; _ = stage; unreachable;
   }
 
-  fn tryGenRecord(self: *Interpreter, gr: *model.Node.tg.Record, stage: Stage)
-      nyarna.Error!?*model.Expression {
+  fn tryGenRecord(
+    self: *Interpreter,
+    gr: *model.Node.tg.Record,
+    stage: Stage,
+  ) nyarna.Error!?*model.Expression {
     if (stage.kind == .resolve) {
       switch (gr.fields) {
         .unresolved => |node| _ = try self.tryInterpret(node, stage),
@@ -1407,8 +1486,11 @@ pub const Interpreter = struct {
     return null;
   }
 
-  fn tryGenTextual(self: *Interpreter, gt: *model.Node.tg.Textual, stage: Stage)
-      nyarna.Error!?*model.Expression {
+  fn tryGenTextual(
+    self: *Interpreter,
+    gt: *model.Node.tg.Textual,
+    stage: Stage,
+  ) nyarna.Error!?*model.Expression {
     _ = self; _ = gt; _ = stage; unreachable;
   }
 
@@ -1423,8 +1505,11 @@ pub const Interpreter = struct {
   ///
   /// if report_failure is set, emits errors to the handler if this or a child
   /// node cannot be interpreted.
-  pub fn tryInterpret(self: *Interpreter, input: *model.Node, stage: Stage)
-      nyarna.Error!?*model.Expression {
+  pub fn tryInterpret(
+    self: *Interpreter,
+    input: *model.Node,
+    stage: Stage,
+  ) nyarna.Error!?*model.Expression {
     return switch (input.data) {
       .assign => |*ass| self.tryInterpretAss(ass, stage),
       .branches => |*branches| if (stage.kind == .resolve) {
@@ -1502,8 +1587,10 @@ pub const Interpreter = struct {
     };
   }
 
-  pub fn interpret(self: *Interpreter, input: *model.Node)
-      nyarna.Error!*model.Expression {
+  pub fn interpret(
+    self: *Interpreter,
+    input: *model.Node,
+  ) nyarna.Error!*model.Expression {
     return if (try self.tryInterpret(input, .{.kind = .final})) |expr| expr
     else try self.ctx.createValueExpr(try self.ctx.values.poison(input.pos));
   }
@@ -1538,8 +1625,11 @@ pub const Interpreter = struct {
   ///
   /// Substructures will be interpreted as necessary (see doc on probeType).
   /// If some substructure cannot be interpreted, null is returned.
-  fn probeNodeList(self: *Interpreter, nodes: []*model.Node,
-                   stage: Stage) !?model.Type {
+  fn probeNodeList(
+    self: *Interpreter,
+    nodes: []*model.Node,
+    stage: Stage,
+  ) !?model.Type {
     std.debug.assert(stage.kind != .resolve);
     var sup = model.Type{.intrinsic = .every};
     var already_poison = false;
@@ -1559,7 +1649,8 @@ pub const Interpreter = struct {
         first_incompatible = i;
       }
     }
-    return if (seen_unfinished) null else if (first_incompatible) |index| blk: {
+    return if (seen_unfinished) null
+    else if (first_incompatible) |index| blk: {
       const type_arr =
         try self.allocator.alloc(model.Type, index + 1);
       type_arr[0] = (try self.probeType(nodes[index], stage)).?;
@@ -1569,7 +1660,9 @@ pub const Interpreter = struct {
       }
       self.ctx.logger.IncompatibleTypes(nodes[index].pos, type_arr);
       break :blk model.Type{.intrinsic = .poison};
-    } else if (already_poison) model.Type{.intrinsic = .poison} else sup;
+    } else if (already_poison)
+      model.Type{.intrinsic = .poison}
+    else sup;
   }
 
   /// Calculate the supremum of all scalar types in the given node's types.
@@ -1577,8 +1670,11 @@ pub const Interpreter = struct {
   /// concatenations, optionals and paragraphs.
   ///
   /// returns null only in the event of unfinished nodes.
-  fn probeForScalarType(self: *Interpreter, input: *model.Node,
-                        stage: Stage) !?model.Type {
+  fn probeForScalarType(
+    self: *Interpreter,
+    input: *model.Node,
+    stage: Stage,
+  ) !?model.Type {
     std.debug.assert(stage.kind != .resolve);
     const t = (try self.probeType(input, stage)) orelse return null;
     return types.containedScalar(t) orelse .{.intrinsic = .every};
@@ -1631,8 +1727,11 @@ pub const Interpreter = struct {
   ///
   /// Semantic errors that are discovered during probing will be logged and lead
   /// to poison being returned if stage.kind != .intermediate.
-  pub fn probeType(self: *Interpreter, node: *model.Node, stage: Stage)
-      nyarna.Error!?model.Type {
+  pub fn probeType(
+    self: *Interpreter,
+    node: *model.Node,
+    stage: Stage,
+  ) nyarna.Error!?model.Type {
     switch (node.data) {
       .assign, .import, .funcgen, .gen_concat, .gen_enum, .gen_float,
       .gen_intersection, .gen_list, .gen_map, .gen_numeric, .gen_optional,
@@ -1712,18 +1811,25 @@ pub const Interpreter = struct {
     }
   }
 
-  pub inline fn genValueNode(self: *Interpreter, content: *model.Value)
-      !*model.Node {
+  pub inline fn genValueNode(
+    self: *Interpreter,
+    content: *model.Value,
+  ) !*model.Node {
     return try self.node_gen.expression(try self.ctx.createValueExpr(content));
   }
 
-  fn createTextLiteral(self: *Interpreter, l: *model.Node.Literal,
-                       t: model.Type) nyarna.Error!*model.Value {
+  fn createTextLiteral(
+    self: *Interpreter,
+    l: *model.Node.Literal,
+    t: model.Type,
+  ) nyarna.Error!*model.Value {
     switch (t) {
       .intrinsic => |it| switch (it) {
-        .space => if (l.kind == .space) return (try self.ctx.values.textScalar(
-          l.node().pos, t, try self.ctx.global().dupe(u8, l.content))).value()
-        else {
+        .space => if (l.kind == .space) {
+          return (try self.ctx.values.textScalar(
+            l.node().pos, t, try self.ctx.global().dupe(u8, l.content))
+          ).value();
+        } else {
           self.ctx.logger.ExpectedExprOfTypeXGotY(
             l.node().pos, &[_]model.Type{t, .{.intrinsic = .literal}});
           return self.ctx.values.poison(l.node().pos);
@@ -1775,12 +1881,18 @@ pub const Interpreter = struct {
     }
   }
 
-  fn probeCheckOrPoison(self: *Interpreter, input: *model.Node, t: model.Type,
-                        stage: Stage) nyarna.Error!?*model.Expression {
+  fn probeCheckOrPoison(
+    self: *Interpreter,
+    input: *model.Node,
+    t: model.Type,
+    stage: Stage,
+  ) nyarna.Error!?*model.Expression {
     std.debug.assert(stage.kind != .resolve);
     var actual_type = (try self.probeType(input, stage)) orelse return null;
-    if (!actual_type.is(.poison) and
-        !self.ctx.types().lesserEqual(actual_type, t)) {
+    if (
+      !actual_type.is(.poison) and
+      !self.ctx.types().lesserEqual(actual_type, t)
+    ) {
       actual_type = .{.intrinsic = .poison};
       self.ctx.logger.ExpectedExprOfTypeXGotY(
         input.pos, &[_]model.Type{t, actual_type});
@@ -1791,8 +1903,11 @@ pub const Interpreter = struct {
   }
 
   fn poisonIfNotCompat(
-      self: *Interpreter, pos: model.Position, actual: model.Type,
-      scalar: model.Type) !?*model.Expression {
+    self: *Interpreter,
+    pos: model.Position,
+    actual: model.Type,
+    scalar: model.Type,
+  ) !?*model.Expression {
     if (!actual.is(.poison)) {
       if (types.containedScalar(actual)) |contained| {
         // TODO: conversion
@@ -1806,8 +1921,11 @@ pub const Interpreter = struct {
   /// typed literal values from text literals. The target type *must* be a
   /// scalar type.
   pub fn interpretWithTargetScalar(
-      self: *Interpreter, input: *model.Node, t: model.Type, stage: Stage)
-      nyarna.Error!?*model.Expression {
+    self: *Interpreter,
+    input: *model.Node,
+    t: model.Type,
+    stage: Stage,
+  ) nyarna.Error!?*model.Expression {
     std.debug.assert(stage.kind != .resolve);
     std.debug.assert(switch (t) {
       .intrinsic => |intr|

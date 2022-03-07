@@ -50,8 +50,12 @@ pub const ModuleLoader = struct {
 
   /// allocates the loader and initializes it. Give no_interpret if you want to
   /// load the input as Node without interpreting it.
-  pub fn create(data: *nyarna.Globals, input: *const model.Source.Descriptor,
-                resolver: *nyarna.Resolver, fullast: bool) !*ModuleLoader {
+  pub fn create(
+    data: *nyarna.Globals,
+    input: *const model.Source.Descriptor,
+    resolver: *nyarna.Resolver,
+    fullast: bool,
+  ) !*ModuleLoader {
     var ret = try data.storage.allocator().create(ModuleLoader);
     ret.* = .{
       .data = data,
@@ -81,8 +85,8 @@ pub const ModuleLoader = struct {
         // ModuleLoader will never call its interpreter.
         break :blk undefined;
       };
-    ret.interpreter = (try Interpreter.create(
-      ret.ctx(), ret.storage.allocator(), source, &ret.public_syms));
+    ret.interpreter = try Interpreter.create(
+      ret.ctx(), ret.storage.allocator(), source, &ret.public_syms);
     return ret;
   }
 
@@ -179,8 +183,11 @@ pub const ModuleLoader = struct {
   /// returns null if no module cannot be found for the given locator or if
   /// referencing the module would create a cyclic dependency. If null is
   /// returned, an error message has been logged.
-  pub fn searchModule(self: *ModuleLoader, pos: model.Position,
-                      locator: model.Locator) !?usize {
+  pub fn searchModule(
+    self: *ModuleLoader,
+    pos: model.Position,
+    locator: model.Locator,
+  ) !?usize {
     var resolver: *nyarna.Resolver = undefined;
     const descriptor = if (locator.resolver) |name| blk: {
       if (self.data.known_modules.getIndex(locator.path)) |index| return index;
@@ -235,8 +242,10 @@ pub const ModuleLoader = struct {
   /// tries to query the parameters of the module at the given index.
   /// returns null if the referenced module has not yet been loaded far enough
   /// for it to provide parameters.
-  pub fn getModuleParams(self: *ModuleLoader, module_index: usize)
-      ?*model.Type.Signature {
+  pub fn getModuleParams(
+    self: *ModuleLoader,
+    module_index: usize,
+  ) ?*model.Type.Signature {
     _ = self;
     _ = module_index;
     unreachable; // TODO

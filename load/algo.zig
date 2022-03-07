@@ -28,6 +28,10 @@ fn subjectIsType(uacc: *model.Node.UnresolvedAccess, t: model.Type) bool {
   };
 }
 
+/// A graph.ResolutionContext that resolves symbol references to type symbols
+/// within the same \declare call. The referenced types are unfinished and must
+/// only be used to construct types, never be called or used as value while this
+/// context is active.
 const TypeResolver = struct {
   ctx: graph.ResolutionContext,
   dres: *DeclareResolution,
@@ -143,6 +147,11 @@ const TypeResolver = struct {
   }
 };
 
+/// A graph.ResolutionContext that returns the current return type of a
+/// referenced, unfinished function. That type must only be used to calculate
+/// the return type of other unfinished functions. Only when a fixpoint is
+/// reached will the calculated type become the definite return type of the
+/// function.
 const FixpointContext = struct {
   ctx: graph.ResolutionContext,
   dres: *DeclareResolution,
@@ -195,25 +204,27 @@ const FixpointContext = struct {
         else => unreachable,
       }
     } else (try fc.dres.intpr.probeType(
-        fgen.body, .{.kind = .intermediate, .resolve = &fc.ctx})) orelse blk: {
-          // this happens if there are still unknown symbols in the function
-          // body. These are errors since everything resolvable has been
-          // resolved at this point. we call interpret solely for issuing error
-          // messages.
-          _ = try fc.dres.intpr.interpret(fgen.body);
-          fgen.body.data = .poison;
-          break :blk model.Type{.intrinsic = .poison};
-        };
-    if (new_type.eql(fgen.cur_returns)) return false
-    else {
+      fgen.body, .{.kind = .intermediate, .resolve = &fc.ctx})) orelse blk: {
+        // this happens if there are still unknown symbols in the function
+        // body. These are errors since everything resolvable has been
+        // resolved at this point. we call interpret solely for issuing error
+        // messages.
+        _ = try fc.dres.intpr.interpret(fgen.body);
+        fgen.body.data = .poison;
+        break :blk model.Type{.intrinsic = .poison};
+      };
+    if (new_type.eql(fgen.cur_returns)) {
+      return false;
+    } else {
       fgen.cur_returns = new_type;
       return true;
     }
   }
 };
 
+/// A graph.Processor that handles symbols declared within a \declare call.
 pub const DeclareResolution = struct {
-  const Processor = graph.GraphProcessor(*DeclareResolution);
+  const Processor = graph.Processor(*DeclareResolution);
 
   defs: []*model.Node.Definition,
   processor: Processor,
@@ -221,11 +232,14 @@ pub const DeclareResolution = struct {
   intpr: *Interpreter,
   in: graph.ResolutionContext.Target,
 
-  pub fn create(intpr: *Interpreter,
-                defs: []*model.Node.Definition,
-                ns: u15, parent: ?model.Type) !*DeclareResolution {
-    const in = if (parent) |ptype| graph.ResolutionContext.Target{.t = ptype}
-               else graph.ResolutionContext.Target{.ns = ns};
+  pub fn create(
+    intpr: *Interpreter,
+    defs: []*model.Node.Definition,
+    ns: u15,
+    parent: ?model.Type,
+  ) !*DeclareResolution {
+    const in: graph.ResolutionContext.Target =
+      if (parent) |ptype| .{.t = ptype} else .{.ns = ns};
     const res = try intpr.allocator.create(DeclareResolution);
     res.* = .{
       .defs = defs,
@@ -244,8 +258,12 @@ pub const DeclareResolution = struct {
     gen.generated = try self.intpr.ctx.global().create(model.Type.Structural);
   }
 
-  inline fn genSym(self: *DeclareResolution, name: *model.Node.Literal,
-                   content: model.Symbol.Data, publish: bool) !*model.Symbol {
+  fn genSym(
+    self: *DeclareResolution,
+    name: *model.Node.Literal,
+    content: model.Symbol.Data,
+    publish: bool,
+  ) !*model.Symbol {
     const sym = try self.intpr.ctx.global().create(model.Symbol);
     sym.* = .{
       .defined_at = name.node().pos,
@@ -262,8 +280,12 @@ pub const DeclareResolution = struct {
     return sym;
   }
 
-  fn genSymFromValue(self: *DeclareResolution, name: *model.Node.Literal,
-                     value: *model.Value, publish: bool) !*model.Symbol {
+  fn genSymFromValue(
+    self: *DeclareResolution,
+    name: *model.Node.Literal,
+    value: *model.Value,
+    publish: bool,
+  ) !*model.Symbol {
     switch (value.data) {
       .@"type" => |tref| {
         const sym = try self.genSym(name, .{.@"type" = tref.t}, publish);
@@ -454,9 +476,7 @@ pub const DeclareResolution = struct {
           changed = false;
           for (defs) |def| {
             switch (def.content.data) {
-              .funcgen => |*fgen| if (try fc.probe(fgen)) {
-                changed = true;
-              },
+              .funcgen => |*fgen| if (try fc.probe(fgen)) {changed = true;},
               else => {},
             }
           }
@@ -530,8 +550,11 @@ pub const DeclareResolution = struct {
     return self.defs.len;
   }
 
-  pub fn collectDeps(self: *DeclareResolution, index: usize,
-                     edges: *[]usize) !void {
+  pub fn collectDeps(
+    self: *DeclareResolution,
+    index: usize,
+    edges: *[]usize,
+  ) !void {
     self.dep_discovery_ctx.dependencies = .{};
     if (try self.intpr.tryInterpret(self.defs[index].content,
       .{.kind = .resolve, .resolve = &self.dep_discovery_ctx})) |expr| {

@@ -4,6 +4,21 @@ const model = nyarna.model;
 const Type = model.Type;
 const Interpreter = @import("interpret.zig").Interpreter;
 
+/// Mapper is the interface for mapping call arguments to parameters.
+/// This is a multi-stage process for each argument:
+///
+///  * first, the argument is mapped via `map()`. For block arguments, this must
+///    occur before the argument content is read so that block config can be
+///    applied. Unmappable arguments must also return a valid cursor.
+///  * `map()` returns a Cursor that can be used to query implicit block config
+///    of the target parameter via `config()`.
+///  * Similarly, `paramType()` can be used to query the type of the target
+///    parameter. This may return `null` for unmappable arguments.
+///  * After the content of the argument has been read, `push()` is to be called
+///    to finalize the argument by pushing its content.
+///
+/// When all arguments have been pushed, `finalize()` is to be called to
+/// generate the node resulting from the call.
 pub const Mapper = struct {
   const Self = @This();
 
@@ -23,8 +38,12 @@ pub const Mapper = struct {
   };
   const ArgKind = model.Node.UnresolvedCall.ArgKind;
 
-  mapFn: fn(self: *Self, pos: model.Position, input: ArgKind,
-            flag: ProtoArgFlag) nyarna.Error!?Cursor,
+  mapFn: fn(
+    self: *Self,
+    pos: model.Position,
+    input: ArgKind,
+    flag: ProtoArgFlag,
+  ) nyarna.Error!?Cursor,
   pushFn: fn(self: *Self, at: Cursor, content: *model.Node) nyarna.Error!void,
   configFn: fn(self: *Self, at: Cursor) ?*model.BlockConfig,
   paramTypeFn: fn(self: *Self, at: Cursor) ?model.Type,
@@ -32,8 +51,12 @@ pub const Mapper = struct {
 
   subject_pos: model.Position,
 
-  pub fn map(self: *Self, pos: model.Position, input: ArgKind,
-             flag: ProtoArgFlag) nyarna.Error!?Cursor {
+  pub fn map(
+    self: *Self,
+    pos: model.Position,
+    input: ArgKind,
+    flag: ProtoArgFlag,
+  ) nyarna.Error!?Cursor {
     return self.mapFn(self, pos, input, flag);
   }
 
