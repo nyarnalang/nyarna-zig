@@ -1,8 +1,8 @@
 const std = @import("std");
-const errors = @import("../errors.zig");
+const errors = @import("../src/errors.zig");
 
 pub fn main() !void {
-  var eh = try std.fs.cwd().createFile("errors_generated.zig", .{});
+  var eh = try std.fs.cwd().createFile("src/errors_generated.zig", .{});
   defer eh.close();
   try eh.writeAll(
     \\const std = @import("std");

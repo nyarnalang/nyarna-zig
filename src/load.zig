@@ -1,5 +1,5 @@
 const std = @import("std");
-const nyarna = @import("../nyarna.zig");
+const nyarna = @import("nyarna.zig");
 const types = nyarna.types;
 const errors = nyarna.errors;
 const model = nyarna.model;
@@ -7,7 +7,7 @@ const lib = nyarna.lib;
 const Context = nyarna.Context;
 const Interpreter = @import("interpret.zig").Interpreter;
 const parse = @import("parse.zig");
-const lex = @import("lex.zig");
+const lex = @import("parse/lex.zig");
 
 
 /// interruptible loader of a module. Interrupts happen when a reference to
@@ -78,7 +78,7 @@ pub const ModuleLoader = struct {
             .end = model.Cursor.unknown(),
           },
           .data = .poison,
-          .expected_type = .{.intrinsic = .poison},
+          .expected_type = .poison,
         };
         ret.state = .{.finished = poison};
         // it is safe to leave the source undefined here, as a finished
@@ -245,7 +245,7 @@ pub const ModuleLoader = struct {
   pub fn getModuleParams(
     self: *ModuleLoader,
     module_index: usize,
-  ) ?*model.Type.Signature {
+  ) ?*model.Signature {
     _ = self;
     _ = module_index;
     unreachable; // TODO

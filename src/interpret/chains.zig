@@ -5,7 +5,7 @@ const errors = nyarna.errors;
 const types = nyarna.types;
 const lib = nyarna.lib;
 
-const interpret = @import("interpret.zig");
+const interpret = @import("../interpret.zig");
 const graph = @import("graph.zig");
 
 /// Result of resolving an accessor chain.
@@ -109,7 +109,6 @@ pub const Resolver = struct {
     name: []const u8
   ) ?SearchResult {
     switch (t) {
-      .intrinsic, .structural => {},
       .instantiated => |inst| switch (inst.data) {
         .record => |*rec| {
           for (rec.constructor.sig.parameters) |*field, index| {
@@ -119,7 +118,8 @@ pub const Resolver = struct {
           }
         },
         else => {},
-      }
+      },
+      else => {},
     }
     if (intpr.type_namespaces.get(t)) |ns| {
       if (ns.data.get(name)) |sym| return SearchResult{.symbol = sym};
@@ -131,7 +131,7 @@ pub const Resolver = struct {
     switch (rs.sym.data) {
       .poison => return Resolution.poison,
       .variable => |*v| {
-        if (v.t.is(.every)) {
+        if (v.t == .every) {
           std.debug.assert(self.stage.kind == .intermediate);
           return Resolution{.failed = rs.ns};
         } else {
@@ -160,7 +160,7 @@ pub const Resolver = struct {
           .ns = ns,
           .name_pos = name_pos,
         }};
-        std.debug.assert(!v.t.is(.every));
+        std.debug.assert(v.t != .every);
         return Resolution.chain(ns, node, .{}, v.t, name_pos, false);
       },
       .poison => return Resolution.poison,
@@ -392,7 +392,7 @@ pub const CallContext = union(enum) {
   known: struct {
     target: *model.Node,
     ns: u15,
-    signature: *const model.Type.Signature,
+    signature: *const model.Signature,
     first_arg: ?*model.Node,
   },
   unknown, poison,
@@ -408,10 +408,8 @@ pub const CallContext = union(enum) {
         .callable => |*callable| callable,
         else => null,
       },
-      .intrinsic => |intr| if (intr == .poison) {
-        return CallContext.poison;
-      } else null,
-      .instantiated => null,
+      .poison => return CallContext.poison,
+      else => null,
     } orelse {
       intpr.ctx.logger.CantBeCalled(target.pos);
       return CallContext.poison;
@@ -455,7 +453,6 @@ pub const CallContext = union(enum) {
           },
           .@"type" => |t| {
             switch (intpr.ctx.types().typeType(t)) {
-              .intrinsic => |intr| if (intr == .poison) return .poison,
               .structural => |strct| switch (strct.*) {
                 .callable => |*callable| {
                   return CallContext{.known = .{
@@ -467,7 +464,8 @@ pub const CallContext = union(enum) {
                 },
                 else => {},
               },
-              .instantiated => {},
+              .poison => return .poison,
+              else => {},
             }
             intpr.ctx.logger.CantBeCalled(node.pos);
             return CallContext.poison;

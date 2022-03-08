@@ -5,9 +5,9 @@ pub const model = @import("model.zig");
 pub const types = @import("types.zig");
 pub const errors = @import("errors");
 pub const lib = @import("lib.zig");
-pub const resolve = @import("resolve.zig");
-pub const ModuleLoader = @import("load/load.zig").ModuleLoader;
-pub const EncodedCharacter = @import("load/unicode.zig").EncodedCharacter;
+pub const resolve = @import("load/resolve.zig");
+pub const ModuleLoader = @import("load.zig").ModuleLoader;
+pub const EncodedCharacter = @import("unicode.zig").EncodedCharacter;
 pub const Resolver = resolve.Resolver;
 
 pub const default_stack_size = 1024 * 1024; // 1MB
@@ -105,7 +105,7 @@ pub const Globals = struct {
       .this_name = .{
         .origin = model.Position.intrinsic(),
         .data = .{.text = .{
-          .t = .{.intrinsic = .literal},
+          .t = .literal,
           .content = "this",
         }},
       },

@@ -550,7 +550,6 @@ const AstEmitter = struct {
 
   fn processType(self: *Self, t: model.Type) anyerror!void {
     switch (t) {
-      .intrinsic => |i| try self.emitLine("=TYPE {s}", .{@tagName(i)}),
       .structural => unreachable,
       .instantiated => |i| {
         if (i.name) |sym| try self.emitLine("=TYPE {s} {s}.{s}",
@@ -578,6 +577,7 @@ const AstEmitter = struct {
           try tc.pop();
         }
       },
+      else => try self.emitLine("=TYPE {s}", .{@tagName(t)}),
     }
   }
 

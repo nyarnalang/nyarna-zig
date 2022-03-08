@@ -1,7 +1,7 @@
 const std = @import("std");
 const model = @import("model.zig");
 const nyarna = @import("nyarna.zig");
-const unicode = @import("load/unicode.zig");
+const unicode = @import("unicode.zig");
 
 /// a type or prototype constructor.
 pub const Constructor = struct {
@@ -28,12 +28,6 @@ const InnerIntend = enum {
 
   fn concat(t: model.Type) InnerIntend {
     return switch (t) {
-      .intrinsic => |i| switch (i) {
-        .prototype, .schema, .extension, .ast_node, .frame_root =>
-          InnerIntend.forbidden,
-        .space, .literal, .raw, .void, .poison => InnerIntend.collapse,
-        else => InnerIntend.allowed,
-      },
       .structural => |s| switch (s.*) {
         .optional => InnerIntend.exalt,
         .concat => InnerIntend.collapse,
@@ -45,22 +39,24 @@ const InnerIntend = enum {
         .record => InnerIntend.allowed,
         else => InnerIntend.forbidden,
       },
+      .prototype, .schema, .extension, .ast_node, .frame_root =>
+        InnerIntend.forbidden,
+      .space, .literal, .raw, .void, .poison => InnerIntend.collapse,
+      else => InnerIntend.allowed,
     };
   }
 
   fn optional(t: model.Type) InnerIntend {
     return switch (t) {
-      .intrinsic => |i| switch (i) {
-        .every => InnerIntend.exalt,
-        .void => InnerIntend.collapse,
-        .prototype, .schema, .extension => InnerIntend.forbidden,
-        else => InnerIntend.allowed,
-      },
       .structural => |s| switch (s.*) {
         .optional, .concat, .paragraphs => InnerIntend.collapse,
         else => InnerIntend.allowed,
       },
       .instantiated => InnerIntend.allowed,
+      .every => InnerIntend.exalt,
+      .void => InnerIntend.collapse,
+      .prototype, .schema, .extension => InnerIntend.forbidden,
+      else => InnerIntend.allowed,
     };
   }
 };
@@ -73,19 +69,18 @@ const InnerIntend = enum {
 /// The first argument exists so that this fn can be used for std.sort.sort.
 fn total_order_less(_: void, a: model.Type, b: model.Type) bool {
   const a_int = switch (a) {
-    .intrinsic => |ia| {
-      return switch (b) {
-        .intrinsic => |ib| @enumToInt(ia) < @enumToInt(ib),
-        else => true,
-      };
-    },
     .structural => |sa| @ptrToInt(sa),
     .instantiated => |ia| @ptrToInt(ia),
+    else => return switch (b) {
+      .structural, .instantiated => true,
+      else => @enumToInt(@as(std.meta.Tag(model.Type), a)) <
+              @enumToInt(@as(std.meta.Tag(model.Type), b)),
+    }
   };
   const b_int = switch (b) {
-    .intrinsic => return false,
     .structural => |sb| @ptrToInt(sb),
     .instantiated => |ib| @ptrToInt(ib),
+    else => return false,
   };
   return a_int < b_int;
 }
@@ -340,12 +335,6 @@ pub const Lattice = struct {
   /// may only be called on types that do have constructors
   pub fn typeConstructor(self: *const Self, t: model.Type) Constructor {
     return switch (t) {
-      .intrinsic => |it| switch (it) {
-        .location   => self.constructors.location,
-        .definition => self.constructors.definition,
-        .raw,       => self.constructors.raw,
-        else        => unreachable,
-      },
       .instantiated => |inst| switch (inst.data) {
         .textual    => |*text| Constructor{
           .callable   = text.constructor,
@@ -365,6 +354,9 @@ pub const Lattice = struct {
         },
         else => unreachable,
       },
+      .location   => self.constructors.location,
+      .definition => self.constructors.definition,
+      .raw,       => self.constructors.raw,
       else => unreachable,
     };
   }
@@ -418,9 +410,8 @@ pub const Lattice = struct {
       else => {},
     };
     for (types) |t, i| switch (t) {
-      .intrinsic => |intr|
-        return try self.supWithIntrinsic(intr, types[(i + 1) % 2]),
-      else => {},
+      .structural, .instantiated => {},
+      else => return try self.supWithIntrinsic(t, types[(i + 1) % 2]),
     };
     const inst_types =
       [_]*model.Type.Instantiated{t1.instantiated, t2.instantiated};
@@ -434,7 +425,7 @@ pub const Lattice = struct {
         return switch (other.data) {
           .float => if (i == 0) t2 else t1,
           .numeric => |_| unreachable, // TODO
-          else => .{.intrinsic = .raw},
+          else => .raw,
         };
       },
       else => {},
@@ -446,7 +437,7 @@ pub const Lattice = struct {
           .tenum => unreachable, // TODO: return predefined Identifier type
           .textual => |_|
             unreachable, // TODO: return sup of Identifier with text
-          else => .{.intrinsic = .raw},
+          else => .raw,
         };
       },
       else => {},
@@ -459,7 +450,7 @@ pub const Lattice = struct {
                    // of the two types
     // at this point, we have two different instantiated types that are not
     // records, nor in any direct relationship with each other. therefore…
-    return model.Type{.intrinsic = .raw};
+    return .raw;
   }
 
   fn calcParagraphs(self: *Self, inner: []model.Type) !model.Type {
@@ -485,7 +476,7 @@ pub const Lattice = struct {
     self: *Self,
     p: *model.Type.Structural.Paragraphs,
   ) !model.Type {
-    var res = model.Type{.intrinsic = .space};
+    var res = .space;
     for (p.inner) |t| res = try self.sup(res, t);
     return res;
   }
@@ -496,40 +487,25 @@ pub const Lattice = struct {
     other: model.Type,
   ) !model.Type {
     switch (other) {
-      .intrinsic => |other_in| switch (other_in) {
-        .every => return model.Type{.structural = struc},
-        .void => return switch (struc.*) {
-          .concat => model.Type{.structural = struc},
-          else => (try self.optional(.{.structural = struc})) orelse
-            model.Type{.intrinsic = .poison},
-        },
-        .space, .literal, .raw => {},
-        .@"type" => return switch (struc.*) {
-          .callable => |*clb| if (clb.kind == .@"type") other
-                              else model.Type{.intrinsic = .poison},
-          else => model.Type{.intrinsic = .poison},
-        },
-        else => return model.Type{.intrinsic = .poison},
-      },
       // we're handling some special cases here, but most are handled by the
       // switch below.
       .structural => |other_struc| switch (struc.*) {
         .optional => |*op| switch (other_struc.*) {
           .optional => |*other_op| return
             (try self.optional(try self.sup(other_op.inner, op.inner))) orelse
-              model.Type{.intrinsic = .poison},
+              .poison,
           .concat => |*other_con| return
             (try self.concat(try self.sup(other_con.inner, op.inner))) orelse
-              model.Type{.intrinsic = .poison},
+              .poison,
           else => {},
         },
         .concat => |*other_con| switch (struc.*) {
           .optional => |*op| return
             (try self.concat(try self.sup(op.inner, other_con.inner))) orelse
-              model.Type{.intrinsic = .poison},
+              .poison,
           .concat => |*con| return
             (try self.concat(try self.sup(other_con.inner, con.inner))) orelse
-              model.Type{.intrinsic = .poison},
+              .poison,
           else => {},
         },
         .intersection => |*other_inter| switch (struc.*) {
@@ -550,20 +526,29 @@ pub const Lattice = struct {
         else => {},
       },
       .instantiated => {},
+      .every => return model.Type{.structural = struc},
+      .void => return switch (struc.*) {
+        .concat => model.Type{.structural = struc},
+        else => (try self.optional(.{.structural = struc})) orelse
+          .poison,
+      },
+      .space, .literal, .raw => {},
+      .@"type" => return switch (struc.*) {
+        .callable => |*clb| if (clb.kind == .@"type") other else .poison,
+        else => @as(model.Type, .poison),
+      },
+      else => return @as(model.Type, .poison),
     }
     return switch (struc.*) {
       .optional => |*o|
-        (try self.optional(try self.sup(o.inner, other))) orelse
-          model.Type{.intrinsic = .poison},
+        (try self.optional(try self.sup(o.inner, other))) orelse .poison,
       .concat => |*c|
-        (try self.concat(try self.sup(c.inner, other))) orelse
-          model.Type{.intrinsic = .poison},
+        (try self.concat(try self.sup(c.inner, other))) orelse .poison,
       .paragraphs => {
         unreachable; // TODO
       },
       .list => |*l|
-        (try self.list(try self.sup(l.inner, other))) orelse
-          model.Type{.intrinsic = .poison},
+        (try self.list(try self.sup(l.inner, other))) orelse .poison,
       .map => {
         unreachable; // TODO
       },
@@ -578,7 +563,7 @@ pub const Lattice = struct {
           },
           else => {},
         }
-        return model.Type{.intrinsic = .poison};
+        return @as(model.Type, .poison);
       },
       .intersection => |*inter| blk: {
         if (other.isScalar()) {
@@ -595,46 +580,42 @@ pub const Lattice = struct {
           },
           else => {},
         }
-        break :blk model.Type{.intrinsic = .poison};
+        break :blk .poison;
       }
     };
   }
 
   fn supWithIntrinsic(
     self: *Self,
-    intr: @typeInfo(model.Type).Union.fields[0].field_type,
+    intr: model.Type,
     other: model.Type,
   ) !model.Type {
+    std.debug.assert(intr != .instantiated and intr != .structural);
     return switch (intr) {
       .void =>
-        (try self.optional(other)) orelse model.Type{.intrinsic = .poison},
+        (try self.optional(other)) orelse .poison,
       .prototype, .schema, .extension, .ast_node, .frame_root =>
-        .{.intrinsic = .poison},
+        .poison,
       .space, .literal, .raw => switch (other) {
-        .intrinsic => |other_intr| switch (other_intr) {
-          .every => model.Type{.intrinsic = intr},
-          .void => (try self.optional(.{.intrinsic = intr})).?,
-          .space, .literal, .raw =>
-            model.Type{.intrinsic = @intToEnum(@TypeOf(intr),
-              std.math.max(@enumToInt(intr), @enumToInt(other_intr)))},
-          else => model.Type{.intrinsic = .poison},
-        },
         .structural => unreachable, // case is handled in supWithStructural.
         .instantiated => |inst| switch (inst.data) {
           .textual, .numeric, .float, .tenum =>
-            return model.Type{.intrinsic = .raw},
-          .record => model.Type{.intrinsic = .poison},
-        } ,
+            return .raw,
+          .record => .poison,
+        },
+        .every => intr,
+        .void => (try self.optional(intr)).?,
+        .space, .literal, .raw =>
+          if (total_order_less(undefined, intr, other)) other else intr,
+        else => .poison,
       },
       .every => other,
-      else => .{.intrinsic = .poison},
+      else => .poison,
     };
   }
 
   pub fn supAll(self: *Self, types: anytype) !model.Type {
-    var res = model.Type{
-      .intrinsic = .every
-    };
+    var res: model.Type = .every;
     if (@typeInfo(@TypeOf(types)) == .Slice) {
       for (types) |t| {
         res = try self.sup(&res, t);
@@ -659,7 +640,7 @@ pub const Lattice = struct {
   pub fn optional(self: *Self, t: model.Type) !?model.Type {
     switch (InnerIntend.optional(t)) {
       .forbidden => return null,
-      .exalt => return model.Type{.intrinsic = .void},
+      .exalt => return .void,
       .collapse => return t,
       .allowed => {},
     }
@@ -712,10 +693,7 @@ pub const Lattice = struct {
 
   pub fn list(self: *Self, t: model.Type) std.mem.Allocator.Error!?model.Type {
     switch (t) {
-      .intrinsic => |i| switch (i) {
-        .void, .prototype, .schema, .extension => return null,
-        else => {},
-      },
+      .void, .prototype, .schema, .extension => return null,
       else => {},
     }
     const res = try self.lists.getOrPut(self.allocator, t);
@@ -733,18 +711,16 @@ pub const Lattice = struct {
   /// returns the type of the given type if it was a Value.
   pub fn typeType(self: *const Lattice, t: model.Type) model.Type {
     return switch (t) {
-      .intrinsic => |i| switch (i) {
-        .location, .definition, .literal, .space, .raw =>
-          self.typeConstructor(t).callable.typedef(),
-        else => model.Type{.intrinsic = .@"type"},
-      },
-      .structural => model.Type{.intrinsic = .@"type"}, // TODO
+      .structural => .@"type", // TODO
       .instantiated => |inst| switch (inst.data) {
         .numeric => |*num| num.constructor.typedef(),
         .tenum   => |*enu| enu.constructor.typedef(),
         .record  => |*rec| rec.constructor.typedef(),
-        else     =>        model.Type{.intrinsic = .@"type"}, // TODO
-      }
+        else     =>        .@"type", // TODO
+      },
+      .location, .definition, .literal, .space, .raw =>
+        self.typeConstructor(t).callable.typedef(),
+      else => .@"type",
     };
   }
 
@@ -762,14 +738,13 @@ pub const Lattice = struct {
       .@"type" => |tv| return self.typeType(tv.t),
       .prototype => |pv| self.prototypeConstructor(pv.pt).callable.typedef(),
       .funcref => |*fr| fr.func.callable.typedef(),
-      .location => .{.intrinsic = .location},
-      .definition => .{.intrinsic = .definition},
-      .ast => |ast| .{
-        .intrinsic = if (ast.container == null) .ast_node else .frame_root,
-      },
-      .block_header => .{.intrinsic = .block_header},
-      .void => .{.intrinsic = .void},
-      .poison => .{.intrinsic = .poison},
+      .location => .location,
+      .definition => .definition,
+      .ast => |ast|
+        if (ast.container == null) @as(model.Type, .ast_node) else .frame_root,
+      .block_header => .block_header,
+      .void => .void,
+      .poison => .poison,
     };
   }
 
@@ -783,22 +758,10 @@ pub const Lattice = struct {
   ) model.Type {
     if (actual.eql(target)) return target;
     return switch (target) {
-      .intrinsic => |intr| switch (intr) {
-        // only subtypes are Callables with .kind == .@"type", and type checking
-        // guarantees we get one of these.
-        .@"type" => actual,
-        // can never be used for a target type.
-        .every => unreachable,
-        // if a poison value is expected, it will never be used for anything,
-        // and therefore we don't need to modify the value.
-        .poison => actual,
-        // all other types are non-virtual.
-        else => target,
-      },
       // no instantiated types are virtual.
       .instantiated => target,
       .structural => |strct| switch (strct.*) {
-        .optional => |*opt| if (actual.is(.void) or actual.is(.every)) actual
+        .optional => |*opt| if (actual == .void or actual == .every) actual
                             else self.expectedType(actual, opt.inner),
         .concat, .paragraphs, .list, .map => target,
         .callable => unreachable, // TODO
@@ -811,6 +774,16 @@ pub const Lattice = struct {
           unreachable;
         },
       },
+      // only subtypes are Callables with .kind == .@"type", and type checking
+      // guarantees we get one of these.
+      .@"type" => actual,
+      // can never be used for a target type.
+      .every => unreachable,
+      // if a poison value is expected, it will never be used for anything,
+      // and therefore we don't need to modify the value.
+      .poison => actual,
+      // all other types are non-virtual.
+      else => target,
     };
   }
 };
@@ -819,10 +792,6 @@ pub const Lattice = struct {
 /// optional and paragraphs types.
 pub fn containedScalar(t: model.Type) ?model.Type {
   return switch (t) {
-    .intrinsic => |intr| switch (intr) {
-      .space, .literal, .raw => t,
-      else => null,
-    },
     .structural => |strct| switch (strct.*) {
       .optional => |*opt| containedScalar(opt.inner),
       .concat => |*con| containedScalar(con.inner),
@@ -840,7 +809,9 @@ pub fn containedScalar(t: model.Type) ?model.Type {
     .instantiated => |inst| switch (inst.data) {
       .textual, .numeric, .float, .tenum => t,
       else => null
-    }
+    },
+    .space, .literal, .raw => t,
+    else => null,
   };
 }
 
@@ -859,10 +830,10 @@ pub fn descend(t: model.Type, index: usize) model.Type {
 
 pub const SigBuilderResult = struct {
   /// the built signature
-  sig: *model.Type.Signature,
+  sig: *model.Signature,
   /// if build_repr has been set in init(), the representative signature
   /// for the type lattice. else null.
-  repr: ?*model.Type.Signature,
+  repr: ?*model.Signature,
 
   pub fn createCallable(
     self: *const @This(),
@@ -898,14 +869,14 @@ pub const SigBuilderResult = struct {
 pub const SigBuilder = struct {
   const Result = SigBuilderResult;
 
-  val: *model.Type.Signature,
-  repr: ?*model.Type.Signature,
+  val: *model.Signature,
+  repr: ?*model.Signature,
   ctx: nyarna.Context,
   next_param: u21,
 
   const Self = @This();
 
-  /// if returns type is yet to be determined, give .{.intrinsic = .every}.
+  /// if returns type is yet to be determined, give .every.
   /// the returns type is given early to know whether this is a keyword.
   ///
   /// if build_repr is true, a second signature will be built to be the
@@ -917,16 +888,16 @@ pub const SigBuilder = struct {
     build_repr: bool,
   ) !Self {
     var ret = Self{
-      .val = try ctx.global().create(model.Type.Signature),
+      .val = try ctx.global().create(model.Signature),
       .repr = if (build_repr)
-          try ctx.global().create(model.Type.Signature)
+          try ctx.global().create(model.Signature)
         else null,
       .ctx = ctx,
       .next_param = 0,
     };
     ret.val.* = .{
       .parameters = try ctx.global().alloc(
-        model.Type.Signature.Parameter, num_params),
+        model.Signature.Parameter, num_params),
       .primary = null,
       .varmap = null,
       .auto_swallow = null,
@@ -935,7 +906,7 @@ pub const SigBuilder = struct {
     if (ret.repr) |sig| {
       sig.* = .{
         .parameters = try ctx.global().alloc(
-          model.Type.Signature.Parameter, num_params),
+          model.Signature.Parameter, num_params),
         .primary = null,
         .varmap = null,
         .auto_swallow = null,
@@ -957,10 +928,11 @@ pub const SigBuilder = struct {
       .config = if (loc.header) |bh| bh.config else null,
     };
     // TODO: use contains(.ast_node) instead (?)
-    const t = if (!self.val.isKeyword() and loc.tloc.is(.ast_node)) blk: {
-      self.ctx.logger.AstNodeInNonKeyword(loc.value().origin);
-      break :blk model.Type{.intrinsic = .poison};
-    } else loc.tloc;
+    const t: model.Type =
+      if (!self.val.isKeyword() and loc.tloc == .ast_node) blk: {
+        self.ctx.logger.AstNodeInNonKeyword(loc.value().origin);
+        break :blk model.Type.poison;
+      } else loc.tloc;
     if (loc.primary) |p| {
       if (self.val.primary) |pindex| {
         self.ctx.logger.DuplicateFlag(
@@ -1068,15 +1040,15 @@ pub const ParagraphTypeBuilder = struct {
     return .{
       .types = types,
       .list = .{},
-      .cur_scalar = .{.intrinsic = .every},
+      .cur_scalar = .every,
       .non_voids = if (force_paragraphs) 2 else 0,
       .poison = false,
     };
   }
 
   pub fn push(self: *ParagraphTypeBuilder, t: model.Type) !void {
-    if (t.is(.void)) return;
-    if (t.is(.poison)) {
+    if (t == .void) return;
+    if (t == .poison) {
       self.poison = true;
       return;
     }
@@ -1091,11 +1063,11 @@ pub const ParagraphTypeBuilder = struct {
   pub fn finish(self: *ParagraphTypeBuilder) !Result {
     return if (self.poison) Result{
       .scalar_type_sup = self.cur_scalar,
-      .resulting_type = .{.intrinsic = .poison},
+      .resulting_type = .poison,
     } else switch (self.non_voids) {
       0 => Result{
         .scalar_type_sup = self.cur_scalar,
-        .resulting_type = .{.intrinsic = .void},
+        .resulting_type = .void,
       },
       1 => Result{
         .scalar_type_sup = self.cur_scalar,
@@ -1140,7 +1112,7 @@ pub const EnumTypeBuilder = struct {
       self.ctx, 1, self.ret.typedef(), true);
     try sb.push((try self.ctx.values.location(
       self.ret.instantiated().at, try self.ctx.values.textScalar(
-        model.Position.intrinsic(), .{.intrinsic = .raw}, "input"
+        model.Position.intrinsic(), .raw, "input"
       ), self.ret.typedef())).withPrimary(model.Position.intrinsic()));
     self.ret.constructor =
       try sb.finish().createCallable(self.ctx.global(), .type);
@@ -1195,7 +1167,7 @@ pub const NumericTypeBuilder = struct {
       self.ctx, 1, self.ret.typedef(), true);
     try sb.push((try self.ctx.values.location(
       self.ret.instantiated().at, try self.ctx.values.textScalar(
-        model.Position.intrinsic(), .{.intrinsic = .raw}, "input"
+        model.Position.intrinsic(), .raw, "input"
       ), self.ret.typedef())).withPrimary(model.Position.intrinsic()));
     self.ret.constructor =
       try sb.finish().createCallable(self.ctx.global(), .type);

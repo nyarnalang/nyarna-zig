@@ -2,7 +2,7 @@ const std = @import("std");
 
 const nyarna = @import("../nyarna.zig");
 const model = nyarna.model;
-const interpret = @import("interpret.zig");
+const interpret = @import("../interpret.zig");
 const Interpreter = interpret.Interpreter;
 
 /// Used for resolution of cyclical references inside \declare and templates.

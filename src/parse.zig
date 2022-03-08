@@ -1,17 +1,17 @@
 const std = @import("std");
 const builtin = @import("builtin");
-const nyarna = @import("../nyarna.zig");
+const nyarna = @import("nyarna.zig");
 const model = nyarna.model;
 const errors = nyarna.errors;
 const Interpreter = @import("interpret.zig").Interpreter;
 
-const lex = @import("lex.zig");
-const mapper = @import("mapper.zig");
+const lex = @import("parse/lex.zig");
+const mapper = @import("parse/mapper.zig");
 const unicode = @import("unicode.zig");
-const syntaxes = @import("syntaxes.zig");
-const chains = @import("chains.zig");
+const syntaxes = @import("parse/syntaxes.zig");
+const chains = @import("interpret/chains.zig");
 
-const last = @import("../helpers.zig").last;
+const last = @import("helpers.zig").last;
 
 /// The parser can return one of these if outside action is required before
 /// resuming parsing.
@@ -143,7 +143,7 @@ const Command = struct {
     intpr: *Interpreter,
     target: *model.Node,
     ns: u15,
-    sig: *const model.Type.Signature,
+    sig: *const model.Signature,
   ) !void {
     self.info = .{.resolved_call =
       try mapper.SignatureMapper.init(intpr, target, ns, sig),
@@ -165,7 +165,7 @@ const Command = struct {
     return switch (self.cur_cursor) {
       .mapped => |cursor|
         if (self.mapper.paramType(cursor)) |t| (
-          t.is(.ast_node) or t.is(.frame_root)
+          t == .ast_node or t == .frame_root
         ) else false,
       else => false,
     };

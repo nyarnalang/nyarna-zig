@@ -4,7 +4,7 @@ const graph = @import("graph.zig");
 const nyarna = @import("../nyarna.zig");
 const model = nyarna.model;
 const chains = @import("chains.zig");
-const interpret = @import("interpret.zig");
+const interpret = @import("../interpret.zig");
 const Interpreter = interpret.Interpreter;
 
 fn isPrototype(ef: *model.Symbol.ExtFunc) bool {
@@ -88,7 +88,7 @@ const TypeResolver = struct {
               else => {
                 self.dres.intpr.ctx.logger.ExpectedExprOfTypeXGotY(
                   name_pos, &[_]model.Type{
-                    .{.intrinsic = .@"type"}, expr.expected_type,
+                    .@"type", expr.expected_type,
                   });
                 return graph.ResolutionContext.Result.failed;
               }
@@ -199,7 +199,7 @@ const FixpointContext = struct {
       const expr = try fc.dres.intpr.interpret(returns);
       const val = try fc.dres.intpr.ctx.evaluator().evaluate(expr);
       switch (val.data) {
-        .poison => break :blk model.Type{.intrinsic = .poison},
+        .poison => break :blk .poison,
         .@"type" => |*tval| break :blk tval.t,
         else => unreachable,
       }
@@ -211,7 +211,7 @@ const FixpointContext = struct {
         // messages.
         _ = try fc.dres.intpr.interpret(fgen.body);
         fgen.body.data = .poison;
-        break :blk model.Type{.intrinsic = .poison};
+        break :blk .poison;
       };
     if (new_type.eql(fgen.cur_returns)) {
       return false;

@@ -40,10 +40,10 @@ const Test = struct {
 test "void <-> optional" {
   var ctx = try Test.create();
   defer ctx.destroy();
-  const void_type = Type{.intrinsic = .void};
+  const void_type = Typ.void;
 
   const optional_nctype =
-    (try ctx.types.optional(Type{.intrinsic = .@"type"})).?;
+    (try ctx.types.optional(Typ.@"type")).?;
   try ctx.testIsLesser(void_type, optional_nctype);
   try ctx.testIsGreater(optional_nctype, void_type);
 }

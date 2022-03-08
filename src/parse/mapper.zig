@@ -2,7 +2,7 @@ const std = @import("std");
 const nyarna = @import("../nyarna.zig");
 const model = nyarna.model;
 const Type = model.Type;
-const Interpreter = @import("interpret.zig").Interpreter;
+const Interpreter = @import("../interpret.zig").Interpreter;
 
 /// Mapper is the interface for mapping call arguments to parameters.
 /// This is a multi-stage process for each argument:
@@ -80,7 +80,7 @@ pub const Mapper = struct {
 pub const SignatureMapper = struct {
   mapper: Mapper,
   subject: *model.Node,
-  signature: *const Type.Signature,
+  signature: *const model.Signature,
   cur_pos: ?u21 = 0,
   args: []*model.Node,
   filled: []bool,
@@ -91,7 +91,7 @@ pub const SignatureMapper = struct {
     intpr: *Interpreter,
     subject: *model.Node,
     ns: u15,
-    sig: *const model.Type.Signature,
+    sig: *const model.Signature,
   ) !SignatureMapper {
     var res = SignatureMapper{
       .mapper = .{
@@ -120,7 +120,7 @@ pub const SignatureMapper = struct {
   }
 
   fn checkFrameRoot(self: *SignatureMapper, t: model.Type) !void {
-    if (t.is(.frame_root)) {
+    if (t == .frame_root) {
       const container =
         try self.intpr.ctx.global().create(model.VariableContainer);
       container.* = .{.num_values = 0};
@@ -242,16 +242,13 @@ pub const SignatureMapper = struct {
 
     fn calc(t: model.Type) ArgBehavior {
       return switch (t) {
-        .intrinsic => |intr| switch (intr) {
-          .ast_node => ArgBehavior.ast_node,
-          .frame_root => .frame_root,
-          else => .normal,
-        },
         .structural => |strct| switch (strct.*) {
           .optional => |*opt| calc(opt.inner),
           else => .normal,
         },
-        .instantiated => .normal,
+        .ast_node => ArgBehavior.ast_node,
+        .frame_root => .frame_root,
+        else => .normal,
       };
     }
   };
@@ -312,28 +309,25 @@ pub const SignatureMapper = struct {
         self.args[i] = if (param.default) |dexpr|
           try self.intpr.node_gen.expression(dexpr)
         else switch (param.ptype) {
-          .intrinsic => |intr| switch (intr) {
-            .void => try self.intpr.node_gen.@"void"(pos),
-            .poison => {
-              missing_param = true;
-              continue;
-            },
-            .frame_root => blk: {
-              const container = try
-                self.intpr.ctx.global().create(model.VariableContainer);
-              container.* = .{.num_values = 0};
-              break :blk try self.intpr.genValueNode(
-                (try self.intpr.ctx.values.ast(
-                  try self.intpr.node_gen.@"void"(pos), container)).value());
-            },
-            else => null,
-          },
           .structural => |strct| switch (strct.*) {
             .optional, .concat, .paragraphs =>
               try self.intpr.node_gen.@"void"(pos),
             else => null,
           },
-          .instantiated => null,
+          .void => try self.intpr.node_gen.@"void"(pos),
+          .poison => {
+            missing_param = true;
+            continue;
+          },
+          .frame_root => blk: {
+            const container = try
+              self.intpr.ctx.global().create(model.VariableContainer);
+            container.* = .{.num_values = 0};
+            break :blk try self.intpr.genValueNode(
+              (try self.intpr.ctx.values.ast(
+                try self.intpr.node_gen.@"void"(pos), container)).value());
+          },
+          else => null,
         } orelse {
           self.intpr.ctx.logger.MissingParameterArgument(
             param.name, pos, param.pos);
@@ -343,7 +337,7 @@ pub const SignatureMapper = struct {
       }
       if (param.capture == .varargs) switch (param.ptype) {
         .structural => |strct| switch (strct.*) {
-          .list => |*list| if (list.inner.is(.ast_node)) {
+          .list => |*list| if (list.inner == .ast_node) {
             const content = self.args[i];
             self.args[i] = try self.intpr.genValueNode(
               (try self.intpr.ctx.values.ast(content, null)).value());

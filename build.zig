@@ -35,12 +35,12 @@ pub fn build(b: *Builder) !void {
 
   const errors_pkg = std.build.Pkg{
     .name = "errors",
-    .path = .{.path = "errors_generated.zig"},
+    .path = .{.path = "src/errors_generated.zig"},
   };
 
   const nyarna_pkg = std.build.Pkg{
     .name = "nyarna",
-    .path = .{.path = "nyarna.zig"},
+    .path = .{.path = "src/nyarna.zig"},
     .dependencies = &.{errors_pkg},
   };
 

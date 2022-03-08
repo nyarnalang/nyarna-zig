@@ -1,7 +1,7 @@
 const std = @import("std");
 const nyarna = @import("../nyarna.zig");
 const model = nyarna.model;
-const Interpreter = @import("interpret.zig").Interpreter;
+const Interpreter = @import("../interpret.zig").Interpreter;
 const errors = nyarna.errors;
 
 pub const SpecialSyntax = struct {
