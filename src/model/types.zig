@@ -7,8 +7,9 @@ const Symbol = @import("Symbol.zig");
 const offset = @import("../helpers.zig").offset;
 const Position = model.Position;
 
-pub const Type = union(enum) {
-  /// Intersection is a virtual type that takes values of possibly a scalar type,
+const local = @This();
+
+/// Intersection is a virtual type that takes values of possibly a scalar type,
 /// or a set of Record types.
 pub const Intersection = struct {
   scalar: ?Type,
@@ -150,8 +151,9 @@ pub const Structural = union(enum) {
     return parent(it).at;
   }
 
-  fn typedef(it: anytype) Type {
-    return .{.structural = parent(it)};
+  /// returns a type, given a pointer to Structural or any of its data types.
+  pub fn typedef(it: anytype) Type {
+    return .{.structural = if (@TypeOf(it) == *Structural) it else parent(it)};
   }
 };
 
@@ -263,7 +265,7 @@ pub const Record = struct {
   }
 };
 
-/// A type with name equivalence.
+/// A type with name equivalence. This includes unique types.
 pub const Instantiated = struct {
   const Data = union(enum) {
     textual: Textual,
@@ -271,6 +273,9 @@ pub const Instantiated = struct {
     float: Float,
     tenum: Enum,
     record: Record,
+    // what follows are unique intrinsic types.
+    @"void", prototype, schema, extension, ast, frame_root, block_header,
+    @"type", space, literal, raw, location, definition, backend, poison, every,
   };
   /// position at which the type has been declared.
   at: Position,
@@ -298,25 +303,41 @@ pub const Instantiated = struct {
     return parent(it).at;
   }
 
-  fn typedef(it: anytype) Type {
-    return .{.instantiated = parent(it)};
+  /// returns a type, given a pointer to Instantiated or any of its data types.
+  pub fn typedef(it: anytype) Type {
+    return .{
+      .instantiated = if (@TypeOf(it) == *Instantiated) it else parent(it),
+    };
   }
 };
 
+pub const Type = union(enum) {
+  pub const Callable = local.Callable;
+  pub const Concat = local.Concat;
+  pub const Intersection = local.Intersection;
+  pub const Map = local.Map;
+  pub const Optional = local.Optional;
+  pub const Paragraphs = local.Paragraphs;
+  pub const List = local.List;
+  pub const Structural = local.Structural;
+
+  pub const Enum = local.Enum;
+  pub const Float = local.Float;
+  pub const Numeric = local.Numeric;
+  pub const Record = local.Record;
+  pub const Textual = local.Textual;
+  pub const Instantiated = local.Instantiated;
+
   /// types with structural equivalence.
-  structural: *Structural,
+  structural: *local.Structural,
   /// types with name equivalence that are instantiated by user code.
-  instantiated: *Instantiated,
-  // what follows are unique intrinsic types.
-  @"void", prototype, schema, extension, ast_node, frame_root, block_header,
-  @"type", space, literal, raw, location, definition, backend, poison, every,
+  instantiated: *local.Instantiated,
 
   pub const HashContext = struct {
     pub fn hash(_: HashContext, t: Type) u64 {
       return switch (t) {
         .structural => |s| @intCast(u64, @ptrToInt(s)),
         .instantiated => |in| @intCast(u64, @ptrToInt(in)),
-        else => @intCast(u64, @enumToInt(@as(std.meta.Tag(Type), t))),
       };
     }
 
@@ -329,21 +350,20 @@ pub const Instantiated = struct {
     return switch (t) {
       .structural => false,
       .instantiated => |it| switch (it.data) {
-        .textual, .numeric, .float, .tenum => true, else => false,
+        .textual, .numeric, .float, .tenum, .space, .literal, .raw => true,
+        else => false,
       },
-      .space, .literal, .raw => true,
-      else => false,
     };
   }
 
-  pub inline fn isStructural(t: Type, comptime expected: anytype) bool {
+  pub inline fn isStruc(t: Type, comptime expected: anytype) bool {
     return switch (t) {
       .structural => |strct| strct.* == expected,
       else => false,
     };
   }
 
-  pub inline fn isInstantiated(t: Type, comptime expected: anytype) bool {
+  pub inline fn isInst(t: Type, comptime expected: anytype) bool {
     return switch (t) {
       .instantiated => |inst| inst.data == expected,
       else => false,
@@ -356,7 +376,6 @@ pub const Instantiated = struct {
         switch (b) {.instantiated => |ib| ia == ib, else => false},
       .structural => |sa|
         switch (b) {.structural => |sb| sa == sb, else => false},
-      else => @as(std.meta.Tag(Type), a) == b,
     };
   }
 
@@ -425,11 +444,10 @@ pub const Instantiated = struct {
         if (it.name) |sym| {
           try writer.writeAll(sym.name);
         } else {
-          // TODO: write representation of type
-          try writer.writeAll("<anonymous>");
+          // TODO: write given name, if any
+          try writer.writeAll(@tagName(it.data));
         }
       },
-      else => try writer.writeAll(@tagName(self)),
     }
   }
 

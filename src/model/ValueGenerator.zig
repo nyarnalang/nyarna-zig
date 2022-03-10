@@ -15,6 +15,10 @@ inline fn allocator(self: *const Self) std.mem.Allocator {
   return @fieldParentPtr(nyarna.Context, "values", self).global();
 }
 
+inline fn types(self: *const Self) *nyarna.types.Lattice {
+  return @fieldParentPtr(nyarna.Context, "values", self).types();
+}
+
 inline fn create(self: *const Self) !*Value {
   return self.allocator().create(Value);
 }
@@ -178,7 +182,7 @@ pub inline fn intLocation(
   t: Type,
 ) !*Value.Location {
   const name_val = try self.textScalar(Position.intrinsic(),
-    .literal, name);
+    self.types().literal(), name);
   return self.location(Position.intrinsic(), name_val, t);
 }
 

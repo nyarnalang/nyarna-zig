@@ -86,10 +86,9 @@ const TypeResolver = struct {
                 };
               },
               else => {
+                const tt = self.dres.intpr.ctx.types().@"type"();
                 self.dres.intpr.ctx.logger.ExpectedExprOfTypeXGotY(
-                  name_pos, &[_]model.Type{
-                    .@"type", expr.expected_type,
-                  });
+                  name_pos, &[_]model.Type{tt, expr.expected_type});
                 return graph.ResolutionContext.Result.failed;
               }
             },
@@ -199,7 +198,7 @@ const FixpointContext = struct {
       const expr = try fc.dres.intpr.interpret(returns);
       const val = try fc.dres.intpr.ctx.evaluator().evaluate(expr);
       switch (val.data) {
-        .poison => break :blk .poison,
+        .poison => break :blk fc.dres.intpr.ctx.types().poison(),
         .@"type" => |*tval| break :blk tval.t,
         else => unreachable,
       }
@@ -211,7 +210,7 @@ const FixpointContext = struct {
         // messages.
         _ = try fc.dres.intpr.interpret(fgen.body);
         fgen.body.data = .poison;
-        break :blk .poison;
+        break :blk fc.dres.intpr.ctx.types().poison();
       };
     if (new_type.eql(fgen.cur_returns)) {
       return false;

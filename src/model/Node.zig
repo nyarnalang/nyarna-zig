@@ -93,7 +93,7 @@ pub const Funcgen = struct {
   needs_this_inject: bool,
   /// used during fixpoint iteration for type inference.
   /// unused if `returns` is set.
-  cur_returns: Type = .every,
+  cur_returns: Type,
 
   pub inline fn node(self: *@This()) *Node {
     return Node.parent(self);

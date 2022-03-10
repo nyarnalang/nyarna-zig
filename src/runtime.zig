@@ -228,7 +228,7 @@ pub const Evaluator = struct {
       },
       .branches => |*branches| {
         var condition = try self.evaluate(branches.condition);
-        if (self.ctx.types().valueType(condition) == .poison)
+        if (self.ctx.types().valueType(condition).isInst(.poison))
           return model.Value.create(
             self.ctx.global(), expr.pos, .poison);
         return self.evaluate(
@@ -308,14 +308,12 @@ pub const Evaluator = struct {
     const value_type = self.ctx.types().valueType(value);
     if (value_type.eql(expected_type)) return value;
     switch (expected_type) {
-      // TODO: implement enums being coerced to Identifier.
-      .instantiated => unreachable,
       .structural => |strct| switch (strct.*) {
         // these are virtual types and thus can never be the expected type.
         .optional, .intersection => unreachable,
         .concat => |*concat| {
           var cv = try self.ctx.values.concat(value.origin, concat);
-          if (value_type != .void) {
+          if (!value_type.isInst(.void)) {
             const inner_value = try self.coerce(value, concat.inner);
             try cv.content.append(inner_value);
           }
@@ -323,7 +321,7 @@ pub const Evaluator = struct {
         },
         .paragraphs => |*para| {
           var lv = try self.ctx.values.para(value.origin, para);
-          if (value_type != .void) {
+          if (!value_type.isInst(.void)) {
             const para_value = for (para.inner) |cur| {
               if (self.ctx.types().lesserEqual(value_type, cur))
                 break try self.coerce(value, cur);
@@ -335,35 +333,38 @@ pub const Evaluator = struct {
         .list, .map => unreachable, // TODO: implement coercion of inner values.
         .callable => unreachable, // TODO: implement callable wrapper.
       },
-      .poison => return value,
-      // for .literal, this can only be a coercion from .space.
-      // for .raw, this could be a coercion from any scalar type.
-      .literal, .raw => {
-        const content = switch (value.data) {
-          .text => |*text_val| text_val.content,
-          .number => |*num_val| try self.toString(num_val.content),
-          .float => |*float_val| try switch (float_val.t.precision) {
-            .half => self.toString(float_val.content.half),
-            .single => self.toString(float_val.content.single),
-            .double => self.toString(float_val.content.double),
-            .quadruple, .octuple =>
-              self.toString(float_val.content.quadruple),
-          },
-          .@"enum" => |ev| ev.t.values.entries.items(.key)[ev.index],
-          // type checking ensures this never happens
-          else => unreachable,
-        };
-        return model.Value.create(
-          self.ctx.global(), value.origin,
-          model.Value.TextScalar{.t = expected_type, .content = content});
+      .instantiated => |inst| switch (inst.data) {
+        .tenum => unreachable, // TODO: implement enums being coerced to Identifier.
+        .poison => return value,
+        // for .literal, this can only be a coercion from .space.
+        // for .raw, this could be a coercion from any scalar type.
+        .literal, .raw => {
+          const content = switch (value.data) {
+            .text => |*text_val| text_val.content,
+            .number => |*num_val| try self.toString(num_val.content),
+            .float => |*float_val| try switch (float_val.t.precision) {
+              .half => self.toString(float_val.content.half),
+              .single => self.toString(float_val.content.single),
+              .double => self.toString(float_val.content.double),
+              .quadruple, .octuple =>
+                self.toString(float_val.content.quadruple),
+            },
+            .@"enum" => |ev| ev.t.values.entries.items(.key)[ev.index],
+            // type checking ensures this never happens
+            else => unreachable,
+          };
+          return model.Value.create(
+            self.ctx.global(), value.origin,
+            model.Value.TextScalar{.t = expected_type, .content = content});
+        },
+        // other coercions can never happen.
+        else => {
+          const v = value_type.formatter();
+          const e = expected_type.formatter();
+          std.debug.panic("coercion from {} to {} requested, which is illegal",
+            .{v, e});
+        }
       },
-      // other coercions can never happen.
-      else => {
-        const v = value_type.formatter();
-        const e = expected_type.formatter();
-        std.debug.panic("coercion from {} to {} requested, which is illegal",
-          .{v, e});
-      }
     }
   }
 
@@ -409,7 +410,7 @@ const ConcatBuilder = struct {
       .cur_items = null,
       .ctx = ctx,
       .pos = pos,
-      .inner_type = .every,
+      .inner_type = ctx.types().every(),
       .expected_type = expected_type,
       .scalar_type =
         nyarna.types.containedScalar(expected_type) orelse undefined,
@@ -499,13 +500,13 @@ const ConcatBuilder = struct {
       .first_text => |first| try self.enqueue(first),
       .more_text => |*more| try self.finishText(more),
     }
-    if (self.cur) |single| if (self.expected_type.isStructural(.concat)) {
+    if (self.cur) |single| if (self.expected_type.isStruc(.concat)) {
       try self.initList(single);
     };
     if (self.cur_items) |cval| {
       const concat = try self.ctx.global().create(model.Value);
       const t = (try self.ctx.types().concat(self.inner_type)).?;
-      std.debug.assert(t.isStructural(.concat));
+      std.debug.assert(t.isStruc(.concat));
       concat.* = .{
         .origin = self.pos,
         .data = .{.concat = .{.t = &t.structural.concat, .content = cval}},
@@ -514,10 +515,10 @@ const ConcatBuilder = struct {
     } else if (self.cur) |single| {
       return single;
     } else {
-      return if (self.expected_type.isStructural(.concat))
+      return if (self.expected_type.isStruc(.concat))
         (try self.ctx.values.concat(
           self.pos, &self.expected_type.structural.concat)).value()
-      else if (self.expected_type == .void) try
+      else if (self.expected_type.isInst(.void)) try
         model.Value.create(self.ctx.global(), self.pos, .void)
       else blk: {
         std.debug.assert(
@@ -571,7 +572,7 @@ const ParagraphsBuilder = struct {
     const ret = try self.ctx.global().create(model.Value);
     ret.* = .{
       .origin = pos,
-      .data = if (ret_t == .poison) .poison else .{
+      .data = if (ret_t.isInst(.poison)) .poison else .{
         .para = .{
           .content = self.content,
           .t = &ret_t.structural.paragraphs,

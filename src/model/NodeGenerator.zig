@@ -12,10 +12,12 @@ const Position = model.Position;
 const Self = @This();
 
 allocator: std.mem.Allocator,
+types: *nyarna.types.Lattice,
 
-pub fn init(allocator: std.mem.Allocator) Self {
+pub fn init(allocator: std.mem.Allocator, types: *nyarna.types.Lattice) Self {
   return .{
     .allocator = allocator,
+    .types = types,
   };
 }
 
@@ -81,7 +83,7 @@ pub inline fn funcgen(
   return &(try self.node(pos, .{.funcgen = .{
     .returns = returns, .params = .{.unresolved = params},
     .params_ns = params_ns, .body = body, .needs_this_inject = inject_this,
-    .variables = variables,
+    .variables = variables, .cur_returns = self.types.every(),
   }})).data.funcgen;
 }
 

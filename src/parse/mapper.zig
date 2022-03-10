@@ -120,7 +120,7 @@ pub const SignatureMapper = struct {
   }
 
   fn checkFrameRoot(self: *SignatureMapper, t: model.Type) !void {
-    if (t == .frame_root) {
+    if (t.isInst(.frame_root)) {
       const container =
         try self.intpr.ctx.global().create(model.VariableContainer);
       container.* = .{.num_values = 0};
@@ -246,9 +246,11 @@ pub const SignatureMapper = struct {
           .optional => |*opt| calc(opt.inner),
           else => .normal,
         },
-        .ast_node => ArgBehavior.ast_node,
-        .frame_root => .frame_root,
-        else => .normal,
+        .instantiated => |inst| switch (inst.data) {
+          .ast => ArgBehavior.ast_node,
+          .frame_root => .frame_root,
+          else => .normal,
+        },
       };
     }
   };
@@ -314,20 +316,22 @@ pub const SignatureMapper = struct {
               try self.intpr.node_gen.@"void"(pos),
             else => null,
           },
-          .void => try self.intpr.node_gen.@"void"(pos),
-          .poison => {
-            missing_param = true;
-            continue;
+          .instantiated => |inst| switch (inst.data) {
+            .void => try self.intpr.node_gen.@"void"(pos),
+            .poison => {
+              missing_param = true;
+              continue;
+            },
+            .frame_root => blk: {
+              const container = try
+                self.intpr.ctx.global().create(model.VariableContainer);
+              container.* = .{.num_values = 0};
+              break :blk try self.intpr.genValueNode(
+                (try self.intpr.ctx.values.ast(
+                  try self.intpr.node_gen.@"void"(pos), container)).value());
+            },
+            else => null,
           },
-          .frame_root => blk: {
-            const container = try
-              self.intpr.ctx.global().create(model.VariableContainer);
-            container.* = .{.num_values = 0};
-            break :blk try self.intpr.genValueNode(
-              (try self.intpr.ctx.values.ast(
-                try self.intpr.node_gen.@"void"(pos), container)).value());
-          },
-          else => null,
         } orelse {
           self.intpr.ctx.logger.MissingParameterArgument(
             param.name, pos, param.pos);
@@ -337,7 +341,7 @@ pub const SignatureMapper = struct {
       }
       if (param.capture == .varargs) switch (param.ptype) {
         .structural => |strct| switch (strct.*) {
-          .list => |*list| if (list.inner == .ast_node) {
+          .list => |*list| if (list.inner.isInst(.ast)) {
             const content = self.args[i];
             self.args[i] = try self.intpr.genValueNode(
               (try self.intpr.ctx.values.ast(content, null)).value());

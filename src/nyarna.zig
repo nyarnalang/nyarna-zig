@@ -102,13 +102,7 @@ pub const Globals = struct {
       .builtin_registry = .{},
       .stack = undefined,
       .stack_ptr = undefined,
-      .this_name = .{
-        .origin = model.Position.intrinsic(),
-        .data = .{.text = .{
-          .t = .literal,
-          .content = "this",
-        }},
-      },
+      .this_name = undefined,
       .resolvers = resolvers,
     };
     errdefer backing_allocator.destroy(ret);
@@ -121,6 +115,13 @@ pub const Globals = struct {
     var init_ctx = Context{.data = ret, .logger = &logger};
     ret.types = try types.Lattice.init(init_ctx);
     errdefer ret.types.deinit();
+    ret.this_name = .{
+      .origin = model.Position.intrinsic(),
+      .data = .{.text = .{
+        .t = .{.instantiated = &ret.types.predefined.literal},
+        .content = "this",
+      }},
+    };
     ret.intrinsics = try lib.intrinsicModule(init_ctx);
     if (logger.count > 0) {
       return Error.step_produced_errors;

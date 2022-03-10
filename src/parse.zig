@@ -165,7 +165,7 @@ const Command = struct {
     return switch (self.cur_cursor) {
       .mapped => |cursor|
         if (self.mapper.paramType(cursor)) |t| (
-          t == .ast_node or t == .frame_root
+          t.isInst(.ast) or t.isInst(.frame_root)
         ) else false,
       else => false,
     };

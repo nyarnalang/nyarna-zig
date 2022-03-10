@@ -78,7 +78,7 @@ pub const ModuleLoader = struct {
             .end = model.Cursor.unknown(),
           },
           .data = .poison,
-          .expected_type = .poison,
+          .expected_type = data.types.poison(),
         };
         ret.state = .{.finished = poison};
         // it is safe to leave the source undefined here, as a finished

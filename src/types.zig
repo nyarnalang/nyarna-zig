@@ -35,14 +35,12 @@ const InnerIntend = enum {
         else => InnerIntend.allowed,
       },
       .instantiated => |ins| switch (ins.data) {
-        .textual => InnerIntend.collapse,
-        .record => InnerIntend.allowed,
+        .textual, .space, .literal, .raw, .void, .poison =>
+          InnerIntend.collapse,
+        .record, .@"type", .location, .definition, .backend, .every =>
+          InnerIntend.allowed,
         else => InnerIntend.forbidden,
       },
-      .prototype, .schema, .extension, .ast_node, .frame_root =>
-        InnerIntend.forbidden,
-      .space, .literal, .raw, .void, .poison => InnerIntend.collapse,
-      else => InnerIntend.allowed,
     };
   }
 
@@ -52,11 +50,12 @@ const InnerIntend = enum {
         .optional, .concat, .paragraphs => InnerIntend.collapse,
         else => InnerIntend.allowed,
       },
-      .instantiated => InnerIntend.allowed,
-      .every => InnerIntend.exalt,
-      .void => InnerIntend.collapse,
-      .prototype, .schema, .extension => InnerIntend.forbidden,
-      else => InnerIntend.allowed,
+      .instantiated => |inst| switch (inst.data) {
+        .every => InnerIntend.exalt,
+        .void => InnerIntend.collapse,
+        .prototype, .schema, .extension => InnerIntend.forbidden,
+        else => InnerIntend.allowed,
+      },
     };
   }
 };
@@ -71,22 +70,16 @@ fn total_order_less(_: void, a: model.Type, b: model.Type) bool {
   const a_int = switch (a) {
     .structural => |sa| @ptrToInt(sa),
     .instantiated => |ia| @ptrToInt(ia),
-    else => return switch (b) {
-      .structural, .instantiated => true,
-      else => @enumToInt(@as(std.meta.Tag(model.Type), a)) <
-              @enumToInt(@as(std.meta.Tag(model.Type), b)),
-    }
   };
   const b_int = switch (b) {
     .structural => |sb| @ptrToInt(sb),
     .instantiated => |ib| @ptrToInt(ib),
-    else => return false,
   };
   return a_int < b_int;
 }
 
 /// This is Nyarna's type lattice. It calculates type intersections, checks type
-/// compatibility, and owns all data of structural types.
+/// compatibility, and owns all data of structural and unique types.
 ///
 /// As it is defined, the type lattice defines only a partial order on types.
 /// To simplify processing, the Lattice additionally defines an internal,
@@ -246,7 +239,22 @@ pub const Lattice = struct {
       @"enum": Constructor,
     },
   },
-  /// predefined types. TODO: move these to system.ny
+  predefined: struct {
+    ast: model.Type.Instantiated,
+    block_header: model.Type.Instantiated,
+    definition: model.Type.Instantiated,
+    every: model.Type.Instantiated,
+    frame_root: model.Type.Instantiated,
+    literal: model.Type.Instantiated,
+    location: model.Type.Instantiated,
+    poison: model.Type.Instantiated,
+    prototype: model.Type.Instantiated,
+    raw: model.Type.Instantiated,
+    space: model.Type.Instantiated,
+    @"type": model.Type.Instantiated,
+    void: model.Type.Instantiated,
+  },
+  /// predefined types. TODO: move these into predefined.
   boolean: *model.Type.Instantiated,
   unicode_category: *model.Type.Instantiated,
   integer: *model.Type.Instantiated,
@@ -264,10 +272,19 @@ pub const Lattice = struct {
         .callable = .{},
       },
       .constructors = undefined, // set later by loading the intrinsic lib
+      .predefined = undefined,
       .boolean = undefined,
       .unicode_category = undefined,
       .integer = undefined,
     };
+    inline for (@typeInfo(@TypeOf(ret.predefined)).Struct.fields) |field| {
+      const val = &@field(ret.predefined, field.name);
+      val.* = .{
+        .at = model.Position.intrinsic(),
+        .name = null,
+        .data = @unionInit(@TypeOf(val.data), field.name, .{}),
+      };
+    }
 
     var builder = try EnumTypeBuilder.init(ctx, model.Position.intrinsic());
     ret.boolean = blk: {
@@ -332,6 +349,58 @@ pub const Lattice = struct {
     // the instantiated types.
   }
 
+  pub inline fn literal(self: *Self) model.Type {
+    return self.predefined.literal.typedef();
+  }
+
+  pub inline fn raw(self: *Self) model.Type {
+    return self.predefined.raw.typedef();
+  }
+
+  pub inline fn @"void"(self: *Self) model.Type {
+    return self.predefined.void.typedef();
+  }
+
+  pub inline fn @"type"(self: *Self) model.Type {
+    return self.predefined.@"type".typedef();
+  }
+
+  pub inline fn poison(self: *Self) model.Type {
+    return self.predefined.poison.typedef();
+  }
+
+  pub inline fn location(self: *Self) model.Type {
+    return self.predefined.location.typedef();
+  }
+
+  pub inline fn definition(self: *Self) model.Type {
+    return self.predefined.definition.typedef();
+  }
+
+  pub inline fn every(self: *Self) model.Type {
+    return self.predefined.every.typedef();
+  }
+
+  pub inline fn space(self: *Self) model.Type {
+    return self.predefined.space.typedef();
+  }
+
+  pub inline fn prototype(self: *Self) model.Type {
+    return self.predefined.prototype.typedef();
+  }
+
+  pub inline fn ast(self: *Self) model.Type {
+    return self.predefined.ast.typedef();
+  }
+
+  pub inline fn frameRoot(self: *Self) model.Type {
+    return self.predefined.frame_root.typedef();
+  }
+
+  pub inline fn blockHeader(self: *Self) model.Type {
+    return self.predefined.block_header.typedef();
+  }
+
   /// may only be called on types that do have constructors
   pub fn typeConstructor(self: *const Self, t: model.Type) Constructor {
     return switch (t) {
@@ -352,12 +421,12 @@ pub const Lattice = struct {
           .callable   = tenum.constructor,
           .impl_index = self.constructors.generic.@"enum",
         },
+        .location   => self.constructors.location,
+        .definition => self.constructors.definition,
+        .raw,       => self.constructors.raw,
         else => unreachable,
       },
-      .location   => self.constructors.location,
-      .definition => self.constructors.definition,
-      .raw,       => self.constructors.raw,
-      else => unreachable,
+      .structural => unreachable,
     };
   }
 
@@ -410,8 +479,11 @@ pub const Lattice = struct {
       else => {},
     };
     for (types) |t, i| switch (t) {
-      .structural, .instantiated => {},
-      else => return try self.supWithIntrinsic(t, types[(i + 1) % 2]),
+      .instantiated => |inst| switch (inst.data) {
+        .textual, .numeric, .float, .tenum, .record => {},
+        else => return try self.supWithIntrinsic(inst, types[(i + 1) % 2]),
+      },
+      .structural => {},
     };
     const inst_types =
       [_]*model.Type.Instantiated{t1.instantiated, t2.instantiated};
@@ -425,7 +497,7 @@ pub const Lattice = struct {
         return switch (other.data) {
           .float => if (i == 0) t2 else t1,
           .numeric => |_| unreachable, // TODO
-          else => .raw,
+          else => self.predefined.raw.typedef(),
         };
       },
       else => {},
@@ -437,7 +509,7 @@ pub const Lattice = struct {
           .tenum => unreachable, // TODO: return predefined Identifier type
           .textual => |_|
             unreachable, // TODO: return sup of Identifier with text
-          else => .raw,
+          else => self.predefined.raw.typedef(),
         };
       },
       else => {},
@@ -450,7 +522,7 @@ pub const Lattice = struct {
                    // of the two types
     // at this point, we have two different instantiated types that are not
     // records, nor in any direct relationship with each other. therefore…
-    return .raw;
+    return self.predefined.raw.typedef();
   }
 
   fn calcParagraphs(self: *Self, inner: []model.Type) !model.Type {
@@ -476,7 +548,7 @@ pub const Lattice = struct {
     self: *Self,
     p: *model.Type.Structural.Paragraphs,
   ) !model.Type {
-    var res = .space;
+    var res = self.predefined.space.typedef();
     for (p.inner) |t| res = try self.sup(res, t);
     return res;
   }
@@ -493,19 +565,19 @@ pub const Lattice = struct {
         .optional => |*op| switch (other_struc.*) {
           .optional => |*other_op| return
             (try self.optional(try self.sup(other_op.inner, op.inner))) orelse
-              .poison,
+              self.predefined.poison.typedef(),
           .concat => |*other_con| return
             (try self.concat(try self.sup(other_con.inner, op.inner))) orelse
-              .poison,
+              self.predefined.poison.typedef(),
           else => {},
         },
         .concat => |*other_con| switch (struc.*) {
           .optional => |*op| return
             (try self.concat(try self.sup(op.inner, other_con.inner))) orelse
-              .poison,
+              self.predefined.poison.typedef(),
           .concat => |*con| return
             (try self.concat(try self.sup(other_con.inner, con.inner))) orelse
-              .poison,
+              self.predefined.poison.typedef(),
           else => {},
         },
         .intersection => |*other_inter| switch (struc.*) {
@@ -525,30 +597,35 @@ pub const Lattice = struct {
         },
         else => {},
       },
-      .instantiated => {},
-      .every => return model.Type{.structural = struc},
-      .void => return switch (struc.*) {
-        .concat => model.Type{.structural = struc},
-        else => (try self.optional(.{.structural = struc})) orelse
-          .poison,
+      .instantiated => |inst| switch (inst.data) {
+        .every => return struc.typedef(),
+        .void => return switch (struc.*) {
+          .concat => model.Type{.structural = struc},
+          else => (try self.optional(struc.typedef())) orelse
+            self.predefined.poison.typedef(),
+        },
+        .space, .literal, .raw => {},
+        .@"type" => return switch (struc.*) {
+          .callable => |*clb| if (clb.kind == .@"type") other
+                              else self.predefined.poison.typedef(),
+          else => self.predefined.poison.typedef(),
+        },
+        else => return self.predefined.poison.typedef(),
       },
-      .space, .literal, .raw => {},
-      .@"type" => return switch (struc.*) {
-        .callable => |*clb| if (clb.kind == .@"type") other else .poison,
-        else => @as(model.Type, .poison),
-      },
-      else => return @as(model.Type, .poison),
     }
     return switch (struc.*) {
       .optional => |*o|
-        (try self.optional(try self.sup(o.inner, other))) orelse .poison,
+        (try self.optional(try self.sup(o.inner, other)))
+        orelse self.predefined.poison.typedef(),
       .concat => |*c|
-        (try self.concat(try self.sup(c.inner, other))) orelse .poison,
+        (try self.concat(try self.sup(c.inner, other)))
+        orelse self.predefined.poison.typedef(),
       .paragraphs => {
         unreachable; // TODO
       },
       .list => |*l|
-        (try self.list(try self.sup(l.inner, other))) orelse .poison,
+        (try self.list(try self.sup(l.inner, other)))
+        orelse self.predefined.poison.typedef(),
       .map => {
         unreachable; // TODO
       },
@@ -563,7 +640,7 @@ pub const Lattice = struct {
           },
           else => {},
         }
-        return @as(model.Type, .poison);
+        return self.predefined.poison.typedef();
       },
       .intersection => |*inter| blk: {
         if (other.isScalar()) {
@@ -580,37 +657,38 @@ pub const Lattice = struct {
           },
           else => {},
         }
-        break :blk .poison;
+        break :blk self.predefined.poison.typedef();
       }
     };
   }
 
   fn supWithIntrinsic(
     self: *Self,
-    intr: model.Type,
+    intr: *model.Type.Instantiated,
     other: model.Type,
   ) !model.Type {
-    std.debug.assert(intr != .instantiated and intr != .structural);
-    return switch (intr) {
+    return switch (intr.data) {
+      .tenum, .float, .numeric, .record, .textual => unreachable,
       .void =>
-        (try self.optional(other)) orelse .poison,
-      .prototype, .schema, .extension, .ast_node, .frame_root =>
-        .poison,
+        (try self.optional(other)) orelse self.predefined.poison.typedef(),
+      .prototype, .schema, .extension, .ast, .frame_root =>
+        self.predefined.poison.typedef(),
       .space, .literal, .raw => switch (other) {
         .structural => unreachable, // case is handled in supWithStructural.
         .instantiated => |inst| switch (inst.data) {
           .textual, .numeric, .float, .tenum =>
-            return .raw,
-          .record => .poison,
+            self.predefined.raw.typedef(),
+          .record => self.predefined.poison.typedef(),
+          .every => intr.typedef(),
+          .void => (try self.optional(intr.typedef())).?,
+          .space => intr.typedef(),
+          .literal => if (intr.data == .raw) intr.typedef() else other,
+          .raw => other,
+          else => self.predefined.poison.typedef(),
         },
-        .every => intr,
-        .void => (try self.optional(intr)).?,
-        .space, .literal, .raw =>
-          if (total_order_less(undefined, intr, other)) other else intr,
-        else => .poison,
       },
       .every => other,
-      else => .poison,
+      else => self.predefined.poison.typedef(),
     };
   }
 
@@ -640,7 +718,7 @@ pub const Lattice = struct {
   pub fn optional(self: *Self, t: model.Type) !?model.Type {
     switch (InnerIntend.optional(t)) {
       .forbidden => return null,
-      .exalt => return .void,
+      .exalt => return self.predefined.void.typedef(),
       .collapse => return t,
       .allowed => {},
     }
@@ -693,8 +771,11 @@ pub const Lattice = struct {
 
   pub fn list(self: *Self, t: model.Type) std.mem.Allocator.Error!?model.Type {
     switch (t) {
-      .void, .prototype, .schema, .extension => return null,
-      else => {},
+      .instantiated => |inst| switch (inst.data) {
+        .void, .prototype, .schema, .extension => return null,
+        else => {},
+      },
+      .structural => {},
     }
     const res = try self.lists.getOrPut(self.allocator, t);
     if (!res.found_existing) {
@@ -705,26 +786,25 @@ pub const Lattice = struct {
         }
       };
     }
-    return model.Type{.structural = res.value_ptr.*};
+    return res.value_ptr.*.typedef();
   }
 
   /// returns the type of the given type if it was a Value.
-  pub fn typeType(self: *const Lattice, t: model.Type) model.Type {
+  pub fn typeType(self: *Lattice, t: model.Type) model.Type {
     return switch (t) {
-      .structural => .@"type", // TODO
+      .structural => self.predefined.@"type".typedef(), // TODO
       .instantiated => |inst| switch (inst.data) {
         .numeric => |*num| num.constructor.typedef(),
         .tenum   => |*enu| enu.constructor.typedef(),
         .record  => |*rec| rec.constructor.typedef(),
-        else     =>        .@"type", // TODO
+        .location, .definition, .literal, .space, .raw =>
+          self.typeConstructor(t).callable.typedef(),
+        else     => self.predefined.@"type".typedef(), // TODO
       },
-      .location, .definition, .literal, .space, .raw =>
-        self.typeConstructor(t).callable.typedef(),
-      else => .@"type",
     };
   }
 
-  pub fn valueType(self: *const Lattice, v: *model.Value) model.Type {
+  pub fn valueType(self: *Lattice, v: *model.Value) model.Type {
     return switch (v.data) {
       .text => |*txt| txt.t,
       .number => |*num| num.t.typedef(),
@@ -738,13 +818,13 @@ pub const Lattice = struct {
       .@"type" => |tv| return self.typeType(tv.t),
       .prototype => |pv| self.prototypeConstructor(pv.pt).callable.typedef(),
       .funcref => |*fr| fr.func.callable.typedef(),
-      .location => .location,
-      .definition => .definition,
-      .ast => |ast|
-        if (ast.container == null) @as(model.Type, .ast_node) else .frame_root,
-      .block_header => .block_header,
-      .void => .void,
-      .poison => .poison,
+      .location => self.predefined.location.typedef(),
+      .definition => self.predefined.definition.typedef(),
+      .ast => |ast| if (ast.container == null)
+        self.predefined.ast.typedef() else self.predefined.frame_root.typedef(),
+      .block_header => self.predefined.block_header.typedef(),
+      .void => self.predefined.void.typedef(),
+      .poison => self.predefined.poison.typedef(),
     };
   }
 
@@ -759,10 +839,22 @@ pub const Lattice = struct {
     if (actual.eql(target)) return target;
     return switch (target) {
       // no instantiated types are virtual.
-      .instantiated => target,
+      .instantiated => |inst| switch (inst.data) {
+        // only subtypes are Callables with .kind == .@"type", and type checking
+        // guarantees we get one of these.
+        .@"type" => actual,
+        // can never be used for a target type.
+        .every => unreachable,
+        // if a poison value is expected, it will never be used for anything,
+        // and therefore we don't need to modify the value.
+        .poison => actual,
+        // all other instantiated types are non-virtual.
+        else => target,
+      },
       .structural => |strct| switch (strct.*) {
-        .optional => |*opt| if (actual == .void or actual == .every) actual
-                            else self.expectedType(actual, opt.inner),
+        .optional => |*opt|
+          if (actual.isInst(.void) or actual.isInst(.every)) actual
+          else self.expectedType(actual, opt.inner),
         .concat, .paragraphs, .list, .map => target,
         .callable => unreachable, // TODO
         .intersection => |*inter| blk: {
@@ -774,16 +866,6 @@ pub const Lattice = struct {
           unreachable;
         },
       },
-      // only subtypes are Callables with .kind == .@"type", and type checking
-      // guarantees we get one of these.
-      .@"type" => actual,
-      // can never be used for a target type.
-      .every => unreachable,
-      // if a poison value is expected, it will never be used for anything,
-      // and therefore we don't need to modify the value.
-      .poison => actual,
-      // all other types are non-virtual.
-      else => target,
     };
   }
 };
@@ -807,11 +889,9 @@ pub fn containedScalar(t: model.Type) ?model.Type {
       else => null,
     },
     .instantiated => |inst| switch (inst.data) {
-      .textual, .numeric, .float, .tenum => t,
+      .textual, .numeric, .float, .tenum, .space, .literal, .raw => t,
       else => null
     },
-    .space, .literal, .raw => t,
-    else => null,
   };
 }
 
@@ -929,9 +1009,9 @@ pub const SigBuilder = struct {
     };
     // TODO: use contains(.ast_node) instead (?)
     const t: model.Type =
-      if (!self.val.isKeyword() and loc.tloc == .ast_node) blk: {
+      if (!self.val.isKeyword() and loc.tloc.isInst(.ast)) blk: {
         self.ctx.logger.AstNodeInNonKeyword(loc.value().origin);
-        break :blk model.Type.poison;
+        break :blk self.ctx.types().predefined.poison.typedef();
       } else loc.tloc;
     if (loc.primary) |p| {
       if (self.val.primary) |pindex| {
@@ -1040,15 +1120,15 @@ pub const ParagraphTypeBuilder = struct {
     return .{
       .types = types,
       .list = .{},
-      .cur_scalar = .every,
+      .cur_scalar = types.every(),
       .non_voids = if (force_paragraphs) 2 else 0,
       .poison = false,
     };
   }
 
   pub fn push(self: *ParagraphTypeBuilder, t: model.Type) !void {
-    if (t == .void) return;
-    if (t == .poison) {
+    if (t.isInst(.void)) return;
+    if (t.isInst(.poison)) {
       self.poison = true;
       return;
     }
@@ -1063,11 +1143,11 @@ pub const ParagraphTypeBuilder = struct {
   pub fn finish(self: *ParagraphTypeBuilder) !Result {
     return if (self.poison) Result{
       .scalar_type_sup = self.cur_scalar,
-      .resulting_type = .poison,
+      .resulting_type = self.types.poison(),
     } else switch (self.non_voids) {
       0 => Result{
         .scalar_type_sup = self.cur_scalar,
-        .resulting_type = .void,
+        .resulting_type = self.types.void(),
       },
       1 => Result{
         .scalar_type_sup = self.cur_scalar,
@@ -1112,7 +1192,8 @@ pub const EnumTypeBuilder = struct {
       self.ctx, 1, self.ret.typedef(), true);
     try sb.push((try self.ctx.values.location(
       self.ret.instantiated().at, try self.ctx.values.textScalar(
-        model.Position.intrinsic(), .raw, "input"
+        model.Position.intrinsic(), self.ctx.types().predefined.raw.typedef(),
+        "input"
       ), self.ret.typedef())).withPrimary(model.Position.intrinsic()));
     self.ret.constructor =
       try sb.finish().createCallable(self.ctx.global(), .type);
@@ -1167,7 +1248,8 @@ pub const NumericTypeBuilder = struct {
       self.ctx, 1, self.ret.typedef(), true);
     try sb.push((try self.ctx.values.location(
       self.ret.instantiated().at, try self.ctx.values.textScalar(
-        model.Position.intrinsic(), .raw, "input"
+        model.Position.intrinsic(), self.ctx.types().predefined.raw.typedef(),
+        "input"
       ), self.ret.typedef())).withPrimary(model.Position.intrinsic()));
     self.ret.constructor =
       try sb.finish().createCallable(self.ctx.global(), .type);
@@ -1246,7 +1328,7 @@ pub const IntersectionTypeBuilder = struct {
   }
 
   pub fn push(self: *Self, item: []const model.Type) void {
-    for (item) |t| std.debug.assert(t.isScalar() or t.isInstantiated(.record));
+    for (item) |t| std.debug.assert(t.isScalar() or t.isInst(.record));
     self.sources[self.filled] = item;
     self.indexes[self.filled] = 0;
     self.filled += 1;

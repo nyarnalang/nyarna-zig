@@ -573,11 +573,11 @@ const AstEmitter = struct {
                 try p.pop();
               }
             },
+            else => try self.emitLine("=TYPE {s}", .{@tagName(i.data)}),
           }
           try tc.pop();
         }
       },
-      else => try self.emitLine("=TYPE {s}", .{@tagName(t)}),
     }
   }
 
@@ -808,7 +808,8 @@ const ErrorEmitter = struct {
   ) void {
     const self = @fieldParentPtr(ErrorEmitter, "api", reporter);
     self.forwardError(id, pos);
-    self.forwardArg("t", "{}", t.formatter());
+    const t_fmt = t.formatter();
+    self.forwardArg("t", "{}", t_fmt);
     self.forwardArg("repr", "{s}", repr);
   }
 

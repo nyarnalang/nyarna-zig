@@ -131,7 +131,7 @@ pub const Resolver = struct {
     switch (rs.sym.data) {
       .poison => return Resolution.poison,
       .variable => |*v| {
-        if (v.t == .every) {
+        if (v.t.isInst(.every)) {
           std.debug.assert(self.stage.kind == .intermediate);
           return Resolution{.failed = rs.ns};
         } else {
@@ -160,7 +160,7 @@ pub const Resolver = struct {
           .ns = ns,
           .name_pos = name_pos,
         }};
-        std.debug.assert(v.t != .every);
+        std.debug.assert(!v.t.isInst(.every));
         return Resolution.chain(ns, node, .{}, v.t, name_pos, false);
       },
       .poison => return Resolution.poison,
@@ -408,8 +408,10 @@ pub const CallContext = union(enum) {
         .callable => |*callable| callable,
         else => null,
       },
-      .poison => return CallContext.poison,
-      else => null,
+      .instantiated => |inst| switch (inst.data) {
+        .poison => return CallContext.poison,
+        else => null,
+      },
     } orelse {
       intpr.ctx.logger.CantBeCalled(target.pos);
       return CallContext.poison;
@@ -464,8 +466,10 @@ pub const CallContext = union(enum) {
                 },
                 else => {},
               },
-              .poison => return .poison,
-              else => {},
+              .instantiated => |inst| switch (inst.data) {
+                .poison => return .poison,
+                else => {},
+              }
             }
             intpr.ctx.logger.CantBeCalled(node.pos);
             return CallContext.poison;

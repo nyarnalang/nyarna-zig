@@ -473,7 +473,7 @@ pub const Signature = struct {
   returns: Type,
 
   pub fn isKeyword(sig: *const Signature) bool {
-    return sig.returns == .ast_node;
+    return sig.returns.isInst(.ast);
   }
 
   pub inline fn typedef(self: *const @This()) Type {
