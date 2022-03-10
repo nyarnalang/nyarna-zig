@@ -117,10 +117,7 @@ pub const Globals = struct {
     errdefer ret.types.deinit();
     ret.this_name = .{
       .origin = model.Position.intrinsic(),
-      .data = .{.text = .{
-        .t = .{.instantiated = &ret.types.predefined.literal},
-        .content = "this",
-      }},
+      .data = .{.text = .{.t = ret.types.literal(), .content = "this"}},
     };
     ret.intrinsics = try lib.intrinsicModule(init_ctx);
     if (logger.count > 0) {

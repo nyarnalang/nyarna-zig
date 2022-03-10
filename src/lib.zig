@@ -327,8 +327,7 @@ pub const Intrinsics = Provider.Wrapper(struct {
     ns: u15,
     locator: *model.Node,
   ) nyarna.Error!*model.Node {
-    const expr = (try intpr.associate(
-      locator, intpr.ctx.types().predefined.raw.typedef(),
+    const expr = (try intpr.associate(locator, intpr.ctx.types().raw(),
       .{.kind = .keyword}))
     orelse return try intpr.node_gen.poison(pos);
     const value = try intpr.ctx.evaluator().evaluate(expr);
