@@ -47,6 +47,18 @@ pub inline fn branches(
   return &(try self.node(pos, .{.branches = content})).data.branches;
 }
 
+pub inline fn builtinGen(
+  self: *Self,
+  pos: Position,
+  params: *Node,
+  returns: std.meta.fieldInfo(Node.BuiltinGen, .returns).field_type,
+) !*Node.BuiltinGen {
+  return &(try self.node(pos, .{.builtingen = .{
+    .params = .{.unresolved = params},
+    .returns = returns,
+  }})).data.builtingen;
+}
+
 pub inline fn concat(
   self: *Self,
   pos: Position,
@@ -286,6 +298,16 @@ pub inline fn tgParagraphs(
   )).data.gen_paragraphs;
 }
 
+pub inline fn tgPrototype(
+  self: *Self,
+  pos: Position,
+  params: *Node,
+) !*Node.tg.Prototype {
+  return &(try self.node(
+    pos, .{.gen_prototype = .{.params = .{.unresolved = params}}}
+  )).data.gen_prototype;
+}
+
 pub inline fn tgRecord(
   self: *Self,
   pos: Position,
@@ -309,6 +331,15 @@ pub inline fn tgTextual(
       .include_chars = include_chars,
       .exclude_chars = exclude_chars,
     }})).data.gen_textual;
+}
+
+pub inline fn tgUnique(
+  self: *Self,
+  pos: Position,
+  params: ?*Node,
+) !*Node.tg.Unique {
+  return &(try self.node(
+    pos, .{.gen_unique = .{.constr_params = params}})).data.gen_unique;
 }
 
 pub inline fn uAccess(

@@ -29,6 +29,19 @@
       "externalConsole": false,
       "MIMode": "lldb",
       "targetArchitecture": "aarch64"
+    },
+    {
+      "name": "(lldb) lex_test",
+      "type": "lldb",
+      "request": "launch",
+      "program": "${workspaceFolder}/lex_test",
+      "args": ["/Users/flyx/.nix-profile/bin/zig"],
+      "stopAtEntry": false,
+      "cwd": "${workspaceFolder}",
+      "environment": [],
+      "externalConsole": false,
+      "MIMode": "lldb",
+      "targetArchitecture": "aarch64"
     }
   ]
 }

@@ -4,6 +4,7 @@ const graph = @import("graph.zig");
 const nyarna = @import("../nyarna.zig");
 const model = nyarna.model;
 const chains = @import("chains.zig");
+const lib = @import("../lib.zig");
 const interpret = @import("../interpret.zig");
 const Interpreter = interpret.Interpreter;
 
@@ -72,7 +73,10 @@ const TypeResolver = struct {
           .gen_record => |*gr| return graph.ResolutionContext.Result{
             .unfinished_type = .{.instantiated = gr.generated.?},
           },
-          .funcgen => {
+          .gen_unique => |*gu| return graph.ResolutionContext.Result{
+            .unfinished_type = gu.generated,
+          },
+          .builtingen, .funcgen, .gen_prototype => {
             self.dres.intpr.ctx.logger.NotAType(name_pos);
             return graph.ResolutionContext.Result.failed;
           },
@@ -104,9 +108,9 @@ const TypeResolver = struct {
 
   fn process(self: *TypeResolver, def: *model.Node.Definition) !void {
     switch (def.content.data) {
-      .expression, .poison, .gen_record, .funcgen => return,
+      .expression, .poison, .gen_record, .gen_unique, .funcgen => return,
       .gen_concat, .gen_intersection, .gen_list, .gen_map, .gen_optional,
-      .gen_paragraphs => {},
+      .gen_paragraphs, .gen_prototype => {},
       else => unreachable,
     }
     for (self.worklist.items) |wli, index| if (wli == def.content) {
@@ -307,6 +311,46 @@ pub const DeclareResolution = struct {
     }
   }
 
+  fn genConstructor(
+    self: *DeclareResolution,
+    def: *model.Node.Definition,
+    params: *model.locations.List(void),
+    ret_type: model.Type,
+    provider: *const lib.Provider,
+    resolve: ?*graph.ResolutionContext,
+  ) !?nyarna.types.Constructor {
+    if (
+      (try self.intpr.tryInterpretLocationsList(
+        params, .{.kind = .final, .resolve = resolve}))
+    ) {
+      var finder = (
+        try self.intpr.processLocations(
+          &params.resolved.locations, .{.kind = .final})
+      ) orelse return null;
+
+      const finder_res = try finder.finish(ret_type, true);
+      var builder = try nyarna.types.SigBuilder.init(
+        self.intpr.ctx, params.resolved.locations.len, ret_type,
+        finder_res.needs_different_repr);
+      for (params.resolved.locations) |loc| try builder.push(loc.value);
+      const builder_res = builder.finish();
+
+      const index = (
+        try lib.registerExtImpl(
+          self.intpr.ctx, provider, def.name.content, builder_res)
+      ) orelse {
+        self.intpr.ctx.logger.DoesntHaveConstructor(
+          def.name.node().pos, def.name.content);
+        return null;
+      };
+      return nyarna.types.Constructor{
+        .impl_index = index,
+        .callable = try builder_res.createCallable(
+          self.intpr.ctx.global(), .@"type"),
+      };
+    } else return null;
+  }
+
   pub fn execute(self: *DeclareResolution) !void {
     const ns_data = switch (self.in) {
       .ns => |index| self.intpr.namespace(index),
@@ -324,31 +368,32 @@ pub const DeclareResolution = struct {
         self.processor.components[cmpt_index + 1] - first_index;
       const defs = self.defs[first_index..first_index+num_nodes];
 
+      // ensure no more unresolved calls or expressions exist
+      for (defs) |def| switch (def.content.data) {
+        .unresolved_call, .unresolved_symref => {
+          // could be function defined in a previous component (that would be
+          // fine). Try resolving.
+          if (
+            try self.intpr.tryInterpret(def.content, .{.kind = .intermediate})
+          ) |expr| {
+            def.content.data = .{.expression = expr};
+          } else switch (def.content.data) {
+            .unresolved_call, .unresolved_symref => {
+              // still unresolved => cannot be resolved.
+              // force error generation.
+              const res = try self.intpr.interpret(def.content);
+              def.content.data = .{.expression = res};
+            },
+            else => {},
+          }
+        },
+        else => {},
+      };
+
       // allocate all types and create their symbols. This allows referring to
       // them even when not all information (record field types, inner types,
       // default expressions) has been resolved.
       alloc_types: for (defs) |def| {
-        switch (def.content.data) {
-          .unresolved_call, .unresolved_symref => {
-            // could be function defined in a previous component (that would be
-            // fine). Try resolving.
-            if (
-              try self.intpr.tryInterpret(def.content, .{.kind = .intermediate})
-            ) |expr| {
-              def.content.data = .{.expression = expr};
-            } else switch (def.content.data) {
-              .unresolved_call, .unresolved_symref => {
-                // still unresolved => cannot be resolved.
-                // force error generation.
-                const res = try self.intpr.interpret(def.content);
-                def.content.data = .{.expression = res};
-              },
-              else => {},
-            }
-          },
-          else => {},
-        }
-
         while (true) switch (def.content.data) {
           .gen_concat => |*gc| {
             try self.createStructural(gc); continue :alloc_types;
@@ -370,6 +415,49 @@ pub const DeclareResolution = struct {
           .gen_paragraphs => |*gp| {
             try self.createStructural(gp); continue :alloc_types;
           },
+          .gen_prototype => |*gp| {
+            const proto_constr = lib.constructors.Prototypes.init();
+            const constructor = (
+              try self.genConstructor(
+                def, &gp.params, self.intpr.ctx.types().ast(),
+                &proto_constr.provider, null)
+            ) orelse break;
+            const types = self.intpr.ctx.types();
+            const prototype: model.Prototype =
+              switch (std.hash.Adler32.hash(def.name.content)) {
+              std.hash.Adler32.hash("Concat") => .concat,
+              std.hash.Adler32.hash("Enum") => .@"enum",
+              std.hash.Adler32.hash("Float") => .float,
+              std.hash.Adler32.hash("Intersection") => .intersection,
+              std.hash.Adler32.hash("List") => .list,
+              std.hash.Adler32.hash("Map") => .map,
+              std.hash.Adler32.hash("Numeric") => .numeric,
+              std.hash.Adler32.hash("Optional") => .optional,
+              std.hash.Adler32.hash("Paragraphs") => .paragraphs,
+              std.hash.Adler32.hash("Record") => .record,
+              std.hash.Adler32.hash("Textual") => .textual,
+              else => unreachable,
+            };
+            switch (prototype) {
+              .concat   => types.constructors.prototypes.concat   = constructor,
+              .@"enum"  => types.constructors.prototypes.@"enum"  = constructor,
+              .float    => types.constructors.prototypes.float    = constructor,
+              .intersection =>
+                types.constructors.prototypes.intersection        = constructor,
+              .list     => types.constructors.prototypes.list     = constructor,
+              .map      => types.constructors.prototypes.map      = constructor,
+              .numeric  => types.constructors.prototypes.numeric  = constructor,
+              .optional => types.constructors.prototypes.optional = constructor,
+              .paragraphs =>
+                types.constructors.prototypes.paragraphs          = constructor,
+              .record   => types.constructors.prototypes.record   = constructor,
+              .textual  => types.constructors.prototypes.textual  = constructor,
+            }
+            const sym =
+              try self.genSym(def.name, .{.prototype = prototype}, def.public);
+            _ = try ns_data.tryRegister(self.intpr, sym);
+            continue :alloc_types;
+          },
           .gen_record => |*gr| {
             const inst =
               try self.intpr.ctx.global().create(model.Type.Instantiated);
@@ -382,7 +470,34 @@ pub const DeclareResolution = struct {
             continue :alloc_types;
           },
           .gen_textual => unreachable,
-          .funcgen => continue :alloc_types,
+          .gen_unique => |*gu| {
+            const types = self.intpr.ctx.types();
+            gu.generated = switch (std.hash.Adler32.hash(def.name.content)) {
+              std.hash.Adler32.hash("Ast") => types.ast(),
+              std.hash.Adler32.hash("BlockHeader") => types.blockHeader(),
+              std.hash.Adler32.hash("Definition") => types.definition(),
+              std.hash.Adler32.hash("FrameRoot") => types.frameRoot(),
+              std.hash.Adler32.hash("Literal") => types.literal(),
+              std.hash.Adler32.hash("Location") => types.location(),
+              std.hash.Adler32.hash("Raw") => types.raw(),
+              std.hash.Adler32.hash("Space") => types.space(),
+              std.hash.Adler32.hash("Type") => types.@"type"(),
+              std.hash.Adler32.hash("Void") => types.@"void"(),
+              else => {
+                self.intpr.ctx.logger.UnknownUnique(
+                  def.name.node().pos, def.name.content);
+                break;
+              }
+            };
+            const sym = try self.genSym(
+              def.name, .{.@"type" = gu.generated}, def.public);
+            if (try ns_data.tryRegister(self.intpr, sym)) {
+              std.debug.assert(gu.generated.instantiated.name == null);
+              gu.generated.instantiated.name = sym;
+            }
+            continue :alloc_types;
+          },
+          .funcgen, .builtingen => continue :alloc_types,
           .poison => break,
           // anything that is an expression is already finished and can
           // immediately be established.
@@ -422,12 +537,33 @@ pub const DeclareResolution = struct {
             .gen_paragraphs => try tr.process(def),
             .gen_record => |*rgen| {
               if (
-                !(try self.intpr.tryInterpretRecordParams(
-                  rgen, .{.kind = .final, .resolve = &tr.ctx}))
+                !(try self.intpr.tryInterpretLocationsList(
+                  &rgen.fields, .{.kind = .final, .resolve = &tr.ctx}))
               ) {
                 const sym = try self.genSym(def.name, .poison, def.public);
                 _ = try ns_data.tryRegister(self.intpr, sym);
                 def.content.data = .poison;
+              }
+            },
+            .gen_unique => |*gu| if (gu.constr_params) |params| {
+              const ret_type = switch (gu.generated.instantiated.data) {
+                // location and definition types have a keyword constructor
+                // that returns an ast.
+                .location, .definition => self.intpr.ctx.types().ast(),
+                else => gu.generated,
+              };
+              const type_constr = lib.constructors.Types.init();
+              var locs: model.locations.List(void) = .{.unresolved = params};
+              const constructor = (
+                try self.genConstructor(
+                  def, &locs, ret_type, &type_constr.provider, &tr.ctx)
+              ) orelse continue;
+              const types = self.intpr.ctx.types();
+              switch (gu.generated.instantiated.data) {
+                .raw        => types.constructors.raw = constructor,
+                .location   => types.constructors.location = constructor,
+                .definition => types.constructors.definition = constructor,
+                else => unreachable,
               }
             },
             .funcgen => |*fgen| {

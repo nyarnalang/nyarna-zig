@@ -38,6 +38,21 @@ pub const Assign = struct {
   }
 };
 
+/// Node that generates builtin and keyword definitions.
+/// Must only be used in context of \declare so that the interpreter can map
+/// the builtin to a provided internal function via the builtin's name.
+pub const BuiltinGen = struct {
+  params: locations.List(void),
+  returns: union(enum) {
+    node: *Node,
+    value: *Value.TypeVal,
+  },
+
+  pub inline fn node(self: *@This()) *Node {
+    return Node.parent(self);
+  }
+};
+
 /// A branching node. Branching works on enum types; the condition is to be
 /// interpreted into an expression having an Enum type and the number of
 /// branches must match the number of values of that Enum type.
@@ -322,6 +337,10 @@ pub const tg = struct {
     generated: ?*Type.Structural = null,
     pub inline fn node(self: *@This()) *Node {return Node.parent(self);}
   };
+  pub const Prototype = struct {
+    params: locations.List(void),
+    pub inline fn node(self: *@This()) *Node {return Node.parent(self);}
+  };
   pub const Record = struct {
     fields: locations.List(void),
     generated: ?*Type.Instantiated = null,
@@ -333,11 +352,20 @@ pub const tg = struct {
     exclude_chars: *Node,
     pub inline fn node(self: *@This()) *Node {return Node.parent(self);}
   };
+  pub const Unique = struct {
+    constr_params: ?*Node,
+    /// used during declare resolution, since the type is first generated and
+    /// later the constructor is built. This field stores the built type so that
+    /// the constructor knows its return type.
+    generated: Type = undefined,
+    pub inline fn node(self: *@This()) *Node {return Node.parent(self);}
+  };
 };
 
 pub const Data = union(enum) {
   assign           : Assign,
   branches         : Branches,
+  builtingen       : BuiltinGen,
   concat           : Concat,
   definition       : Definition,
   expression       : *Expression,
@@ -351,8 +379,10 @@ pub const Data = union(enum) {
   gen_numeric      : tg.Numeric,
   gen_optional     : tg.Optional,
   gen_paragraphs   : tg.Paragraphs,
+  gen_prototype    : tg.Prototype,
   gen_record       : tg.Record,
   gen_textual      : tg.Textual,
+  gen_unique       : tg.Unique,
   import           : Import,
   literal          : Literal,
   location         : Location,
@@ -377,6 +407,7 @@ fn parent(it: anytype) *Node {
   const addr = @ptrToInt(it) - switch (t) {
     Assign           => offset(Data, "assign"),
     Branches         => offset(Data, "branches"),
+    BuiltinGen       => offset(Data, "builtingen"),
     Concat           => offset(Data, "concat"),
     Definition       => offset(Data, "definition"),
     *Expression      => offset(Data, "expression"),
@@ -397,8 +428,10 @@ fn parent(it: anytype) *Node {
     tg.Numeric       => offset(Data, "gen_numeric"),
     tg.Optional      => offset(Data, "gen_optional"),
     tg.Paragraphs    => offset(Data, "gen_paragraphs"),
+    tg.Prototype     => offset(Data, "gen_prototype"),
     tg.Record        => offset(Data, "gen_record"),
     tg.Textual       => offset(Data, "gen_textual"),
+    tg.Unique        => offset(Data, "gen_unique"),
     UnresolvedAccess => offset(Data, "unresolved_access"),
     UnresolvedCall   => offset(Data, "unresolved_call"),
     UnresolvedSymref => offset(Data, "unresolved_symref"),

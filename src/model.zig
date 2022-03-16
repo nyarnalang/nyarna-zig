@@ -46,7 +46,7 @@ pub const Position = struct {
   start: Cursor,
   end: Cursor,
 
-  const IntrinsicSource = Source.Descriptor{
+  const intrinsic_source = Source.Descriptor{
     .name = "<intrinsic>",
     .locator = ".std.intrinsic",
     .argument = false
@@ -63,7 +63,7 @@ pub const Position = struct {
     return .{
       .start = Cursor.unknown(),
       .end = Cursor.unknown(),
-      .source = &IntrinsicSource,
+      .source = &intrinsic_source,
     };
   }
 
@@ -90,6 +90,10 @@ pub const Position = struct {
     return .{
       .source = self.source, .start = self.end, .end = self.end,
     };
+  }
+
+  pub fn isIntrinsic(self: Position) bool {
+    return self.source == &intrinsic_source;
   }
 
   /// formats the position in the form
@@ -394,7 +398,7 @@ pub const Type = @import("model/types.zig").Type;
 pub const Function = struct {
   /// externally defined function, pre-defined by the Nyarna processor or
   /// registered via Nyarna's API.
-  const External = struct {
+  pub const External = struct {
     /// tells the interpreter under which index to look up the implementation.
     impl_index: usize,
     /// whether the implementation depends on the namespace by which the it is
@@ -403,11 +407,11 @@ pub const Function = struct {
     ns_dependent: bool,
   };
   /// Function defined in Nyarna code.
-  const Nyarna = struct {
+  pub const Nyarna = struct {
     body: *Expression,
   };
 
-  const Data = union(enum) {
+  pub const Data = union(enum) {
     ny: Nyarna,
     ext: External,
   };

@@ -100,13 +100,14 @@ pub const Evaluator = struct {
     call: *model.Expression.Call,
     constr: nyarna.types.Constructor,
   ) nyarna.Error!RetTypeForCtx(@TypeOf(impl_ctx)) {
+    const callable = constr.callable.?;
     const target_impl =
       self.registeredFnForCtx(@TypeOf(impl_ctx), constr.impl_index);
     std.debug.assert(
-      call.exprs.len == constr.callable.sig.parameters.len);
+      call.exprs.len == callable.sig.parameters.len);
     var frame: ?[*]model.StackItem = try self.setupParameterStackFrame(
-      constr.callable.sig, false, null);
-    defer self.resetParameterStackFrame(&frame, constr.callable.sig);
+      callable.sig, false, null);
+    defer self.resetParameterStackFrame(&frame, callable.sig);
     return if (try self.fillParameterStackFrame(
         call.exprs, frame.? + 1))
       target_impl(impl_ctx, call.expr().pos, frame.? + 1)

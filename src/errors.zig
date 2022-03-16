@@ -20,7 +20,8 @@ pub const GenericParserError = enum {
   CantCallUnfinished, FailedToCalculateReturnType, FieldAccessWithoutInstance,
   MethodOutsideDeclare, CannotResolveLocator, ImportIllegalInFullast,
   MissingInitialValue, IllegalNumericInterval, EntityCannotBeNamed,
-  SurplusFlags,
+  SurplusFlags, TypeInMagic, NyFuncInMagic, BuiltinMustBeNamed,
+  ConstructorUnavailable,
 };
 
 pub const WrongItemError = enum {
@@ -78,7 +79,7 @@ pub const WrongItemError = enum {
 
 pub const UnknownError = enum {
   UnknownFlag, UnknownSyntax, UnknownParameter, UnknownSymbol, UnknownField,
-  UnknownResolver,
+  UnknownResolver, UnknownUnique, UnknownPrototype, DoesntHaveConstructor,
 };
 
 pub const WrongIdError = enum {
@@ -168,6 +169,8 @@ pub const WrongTypeError = enum {
    InvalidInnerOptionalType,
    /// gives one type.
    InvalidInnerIntersectionType,
+   /// gives one type.
+   InvalidInnerListType,
    /// gives one type.
    InvalidDefinitionValue,
 };
@@ -361,9 +364,11 @@ pub const CmdLineReporter = struct {
     const self = @fieldParentPtr(CmdLineReporter, "reporter", reporter);
     self.style(.{.bold}, "{s}", .{pos});
     const entity: []const u8 = switch (id) {
-      .UnknownFlag      => "flag",      .UnknownSyntax   => "syntax",
-      .UnknownParameter => "parameter", .UnknownSymbol   => "symbol",
-      .UnknownField     => "field",     .UnknownResolver => "resolver",
+      .UnknownFlag      => "flag",        .UnknownSyntax   => "syntax",
+      .UnknownParameter => "parameter",   .UnknownSymbol   => "symbol",
+      .UnknownField     => "field",       .UnknownResolver => "resolver",
+      .UnknownUnique    => "unique type", .UnknownPrototype => "prototype",
+      .DoesntHaveConstructor => "constructor of unique type",
     };
     self.renderError("unknown {s}: '{s}'", .{entity, name});
   }
@@ -380,8 +385,8 @@ pub const CmdLineReporter = struct {
     self.style(.{.bold}, "{s}", .{pos});
     self.renderError("{s} id: expected '{s}', got '{s}'",
         .{WrongIdError.kind(id), expected, got});
-    self.writer.print("{s}", .{defined_at}) catch unreachable;
-    _ = self.writer.write("command started here") catch unreachable;
+    self.writer.print("  {s} command started here\n", .{defined_at})
+      catch unreachable;
   }
 
   fn previousOccurence(
@@ -394,8 +399,7 @@ pub const CmdLineReporter = struct {
     const self = @fieldParentPtr(CmdLineReporter, "reporter", reporter);
     self.style(.{.bold}, "{s}", .{pos});
     self.renderError("{s} '{s}'{s}", .{id.entityName(), repr, id.errorMsg()});
-    self.writer.print("{s}", .{previous}) catch unreachable;
-    self.writer.print("{s} here\n", .{id.prevOccurenceKind()})
+    self.writer.print("  {s} {s} here\n", .{previous, id.prevOccurenceKind()})
       catch unreachable;
   }
 
@@ -452,6 +456,10 @@ pub const CmdLineReporter = struct {
       .InvalidInnerIntersectionType => {
         const t_fmt = types[0].formatter();
         self.renderError("invalid inner type for Intersection: '{}'", .{t_fmt});
+      },
+      .InvalidInnerListType => {
+        const t_fmt = types[0].formatter();
+        self.renderError("invalid inner type for List: '{}'", .{t_fmt});
       },
       .InvalidDefinitionValue => {
         const t_fmt = types[0].formatter();

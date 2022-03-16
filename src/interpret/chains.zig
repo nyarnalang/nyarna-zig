@@ -478,8 +478,12 @@ pub const CallContext = union(enum) {
             return CallContext{.known = .{
               .target = node,
               .ns = undefined,
-              .signature = intpr.ctx.types().prototypeConstructor(
-                pt).callable.sig,
+              .signature = if (
+                intpr.ctx.types().prototypeConstructor(pt).callable
+              ) |c| c.sig else {
+                intpr.ctx.logger.ConstructorUnavailable(node.pos);
+                return .poison;
+              },
               .first_arg = null,
             }};
           },

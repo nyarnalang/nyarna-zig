@@ -9,6 +9,7 @@ pub const resolve = @import("load/resolve.zig");
 pub const ModuleLoader = @import("load.zig").ModuleLoader;
 pub const EncodedCharacter = @import("unicode.zig").EncodedCharacter;
 pub const Resolver = resolve.Resolver;
+pub const FileSystemResolver = resolve.FileSystemResolver;
 
 pub const default_stack_size = 1024 * 1024; // 1MB
 
@@ -57,15 +58,13 @@ pub const Globals = struct {
   /// not discarded after a source has been fully interpreted. Uses the
   /// externally supplied allocator.
   storage: std.heap.ArenaAllocator,
-  /// This module contains the definitions of intrinsic symbols.
-  /// it is initialized with the loader and used in all files the loader
-  /// processes.
-  intrinsics: *const model.Module,
   /// list of known keyword implementations. They bear no name since they are
   /// referenced via their index.
-  keyword_registry: std.ArrayListUnmanaged(lib.Provider.KeywordWrapper),
+  keyword_registry: std.ArrayListUnmanaged(lib.Provider.KeywordWrapper) = .{},
   /// list of known builtin implementations, analoguous to keyword_registry.
-  builtin_registry: std.ArrayListUnmanaged(lib.Provider.BuiltinWrapper),
+  builtin_registry: std.ArrayListUnmanaged(lib.Provider.BuiltinWrapper) = .{},
+  /// list of symbols available in any namespace (\declare, \var, \import etc).
+  generic_symbols: std.ArrayListUnmanaged(*model.Symbol) = .{},
   /// stack for evaluation. Size can be set during initialization.
   stack: []model.StackItem,
   /// current top of the stack, where new stack allocations happen.
@@ -97,9 +96,6 @@ pub const Globals = struct {
       .backing_allocator = backing_allocator,
       .types = undefined,
       .storage = std.heap.ArenaAllocator.init(backing_allocator),
-      .intrinsics = undefined,
-      .keyword_registry = .{},
-      .builtin_registry = .{},
       .stack = undefined,
       .stack_ptr = undefined,
       .this_name = undefined,
@@ -119,7 +115,6 @@ pub const Globals = struct {
       .origin = model.Position.intrinsic(),
       .data = .{.text = .{.t = ret.types.literal(), .content = "this"}},
     };
-    ret.intrinsics = try lib.intrinsicModule(init_ctx);
     if (logger.count > 0) {
       return Error.step_produced_errors;
     }
@@ -373,6 +368,7 @@ pub const Processor = struct {
     allocator: std.mem.Allocator,
     stack_size: usize,
     reporter: *errors.Reporter,
+    stdlib: *resolve.Resolver,
   ) !Processor {
     var ret = Processor{
       .allocator = allocator, .stack_size = stack_size, .reporter = reporter,
@@ -382,7 +378,11 @@ pub const Processor = struct {
       .implicit = false,
       .resolver = undefined, // given in startLoading()
     });
-    // TODO: std resolver
+    try ret.resolvers.append(allocator, .{
+      .name = "std",
+      .implicit = true,
+      .resolver = stdlib,
+    });
     return ret;
   }
 
@@ -408,12 +408,31 @@ pub const Processor = struct {
         self.allocator, self.reporter, self.stack_size, self.resolvers.items),
     };
     errdefer ret.globals.destroy();
-    var logger = errors.Handler{.reporter = self.reporter};
-    const desc = (try doc_resolver.resolve(
-      main_module, model.Position.intrinsic(), &logger)).?;
 
-    const ml =
-      try ModuleLoader.create(ret.globals, desc, doc_resolver, fullast);
+    var logger = errors.Handler{.reporter = self.reporter};
+
+    // load system.ny.
+    const system_ny = (try self.resolvers.items[1].resolver.resolve(
+      ret.globals.storage.allocator(), "system", model.Position.intrinsic(),
+      &logger)).?;
+    const system_loader = try ModuleLoader.create(
+      ret.globals, system_ny, self.resolvers.items[1].resolver, "std.system",
+      false);
+    _ = try system_loader.work();
+    const module = try system_loader.finalize();
+    try ret.globals.known_modules.put(
+      ret.globals.storage.allocator(), system_ny.name, .{.loaded = module});
+
+    // now setup loading of the main module
+    const desc = (try doc_resolver.resolve(
+      ret.globals.storage.allocator(), main_module, model.Position.intrinsic(),
+      &logger)).?;
+    const locator =
+      try ret.globals.storage.allocator().alloc(u8, main_module.len + 5);
+    std.mem.copy(u8, locator, ".doc.");
+    std.mem.copy(u8, locator[5..], main_module);
+    const ml = try ModuleLoader.create(
+      ret.globals, desc, doc_resolver, locator, fullast);
     if (fullast) {
       try ret.globals.known_modules.put(
         ret.globals.storage.allocator(), desc.name, .{.require_module = ml});

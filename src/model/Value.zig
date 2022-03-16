@@ -186,8 +186,12 @@ pub const Location = struct {
 
 pub const Definition = struct {
   name: *Value.TextScalar,
-  // must be either function or type value
-  content: *Value,
+  content_pos: model.Position,
+  content: union(enum) {
+    /// might be a keyword function, which is why content is not simply a Value.
+    func: *model.Function,
+    @"type": model.Type,
+  },
   root: ?model.Position = null,
 
   pub inline fn value(self: *@This()) *Value {

@@ -7,9 +7,11 @@ const unicode = @import("unicode.zig");
 pub const Constructor = struct {
   /// contains the signature of the constructor when called.
   /// has kind set to .@"type" if it's a type, .prototype if it's a prototype.
-  callable: *model.Type.Callable,
-  /// index of the constructor's implementation.
-  impl_index: usize,
+  /// initially null, will be set during loading of system.ny
+  callable: ?*model.Type.Callable = null,
+  /// index of the constructor's implementation. Initially undefined, will be
+  /// set during loading of system.ny.
+  impl_index: usize = undefined,
 };
 
 /// calculates what to do with inner types for various structural types.
@@ -210,9 +212,9 @@ pub const Lattice = struct {
   /// Constructors for all types that have constructors.
   /// These are to be queried via typeConstructor() and prototypeConstructor().
   constructors: struct {
-    raw: Constructor,
-    location: Constructor,
-    definition: Constructor,
+    raw       : Constructor = .{},
+    location  : Constructor = .{},
+    definition: Constructor = .{},
 
     // the signature of instantiated types' constructors differ per type.
     // they use the same implementation though. Those implementations' indexes
@@ -220,39 +222,39 @@ pub const Lattice = struct {
     generic: struct {
       textual: usize,
       numeric: usize,
-      float: usize,
+      float  : usize,
       @"enum": usize,
-    },
+    } = undefined,
 
     /// Prototype implementations that generate types.
     prototypes: struct {
-      optional: Constructor,
-      concat: Constructor,
-      list: Constructor,
-      paragraphs: Constructor,
-      map: Constructor,
-      record: Constructor,
-      intersection: Constructor,
-      textual: Constructor,
-      numeric: Constructor,
-      float: Constructor,
-      @"enum": Constructor,
-    },
+      concat      : Constructor = .{},
+      @"enum"     : Constructor = .{},
+      float       : Constructor = .{},
+      intersection: Constructor = .{},
+      list        : Constructor = .{},
+      map         : Constructor = .{},
+      numeric     : Constructor = .{},
+      optional    : Constructor = .{},
+      paragraphs  : Constructor = .{},
+      record      : Constructor = .{},
+      textual     : Constructor = .{},
+    } = .{},
   },
   predefined: struct {
-    ast: model.Type.Instantiated,
+    ast         : model.Type.Instantiated,
     block_header: model.Type.Instantiated,
-    definition: model.Type.Instantiated,
-    every: model.Type.Instantiated,
-    frame_root: model.Type.Instantiated,
-    literal: model.Type.Instantiated,
-    location: model.Type.Instantiated,
-    poison: model.Type.Instantiated,
-    prototype: model.Type.Instantiated,
-    raw: model.Type.Instantiated,
-    space: model.Type.Instantiated,
-    @"type": model.Type.Instantiated,
-    void: model.Type.Instantiated,
+    definition  : model.Type.Instantiated,
+    every       : model.Type.Instantiated,
+    frame_root  : model.Type.Instantiated,
+    literal     : model.Type.Instantiated,
+    location    : model.Type.Instantiated,
+    poison      : model.Type.Instantiated,
+    prototype   : model.Type.Instantiated,
+    raw         : model.Type.Instantiated,
+    space       : model.Type.Instantiated,
+    @"type"     : model.Type.Instantiated,
+    void        : model.Type.Instantiated,
   },
   /// predefined types. TODO: move these into predefined.
   boolean: *model.Type.Instantiated,
@@ -271,7 +273,7 @@ pub const Lattice = struct {
         .paragraphs = .{},
         .callable = .{},
       },
-      .constructors = undefined, // set later by loading the intrinsic lib
+      .constructors = .{}, // set later by loading the intrinsic lib
       .predefined = undefined,
       .boolean = undefined,
       .unicode_category = undefined,
@@ -763,6 +765,20 @@ pub const Lattice = struct {
     return true;
   }
 
+  pub fn registerList(self: *Self, t: *model.Type.List) !bool {
+    switch (t.inner) {
+      .instantiated => |inst| switch (inst.data) {
+        .void, .prototype, .schema, .extension => return false,
+        else => {},
+      },
+      .structural => {},
+    }
+    const res = try self.lists.getOrPut(self.allocator, t.inner);
+    std.debug.assert(!res.found_existing);
+    res.value_ptr.* = t.typedef().structural;
+    return true;
+  }
+
   pub fn list(self: *Self, t: model.Type) std.mem.Allocator.Error!?model.Type {
     switch (t) {
       .instantiated => |inst| switch (inst.data) {
@@ -792,7 +808,10 @@ pub const Lattice = struct {
         .tenum   => |*enu| enu.constructor.typedef(),
         .record  => |*rec| rec.constructor.typedef(),
         .location, .definition, .literal, .space, .raw =>
-          self.typeConstructor(t).callable.typedef(),
+          // callable may be null if currently processing system.ny. In that
+          // case, the type is not callable.
+          if (self.typeConstructor(t).callable) |c| c.typedef()
+          else self.@"type"(),
         else     => self.@"type"(), // TODO
       },
     };
@@ -810,7 +829,7 @@ pub const Lattice = struct {
       .list => |*list| list.t.typedef(),
       .map => |*map| map.t.typedef(),
       .@"type" => |tv| return self.typeType(tv.t),
-      .prototype => |pv| self.prototypeConstructor(pv.pt).callable.typedef(),
+      .prototype => |pv| self.prototypeConstructor(pv.pt).callable.?.typedef(),
       .funcref => |*fr| fr.func.callable.typedef(),
       .location => self.location(),
       .definition => self.definition(),

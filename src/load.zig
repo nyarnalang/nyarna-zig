@@ -4,6 +4,7 @@ const types = nyarna.types;
 const errors = nyarna.errors;
 const model = nyarna.model;
 const lib = nyarna.lib;
+const magic = @import("lib/magic.zig");
 const Context = nyarna.Context;
 const Interpreter = @import("interpret.zig").Interpreter;
 const parse = @import("parse.zig");
@@ -52,8 +53,9 @@ pub const ModuleLoader = struct {
   /// load the input as Node without interpreting it.
   pub fn create(
     data: *nyarna.Globals,
-    input: *const model.Source.Descriptor,
+    input: *nyarna.Resolver.Cursor,
     resolver: *nyarna.Resolver,
+    location: []const u8,
     fullast: bool,
   ) !*ModuleLoader {
     var ret = try data.storage.allocator().create(ModuleLoader);
@@ -68,15 +70,12 @@ pub const ModuleLoader = struct {
     };
     errdefer data.storage.allocator().destroy(ret);
     const source =
-      (try resolver.getSource(input, ret.storage.allocator(), &ret.logger))
+      (try resolver.getSource(
+        ret.storage.allocator(), input, location, &ret.logger))
       orelse blk: {
         const poison = try data.storage.allocator().create(model.Expression);
         poison.* = .{
-          .pos = model.Position{
-            .source = input,
-            .start = model.Cursor.unknown(),
-            .end = model.Cursor.unknown(),
-          },
+          .pos = model.Position.intrinsic(),
           .data = .poison,
           .expected_type = data.types.poison(),
         };
@@ -118,6 +117,14 @@ pub const ModuleLoader = struct {
   pub fn work(self: *ModuleLoader) !bool {
     while (true) switch (self.state) {
       .initial => {
+        const implicit_module = if (self.data.known_modules.count() == 0)
+          // only happens if we're loading system.ny.
+          // in that case, we're loading the magic module that help
+          // bootstrapping system.ny and provides keyword exclusive to it.
+          try magic.magicModule(self.interpreter.ctx)
+        else self.data.known_modules.values()[0].loaded;
+        try self.interpreter.importModuleSyms(implicit_module, 0);
+
         const node = self.parser.parseSource(self.interpreter, self.fullast)
           catch |e| return self.handleError(e);
         self.state = .{.interpreting = node};
@@ -189,12 +196,17 @@ pub const ModuleLoader = struct {
     locator: model.Locator,
   ) !?usize {
     var resolver: *nyarna.Resolver = undefined;
+    var abs_locator: []const u8 = undefined;
     const descriptor = if (locator.resolver) |name| blk: {
       if (self.data.known_modules.getIndex(locator.path)) |index| return index;
       for (self.data.resolvers) |*re| {
         if (std.mem.eql(u8, re.name, name)) {
-          if (try re.resolver.resolve(locator.path, pos, &self.logger)) |desc| {
+          if (
+            try re.resolver.resolve(
+              self.data.storage.allocator(), locator.path, pos, &self.logger)
+          ) |desc| {
             resolver = re.resolver;
+            abs_locator = locator.repr;
             break :blk desc;
           }
           self.logger.CannotResolveLocator(pos);
@@ -205,7 +217,7 @@ pub const ModuleLoader = struct {
       return null;
     } else blk: {
       // try to resolve the locator relative to the current module.
-      const fullpath = try self.storage.allocator().alloc(
+      var fullpath = try self.storage.allocator().alloc(
         u8, self.interpreter.input.locator_ctx.len + locator.path.len);
       defer self.storage.allocator().free(fullpath);
       std.mem.copy(u8, fullpath, self.interpreter.input.locator_ctx);
@@ -215,15 +227,29 @@ pub const ModuleLoader = struct {
       const rel_loc = model.Locator.parse(fullpath) catch unreachable;
       const rel_name = rel_loc.resolver.?;
       for (self.data.resolvers) |*re| if (std.mem.eql(u8, rel_name, re.name)) {
-        if (try re.resolver.resolve(rel_loc.path, pos, &self.logger)) |desc| {
+        if (
+          try re.resolver.resolve(
+            self.data.storage.allocator(), rel_loc.path, pos, &self.logger)
+        ) |desc| {
           resolver = re.resolver;
+          abs_locator = fullpath;
           break :blk desc;
         }
         break;
       };
       // try with each resolver that is set to implicitly resolve paths.
       for (self.data.resolvers) |*re| if (re.implicit) {
-        if (try re.resolver.resolve(locator.path, pos, &self.logger)) |desc| {
+        if (
+          try re.resolver.resolve(
+            self.data.storage.allocator(), locator.path, pos, &self.logger)
+        ) |desc| {
+          fullpath = try self.storage.allocator().realloc(
+            fullpath, 2 + re.name.len + locator.path.len);
+          fullpath[0] = '.';
+          std.mem.copy(u8, fullpath[1..], re.name);
+          fullpath[1 + re.name.len] = '.';
+          std.mem.copy(u8, fullpath[2 + re.name.len..], locator.path);
+          abs_locator = fullpath;
           resolver = re.resolver;
           break :blk desc;
         }
@@ -231,9 +257,10 @@ pub const ModuleLoader = struct {
       self.logger.CannotResolveLocator(pos);
       return null;
     };
-    const loader = try create(self.data, descriptor, resolver, false);
+    const loader =
+      try create(self.data, descriptor, resolver, abs_locator, false);
     const res = try self.data.known_modules.getOrPut(
-      self.data.storage.allocator(), descriptor.locator);
+      self.data.storage.allocator(), abs_locator);
     std.debug.assert(!res.found_existing);
     res.value_ptr.* = .{.require_params = loader};
     return res.index;

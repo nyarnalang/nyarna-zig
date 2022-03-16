@@ -190,10 +190,12 @@ pub inline fn definition(
   self: *const Self,
   pos: Position,
   name: *Value.TextScalar,
-  content: *Value,
+  content: std.meta.fieldInfo(Value.Definition, .content).field_type,
+  content_pos: Position,
 ) !*Value.Definition {
-  return &(try self.value(pos, .{.definition =
-    .{.name = name, .content = content}})).data.definition;
+  return &(try self.value(pos, .{.definition = .{
+    .name = name, .content = content, .content_pos = content_pos,
+  }})).data.definition;
 }
 
 pub inline fn ast(

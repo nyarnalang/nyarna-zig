@@ -11,10 +11,11 @@ const Error = error {
 pub fn lexTest(data: *TestDataResolver) !void {
   var r = errors.CmdLineReporter.init();
   var proc = try nyarna.Processor.init(
-    std.testing.allocator, nyarna.default_stack_size, &r.reporter);
+    std.testing.allocator, nyarna.default_stack_size, &r.reporter,
+    &data.stdlib.api);
   defer proc.deinit();
   var loader = try proc.initMainModule(&data.api, "input", true);
-  const ml = loader.globals.known_modules.values()[0].require_module;
+  const ml = loader.globals.known_modules.values()[1].require_module;
   defer loader.deinit();
   var expected_content = data.valueLines("tokens");
   var lexer = try ml.initLexer();
@@ -248,6 +249,16 @@ const AstEmitter = struct {
         }
         try branches.pop();
       },
+      .builtingen => |bg| {
+        const lvl = try self.push("BUILTINGEN");
+        switch (bg.returns) {
+          .node => |rnode| try self.process(rnode),
+          .value => |tv| try self.processValue(tv.value()),
+        }
+        try self.emitLine(">PARAMS", .{});
+        try self.process(bg.params.unresolved);
+        try lvl.pop();
+      },
       .concat => |c| {
         for (c.items) |item| try self.process(item);
       },
@@ -392,6 +403,11 @@ const AstEmitter = struct {
         }
         try gen.pop();
       },
+      .gen_prototype => |gp| {
+        const gen = try self.pushWithKey("TGEN", "Prototype", null);
+        try self.process(gp.params.unresolved);
+        try gen.pop();
+      },
       .gen_record => |gr| {
         const gen = try self.pushWithKey("TGEN", "Record", null);
         switch (gr.fields) {
@@ -413,6 +429,15 @@ const AstEmitter = struct {
         try self.emitLine(">EXCLUDE", .{});
         try self.process(gt.exclude_chars);
         try gen.pop();
+      },
+      .gen_unique => |gu| {
+        if (gu.constr_params) |params| {
+          const gen = try self.pushWithKey("TGEN", "Unique", null);
+          try self.process(params);
+          try gen.pop();
+        } else {
+          try self.emitLine("=UNIQUE", .{});
+        }
       },
       .unresolved_access => |a| {
         const access = try self.push("ACCESS");
@@ -638,7 +663,10 @@ const AstEmitter = struct {
       .definition => |def| {
         const wrap = try self.pushWithKey("DEF", def.name.content,
           if (def.root != null) @as([]const u8, "{root}") else null);
-        try self.processValue(def.content);
+        switch (def.content) {
+          .func => try self.emitLine("=FUNC", .{}),
+          .@"type" => |t| try self.processType(t),
+        }
         try wrap.pop();
       },
       .ast => |a| {
@@ -919,10 +947,11 @@ pub fn parseTest(data: *TestDataResolver) !void {
   defer checker.deinit();
   var r = errors.CmdLineReporter.init();
   var proc = try nyarna.Processor.init(
-    std.testing.allocator, nyarna.default_stack_size, &r.reporter);
+    std.testing.allocator, nyarna.default_stack_size, &r.reporter,
+    &data.stdlib.api);
   defer proc.deinit();
   var loader = try proc.initMainModule(&checker.data.api, "input", true);
-  const ml = loader.globals.known_modules.values()[0].require_module;
+  const ml = loader.globals.known_modules.values()[1].require_module;
   defer loader.deinit();
   var emitter = AstEmitter.init(loader.globals, &checker);
   while (!try ml.work()) {}
@@ -936,10 +965,11 @@ pub fn parseErrorTest(data: *TestDataResolver) !void {
   defer checker.deinit();
   var reporter = ErrorEmitter.init(&checker);
   var proc = try nyarna.Processor.init(
-    std.testing.allocator, nyarna.default_stack_size, &reporter.api);
+    std.testing.allocator, nyarna.default_stack_size, &reporter.api,
+    &data.stdlib.api);
   defer proc.deinit();
   var loader = try proc.initMainModule(&checker.data.api, "input", true);
-  const ml = loader.globals.known_modules.values()[0].require_module;
+  const ml = loader.globals.known_modules.values()[1].require_module;
   defer loader.deinit();
   while (!try ml.work()) {}
   try checker.finish();
@@ -950,7 +980,8 @@ pub fn interpretTest(data: *TestDataResolver) !void {
   defer checker.deinit();
   var r = errors.CmdLineReporter.init();
   var proc = try nyarna.Processor.init(
-    std.testing.allocator, nyarna.default_stack_size, &r.reporter);
+    std.testing.allocator, nyarna.default_stack_size, &r.reporter,
+    &data.stdlib.api);
   defer proc.deinit();
   var loader = try proc.startLoading(&data.api, "input");
   if (try loader.finalize()) |document| {
@@ -966,7 +997,8 @@ pub fn interpretErrorTest(data: *TestDataResolver) !void {
   defer checker.deinit();
   var reporter = ErrorEmitter.init(&checker);
   var proc = try nyarna.Processor.init(
-    std.testing.allocator, nyarna.default_stack_size, &reporter.api);
+    std.testing.allocator, nyarna.default_stack_size, &reporter.api,
+    &data.stdlib.api);
   defer proc.deinit();
   var loader = try proc.startLoading(&data.api, "input");
   if (try loader.finalize()) |doc| {
