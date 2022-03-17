@@ -16,24 +16,24 @@
 --- rawast
 +PARA
   +RCALL
-    =SYMREF <intrinsic>.declare
+    =SYMREF .std.system.declare
     >ARG namespace
     =VOID
     >ARG public
     +AST
       +DEF Data
         +RCALL
-          =SYMREF <intrinsic>.Record
+          =SYMREF .std.system.Record
           >ARG fields
           +AST
             +LOC a
               +TYPE
-                =SYMREF <intrinsic>.Raw
+                =SYMREF .std.system.Raw
               -TYPE
             -LOC
             +LOC b
               +TYPE
-                =SYMREF <intrinsic>.Raw
+                =SYMREF .std.system.Raw
               -TYPE
             -LOC
           -AST
@@ -41,7 +41,7 @@
       -DEF
       +DEF foo
         +RCALL
-          =SYMREF <intrinsic>.func
+          =SYMREF .std.system.func
           >ARG return
           =VOID
           >ARG params
@@ -104,9 +104,9 @@
   +CALL
     =TYPE record .doc.input.Data
     >ARG a
-    =TEXT raw "x"
+    =TEXT Raw "x"
     >ARG b
-    =TEXT raw "y"
+    =TEXT Raw "y"
   -CALL
 -CALL
 --- document

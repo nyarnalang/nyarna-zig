@@ -350,7 +350,7 @@ pub const Processor = struct {
       }
       const doc = try self.globals.storage.allocator().create(model.Document);
       doc.* = .{
-        .main = self.globals.known_modules.values()[0].loaded,
+        .main = self.globals.known_modules.values()[1].loaded,
         .globals = self.globals,
       };
       return doc;
@@ -416,8 +416,8 @@ pub const Processor = struct {
       ret.globals.storage.allocator(), "system", model.Position.intrinsic(),
       &logger)).?;
     const system_loader = try ModuleLoader.create(
-      ret.globals, system_ny, self.resolvers.items[1].resolver, "std.system",
-      false);
+      ret.globals, system_ny, self.resolvers.items[1].resolver, ".std.system",
+      false, &lib.system.instance.provider);
     _ = try system_loader.work();
     const module = try system_loader.finalize();
     try ret.globals.known_modules.put(
@@ -432,7 +432,7 @@ pub const Processor = struct {
     std.mem.copy(u8, locator, ".doc.");
     std.mem.copy(u8, locator[5..], main_module);
     const ml = try ModuleLoader.create(
-      ret.globals, desc, doc_resolver, locator, fullast);
+      ret.globals, desc, doc_resolver, locator, fullast, null);
     if (fullast) {
       try ret.globals.known_modules.put(
         ret.globals.storage.allocator(), desc.name, .{.require_module = ml});

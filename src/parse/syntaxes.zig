@@ -817,14 +817,4 @@ pub const SymbolDefs = struct {
       try self.produced.append(self.intpr.allocator, node);
     }
   }
-
-  fn boolFrom(
-    self: *SymbolDefs,
-    pos: ?model.Position,
-    at: model.Position,
-  ) !*model.Node {
-    return self.intpr.genValueNode(self.intpr.ctx.values.@"enum"(
-      pos orelse at, self.intpr.types().getBoolean(),
-      if (pos == null) 0 else 1));
-  }
 };

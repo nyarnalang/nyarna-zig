@@ -293,14 +293,14 @@ pub const DeclareResolution = struct {
       .@"type" => |tref| {
         const sym = try self.genSym(name, .{.@"type" = tref.t}, publish);
         switch (tref.t) {
-          .instantiated => |inst| inst.name = sym,
+          .instantiated => |inst| if (inst.name == null) {inst.name = sym;},
           else => {},
         }
         return sym;
       },
       .funcref => |fref| {
         const sym = try self.genSym(name, .{.func = fref.func}, publish);
-        fref.func.name = sym;
+        if (fref.func.name == null) {fref.func.name = sym;}
         return sym;
       },
       .poison => return try self.genSym(name, .poison, publish),
@@ -533,6 +533,37 @@ pub const DeclareResolution = struct {
         var tr = TypeResolver.init(self, ns_data);
         for (defs) |def| {
           switch (def.content.data) {
+            .builtingen => |*bgen| {
+              if (
+                (try self.intpr.tryInterpretLocationsList(
+                 &bgen.params, .{.kind = .final, .resolve = &tr.ctx}))
+              ) blk: {
+                switch (bgen.returns) {
+                  .value => continue,
+                  .node => |rnode| {
+                    const value = try self.intpr.ctx.evaluator().evaluate(
+                      (
+                        try self.intpr.associate(
+                          rnode, self.intpr.ctx.types().@"type"(),
+                          .{.kind = .final})
+                      ) orelse break :blk
+                    );
+                    switch (value.data) {
+                      .@"type" => |*tv| {
+                        bgen.returns = .{.value = tv};
+                        break;
+                      },
+                      .poison => break :blk,
+                      else => unreachable,
+                    }
+                    continue;
+                  }
+                }
+              }
+              const sym = try self.genSym(def.name, .poison, def.public);
+              _ = try ns_data.tryRegister(self.intpr, sym);
+              def.content.data = .poison;
+            },
             .gen_concat, .gen_intersection, .gen_list, .gen_map, .gen_optional,
             .gen_paragraphs => try tr.process(def),
             .gen_record => |*rgen| {
@@ -635,6 +666,37 @@ pub const DeclareResolution = struct {
       // all other symbols that can be constructed by now.
       for (defs) |def| {
         switch (def.content.data) {
+          .builtingen => |*bgen| {
+            if (
+              try self.intpr.tryInterpretBuiltin(bgen, .{.kind = .intermediate})
+            ) {
+              if (self.intpr.builtin_provider) |provider| blk: {
+                const ret_type = bgen.returns.value;
+                const locations = &bgen.params.resolved.locations;
+                var finder = (try self.intpr.processLocations(
+                  locations, .{.kind = .final})) orelse break :blk;
+                const finder_res = try finder.finish(ret_type.t, false);
+                var builder = try nyarna.types.SigBuilder.init(
+                  self.intpr.ctx, locations.len, ret_type.t,
+                  finder_res.needs_different_repr);
+                for (locations.*) |loc| try builder.push(loc.value);
+                const builder_res = builder.finish();
+
+                const sym = try self.genSym(def.name, undefined, def.public);
+                sym.data = if (
+                  try lib.extFunc(
+                    self.intpr.ctx, sym, builder_res, false, provider)
+                ) |func| .{.func = func} else .poison;
+                _ = try ns_data.tryRegister(self.intpr, sym);
+                continue;
+              } else {
+                self.intpr.ctx.logger.NoBuiltinProvider(def.content.pos);
+              }
+              const sym = try self.genSym(def.name, .poison, def.public);
+              _ = try ns_data.tryRegister(self.intpr, sym);
+              def.content.data = .poison;
+            }
+          },
           .funcgen => |*fgen| blk: {
             const func = (try self.intpr.tryPregenFunc(
               fgen, fgen.cur_returns, .{.kind = .final})) orelse {

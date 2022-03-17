@@ -22,6 +22,25 @@ fn registerMagicFunc(
   res.value_ptr.* = sym;
 }
 
+fn extFuncSymbol(
+  ctx: Context,
+  name: []const u8,
+  ns_dependent: bool,
+  bres: types.SigBuilderResult,
+  p: *const lib.Provider,
+) !?*model.Symbol {
+  const ret = try ctx.global().create(model.Symbol);
+  ret.defined_at = model.Position.intrinsic();
+  ret.name = name;
+  if (try lib.extFunc(ctx, ret, bres, ns_dependent, p)) |func| {
+    ret.data = .{.func = func};
+    return ret;
+  } else {
+    ctx.global().destroy(ret);
+    return null;
+  }
+}
+
 const Impl = lib.Provider.Wrapper(struct {
   /// \magic defines the functions implicitly available in every namespace.
   pub fn magic(
@@ -30,7 +49,6 @@ const Impl = lib.Provider.Wrapper(struct {
     ns: u15,
     arg: *model.Node,
   ) nyarna.Error!*model.Node {
-    const systemImpl = system.Impl.init();
     var collector = system.DefCollector{.dt = intpr.ctx.types().definition()};
     try collector.collect(arg, intpr);
     try collector.allocate(intpr.allocator);
@@ -46,7 +64,7 @@ const Impl = lib.Provider.Wrapper(struct {
           intpr.ctx.logger.TypeInMagic(decl.node().pos),
         .funcgen => intpr.ctx.logger.NyFuncInMagic(decl.node().pos),
         .builtingen => |*bg| {
-          if ((try intpr.tryInterpretBuiltin(bg, .{.kind = .intermediate}))) {
+          if (try intpr.tryInterpretBuiltin(bg, .{.kind = .intermediate})) {
             const ret_type = bg.returns.value;
             const locations = &bg.params.resolved.locations;
             var finder = (try intpr.processLocations(
@@ -59,10 +77,11 @@ const Impl = lib.Provider.Wrapper(struct {
             const builder_res = builder.finish();
 
             const sym = (
-              try lib.extFuncSymbol(
+              try extFuncSymbol(
                 intpr.ctx, try intpr.ctx.global().dupe(u8, decl.name.content),
-                true, builder_res, &systemImpl.provider)
+                true, builder_res, &system.instance.provider)
             ) orelse continue;
+            sym.defined_at = decl.name.node().pos;
             try registerMagicFunc(intpr, namespace, sym);
           }
         },
@@ -201,14 +220,14 @@ pub fn magicModule(ctx: Context) !*model.Module {
     (try ctx.values.intLocation("decls", ctx.types().ast())).withPrimary(
       model.Position.intrinsic()).withHeader(definition_block));
   module.symbols[index] =
-    (try lib.extFuncSymbol(ctx, "magic", true, b.finish(), &impl.provider)).?;
+    (try extFuncSymbol(ctx, "magic", true, b.finish(), &impl.provider)).?;
   index += 1;
 
   b = try types.SigBuilder.init(ctx, 1, t.ast(), false);
   try b.push((try ctx.values.intLocation("params", t.ast())).withPrimary(
     model.Position.intrinsic()).withHeader(location_block));
   module.symbols[index] = (
-    try lib.extFuncSymbol(
+    try extFuncSymbol(
       ctx, "keyword", false, b.finish(), &systemImpl.provider)
   ).?;
   index += 1;
@@ -218,7 +237,7 @@ pub fn magicModule(ctx: Context) !*model.Module {
     "constrParams", (try ctx.types().optional(t.ast())).?
   )).withPrimary(model.Position.intrinsic()).withHeader(location_block));
   module.symbols[index] = (
-    try lib.extFuncSymbol(ctx, "unique", false, b.finish(), &impl.provider)
+    try extFuncSymbol(ctx, "unique", false, b.finish(), &impl.provider)
   ).?;
   index += 1;
 
@@ -226,7 +245,7 @@ pub fn magicModule(ctx: Context) !*model.Module {
   try b.push((try ctx.values.intLocation("params", t.ast())).withPrimary(
     model.Position.intrinsic()).withHeader(location_block));
   module.symbols[index] = (
-    try lib.extFuncSymbol(ctx, "prototype", true, b.finish(), &impl.provider)
+    try extFuncSymbol(ctx, "prototype", true, b.finish(), &impl.provider)
   ).?;
   index += 1;
 

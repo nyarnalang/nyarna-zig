@@ -8,6 +8,20 @@ const Evaluator = @import("../runtime.zig").Evaluator;
 const model = nyarna.model;
 const types = nyarna.types;
 
+fn nodeToVarargsItemList(
+  intpr: *Interpreter,
+  node: *model.Node,
+) ![]model.Node.Varargs.Item {
+  return switch (node.data) {
+    .varargs => |*va| va.content.items,
+    else => blk: {
+      const arr = try intpr.allocator.alloc(model.Node.Varargs.Item, 1);
+      arr[0] = .{.direct = true, .node = node};
+      break :blk arr;
+    }
+  };
+}
+
 pub const Types = lib.Provider.Wrapper(struct {
   pub fn @"Raw"(
     _: *Evaluator,
@@ -201,10 +215,11 @@ pub const Prototypes = lib.Provider.Wrapper(struct {
   pub fn @"Paragraphs"(
     intpr: *Interpreter,
     pos: model.Position,
-    inners: []*model.Node,
+    inners: *model.Node,
     auto: ?*model.Node,
   ) nyarna.Error!*model.Node {
-    return (try intpr.node_gen.tgParagraphs(pos, inners, auto)).node();
+    return (try intpr.node_gen.tgParagraphs(
+      pos, try nodeToVarargsItemList(intpr, inners), auto)).node();
   }
 
   pub fn @"Map"(
@@ -249,15 +264,8 @@ pub const Prototypes = lib.Provider.Wrapper(struct {
     pos: model.Position,
     input_types: *model.Node,
   ) nyarna.Error!*model.Node {
-    const given_types = switch (input_types.data) {
-      .varargs => |*va| va.content.items,
-      else => blk: {
-        const arr = try intpr.allocator.alloc(model.Node.Varargs.Item, 1);
-        arr[0] = .{.direct = true, .node = input_types};
-        break :blk arr;
-      }
-    };
-    return (try intpr.node_gen.tgIntersection(pos, given_types)).node();
+    return (try intpr.node_gen.tgIntersection(
+      pos, try nodeToVarargsItemList(intpr, input_types))).node();
   }
 
   pub fn @"Textual"(
@@ -291,8 +299,9 @@ pub const Prototypes = lib.Provider.Wrapper(struct {
   pub fn @"Enum"(
     intpr: *Interpreter,
     pos: model.Position,
-    values: []*model.Node,
+    values: *model.Node,
   ) nyarna.Error!*model.Node {
-    return (try intpr.node_gen.tgEnum(pos, values)).node();
+    return (try intpr.node_gen.tgEnum(
+      pos, try nodeToVarargsItemList(intpr, values))).node();
   }
 });

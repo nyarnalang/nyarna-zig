@@ -40,7 +40,7 @@
   +ACCESS first
     =GETVAR val
   -ACCESS
-  =TEXT raw "\n"
+  =TEXT Raw "\n"
   +ACCESS second
     =GETVAR val
   -ACCESS

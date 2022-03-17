@@ -28,7 +28,7 @@
 -PARA
 +PARA
   +RCALL
-    =SYMREF <intrinsic>.if
+    =SYMREF .std.system.if
     >ARG condition
     +AST
       =LIT text "true"
@@ -51,7 +51,7 @@
     +PROTO primary
       =LIT text "\\this is not a command "
       +RCALL
-        =SYMREF <intrinsic>.if
+        =SYMREF .std.system.if
         >ARG condition
         +AST
           =LIT text "true"

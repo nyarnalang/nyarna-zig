@@ -154,6 +154,8 @@ pub const Interpreter = struct {
   /// length equals the current list of open levels whose block configuration
   /// includes `varhead`.
   var_containers: std.ArrayListUnmanaged(ActiveVarContainer),
+  /// the implementation of builtin functions for this module, if any.
+  builtin_provider: ?*const lib.Provider,
 
   /// creates an interpreter.
   pub fn create(
@@ -161,6 +163,7 @@ pub const Interpreter = struct {
     allocator: std.mem.Allocator,
     source: *model.Source,
     public_ns: *std.ArrayListUnmanaged(*model.Symbol),
+    provider: ?*const lib.Provider,
   ) !*Interpreter {
     var ret = try allocator.create(Interpreter);
     ret.* = .{
@@ -173,6 +176,7 @@ pub const Interpreter = struct {
       .public_namespace = public_ns,
       .variables = .{},
       .var_containers = .{},
+      .builtin_provider = provider,
     };
     ret.node_gen = model.NodeGenerator.init(allocator, ctx.types());
     try ret.addNamespace('\\');
@@ -1126,7 +1130,6 @@ pub const Interpreter = struct {
     stage: Stage,
   ) nyarna.Error!?*model.Expression {
     switch (stage.kind) {
-      .intermediate => return null,
       .resolve => {
         _ = try chains.Resolver.init(self, stage).resolve(uc.target);
         for (uc.proto_args) |arg| {
@@ -1137,7 +1140,7 @@ pub const Interpreter = struct {
         return null;
       },
       else => return self.interpretCallToChain(
-      uc, try chains.Resolver.init(self, stage).resolve(uc.target), stage),
+        uc, try chains.Resolver.init(self, stage).resolve(uc.target), stage),
     }
   }
 
@@ -1287,7 +1290,47 @@ pub const Interpreter = struct {
     ge: *model.Node.tg.Enum,
     stage: Stage,
   ) nyarna.Error!?*model.Expression {
-    _ = self; _ = ge; _ = stage; unreachable;
+    var result =
+      try self.tryProcessVarargs(ge.values, self.ctx.types().raw(), stage);
+
+    var builder = try types.EnumTypeBuilder.init(self.ctx, ge.node().pos);
+
+    for (ge.values) |item| {
+      if (item.direct) {
+        switch (item.node.data.expression.data.value.data) {
+          .poison => {},
+          .list => |*list| for (list.content.items) |child| {
+            try builder.add(child.data.text.content, child.origin);
+          },
+          else => unreachable,
+        }
+      } else {
+        const expr = (
+          try self.associate(item.node, self.ctx.types().raw(), stage)
+        ) orelse {
+          if (result.kind != .poison) result.kind = .failed;
+          continue;
+        };
+        const value = try self.ctx.evaluator().evaluate(expr);
+        switch (value.data) {
+          .poison => result.kind = .poison,
+          .text => |*text| try builder.add(text.content, value.origin),
+          else => unreachable,
+        }
+        expr.data = .{.value = value};
+        item.node.data = .{.expression = expr};
+      }
+    }
+    switch (result.kind) {
+      .poison => return try self.ctx.createValueExpr(
+        try self.ctx.values.poison(ge.node().pos)),
+      .failed => return null,
+      .success => {
+        const t = (try builder.finish()).typedef();
+        return try self.ctx.createValueExpr(
+          (try self.ctx.values.@"type"(ge.node().pos, t)).value());
+      },
+    }
   }
 
   fn tryGenFloat(
@@ -1345,30 +1388,61 @@ pub const Interpreter = struct {
     }
   };
 
+  const VarargsProcessResult = struct {
+    const Kind = enum{success, failed, poison};
+    kind: Kind,
+    /// the maximum number of value that can be produced. Sum of the number of
+    /// children in direct items that can be interpreted, plus number of
+    /// non-direct items.
+    max: usize,
+  };
+
+  fn tryProcessVarargs(
+    self: *Interpreter,
+    items: []model.Node.Varargs.Item,
+    inner_type: model.Type,
+    stage: Stage,
+  ) nyarna.Error!VarargsProcessResult {
+    const list_type = (try self.ctx.types().list(inner_type)).?;
+    var failed_some = false;
+    var poison = false;
+    var count: usize = 0;
+    for (items) |item| {
+      if (item.direct) {
+        const expr = (
+          try self.associate(item.node, list_type, stage)
+        ) orelse {
+          failed_some = true;
+          continue;
+        };
+        const value = try self.ctx.evaluator().evaluate(expr);
+        switch (value.data) {
+          .poison => poison = true,
+          .list => |*list| count += list.content.items.len,
+          else => unreachable,
+        }
+        expr.data = .{.value = value};
+        item.node.data = .{.expression = expr};
+      } else count += 1;
+    }
+    return VarargsProcessResult{
+      .max = count,
+      .kind = if (poison) VarargsProcessResult.Kind.poison
+              else if (failed_some) VarargsProcessResult.Kind.failed
+              else .success,
+    };
+  }
+
   fn tryGenIntersection(
     self: *Interpreter,
     gi: *model.Node.tg.Intersection,
     stage: Stage,
   ) nyarna.Error!?*model.Expression {
-    var failed_some = false;
-    var poison = false;
-    var type_count: usize = 0;
-    for (gi.types) |item| {
-      if (item.direct) {
-        if (try self.tryInterpret(item.node, stage)) |expr| {
-          const val = try self.ctx.evaluator().evaluate(expr);
-          switch (val.data) {
-            .poison => poison = true,
-            .list => |*list| type_count += list.content.items.len,
-            else => unreachable,
-          }
-          item.node.data = .{.expression = try self.ctx.createValueExpr(val)};
-        }
-      } else type_count += 1;
-    }
+    var result =
+      try self.tryProcessVarargs(gi.types, self.ctx.types().@"type"(), stage);
 
     var builder = try types.IntersectionTypeBuilder.init(
-      type_count + 1, self.allocator);
+      result.max + 1, self.allocator);
     var checker = IntersectionChecker{.builder = &builder, .intpr = self};
 
     for (gi.types) |item| {
@@ -1380,7 +1454,7 @@ pub const Interpreter = struct {
               checker.push(list_item.data.@"type".t, list_item.origin);
             }
           },
-          .poison => {},
+          .poison => result.kind = .poison,
           else => unreachable,
         }
       } else {
@@ -1388,28 +1462,30 @@ pub const Interpreter = struct {
           .finished => |t| t,
           .unfinished => |t| t,
           .unavailable => {
-            failed_some = true;
+            if (result.kind != .poison) result.kind = .failed;
             continue;
           },
           .failed => {
-            poison = true;
+            result.kind = .poison;
             continue;
           },
         };
         checker.push(inner, item.node.pos);
       }
     }
-    if (poison) {
-      return try self.ctx.createValueExpr(
-        try self.ctx.values.poison(gi.node().pos));
+    switch (result.kind) {
+      .poison => return try self.ctx.createValueExpr(
+        try self.ctx.values.poison(gi.node().pos)),
+      .failed => return null,
+      .success => {
+        if (checker.scalar) |*found_scalar| {
+          builder.push(@ptrCast([*]const model.Type, &found_scalar.t)[0..1]);
+        }
+        const t = try builder.finish(self.ctx.types());
+        return try self.ctx.createValueExpr(
+          (try self.ctx.values.@"type"(gi.node().pos, t)).value());
+      }
     }
-    if (failed_some) return null;
-    if (checker.scalar) |*found_scalar| {
-      builder.push(@ptrCast([*]const model.Type, &found_scalar.t)[0..1]);
-    }
-    const t = try builder.finish(self.ctx.types());
-    return try self.ctx.createValueExpr(
-      (try self.ctx.values.@"type"(gi.node().pos, t)).value());
   }
 
   fn tryGenList(
@@ -2080,11 +2156,24 @@ pub const Interpreter = struct {
       },
       .branches => |br| {
         const condition = cblk: {
-          // TODO: support non-boolean branching
-          if (try self.interpretWithTargetScalar(br.condition,
-              self.ctx.types().getBoolean().typedef(), stage)) |expr|
-            break :cblk expr
-          else return null;
+          if (br.cond_type) |ct| {
+            if (
+              try self.interpretWithTargetScalar(br.condition, ct, stage)
+            ) |expr| break :cblk expr
+            else return null;
+          } else {
+            const expr = (
+              try self.tryInterpret(br.condition, stage)
+            ) orelse return null;
+            if (expr.expected_type.isInst(.tenum)) {
+              break :cblk expr;
+            } else if (!expr.expected_type.isInst(.poison)) {
+              self.ctx.logger.CannotBranchOn(
+                br.condition.pos, &[_]model.Type{expr.expected_type});
+            }
+            return try
+              self.ctx.createValueExpr(try self.ctx.values.poison(input.pos));
+          }
         };
         const actual_type =
           (try self.probeNodeList(br.branches, stage)) orelse return null;

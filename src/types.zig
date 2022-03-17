@@ -257,7 +257,6 @@ pub const Lattice = struct {
     void        : model.Type.Instantiated,
   },
   /// predefined types. TODO: move these into predefined.
-  boolean: *model.Type.Instantiated,
   unicode_category: *model.Type.Instantiated,
   integer: *model.Type.Instantiated,
 
@@ -275,7 +274,6 @@ pub const Lattice = struct {
       },
       .constructors = .{}, // set later by loading the intrinsic lib
       .predefined = undefined,
-      .boolean = undefined,
       .unicode_category = undefined,
       .integer = undefined,
     };
@@ -289,30 +287,19 @@ pub const Lattice = struct {
     }
 
     var builder = try EnumTypeBuilder.init(ctx, model.Position.intrinsic());
-    ret.boolean = blk: {
-      try builder.add("false");
-      try builder.add("true");
-      const e = try builder.finish();
-      const boolsym = try ret.allocator.create(model.Symbol);
-      boolsym.defined_at = model.Position.intrinsic();
-      boolsym.name = "Boolean";
-      boolsym.data = .{.@"type" = .{.instantiated = e.instantiated()}};
-      e.instantiated().name = boolsym;
-      break :blk e.instantiated();
-    };
 
     builder = try EnumTypeBuilder.init(ctx, model.Position.intrinsic());
     ret.unicode_category = blk: {
       inline for (@typeInfo(unicode.Category).Enum.fields) |f| {
-        try builder.add(f.name);
+        try builder.add(f.name, model.Position.intrinsic());
       }
-      try builder.add("Lut");
-      try builder.add("LC");
-      try builder.add("L");
-      try builder.add("M");
-      try builder.add("P");
-      try builder.add("S");
-      try builder.add("MPS");
+      try builder.add("Lut", model.Position.intrinsic());
+      try builder.add("LC", model.Position.intrinsic());
+      try builder.add("L", model.Position.intrinsic());
+      try builder.add("M", model.Position.intrinsic());
+      try builder.add("P", model.Position.intrinsic());
+      try builder.add("S", model.Position.intrinsic());
+      try builder.add("MPS", model.Position.intrinsic());
       const e = try builder.finish();
       const unisym = try ret.allocator.create(model.Symbol);
       unisym.defined_at = model.Position.intrinsic();
@@ -700,11 +687,6 @@ pub const Lattice = struct {
       }
     }
     return res;
-  }
-
-  /// returns Nyarna's builtin boolean type
-  pub fn getBoolean(self: *Self) *const model.Type.Enum {
-    return &self.boolean.data.tenum;
   }
 
   pub fn getInteger(self: *Self) *const model.Type.Numeric {
@@ -1196,8 +1178,8 @@ pub const EnumTypeBuilder = struct {
     return Self{.ctx = ctx, .ret = &inst.data.tenum};
   }
 
-  pub inline fn add(self: *Self, value: []const u8) !void {
-    try self.ret.values.put(self.ctx.global(), value, 0);
+  pub inline fn add(self: *Self, value: []const u8, pos: model.Position) !void {
+    try self.ret.values.put(self.ctx.global(), value, pos);
   }
 
   pub fn finish(self: *Self) !*model.Type.Enum {

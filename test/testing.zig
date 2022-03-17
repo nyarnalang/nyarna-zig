@@ -341,7 +341,7 @@ const AstEmitter = struct {
       },
       .resolved_symref => |res|
         try self.emitLine("=SYMREF {s}.{s}",
-          .{res.sym.defined_at.source.name, res.sym.name}),
+          .{res.sym.defined_at.source.locator, res.sym.name}),
       .gen_concat => |gc| {
         const gen = try self.pushWithKey("TGEN", "Concat", null);
         try self.process(gc.inner);
@@ -349,7 +349,7 @@ const AstEmitter = struct {
       },
       .gen_enum => |ge| {
         const gen = try self.pushWithKey("TGEN", "Enum", null);
-        for (ge.values) |value| try self.process(value);
+        for (ge.values) |value| try self.process(value.node);
         try gen.pop();
       },
       .gen_float => |gf| {
@@ -396,7 +396,7 @@ const AstEmitter = struct {
       },
       .gen_paragraphs => |gp| {
         const gen = try self.pushWithKey("TGEN", "Paragraphs", null);
-        for (gp.inners) |inner| try self.process(inner);
+        for (gp.inners) |inner| try self.process(inner.node);
         if (gp.auto) |auto| {
           try self.emitLine(">AUTO", .{});
           try self.process(auto);

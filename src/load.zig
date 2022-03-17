@@ -57,6 +57,7 @@ pub const ModuleLoader = struct {
     resolver: *nyarna.Resolver,
     location: []const u8,
     fullast: bool,
+    provider: ?*const lib.Provider,
   ) !*ModuleLoader {
     var ret = try data.storage.allocator().create(ModuleLoader);
     ret.* = .{
@@ -71,7 +72,8 @@ pub const ModuleLoader = struct {
     errdefer data.storage.allocator().destroy(ret);
     const source =
       (try resolver.getSource(
-        ret.storage.allocator(), input, location, &ret.logger))
+        ret.storage.allocator(), data.storage.allocator(), input, location,
+        &ret.logger))
       orelse blk: {
         const poison = try data.storage.allocator().create(model.Expression);
         poison.* = .{
@@ -85,7 +87,7 @@ pub const ModuleLoader = struct {
         break :blk undefined;
       };
     ret.interpreter = try Interpreter.create(
-      ret.ctx(), ret.storage.allocator(), source, &ret.public_syms);
+      ret.ctx(), ret.storage.allocator(), source, &ret.public_syms, provider);
     return ret;
   }
 
@@ -206,7 +208,8 @@ pub const ModuleLoader = struct {
               self.data.storage.allocator(), locator.path, pos, &self.logger)
           ) |desc| {
             resolver = re.resolver;
-            abs_locator = locator.repr;
+            abs_locator =
+              try self.data.storage.allocator().dupe(u8, locator.repr);
             break :blk desc;
           }
           self.logger.CannotResolveLocator(pos);
@@ -217,9 +220,8 @@ pub const ModuleLoader = struct {
       return null;
     } else blk: {
       // try to resolve the locator relative to the current module.
-      var fullpath = try self.storage.allocator().alloc(
+      var fullpath = try self.data.storage.allocator().alloc(
         u8, self.interpreter.input.locator_ctx.len + locator.path.len);
-      defer self.storage.allocator().free(fullpath);
       std.mem.copy(u8, fullpath, self.interpreter.input.locator_ctx);
       std.mem.copy(
         u8, (fullpath.ptr + self.interpreter.input.locator_ctx.len)[
@@ -243,7 +245,7 @@ pub const ModuleLoader = struct {
           try re.resolver.resolve(
             self.data.storage.allocator(), locator.path, pos, &self.logger)
         ) |desc| {
-          fullpath = try self.storage.allocator().realloc(
+          fullpath = try self.data.storage.allocator().realloc(
             fullpath, 2 + re.name.len + locator.path.len);
           fullpath[0] = '.';
           std.mem.copy(u8, fullpath[1..], re.name);
@@ -254,11 +256,13 @@ pub const ModuleLoader = struct {
           break :blk desc;
         }
       };
+      self.data.storage.allocator().free(fullpath);
       self.logger.CannotResolveLocator(pos);
       return null;
     };
+    // TODO: builtin provider
     const loader =
-      try create(self.data, descriptor, resolver, abs_locator, false);
+      try create(self.data, descriptor, resolver, abs_locator, false, null);
     const res = try self.data.known_modules.getOrPut(
       self.data.storage.allocator(), abs_locator);
     std.debug.assert(!res.found_existing);

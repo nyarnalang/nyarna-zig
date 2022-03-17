@@ -2,7 +2,7 @@
 --- input
 \declare:
   foo = \func:
-    cond: \Boolean {primary}
+    cond: \Bool {primary}
   :body:
     \if(\cond):
       foo

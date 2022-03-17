@@ -12,7 +12,7 @@
 +CALL
   =FUNCREF .doc.input.<anonymous>
   >ARG t
-  =TEXT raw "x"
+  =TEXT Raw "x"
 -CALL
 --- output
 xx

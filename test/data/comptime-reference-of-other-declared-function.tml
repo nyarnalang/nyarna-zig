@@ -15,5 +15,5 @@
 +CALL
   =FUNCREF .doc.input.idem
   >ARG in
-  =TEXT raw "spam"
+  =TEXT Raw "spam"
 -CALL

@@ -4,7 +4,7 @@
 foo
 --- rawast
 +RCALL
-  =SYMREF <intrinsic>.if
+  =SYMREF .std.system.if
   >ARG condition
   +AST
     =LIT text "true"
@@ -18,11 +18,11 @@ foo
 -RCALL
 --- expr
 +BRANCHES
-  =ENUM Boolean "true"
+  =ENUM Bool "true"
   >BRANCH 0
   =VOID
   >BRANCH 1
-  =TEXT literal "foo"
+  =TEXT Literal "foo"
 -BRANCHES
 --- document
 =RAW Raw "foo"

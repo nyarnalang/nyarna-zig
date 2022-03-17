@@ -15,7 +15,7 @@
 9:1 - 9:12 InvalidEndCommand
 9:18 - 9:19 IllegalBlocksStartInArgs
 9:19 - 9:20 IncompatibleTypes
-  types = literal, [type] (raw) -> raw
+  types = Literal, [type] (Raw) -> Raw
 11:20 - 11:21 IllegalNameSep
 7:11 - 7:17 UnknownSymbol
   name = block

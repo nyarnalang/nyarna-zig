@@ -229,23 +229,6 @@ pub fn extFunc(
   return ret;
 }
 
-pub fn extFuncSymbol(
-  ctx: Context,
-  name: []const u8,
-  ns_dependent: bool,
-  bres: types.SigBuilderResult,
-  p: *const Provider,
-) !?*model.Symbol {
-  const ret = try ctx.global().create(model.Symbol);
-  ret.defined_at = model.Position.intrinsic();
-  ret.name = name;
-  ret.data = .{.func = (try extFunc(ctx, ret, bres, ns_dependent, p)) orelse {
-    ctx.global().destroy(ret);
-    return null;
-  }};
-  return ret;
-}
-
 fn typeConstructor(
   ctx: Context,
   p: *Provider,

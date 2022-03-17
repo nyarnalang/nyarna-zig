@@ -153,12 +153,22 @@ pub const Impl = lib.Provider.Wrapper(struct {
     nodes[1] = then orelse try intpr.node_gen.void(pos);
     nodes[0] = @"else" orelse try intpr.node_gen.void(pos);
 
+    // TODO: improve getting this
+    const bool_type = for (
+      intpr.ctx.data.known_modules.values()[0].loaded.symbols
+    ) |sym| {
+      if (std.mem.eql(u8, "Bool", sym.name)) {
+        break sym.data.@"type";
+      }
+    } else unreachable;
+
     const ret = try intpr.allocator.create(model.Node);
     ret.* = .{
       .pos = pos,
       .data = .{
         .branches = .{
           .condition = condition,
+          .cond_type = bool_type,
           .branches = nodes,
         },
       },
@@ -447,3 +457,5 @@ pub const Impl = lib.Provider.Wrapper(struct {
     return try (try Proc.init(intpr, ns, pos)).node(defs);
   }
 });
+
+pub const instance = Impl.init();

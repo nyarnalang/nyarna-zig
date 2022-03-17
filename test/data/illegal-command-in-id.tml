@@ -11,7 +11,7 @@
 3:9 - 3:9 MissingId
 3:9 - 3:12 IllegalContentAfterId
 3:13 - 3:16 NotInEnum
-  t = Boolean
+  t = Bool
   repr = foo
 6:13 - 6:16 IllegalContentAfterId
 9:13 - 10:1 IllegalContentAfterId

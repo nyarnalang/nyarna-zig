@@ -7,8 +7,8 @@ Dolor sit amet
 \import(foo)
 \import(bar)
 --- expr
-=TEXT literal "Lorem ipsum"
-=TEXT literal "\n"
-=TEXT literal "Dolor sit amet"
+=TEXT Literal "Lorem ipsum"
+=TEXT Literal "\n"
+=TEXT Literal "Dolor sit amet"
 --- document
 =RAW Raw "Lorem ipsum\nDolor sit amet"

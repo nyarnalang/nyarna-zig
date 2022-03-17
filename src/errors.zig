@@ -21,7 +21,7 @@ pub const GenericParserError = enum {
   MethodOutsideDeclare, CannotResolveLocator, ImportIllegalInFullast,
   MissingInitialValue, IllegalNumericInterval, EntityCannotBeNamed,
   SurplusFlags, TypeInMagic, NyFuncInMagic, BuiltinMustBeNamed,
-  ConstructorUnavailable,
+  ConstructorUnavailable, NoBuiltinProvider,
 };
 
 pub const WrongItemError = enum {
@@ -98,6 +98,7 @@ pub const PreviousOccurenceError = enum {
   DuplicateBlockHeader, IncompatibleFlag, DuplicateAutoSwallow,
   DuplicateParameterArgument, MissingParameterArgument, DuplicateSymbolName,
   MultipleScalarTypesInIntersection, MissingEndCommand, CannotAssignToConst,
+  DuplicateEnumValue,
 
   fn errorMsg(e: PreviousOccurenceError) []const u8 {
     return switch (e) {
@@ -117,6 +118,7 @@ pub const PreviousOccurenceError = enum {
         " conflicts with another scalar type",
       .MissingEndCommand => " is missing and explict end",
       .CannotAssignToConst => " is constant and cannot be assigned to",
+      .DuplicateEnumValue => " occurs multiple times",
     };
   }
 
@@ -131,6 +133,7 @@ pub const PreviousOccurenceError = enum {
       .MultipleScalarTypesInIntersection => "type",
       .MissingEndCommand => "command",
       .CannotAssignToConst => "variable",
+      .DuplicateEnumValue => "enum value",
     };
   }
 
@@ -145,6 +148,7 @@ pub const PreviousOccurenceError = enum {
       .MultipleScalarTypesInIntersection => "previous type",
       .MissingEndCommand => "here",
       .CannotAssignToConst => "variable definition",
+      .DuplicateEnumValue => "first seen",
     };
   }
 };
@@ -173,6 +177,8 @@ pub const WrongTypeError = enum {
    InvalidInnerListType,
    /// gives one type.
    InvalidDefinitionValue,
+   /// gives one type.
+   CannotBranchOn,
 };
 
 pub const ConstructionError = enum {
@@ -466,6 +472,10 @@ pub const CmdLineReporter = struct {
         self.renderError(
           "given value for symbol definition is '{}' " ++
           "which cannot be made into a symbol", .{t_fmt});
+      },
+      .CannotBranchOn => {
+        const t_fmt = types[0].formatter();
+        self.renderError("cannot branch on expression of type '{}'", .{t_fmt});
       },
     }
   }

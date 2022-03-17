@@ -21,7 +21,7 @@
   +ASSIGNMENT
     =TARGET bar
     >EXPR
-    =TEXT raw ""
+    =TEXT Raw ""
   -ASSIGNMENT
   >PARA 1
   +ASSIGNMENT
@@ -32,7 +32,7 @@
   +ASSIGNMENT
     =TARGET bar
     >EXPR
-    =TEXT raw "Foobar"
+    =TEXT Raw "Foobar"
   -ASSIGNMENT
   +ASSIGNMENT
     =TARGET foo

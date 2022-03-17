@@ -220,7 +220,7 @@ pub inline fn tgConcat(
 pub inline fn tgEnum(
   self: *Self,
   pos: Position,
-  values: []*Node,
+  values: []Node.Varargs.Item,
 ) !*Node.tg.Enum {
   return &(try self.node(
     pos, .{.gen_enum = .{.values = values}})).data.gen_enum;
@@ -290,7 +290,7 @@ pub inline fn tgOptional(
 pub inline fn tgParagraphs(
   self: *Self,
   pos: Position,
-  inners: []*Node,
+  inners: []Node.Varargs.Item,
   auto: ?*Node,
 ) !*Node.tg.Paragraphs {
   return &(try self.node(

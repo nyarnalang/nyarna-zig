@@ -105,7 +105,8 @@
     else: \Optional(\Ast)
   \end(keyword)
 
-  #Bool = \Enum(false, true)
+  Bool = \Enum(false, true)
+  Integer = \Numeric()
 :private:
   FrameRoot   = \unique()
   Literal     = \unique()

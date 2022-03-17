@@ -46,18 +46,19 @@ pub const Resolver = struct {
 
   pub inline fn getSource(
     self: *Resolver,
-    allocator: std.mem.Allocator,
+    source_allocator: std.mem.Allocator,
+    descriptor_allocator: std.mem.Allocator,
     cursor: *Cursor,
     absolute_locator: []const u8,
     logger: *errors.Handler,
   ) std.mem.Allocator.Error!?*model.Source {
-    const descriptor = try allocator.create(model.Source.Descriptor);
+    const descriptor = try descriptor_allocator.create(model.Source.Descriptor);
     descriptor.* = .{
       .name = cursor.name,
       .locator = absolute_locator,
       .argument = false,
     };
-    return self.getSourceFn(self, allocator, cursor, descriptor, logger);
+    return self.getSourceFn(self, source_allocator, cursor, descriptor, logger);
   }
 };
 

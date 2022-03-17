@@ -2,13 +2,13 @@
 --- input
 \declare:
   foo = \func:
-    recurse: \Boolean;
+    recurse: \Bool;
   :body:
     foo\if(\recurse, \bar(false))
   \end(func)
 
   bar = \func:
-    recurse: \Boolean;
+    recurse: \Bool;
   :body:
     bar\if(\recurse, \foo(false))
   \end(func)
@@ -38,11 +38,11 @@
 +CALL
   =FUNCREF .doc.input.foo
   >ARG recurse
-  =ENUM Boolean "true"
+  =ENUM Bool "true"
 -CALL
-=TEXT literal "\n"
+=TEXT Literal "\n"
 +CALL
   =FUNCREF .doc.input.bar
   >ARG recurse
-  =ENUM Boolean "true"
+  =ENUM Bool "true"
 -CALL

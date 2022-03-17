@@ -2,7 +2,7 @@
 --- input
 \declare:
   foo = \record:
-    a : \Boolean; b, c : \Raw
+    a : \Bool; b, c : \Raw
   \end(record)
 \end(declare)
 

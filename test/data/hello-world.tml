@@ -13,7 +13,7 @@
 +CALL
   =FUNCREF .doc.input.hello
   >ARG who
-  =TEXT raw "World"
+  =TEXT Raw "World"
 -CALL
 --- document
 =RAW Raw "Hello, World!"

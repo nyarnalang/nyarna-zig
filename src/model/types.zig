@@ -231,7 +231,8 @@ pub const Enum = struct {
   constructor: *Callable,
   /// retains the order of the enum values.
   /// must not be modified after creation.
-  values: std.StringArrayHashMapUnmanaged(u0),
+  /// the map's value is the position where the enum value has been defined.
+  values: std.StringArrayHashMapUnmanaged(model.Position),
 
   pub inline fn pos(self: *const @This()) Position {
     return Instantiated.pos(self);

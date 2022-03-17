@@ -10,7 +10,7 @@
 \end(if)
 --- rawast
 +RCALL
-  =SYMREF <intrinsic>.if
+  =SYMREF .std.system.if
   >ARG condition
   +AST
     =LIT text "true"
@@ -24,7 +24,7 @@
 -RCALL
 =LIT space "\n"
 +RCALL
-  =SYMREF <intrinsic>.if
+  =SYMREF .std.system.if
   >ARG condition
   +AST
     =LIT text "false"
@@ -40,19 +40,19 @@
 -RCALL
 --- expr
 +BRANCHES
-  =ENUM Boolean "true"
+  =ENUM Bool "true"
   >BRANCH 0
   =VOID
   >BRANCH 1
-  =TEXT literal "foo"
+  =TEXT Literal "foo"
 -BRANCHES
-=TEXT literal "\n"
+=TEXT Literal "\n"
 +BRANCHES
-  =ENUM Boolean "false"
+  =ENUM Bool "false"
   >BRANCH 0
-  =TEXT literal "baz"
+  =TEXT Literal "baz"
   >BRANCH 1
-  =TEXT literal "bar"
+  =TEXT Literal "bar"
 -BRANCHES
 --- document
 =RAW Raw "foo\nbaz"

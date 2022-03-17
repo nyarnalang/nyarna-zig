@@ -31,17 +31,17 @@
 +CALL
   =FUNCREF .doc.input.nocomments
   >ARG content
-  =TEXT raw "This is # not a comment"
+  =TEXT Raw "This is # not a comment"
 -CALL
-=TEXT raw "\n"
+=TEXT Raw "\n"
 +CALL
   =FUNCREF .doc.input.nocommands
   >ARG content
-  =TEXT raw "This is \\not a command"
+  =TEXT Raw "This is \\not a command"
 -CALL
-=TEXT raw "\n"
+=TEXT Raw "\n"
 +CALL
   =FUNCREF .doc.input.verbatim
   >ARG content
-  =TEXT raw "This is \\neither a command # nor a comment"
+  =TEXT Raw "This is \\neither a command # nor a comment"
 -CALL

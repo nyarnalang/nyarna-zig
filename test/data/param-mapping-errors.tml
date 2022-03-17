@@ -22,13 +22,13 @@
   name = elst
 3:1 - 7:9 MissingParameterArgument
   repr = condition
-  previous = <intrinsic>(0:0)
+  previous = /Users/flyx/Projects/nyarna-zig/lib/system.ny(103:5)
 8:9 - 8:14 UnknownParameter
   name = warbl
 8:29 - 8:29 UnexpectedPrimaryBlock
 8:1 - 10:14 MissingParameterArgument
   repr = locator
-  previous = <intrinsic>(0:0)
+  previous = /Users/flyx/Projects/nyarna-zig/lib/system.ny(19:5)
 11:7 - 11:15 UnknownParameter
   name = comptime
 11:21 - 11:29 UnknownParameter

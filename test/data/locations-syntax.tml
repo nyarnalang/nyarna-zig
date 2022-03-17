@@ -8,7 +8,7 @@
   :else:
     wirbl
   \end(if) # comment
-  schwurbl : \Boolean {}:<syntax locations>:3>
+  schwurbl : \Bool {}:<syntax locations>:3>
 \end(block)
 --- rawast
 +UCALL
@@ -18,13 +18,13 @@
   +PROTO primary
     +LOC spam
       +TYPE
-        =SYMREF <intrinsic>.Raw
+        =SYMREF .std.system.Raw
       -TYPE
     -LOC
     +LOC egg
       +DEFAULT
         +RCALL
-          =SYMREF <intrinsic>.Integer
+          =SYMREF .std.system.Integer
           >ARG input
           =NUMBER Integer 42
         -RCALL
@@ -33,7 +33,7 @@
     +LOC sausage
       +DEFAULT
         +RCALL
-          =SYMREF <intrinsic>.Integer
+          =SYMREF .std.system.Integer
           >ARG input
           =NUMBER Integer 42
         -RCALL
@@ -42,7 +42,7 @@
     +LOC baked
       +TYPE
         +RCALL
-          =SYMREF <intrinsic>.List
+          =SYMREF .std.system.List
           >ARG inner
           +AST
             =SYMREF [0]Text
@@ -55,7 +55,7 @@
       =FLAGS {primary}
       +DEFAULT
         +RCALL
-          =SYMREF <intrinsic>.if
+          =SYMREF .std.system.if
           >ARG condition
           +AST
             =LIT text "true"
@@ -73,7 +73,7 @@
     -LOC
     +LOC schwurbl
       +TYPE
-        =SYMREF <intrinsic>.Boolean
+        =SYMREF .std.system.Bool
       -TYPE
       =FLAGS {}:<syntax locations>:3>
     -LOC

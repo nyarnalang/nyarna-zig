@@ -25,9 +25,9 @@
   +CALL
     =TYPE record .doc.input.Foo
     >ARG a
-    =TEXT raw "foo"
+    =TEXT Raw "foo"
     >ARG b
-    =TEXT raw "bar"
+    =TEXT Raw "bar"
   -CALL
 -CALL
 --- document

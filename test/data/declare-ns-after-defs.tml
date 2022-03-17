@@ -15,7 +15,7 @@
 +CALL
   =FUNCREF .doc.input.breakfast
   >ARG cereal
-  =TEXT raw "wheat"
+  =TEXT Raw "wheat"
   >ARG milk
-  =TEXT raw "soy"
+  =TEXT Raw "soy"
 -CALL
