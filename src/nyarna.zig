@@ -14,10 +14,19 @@ pub const FileSystemResolver = resolve.FileSystemResolver;
 pub const default_stack_size = 1024 * 1024; // 1MB
 
 pub const Error = error {
+  /// occurs when any allocation failed during processing.
   OutOfMemory,
+  /// occurs when the given stack size has been exceeded.
   nyarna_stack_overflow,
+  /// occurs when there are more than 2^15-1 namespaces declared in a single
+  /// module.
   too_many_namespaces,
-  step_produced_errors,
+  /// An unexpected error occurred during initialization. This problem is
+  /// independent from user code. It can occur when the system.ny file
+  /// does not have expected content or doesn't exist at the stdlib search path.
+  ///
+  /// Details about the error are reported to the logger.
+  init_error,
 };
 
 /// Globals is the owner of all data that lives through the processing pipeline.
@@ -116,7 +125,7 @@ pub const Globals = struct {
       .data = .{.text = .{.t = ret.types.literal(), .content = "this"}},
     };
     if (logger.count > 0) {
-      return Error.step_produced_errors;
+      return Error.init_error;
     }
     return ret;
   }
@@ -390,6 +399,28 @@ pub const Processor = struct {
     self.resolvers.deinit(self.allocator);
   }
 
+  fn loadSystemNy(
+    self: *Processor,
+    logger: *errors.Handler,
+    globals: *Globals,
+  ) !void {
+    // load system.ny.
+    const system_ny = (try self.resolvers.items[1].resolver.resolve(
+      globals.storage.allocator(), "system", model.Position.intrinsic(),
+      logger)).?;
+    const system_loader = try ModuleLoader.create(
+      globals, system_ny, self.resolvers.items[1].resolver, ".std.system",
+      false, &lib.system.instance.provider);
+    _ = try system_loader.work();
+    const module = try system_loader.finalize();
+    try globals.known_modules.put(
+      globals.storage.allocator(), system_ny.name, .{.loaded = module});
+
+    var checker = lib.system.Checker.init(&globals.types, logger);
+    for (module.symbols) |sym| checker.check(sym);
+    checker.finish(module.root.pos.source);
+  }
+
   /// initialize loading of the given main module. should only be used for
   /// low-level access (useful for testing). The returned ModuleLoader has not
   /// started any loading yet, and thus you can't push arguments
@@ -410,18 +441,8 @@ pub const Processor = struct {
     errdefer ret.globals.destroy();
 
     var logger = errors.Handler{.reporter = self.reporter};
-
-    // load system.ny.
-    const system_ny = (try self.resolvers.items[1].resolver.resolve(
-      ret.globals.storage.allocator(), "system", model.Position.intrinsic(),
-      &logger)).?;
-    const system_loader = try ModuleLoader.create(
-      ret.globals, system_ny, self.resolvers.items[1].resolver, ".std.system",
-      false, &lib.system.instance.provider);
-    _ = try system_loader.work();
-    const module = try system_loader.finalize();
-    try ret.globals.known_modules.put(
-      ret.globals.storage.allocator(), system_ny.name, .{.loaded = module});
+    try self.loadSystemNy(&logger, ret.globals);
+    if (ret.globals.seen_error or logger.count > 0) return Error.init_error;
 
     // now setup loading of the main module
     const desc = (try doc_resolver.resolve(

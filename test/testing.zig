@@ -708,6 +708,7 @@ const ErrorEmitter = struct {
         .posChainFn          = posChain,
         .wrongTypeErrorFn    = wrongTypeError,
         .constructionErrorFn = constructionError,
+        .systemNyErrorFn     = systemNyError,
         .fileErrorFn         = fileError,
       },
       .handler = handler,
@@ -839,6 +840,17 @@ const ErrorEmitter = struct {
     const t_fmt = t.formatter();
     self.forwardArg("t", "{}", t_fmt);
     self.forwardArg("repr", "{s}", repr);
+  }
+
+  fn systemNyError(
+    reporter: *errors.Reporter,
+    id: errors.SystemNyError,
+    pos: model.Position,
+    msg: []const u8,
+  ) void {
+    const self = @fieldParentPtr(ErrorEmitter, "api", reporter);
+    self.forwardError(id, pos);
+    self.forwardArg("msg", "{s}", msg);
   }
 
   fn fileError(

@@ -268,7 +268,7 @@ pub const Record = struct {
 
 /// A type with name equivalence. This includes unique types.
 pub const Instantiated = struct {
-  const Data = union(enum) {
+  pub const Data = union(enum) {
     textual: Textual,
     numeric: Numeric,
     float: Float,

@@ -237,6 +237,17 @@ pub const Impl = lib.Provider.Wrapper(struct {
         try intpr.ctx.values.@"type"(pos, intpr.ctx.types().ast())})).node();
   }
 
+  pub fn builtin(
+    intpr: *Interpreter,
+    pos: model.Position,
+    returns: *model.Node,
+    params: ?*model.Node,
+  ) nyarna.Error!*model.Node {
+    const pnode = params orelse try intpr.node_gen.void(pos);
+    return (try intpr.node_gen.builtinGen(
+      pos, pnode, .{.node = returns})).node();
+  }
+
   pub fn @"var"(
     intpr: *Interpreter,
     pos: model.Position,
@@ -459,3 +470,146 @@ pub const Impl = lib.Provider.Wrapper(struct {
 });
 
 pub const instance = Impl.init();
+
+pub const Checker = struct {
+  const TagType = @typeInfo(model.Type.Instantiated.Data).Union.tag_type.?;
+  const ExpectedSymbol = struct {
+    name: []const u8,
+    kind: union(enum) {
+      @"type": TagType,
+      prototype, keyword,
+    },
+    seen: bool = false,
+  };
+
+  fn ExpectedData(tuples: anytype) type {
+    const ArrayType = @Type(.{.Array = .{
+      .len = tuples.len,
+      .child = ExpectedSymbol,
+      .sentinel = null,
+    }});
+    return struct {
+      const Array = ArrayType;
+      fn init() ArrayType {
+        var ret: ArrayType = undefined;
+        inline for (tuples) |tuple, i| {
+          if (i > 0) if (order(tuple.@"0", tuples[i-1].@"0") != .greater) {
+            std.debug.panic("wrong order: \"{s}\" >= \"{s}\"",
+              .{tuples[i-1].@"0", tuple.@"0"});
+          };
+          if (comptime std.mem.eql(u8, @tagName(tuple.@"1"), "prototype")) {
+            ret[i] = .{.name = tuple.@"0", .kind = .prototype};
+          } else if (
+            comptime std.mem.eql(u8, @tagName(tuple.@"1"), "keyword")
+          ) {
+            ret[i] = .{.name = tuple.@"0", .kind = .keyword};
+          } else {
+            ret[i] = .{.name = tuple.@"0", .kind = .{.@"type" = tuple.@"1"}};
+          }
+        }
+        return ret;
+      }
+    };
+  }
+
+  const ExpectedDataInst = ExpectedData(.{
+    .{"Ast", .ast},
+    .{"Bool", .tenum},
+    .{"Concat", .prototype},
+    .{"Definition", .definition},
+    .{"Enum", .prototype},
+    .{"Float", .prototype},
+    .{"Integer", .numeric},
+    .{"Intersection", .prototype},
+    .{"List", .prototype},
+    .{"Location", .location},
+    .{"Map", .prototype},
+    .{"Numeric", .prototype},
+    .{"Optional", .prototype},
+    .{"Paragraphs", .prototype},
+    .{"Raw", .raw},
+    .{"Record", .prototype},
+    .{"Textual", .prototype},
+    .{"Type", .@"type"},
+    .{"Void", .void},
+    .{"builtin", .keyword},
+    .{"if", .keyword},
+    .{"keyword", .keyword},
+  });
+
+  data: ExpectedDataInst.Array,
+  logger: *nyarna.errors.Handler,
+  lattice: *nyarna.types.Lattice,
+
+  pub inline fn init(
+    lattice: *nyarna.types.Lattice,
+    logger: *nyarna.errors.Handler,
+  ) Checker {
+    return .{
+      .data = ExpectedDataInst.init(),
+      .logger = logger,
+      .lattice = lattice,
+    };
+  }
+
+  const Order = enum { lesser, equal, greater };
+
+  fn order(a: []const u8, b: []const u8) Order {
+    var i: usize = 0;
+    while (i < a.len) : (i += 1) {
+      if (i == b.len) return .greater;
+      if (a[i] < b[i]) return .lesser;
+      if (a[i] > b[i]) return .greater;
+    }
+    return .equal;
+  }
+
+  pub fn check(self: *Checker, sym: *model.Symbol) void {
+    // list of expected items is sorted by name, so we'll do a binary search
+    var data: []ExpectedSymbol = &self.data;
+    while (data.len > 0) {
+      const index = @divTrunc(data.len, 2);
+      const cur = &data[index];
+      data = switch (order(sym.name, cur.name)) {
+        .lesser => data[0..index],
+        .greater => data[index+1..],
+        .equal => {
+          switch (cur.kind) {
+            .prototype => if (sym.data != .prototype) {
+              self.logger.ShouldBePrototype(sym.defined_at, sym.name);
+            },
+            .@"type" => |t| switch (sym.data) {
+              .@"type" => |st| if (
+                st == .structural or st.instantiated.data != t
+              ) {
+                self.logger.WrongType(sym.defined_at, sym.name);
+              },
+              else => self.logger.ShouldBeType(sym.defined_at, sym.name),
+            },
+            .keyword => if (
+              sym.data != .func or !sym.data.func.callable.sig.isKeyword()
+            ) self.logger.ShouldBeKeyword(sym.defined_at, sym.name),
+          }
+          cur.seen = true;
+          return;
+        }
+      };
+    }
+    self.logger.UnknownSystemSymbol(sym.defined_at, sym.name);
+  }
+
+  pub fn finish(self: *Checker, desc: *const model.Source.Descriptor) void {
+    const pos = model.Position{
+      .source = desc,
+      .start = model.Cursor.unknown(),
+      .end = model.Cursor.unknown(),
+    };
+    for (self.data) |*cur| {
+      if (!cur.seen) switch (cur.kind) {
+        .@"type" => self.logger.MissingType(pos, cur.name),
+        .prototype => self.logger.MissingPrototype(pos, cur.name),
+        .keyword => self.logger.MissingKeyword(pos, cur.name),
+      };
+    }
+  }
+};

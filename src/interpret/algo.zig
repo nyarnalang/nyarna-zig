@@ -686,7 +686,11 @@ pub const DeclareResolution = struct {
                 sym.data = if (
                   try lib.extFunc(
                     self.intpr.ctx, sym, builder_res, false, provider)
-                ) |func| .{.func = func} else .poison;
+                ) |func| .{.func = func} else ublk: {
+                  self.intpr.ctx.logger.UnknownBuiltin(
+                    def.content.pos, def.name.content);
+                  break :ublk .poison;
+                };
                 _ = try ns_data.tryRegister(self.intpr, sym);
                 continue;
               } else {

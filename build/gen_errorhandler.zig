@@ -129,6 +129,20 @@ pub fn main() !void {
     \\
     );
   }
+  inline for (@typeInfo(errors.SystemNyError).Enum.fields) |f| {
+    try eh.writeAll("  pub fn " ++ f.name ++
+      \\(
+    \\    self: *@This(),
+    \\    pos: model.Position,
+    \\    msg: []const u8,
+    \\  ) void {
+    \\    self.count += 1;
+    \\    self.reporter.systemNyErrorFn(self.reporter, .
+    ++ f.name ++ \\, pos, msg);
+    \\  }
+    \\
+    );
+  }
   inline for (@typeInfo(errors.FileError).Enum.fields) |f| {
     try eh.writeAll("  pub fn " ++ f.name ++
       \\(

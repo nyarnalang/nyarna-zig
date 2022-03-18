@@ -79,7 +79,8 @@ pub const WrongItemError = enum {
 
 pub const UnknownError = enum {
   UnknownFlag, UnknownSyntax, UnknownParameter, UnknownSymbol, UnknownField,
-  UnknownResolver, UnknownUnique, UnknownPrototype, DoesntHaveConstructor,
+  UnknownResolver, UnknownUnique, UnknownPrototype, UnknownBuiltin,
+  DoesntHaveConstructor,
 };
 
 pub const WrongIdError = enum {
@@ -185,6 +186,12 @@ pub const ConstructionError = enum {
   NotInEnum, OutOfRange, TooManyDecimals, NotANumber, NumberTooLarge,
 };
 
+pub const SystemNyError = enum {
+  MissingType, MissingPrototype, MissingKeyword,
+  ShouldBeType, ShouldBePrototype, ShouldBeKeyword,
+  WrongType, UnknownSystemSymbol,
+};
+
 pub const FileError = enum {
   FailedToOpen, NotAFile, FailedToRead,
 };
@@ -247,6 +254,12 @@ pub const Reporter = struct {
     t: model.Type,
     repr: []const u8,
   ) void,
+  systemNyErrorFn: fn (
+    reporter: *Reporter,
+    id: SystemNyError,
+    pos: model.Position,
+    msg: []const u8,
+  ) void,
   fileErrorFn: fn(
     reporter: *Reporter,
     id: FileError,
@@ -288,6 +301,7 @@ pub const CmdLineReporter = struct {
         .wrongIdErrorFn = CmdLineReporter.wrongIdError,
         .wrongTypeErrorFn = CmdLineReporter.wrongTypeError,
         .constructionErrorFn = CmdLineReporter.constructionError,
+        .systemNyErrorFn = CmdLineReporter.systemNyError,
         .fileErrorFn = CmdLineReporter.fileError,
       },
       .writer = stdout.writer(),
@@ -374,6 +388,7 @@ pub const CmdLineReporter = struct {
       .UnknownParameter => "parameter",   .UnknownSymbol   => "symbol",
       .UnknownField     => "field",       .UnknownResolver => "resolver",
       .UnknownUnique    => "unique type", .UnknownPrototype => "prototype",
+      .UnknownBuiltin   => "builtin",
       .DoesntHaveConstructor => "constructor of unique type",
     };
     self.renderError("unknown {s}: '{s}'", .{entity, name});
@@ -503,6 +518,17 @@ pub const CmdLineReporter = struct {
       .NumberTooLarge => self.renderError(
         "number '{s}' is too large.", .{repr}),
     }
+  }
+
+  fn systemNyError(
+    reporter: *Reporter,
+    id: SystemNyError,
+    pos: model.Position,
+    msg: []const u8,
+  ) void {
+    const self = @fieldParentPtr(CmdLineReporter, "reporter", reporter);
+    self.style(.{.bold}, "{s}", .{pos});
+    self.renderError("(system.ny) {s}: {s}", .{@tagName(id), msg});
   }
 
   fn fileError(
