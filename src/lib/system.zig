@@ -153,22 +153,13 @@ pub const Impl = lib.Provider.Wrapper(struct {
     nodes[1] = then orelse try intpr.node_gen.void(pos);
     nodes[0] = @"else" orelse try intpr.node_gen.void(pos);
 
-    // TODO: improve getting this
-    const bool_type = for (
-      intpr.ctx.data.known_modules.values()[0].loaded.symbols
-    ) |sym| {
-      if (std.mem.eql(u8, "Bool", sym.name)) {
-        break sym.data.@"type";
-      }
-    } else unreachable;
-
     const ret = try intpr.allocator.create(model.Node);
     ret.* = .{
       .pos = pos,
       .data = .{
         .branches = .{
           .condition = condition,
-          .cond_type = bool_type,
+          .cond_type = intpr.ctx.types().system.boolean,
           .branches = nodes,
         },
       },
@@ -480,6 +471,8 @@ pub const Checker = struct {
       prototype, keyword,
     },
     seen: bool = false,
+    /// pointer into types.Lattice where the type should be hooked into
+    hook: ?*model.Type = null,
   };
 
   fn ExpectedData(tuples: anytype) type {
@@ -490,7 +483,7 @@ pub const Checker = struct {
     }});
     return struct {
       const Array = ArrayType;
-      fn init() ArrayType {
+      fn init(lattice: *nyarna.types.Lattice) ArrayType {
         var ret: ArrayType = undefined;
         inline for (tuples) |tuple, i| {
           if (i > 0) if (order(tuple.@"0", tuples[i-1].@"0") != .greater) {
@@ -504,7 +497,13 @@ pub const Checker = struct {
           ) {
             ret[i] = .{.name = tuple.@"0", .kind = .keyword};
           } else {
-            ret[i] = .{.name = tuple.@"0", .kind = .{.@"type" = tuple.@"1"}};
+            ret[i] = .{
+              .name = tuple.@"0",
+              .kind = .{.@"type" = tuple.@"1"},
+              .hook = if (tuple.len == 3)
+                &@field(lattice.system, @tagName(tuple.@"2"))
+              else null
+            };
           }
         }
         return ret;
@@ -514,12 +513,12 @@ pub const Checker = struct {
 
   const ExpectedDataInst = ExpectedData(.{
     .{"Ast", .ast},
-    .{"Bool", .tenum},
+    .{"Bool", .tenum, .boolean},
     .{"Concat", .prototype},
     .{"Definition", .definition},
     .{"Enum", .prototype},
     .{"Float", .prototype},
-    .{"Integer", .numeric},
+    .{"Integer", .numeric, .integer},
     .{"Intersection", .prototype},
     .{"List", .prototype},
     .{"Location", .location},
@@ -531,6 +530,7 @@ pub const Checker = struct {
     .{"Record", .prototype},
     .{"Textual", .prototype},
     .{"Type", .@"type"},
+    .{"UnicodeCategory", .tenum, .unicode_category},
     .{"Void", .void},
     .{"builtin", .keyword},
     .{"if", .keyword},
@@ -539,16 +539,14 @@ pub const Checker = struct {
 
   data: ExpectedDataInst.Array,
   logger: *nyarna.errors.Handler,
-  lattice: *nyarna.types.Lattice,
 
   pub inline fn init(
     lattice: *nyarna.types.Lattice,
     logger: *nyarna.errors.Handler,
   ) Checker {
     return .{
-      .data = ExpectedDataInst.init(),
+      .data = ExpectedDataInst.init(lattice),
       .logger = logger,
-      .lattice = lattice,
     };
   }
 
@@ -580,8 +578,10 @@ pub const Checker = struct {
             },
             .@"type" => |t| switch (sym.data) {
               .@"type" => |st| if (
-                st == .structural or st.instantiated.data != t
+                st == .instantiated and st.instantiated.data == t
               ) {
+                if (cur.hook) |target| target.* = st;
+              } else {
                 self.logger.WrongType(sym.defined_at, sym.name);
               },
               else => self.logger.ShouldBeType(sym.defined_at, sym.name),

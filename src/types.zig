@@ -256,9 +256,13 @@ pub const Lattice = struct {
     @"type"     : model.Type.Instantiated,
     void        : model.Type.Instantiated,
   },
-  /// predefined types. TODO: move these into predefined.
-  unicode_category: *model.Type.Instantiated,
-  integer: *model.Type.Instantiated,
+  /// types defined in system.ny. these are available as soon as system.ny has
+  /// been loaded and must not be accessed earlier.
+  system: struct {
+    boolean: model.Type,
+    integer: model.Type,
+    unicode_category: model.Type,
+  },
 
   pub fn init(ctx: nyarna.Context) !Lattice {
     var ret = Lattice{
@@ -274,8 +278,7 @@ pub const Lattice = struct {
       },
       .constructors = .{}, // set later by loading the intrinsic lib
       .predefined = undefined,
-      .unicode_category = undefined,
-      .integer = undefined,
+      .system = undefined,
     };
     inline for (@typeInfo(@TypeOf(ret.predefined)).Struct.fields) |field| {
       const val = &@field(ret.predefined, field.name);
@@ -285,42 +288,6 @@ pub const Lattice = struct {
         .data = @unionInit(@TypeOf(val.data), field.name, .{}),
       };
     }
-
-    var builder = try EnumTypeBuilder.init(ctx, model.Position.intrinsic());
-
-    builder = try EnumTypeBuilder.init(ctx, model.Position.intrinsic());
-    ret.unicode_category = blk: {
-      inline for (@typeInfo(unicode.Category).Enum.fields) |f| {
-        try builder.add(f.name, model.Position.intrinsic());
-      }
-      try builder.add("Lut", model.Position.intrinsic());
-      try builder.add("LC", model.Position.intrinsic());
-      try builder.add("L", model.Position.intrinsic());
-      try builder.add("M", model.Position.intrinsic());
-      try builder.add("P", model.Position.intrinsic());
-      try builder.add("S", model.Position.intrinsic());
-      try builder.add("MPS", model.Position.intrinsic());
-      const e = try builder.finish();
-      const unisym = try ret.allocator.create(model.Symbol);
-      unisym.defined_at = model.Position.intrinsic();
-      unisym.name = "UnicodeCategory";
-      unisym.data = .{.@"type" = .{.instantiated = e.instantiated()}};
-      e.instantiated().name = unisym;
-      break :blk e.instantiated();
-    };
-
-    ret.integer = blk: {
-      var nb = try NumericTypeBuilder.init(ctx, model.Position.intrinsic());
-      const n = (try nb.finish()).?;
-      const intSym = try ret.allocator.create(model.Symbol);
-      intSym.* = .{
-        .defined_at = model.Position.intrinsic(),
-        .name = "Integer",
-        .data = .{.@"type" = .{.instantiated = n.instantiated()}},
-      };
-      n.instantiated().name = intSym;
-      break :blk n.instantiated();
-    };
 
     ret.self_ref_list.* = .{
       .list = .{
@@ -687,10 +654,6 @@ pub const Lattice = struct {
       }
     }
     return res;
-  }
-
-  pub fn getInteger(self: *Self) *const model.Type.Numeric {
-    return &self.integer.data.numeric;
   }
 
   pub fn optional(self: *Self, t: model.Type) !?model.Type {

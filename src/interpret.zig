@@ -1526,7 +1526,7 @@ pub const Interpreter = struct {
       if (entry) |item| {
         if (
           try self.associate(
-            item, self.ctx.types().getInteger().typedef(), stage)
+            item, self.ctx.types().system.integer, stage)
         ) |expr| {
           if (expr.expected_type.isInst(.poison)) seen_poison = true;
           item.data = .{.expression = expr};

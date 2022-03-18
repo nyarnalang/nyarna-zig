@@ -107,6 +107,11 @@
 
   Bool = \Enum(false, true)
   Integer = \Numeric()
+  UnicodeCategory = \Enum(
+    Lu, Ll, Lt, Lm, Lo, Lut, LC, L, Mn, Mc, Me, Nd, Nl, No, M,
+    Pc, Pd, Ps, Pe, Pi, Pf, Po, P, Sm, Sc, Sk, So, S, MPS,
+    Zs, Zl, Zp, Cc, Cf, Co, Cn
+  )
 :private:
   FrameRoot   = \unique()
   Literal     = \unique()
