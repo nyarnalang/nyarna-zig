@@ -603,7 +603,10 @@ pub const Interpreter = struct {
     def: *model.Node.Definition,
     stage: Stage,
   ) nyarna.Error!?*model.Expression {
-    std.debug.assert(stage.kind != .resolve); // TODO
+    if (stage.kind == .resolve) {
+      _ = try self.tryInterpret(def.content, stage);
+      return null;
+    }
     const expr = (try self.tryInterpret(def.content, stage))
       orelse return null;
     const value = try self.ctx.evaluator().evaluate(expr);
@@ -1505,15 +1508,6 @@ pub const Interpreter = struct {
     _ = self; _ = gm; _ = stage; unreachable;
   }
 
-  fn getNumberFrom(
-    self: *Interpreter,
-    expr: *model.Expression,
-  ) nyarna.Error!?i64 {
-    const value = try self.ctx.evaluator().evaluate(expr);
-    if (value.data == .poison) return null;
-    return value.data.number.content;
-  }
-
   fn tryGenNumeric(
     self: *Interpreter,
     gn: *model.Node.tg.Numeric,
@@ -1522,38 +1516,50 @@ pub const Interpreter = struct {
     var seen_poison = false;
     var seen_unfinished = false;
     var nb = try types.NumericTypeBuilder.init(self.ctx, gn.node().pos);
-    for ([_]?*model.Node{gn.min, gn.max, gn.decimals}) |entry, index| {
+
+    for ([_]?*model.Node{gn.decimals, gn.min, gn.max}) |entry, index| {
       if (entry) |item| {
         if (
+          // use Raw type because Integer might not exist yet (in system.ny).
           try self.associate(
-            item, self.ctx.types().system.integer, stage)
+            item, self.ctx.types().raw(), stage)
         ) |expr| {
-          if (expr.expected_type.isInst(.poison)) seen_poison = true;
           item.data = .{.expression = expr};
-          switch (index) {
-            0 => nb.min((try self.getNumberFrom(expr)) orelse {
-              seen_poison = true;
-              continue;
-            }),
-            1 => nb.max((try self.getNumberFrom(expr)) orelse {
-              seen_poison = true;
-              continue;
-            }),
-            2 => nb.decimals((try self.getNumberFrom(expr)) orelse {
-              seen_poison = true;
-              continue;
-            }, item.pos),
+          const value = try self.ctx.evaluator().evaluate(expr);
+          switch (value.data) {
+            .poison => seen_poison = true,
+            .text => |*txt| switch (parse.LiteralNumber.from(txt.content)) {
+              .invalid => {
+                self.ctx.logger.InvalidNumber(expr.pos, txt.content);
+                seen_poison = true;
+              },
+              .too_large => {
+                self.ctx.logger.NumberTooLarge(expr.pos, txt.content);
+                seen_poison = true;
+              },
+              .success => |parsed| switch (index) {
+                0 => nb.decimals(parsed, expr.pos),
+                1 => nb.min(parsed, expr.pos),
+                2 => nb.max(parsed, expr.pos),
+                else => unreachable,
+              },
+            },
             else => unreachable,
           }
         } else seen_unfinished = true;
       }
     }
-    if (seen_unfinished) return null;
-    const ret: ?*model.Type.Numeric =
-      if (seen_poison) null else try nb.finish();
+    if (seen_unfinished) {
+      nb.abort();
+      return null;
+    }
+    const ret: ?*model.Type.Numeric = if (seen_poison) blk: {
+      nb.abort();
+      break :blk null;
+    } else try nb.finish();
     if (ret) |numeric| {
       return try self.ctx.createValueExpr((try self.ctx.values.@"type"(
-        gn.node().pos, .{.instantiated = numeric.instantiated()})).value());
+        gn.node().pos, numeric.typedef())).value());
     } else return try self.ctx.createValueExpr(
       try self.ctx.values.poison(gn.node().pos));
   }
@@ -1589,6 +1595,7 @@ pub const Interpreter = struct {
         },
         .pregen => {},
       }
+      if (gp.funcs) |funcs| _ = try self.tryInterpret(funcs, stage);
       return false;
     }
 

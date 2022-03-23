@@ -16,7 +16,7 @@
   expected = {'=', ';', ':', ws_break}
   got = identifier
 5:19 - 5:23 UnknownFlag
-  name = derp
+  repr = derp
 5:28 - 5:37 SurplusFlags
 10:15 - 11:1 PrematureToken
   expected = {identifier, '}'}

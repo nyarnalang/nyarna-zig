@@ -13,6 +13,8 @@ const chains = @import("interpret/chains.zig");
 
 const last = @import("helpers.zig").last;
 
+pub const LiteralNumber = @import("parse/numbers.zig").LiteralNumber;
+
 /// The parser can return one of these if outside action is required before
 /// resuming parsing.
 pub const UnwindReason = error {

@@ -104,8 +104,9 @@ const Impl = lib.Provider.Wrapper(struct {
     pos: model.Position,
     _: u15,
     params: *model.Node,
+    funcs: ?*model.Node,
   ) nyarna.Error!*model.Node {
-    return (try intpr.node_gen.tgPrototype(pos, params)).node();
+    return (try intpr.node_gen.tgPrototype(pos, params, funcs)).node();
   }
 });
 
@@ -147,8 +148,8 @@ fn prototypeConstructor(
   const prototypes = constructors.Prototypes.init();
   return types.Constructor{
     .callable = try bres.createCallable(ctx.global(), .prototype),
-    .impl_index =
-      (try lib.registerExtImpl(ctx, &prototypes.provider, name, bres)).?,
+    .impl_index = (try lib.registerExtImpl(
+      ctx, &prototypes.provider, name, bres.sig.isKeyword())).?,
   };
 }
 
@@ -158,7 +159,7 @@ pub fn magicModule(ctx: Context) !*model.Module {
   const module = try ctx.global().create(model.Module);
   module.root = try ctx.createValueExpr(
     try ctx.values.@"void"(model.Position.intrinsic()));
-  module.symbols = try ctx.global().alloc(*model.Symbol, 8);
+  module.symbols = try ctx.global().alloc(*model.Symbol, 9);
   var index: usize = 0;
 
   const impl = Impl.init();
@@ -241,12 +242,24 @@ pub fn magicModule(ctx: Context) !*model.Module {
   ).?;
   index += 1;
 
-  b = try types.SigBuilder.init(ctx, 1, t.ast(), false);
+  b = try types.SigBuilder.init(ctx, 2, t.ast(), false);
   try b.push((try ctx.values.intLocation("params", t.ast())).withPrimary(
     model.Position.intrinsic()).withHeader(location_block));
+  try b.push((
+    try ctx.values.intLocation("funcs", (try t.optional(t.ast())).?)
+  ).withHeader(definition_block));
   module.symbols[index] = (
     try extFuncSymbol(ctx, "prototype", true, b.finish(), &impl.provider)
   ).?;
+  index += 1;
+
+  const sym = try ctx.global().create(model.Symbol);
+  sym.* = .{
+    .defined_at = model.Position.intrinsic(),
+    .name = "This",
+    .data = .{.@"type" = t.prototype()},
+  };
+  module.symbols[index] = sym;
   index += 1;
 
   std.debug.assert(index == module.symbols.len);

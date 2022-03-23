@@ -29,6 +29,39 @@ fn subjectIsType(uacc: *model.Node.UnresolvedAccess, t: model.Type) bool {
   };
 }
 
+/// A graph.ResolutionContext that resolves the name "This" to the .prototype
+/// type. Used for loading prototype functions.
+const PrototypeFuncs = struct {
+  ctx: graph.ResolutionContext,
+  nctx: nyarna.Context,
+
+  fn init(dres: *DeclareResolution) PrototypeFuncs {
+    return .{
+      .ctx = .{
+        .resolveNameFn = resolvePt,
+        .target = dres.in,
+      },
+      .nctx = dres.intpr.ctx,
+    };
+  }
+
+  fn resolvePt(
+    ctx: *graph.ResolutionContext,
+    name: []const u8,
+    name_pos: model.Position,
+  ) nyarna.Error!graph.ResolutionContext.Result {
+    const self = @fieldParentPtr(PrototypeFuncs, "ctx", ctx);
+    if (std.mem.eql(u8, name, "This")) {
+      return graph.ResolutionContext.Result{
+        .unfinished_type = self.nctx.types().prototype(),
+      };
+    } else {
+      self.nctx.logger.UnknownSymbol(name_pos, name);
+      return graph.ResolutionContext.Result.failed;
+    }
+  }
+};
+
 /// A graph.ResolutionContext that resolves symbol references to type symbols
 /// within the same \declare call. The referenced types are unfinished and must
 /// only be used to construct types, never be called or used as value while this
@@ -337,7 +370,8 @@ pub const DeclareResolution = struct {
 
       const index = (
         try lib.registerExtImpl(
-          self.intpr.ctx, provider, def.name.content, builder_res)
+          self.intpr.ctx, provider, def.name.content,
+          builder_res.sig.isKeyword())
       ) orelse {
         self.intpr.ctx.logger.DoesntHaveConstructor(
           def.name.node().pos, def.name.content);
@@ -349,6 +383,186 @@ pub const DeclareResolution = struct {
           self.intpr.ctx.global(), .@"type"),
       };
     } else return null;
+  }
+
+  fn definePrototype(
+    self: *DeclareResolution,
+    def: *model.Node.Definition,
+    gp: *model.Node.tg.Prototype,
+    ns_data: *interpret.Namespace,
+  ) !bool {
+    const constructor = (
+      try self.genConstructor(
+        def, &gp.params, self.intpr.ctx.types().ast(),
+        &lib.constructors.prototypes.provider, null)
+    ) orelse return false;
+    const types = self.intpr.ctx.types();
+    const prototype: model.Prototype =
+      switch (std.hash.Adler32.hash(def.name.content)) {
+      std.hash.Adler32.hash("Concat") => .concat,
+      std.hash.Adler32.hash("Enum") => .@"enum",
+      std.hash.Adler32.hash("Float") => .float,
+      std.hash.Adler32.hash("Intersection") => .intersection,
+      std.hash.Adler32.hash("List") => .list,
+      std.hash.Adler32.hash("Map") => .map,
+      std.hash.Adler32.hash("Numeric") => .numeric,
+      std.hash.Adler32.hash("Optional") => .optional,
+      std.hash.Adler32.hash("Paragraphs") => .paragraphs,
+      std.hash.Adler32.hash("Record") => .record,
+      std.hash.Adler32.hash("Textual") => .textual,
+      else => unreachable,
+    };
+    const sym =
+      try self.genSym(def.name, .{.prototype = prototype}, def.public);
+    _ = try ns_data.tryRegister(self.intpr, sym);
+    const pt: *nyarna.types.PrototypeFuncs = switch (prototype) {
+      .concat   => blk: {
+        types.constructors.prototypes.concat       = constructor;
+        break :blk &types.prototype_funcs.concat;
+      },
+      .@"enum"  => blk: {
+        types.constructors.prototypes.@"enum"      = constructor;
+        break :blk &types.prototype_funcs.@"enum";
+      },
+      .float    => blk: {
+        types.constructors.prototypes.float        = constructor;
+        break :blk &types.prototype_funcs.float;
+      },
+      .intersection => blk: {
+        types.constructors.prototypes.intersection = constructor;
+        break :blk &types.prototype_funcs.intersection;
+      },
+      .list     => blk: {
+        types.constructors.prototypes.list         = constructor;
+        break :blk &types.prototype_funcs.list;
+      },
+      .map      => blk: {
+        types.constructors.prototypes.map          = constructor;
+        break :blk &types.prototype_funcs.map;
+      },
+      .numeric  => blk: {
+        types.constructors.prototypes.numeric      = constructor;
+        break :blk &types.prototype_funcs.numeric;
+      },
+      .optional => blk: {
+        types.constructors.prototypes.optional     = constructor;
+        break :blk &types.prototype_funcs.optional;
+      },
+      .paragraphs => blk: {
+        types.constructors.prototypes.paragraphs   = constructor;
+        break :blk &types.prototype_funcs.paragraphs;
+      },
+      .record   => blk: {
+        types.constructors.prototypes.record       = constructor;
+        break :blk &types.prototype_funcs.record;
+      },
+      .textual  => blk: {
+        types.constructors.prototypes.textual      = constructor;
+        break :blk &types.prototype_funcs.textual;
+      },
+    };
+    if (gp.funcs) |funcs| {
+      var pfuncs = PrototypeFuncs.init(self);
+      var collector = lib.system.DefCollector{
+        .dt = types.definition(),
+      };
+      try collector.collect(funcs, self.intpr);
+      try collector.allocate(self.intpr.allocator);
+      try collector.append(funcs, self.intpr, false);
+      const func_defs = collector.finish();
+      const def_items = try self.intpr.ctx.global().alloc(
+        nyarna.types.PrototypeFuncs.Item, func_defs.len);
+      var next: usize = 0;
+      for (func_defs) |fdef| switch (fdef.content.data) {
+        .unresolved_call, .unresolved_symref => {
+          if (
+            try self.intpr.tryInterpret(fdef.content, .{.kind = .intermediate})
+          ) |expr| {
+            def.content.data = .{.expression = expr};
+          } else switch (def.content.data) {
+            .unresolved_call, .unresolved_symref => {
+              // still unresolved => cannot be resolved.
+              // force error generation.
+              const res = try self.intpr.interpret(def.content);
+              def.content.data = .{.expression = res};
+            },
+            else => {},
+          }
+        },
+        else => {}
+      };
+
+      for (func_defs) |fdef| {
+        switch (fdef.content.data) {
+          .builtingen => |*bg| if (
+            try self.intpr.tryInterpretBuiltin(
+              bg, .{.kind = .intermediate, .resolve = &pfuncs.ctx})
+          ) {
+            const impl_name = try self.intpr.allocator.alloc(
+              u8, def.name.content.len + 2 + fdef.name.content.len
+            );
+            std.mem.copy(u8, impl_name, def.name.content);
+            std.mem.copy(u8, impl_name[def.name.content.len..], "::");
+            std.mem.copy(
+              u8, impl_name[def.name.content.len + 2..], fdef.name.content);
+            const impl_index = (
+              try lib.registerExtImpl(self.intpr.ctx,
+                self.intpr.builtin_provider.?, impl_name, false)
+            ) orelse {
+              self.intpr.ctx.logger.UnknownBuiltin(
+                fdef.name.node().pos, impl_name);
+              self.intpr.allocator.free(impl_name);
+              continue;
+            };
+
+            const locs = try self.intpr.ctx.global().alloc(
+              *model.Value.Location, bg.params.resolved.locations.len);
+            var next_loc: usize = 0;
+            for (bg.params.resolved.locations) |input| {
+              switch (input) {
+                .node => |node| {
+                  const expr = try self.intpr.interpret(node.node());
+                  const value = try self.intpr.ctx.evaluator().evaluate(expr);
+                  switch (value.data) {
+                    .poison => {},
+                    .location => |*lvalue| {
+                      locs[next_loc] = lvalue;
+                      next_loc += 1;
+                    },
+                    else => unreachable,
+                  }
+                },
+                .value =>  |value| {
+                  locs[next_loc] = value;
+                  next_loc += 1;
+                }
+              }
+            }
+            def_items[next] = .{
+              .name = try self.intpr.ctx.values.textScalar(
+                fdef.node().pos, types.raw(),
+                try self.intpr.ctx.global().dupe(u8, fdef.name.content)),
+              .params = locs[0..next_loc],
+              .returns = bg.returns.value,
+              .impl_index = impl_index,
+            };
+            next += 1;
+          } else {
+            _ = try self.intpr.tryInterpretBuiltin(bg, .{.kind = .final});
+          },
+          .expression => |expr| {
+            if (!expr.expected_type.isInst(.poison)) {
+              self.intpr.ctx.logger.IllegalContentInPrototypeFuncs(
+                fdef.node().pos);
+            }
+          },
+          else => self.intpr.ctx.logger.IllegalContentInPrototypeFuncs(
+            fdef.node().pos),
+        }
+      }
+      pt.set(def_items[0..next]);
+    }
+    return true;
   }
 
   pub fn execute(self: *DeclareResolution) !void {
@@ -416,47 +630,9 @@ pub const DeclareResolution = struct {
             try self.createStructural(gp); continue :alloc_types;
           },
           .gen_prototype => |*gp| {
-            const proto_constr = lib.constructors.Prototypes.init();
-            const constructor = (
-              try self.genConstructor(
-                def, &gp.params, self.intpr.ctx.types().ast(),
-                &proto_constr.provider, null)
-            ) orelse break;
-            const types = self.intpr.ctx.types();
-            const prototype: model.Prototype =
-              switch (std.hash.Adler32.hash(def.name.content)) {
-              std.hash.Adler32.hash("Concat") => .concat,
-              std.hash.Adler32.hash("Enum") => .@"enum",
-              std.hash.Adler32.hash("Float") => .float,
-              std.hash.Adler32.hash("Intersection") => .intersection,
-              std.hash.Adler32.hash("List") => .list,
-              std.hash.Adler32.hash("Map") => .map,
-              std.hash.Adler32.hash("Numeric") => .numeric,
-              std.hash.Adler32.hash("Optional") => .optional,
-              std.hash.Adler32.hash("Paragraphs") => .paragraphs,
-              std.hash.Adler32.hash("Record") => .record,
-              std.hash.Adler32.hash("Textual") => .textual,
-              else => unreachable,
-            };
-            switch (prototype) {
-              .concat   => types.constructors.prototypes.concat   = constructor,
-              .@"enum"  => types.constructors.prototypes.@"enum"  = constructor,
-              .float    => types.constructors.prototypes.float    = constructor,
-              .intersection =>
-                types.constructors.prototypes.intersection        = constructor,
-              .list     => types.constructors.prototypes.list     = constructor,
-              .map      => types.constructors.prototypes.map      = constructor,
-              .numeric  => types.constructors.prototypes.numeric  = constructor,
-              .optional => types.constructors.prototypes.optional = constructor,
-              .paragraphs =>
-                types.constructors.prototypes.paragraphs          = constructor,
-              .record   => types.constructors.prototypes.record   = constructor,
-              .textual  => types.constructors.prototypes.textual  = constructor,
-            }
-            const sym =
-              try self.genSym(def.name, .{.prototype = prototype}, def.public);
-            _ = try ns_data.tryRegister(self.intpr, sym);
-            continue :alloc_types;
+            if (try self.definePrototype(def, gp, ns_data))
+              continue :alloc_types
+            else break;
           },
           .gen_record => |*gr| {
             const inst =

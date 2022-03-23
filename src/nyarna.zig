@@ -13,6 +13,8 @@ pub const FileSystemResolver = resolve.FileSystemResolver;
 
 pub const default_stack_size = 1024 * 1024; // 1MB
 
+const parse = @import("parse.zig");
+
 pub const Error = error {
   /// occurs when any allocation failed during processing.
   OutOfMemory,
@@ -281,60 +283,29 @@ pub const Context = struct {
     text: []const u8,
     t: *const model.Type.Numeric,
   ) !?*model.Value.Number {
-    var val: i64 = 0;
-    var neg = false;
-    var rest = switch (if (text.len == 0) @as(u8, 0) else text[0]) {
-      '+' => text[1..],
-      '-' => blk: {
-        neg = true;
-        break :blk text[1..];
-      },
-      else => text,
-    };
-    if (rest.len == 0) {
-      self.logger.NotANumber(pos, t.typedef(), text);
-      return null;
-    }
-    var dec_factor: ?i64 = null;
-    var cur = rest.ptr;
-    const end = rest[rest.len - 1 ..].ptr;
-    while (true) : (cur += 1) {
-      if (cur[0] == '.') {
-        if (dec_factor != null or cur == end) {
-          self.logger.NotANumber(pos, t.typedef(), text);
+    switch (parse.LiteralNumber.from(text)) {
+      .invalid => self.logger.InvalidNumber(pos, text),
+      .too_large => self.logger.NumberTooLarge(pos, text),
+      .success => |parsed| {
+        if (parsed.decimals > t.decimals) {
+          self.logger.TooManyDecimalsForType(pos, t.typedef(), text);
           return null;
         }
-        const num_decimals = @ptrToInt(end) - @ptrToInt(cur);
-        if (num_decimals > t.decimals) {
-          self.logger.TooManyDecimals(pos, t.typedef(), text);
+        const dec_factor = std.math.pow(
+          i64, 10, @intCast(i64, t.decimals - parsed.decimals));
+        var val: i64 = undefined;
+        if (@mulWithOverflow(i64, parsed.value, dec_factor, &val)) {
+          self.logger.NumberTooLarge(pos, text);
           return null;
         }
-        dec_factor = std.math.pow(
-          i64, 10, @intCast(i64, t.decimals - num_decimals));
-      } else if (cur[0] < '0' or cur[0] > '9') {
-        self.logger.NotANumber(pos, t.typedef(), text);
-        return null;
-      } else {
-        if (
-          @mulWithOverflow(i64, val, 10, &val) or
-          @addWithOverflow(i64, val, cur[0] - '0', &val)
-        ) {
-          self.logger.NumberTooLarge(pos, t.typedef(), text);
+        if (val < t.min or val > t.max) {
+          self.logger.OutOfRange(pos, t.typedef(), text);
           return null;
         }
+        return try self.values.number(pos, t, val);
       }
-      if (cur == end) break;
     }
-    if (neg) dec_factor = if (dec_factor) |factor| factor * -1 else -1;
-    if (dec_factor) |factor| if (@mulWithOverflow(i64, val, factor, &val)) {
-      self.logger.NumberTooLarge(pos, t.typedef(), text);
-      return null;
-    };
-    if (val < t.min or val > t.max) {
-      self.logger.OutOfRange(pos, t.typedef(), text);
-      return null;
-    }
-    return try self.values.number(pos, t, val);
+    return null;
   }
 };
 

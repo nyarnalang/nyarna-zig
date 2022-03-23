@@ -6,7 +6,6 @@ const Interpreter = interpret.Interpreter;
 const Context = nyarna.Context;
 const Evaluator = @import("../runtime.zig").Evaluator;
 const model = nyarna.model;
-const types = nyarna.types;
 
 fn nodeToVarargsItemList(
   intpr: *Interpreter,
@@ -160,6 +159,8 @@ pub const Types = lib.Provider.Wrapper(struct {
   }
 });
 
+pub const types = Types.init();
+
 pub const Prototypes = lib.Provider.Wrapper(struct {
   pub fn @"Optional"(
     intpr: *Interpreter,
@@ -305,3 +306,5 @@ pub const Prototypes = lib.Provider.Wrapper(struct {
       pos, try nodeToVarargsItemList(intpr, values))).node();
   }
 });
+
+pub const prototypes = Prototypes.init();

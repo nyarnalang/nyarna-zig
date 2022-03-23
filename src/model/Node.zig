@@ -340,6 +340,7 @@ pub const tg = struct {
   };
   pub const Prototype = struct {
     params: locations.List(void),
+    funcs: ?*Node,
     pub inline fn node(self: *@This()) *Node {return Node.parent(self);}
   };
   pub const Record = struct {

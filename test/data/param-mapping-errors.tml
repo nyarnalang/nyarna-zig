@@ -19,19 +19,19 @@
   repr = then
   previous = input(3:10)
 5:2 - 5:6 UnknownParameter
-  name = elst
+  repr = elst
 3:1 - 7:9 MissingParameterArgument
   repr = condition
-  previous = /Users/flyx/Projects/nyarna-zig/lib/system.ny(103:5)
+  previous = /Users/flyx/Projects/nyarna-zig/lib/system.ny(130:5)
 8:9 - 8:14 UnknownParameter
-  name = warbl
+  repr = warbl
 8:29 - 8:29 UnexpectedPrimaryBlock
 8:1 - 10:14 MissingParameterArgument
   repr = locator
-  previous = /Users/flyx/Projects/nyarna-zig/lib/system.ny(19:5)
+  previous = /Users/flyx/Projects/nyarna-zig/lib/system.ny(39:5)
 11:7 - 11:15 UnknownParameter
-  name = comptime
+  repr = comptime
 11:21 - 11:29 UnknownParameter
-  name = generics
+  repr = generics
 12:7 - 12:9 UnknownSymbol
-  name = T
+  repr = T

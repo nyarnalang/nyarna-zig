@@ -702,7 +702,7 @@ const ErrorEmitter = struct {
         .lexerErrorFn        = lexerError,
         .parserErrorFn       = parserError,
         .wrongItemErrorFn    = wrongItemError,
-        .unknownErrorFn      = unknownError,
+        .scalarErrorFn       = scalarError,
         .wrongIdErrorFn      = wrongIdError,
         .previousOccurenceFn = previousOccurence,
         .posChainFn          = posChain,
@@ -767,15 +767,15 @@ const ErrorEmitter = struct {
     self.forwardArg("got", "{}", got.formatter());
   }
 
-  fn unknownError(
+  fn scalarError(
     reporter: *errors.Reporter,
-    id: errors.UnknownError,
+    id: errors.ScalarError,
     pos: model.Position,
-    name: []const u8
+    repr: []const u8
   ) void {
     const self = @fieldParentPtr(ErrorEmitter, "api", reporter);
     self.forwardError(id, pos);
-    self.forwardArg("name", "{s}", name);
+    self.forwardArg("repr", "{s}", repr);
   }
 
   fn wrongIdError(

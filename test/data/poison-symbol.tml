@@ -16,6 +16,6 @@
   got = ws_break
 5:11 - 6:1 MissingSymbolEntity
 4:9 - 4:13 UnknownSymbol
-  name = bar
+  repr = bar
 8:1 - 8:6 UnknownSymbol
-  name = spam
+  repr = spam

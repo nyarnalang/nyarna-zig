@@ -5,6 +5,7 @@ const nyarna = @import("../nyarna.zig");
 const interpret = @import("../interpret.zig");
 const model = @import("../model.zig");
 const Interpreter = interpret.Interpreter;
+const stringOrder = @import("../helpers.zig").stringOrder;
 
 pub const DefCollector = struct {
   count: usize = 0,
@@ -458,6 +459,16 @@ pub const Impl = lib.Provider.Wrapper(struct {
     };
     return try (try Proc.init(intpr, ns, pos)).node(defs);
   }
+
+  pub fn @"List::length"(
+    eval: *nyarna.Evaluator,
+    pos: model.Position,
+    list: *model.Value.List,
+  ) nyarna.Error!*model.Value {
+    return (try eval.ctx.values.number(
+      pos, &eval.ctx.types().system.natural.instantiated.data.numeric,
+      @intCast(i64, list.content.items.len))).value();
+  }
 });
 
 pub const instance = Impl.init();
@@ -486,7 +497,7 @@ pub const Checker = struct {
       fn init(lattice: *nyarna.types.Lattice) ArrayType {
         var ret: ArrayType = undefined;
         inline for (tuples) |tuple, i| {
-          if (i > 0) if (order(tuple.@"0", tuples[i-1].@"0") != .greater) {
+          if (i > 0) if (stringOrder(tuple.@"0", tuples[i-1].@"0") != .gt) {
             std.debug.panic("wrong order: \"{s}\" >= \"{s}\"",
               .{tuples[i-1].@"0", tuple.@"0"});
           };
@@ -523,6 +534,7 @@ pub const Checker = struct {
     .{"List", .prototype},
     .{"Location", .location},
     .{"Map", .prototype},
+    .{"Natural", .numeric, .natural},
     .{"Numeric", .prototype},
     .{"Optional", .prototype},
     .{"Paragraphs", .prototype},
@@ -550,28 +562,16 @@ pub const Checker = struct {
     };
   }
 
-  const Order = enum { lesser, equal, greater };
-
-  fn order(a: []const u8, b: []const u8) Order {
-    var i: usize = 0;
-    while (i < a.len) : (i += 1) {
-      if (i == b.len) return .greater;
-      if (a[i] < b[i]) return .lesser;
-      if (a[i] > b[i]) return .greater;
-    }
-    return .equal;
-  }
-
   pub fn check(self: *Checker, sym: *model.Symbol) void {
     // list of expected items is sorted by name, so we'll do a binary search
     var data: []ExpectedSymbol = &self.data;
     while (data.len > 0) {
       const index = @divTrunc(data.len, 2);
       const cur = &data[index];
-      data = switch (order(sym.name, cur.name)) {
-        .lesser => data[0..index],
-        .greater => data[index+1..],
-        .equal => {
+      data = switch (stringOrder(sym.name, cur.name)) {
+        .lt => data[0..index],
+        .gt => data[index+1..],
+        .eq => {
           switch (cur.kind) {
             .prototype => if (sym.data != .prototype) {
               self.logger.ShouldBePrototype(sym.defined_at, sym.name);

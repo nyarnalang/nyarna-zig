@@ -53,11 +53,11 @@ pub fn main() !void {
     \\
     );
   }
-  inline for (@typeInfo(errors.UnknownError).Enum.fields) |f| {
+  inline for (@typeInfo(errors.ScalarError).Enum.fields) |f| {
     try eh.writeAll("  pub fn " ++ f.name ++
     \\(self: *@This(), pos: model.Position, name: []const u8) void {
     \\    self.count += 1;
-    \\    self.reporter.unknownErrorFn(self.reporter, .
+    \\    self.reporter.scalarErrorFn(self.reporter, .
     ++ f.name ++ \\, pos, name);
     \\  }
     \\

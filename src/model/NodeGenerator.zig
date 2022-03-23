@@ -302,9 +302,13 @@ pub inline fn tgPrototype(
   self: *Self,
   pos: Position,
   params: *Node,
+  funcs: ?*Node,
 ) !*Node.tg.Prototype {
   return &(try self.node(
-    pos, .{.gen_prototype = .{.params = .{.unresolved = params}}}
+    pos, .{.gen_prototype = .{
+      .params = .{.unresolved = params},
+      .funcs = funcs,
+    }}
   )).data.gen_prototype;
 }
 

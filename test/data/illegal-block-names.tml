@@ -11,7 +11,7 @@
 6:2 - 6:3 IllegalCharacters
 8:6 - 8:6 MissingBlockNameEnd
 8:2 - 8:6 UnknownParameter
-  name = derp
+  repr = derp
 3:2 - 3:4 MissingEndCommand
   repr = if
   previous = input(9:1)

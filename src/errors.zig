@@ -21,7 +21,7 @@ pub const GenericParserError = enum {
   MethodOutsideDeclare, CannotResolveLocator, ImportIllegalInFullast,
   MissingInitialValue, IllegalNumericInterval, EntityCannotBeNamed,
   SurplusFlags, TypeInMagic, NyFuncInMagic, BuiltinMustBeNamed,
-  ConstructorUnavailable, NoBuiltinProvider,
+  ConstructorUnavailable, NoBuiltinProvider, IllegalContentInPrototypeFuncs,
 };
 
 pub const WrongItemError = enum {
@@ -77,10 +77,11 @@ pub const WrongItemError = enum {
   ExpectedXGotY, MissingToken, PrematureToken, IllegalItem,
 };
 
-pub const UnknownError = enum {
+pub const ScalarError = enum {
   UnknownFlag, UnknownSyntax, UnknownParameter, UnknownSymbol, UnknownField,
   UnknownResolver, UnknownUnique, UnknownPrototype, UnknownBuiltin,
-  DoesntHaveConstructor,
+  DoesntHaveConstructor, InvalidNumber, NumberTooLarge, TooManyDecimals,
+  InvalidDecimals,
 };
 
 pub const WrongIdError = enum {
@@ -183,7 +184,7 @@ pub const WrongTypeError = enum {
 };
 
 pub const ConstructionError = enum {
-  NotInEnum, OutOfRange, TooManyDecimals, NotANumber, NumberTooLarge,
+  NotInEnum, OutOfRange, TooManyDecimalsForType,
 };
 
 pub const SystemNyError = enum {
@@ -214,11 +215,11 @@ pub const Reporter = struct {
     expected: []const WrongItemError.ItemDescr,
     got: WrongItemError.ItemDescr,
   ) void,
-  unknownErrorFn: fn(
+  scalarErrorFn: fn(
     reporter: *Reporter,
-    id: UnknownError,
+    id: ScalarError,
     pos: model.Position,
-    name: []const u8,
+    repr: []const u8,
   ) void,
   wrongIdErrorFn: fn(
     reporter: *Reporter,
@@ -297,7 +298,7 @@ pub const CmdLineReporter = struct {
         .previousOccurenceFn = CmdLineReporter.previousOccurence,
         .posChainFn = CmdLineReporter.posChain,
         .wrongItemErrorFn = CmdLineReporter.wrongItemError,
-        .unknownErrorFn = CmdLineReporter.unknownError,
+        .scalarErrorFn = CmdLineReporter.scalarError,
         .wrongIdErrorFn = CmdLineReporter.wrongIdError,
         .wrongTypeErrorFn = CmdLineReporter.wrongTypeError,
         .constructionErrorFn = CmdLineReporter.constructionError,
@@ -375,23 +376,31 @@ pub const CmdLineReporter = struct {
     self.renderError("wrong token: expected {?}, got {}", .{arr, single});
   }
 
-  fn unknownError(
+  fn scalarError(
     reporter: *Reporter,
-    id: UnknownError,
+    id: ScalarError,
     pos: model.Position,
-    name: []const u8,
+    repr: []const u8,
   ) void {
     const self = @fieldParentPtr(CmdLineReporter, "reporter", reporter);
     self.style(.{.bold}, "{s}", .{pos});
     const entity: []const u8 = switch (id) {
-      .UnknownFlag      => "flag",        .UnknownSyntax   => "syntax",
-      .UnknownParameter => "parameter",   .UnknownSymbol   => "symbol",
-      .UnknownField     => "field",       .UnknownResolver => "resolver",
-      .UnknownUnique    => "unique type", .UnknownPrototype => "prototype",
-      .UnknownBuiltin   => "builtin",
-      .DoesntHaveConstructor => "constructor of unique type",
+      .UnknownFlag           => "unknown flag",
+      .UnknownSyntax         => "unknown syntax",
+      .UnknownParameter      => "unknown parameter",
+      .UnknownSymbol         => "unknown symbol",
+      .UnknownField          => "unknown field",
+      .UnknownResolver       => "unknown resolver",
+      .UnknownUnique         => "unknown unique type",
+      .UnknownPrototype      => "unknown prototype",
+      .UnknownBuiltin        => "unknown builtin",
+      .DoesntHaveConstructor => "unknown constructor of unique type",
+      .InvalidNumber         => "invalid number",
+      .NumberTooLarge        => "numeric literal has too many digits",
+      .TooManyDecimals       => "numeric literal has too many decimal digits",
+      .InvalidDecimals       => "not an integer between 0 and 32",
     };
-    self.renderError("unknown {s}: '{s}'", .{entity, name});
+    self.renderError("unknown {s}: '{s}'", .{entity, repr});
   }
 
   fn wrongIdError(
@@ -510,13 +519,9 @@ pub const CmdLineReporter = struct {
         "given value '{s}' is not part of enum {}", .{repr, t_fmt}),
       .OutOfRange => self.renderError(
         "given value '{s}' is outside of the range of type {}", .{repr, t_fmt}),
-      .TooManyDecimals => self.renderError(
+      .TooManyDecimalsForType => self.renderError(
         "given value '{s}' has too many decimal digits for type {}",
         .{repr, t_fmt}),
-      .NotANumber => self.renderError(
-        "given value '{s}' cannot be read as number.", .{repr}),
-      .NumberTooLarge => self.renderError(
-        "number '{s}' is too large.", .{repr}),
     }
   }
 

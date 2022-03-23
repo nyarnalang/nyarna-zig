@@ -9,15 +9,29 @@ const Position = model.Position;
 
 const local = @This();
 
-/// Intersection is a virtual type that takes values of possibly a scalar type,
-/// or a set of Record types.
-pub const Intersection = struct {
-  scalar: ?Type,
-  types: []Type,
+//----------------------------------------------------------------------------//
+// available types                                                            //
+//----------------------------------------------------------------------------//
 
-  pub inline fn pos(self: *@This()) Position {
-    return Structural.pos(self);
-  }
+/// Type of callable entities.
+pub const Callable = struct {
+  pub const Kind = enum {function, @"type", prototype};
+  /// allocated separately to make the Structural union smaller.
+  sig: *model.Signature,
+  /// This determines the position of this type in the type hierarchy.
+  /// For a Callable c,
+  ///    c < Type iff c.kind == type
+  ///    c < Prototype iff c.kind == prototype
+  /// no relation to Type resp. Prototype otherwise.
+  kind: Kind,
+  /// representative of this type in the type lattice.
+  /// the representative has no primary, varmap, or auto_swallow value, and
+  /// its parameters have empty names, always default-capture, and have
+  /// neither config nor default.
+  ///
+  /// undefined for keywords which cannot be used as Callable values and
+  /// therefore never interact with the type lattice.
+  repr: *Callable,
 
   pub inline fn typedef(self: *const @This()) Type {
     return Structural.typedef(self);
@@ -37,26 +51,56 @@ pub const Concat = struct {
   }
 };
 
-/// Optional virtual type with an inner type.
-pub const Optional = struct {
-  inner: Type,
+/// An Enumeration type.
+pub const Enum = struct {
+  constructor: *Callable,
+  /// retains the order of the enum values.
+  /// must not be modified after creation.
+  /// the map's value is the position where the enum value has been defined.
+  values: std.StringArrayHashMapUnmanaged(model.Position),
 
-  pub inline fn pos(self: *@This()) Position {
-    return Structural.pos(self);
+  pub inline fn pos(self: *const @This()) Position {
+    return Instantiated.pos(self);
   }
 
   pub inline fn typedef(self: *const @This()) Type {
-    return Structural.typedef(self);
+    return Instantiated.typedef(self);
+  }
+
+  pub inline fn instantiated(self: *const @This()) *Instantiated {
+    return Instantiated.parent(self);
   }
 };
 
-/// Paragraphs type, with a set of inner types, and possibly a callable
-/// auto-type which will be used to implicitly wrap paragraphs that are not
-/// assignable to any inner type.
-pub const Paragraphs = struct {
-  inner: []Type,
-  /// index into inner, if set.
-  auto: ?u21,
+/// A Float type. While at most five structually different Float types can ever
+/// exist, Float types have name equivalence, which is why it is not five
+/// enumeration values in the Type enum.
+pub const Float = struct {
+  pub const Precision = enum {
+    half, single, double, quadruple, octuple
+  };
+
+  constructor: *Callable,
+  precision: Precision,
+
+  pub inline fn pos(self: *@This()) Position {
+    return Instantiated.pos(self);
+  }
+
+  pub inline fn typedef(self: *const @This()) Type {
+    return Instantiated.typedef(self);
+  }
+
+  pub inline fn instantiated(self: *const @This()) *Instantiated {
+    return Instantiated.parent(self);
+  }
+};
+
+/// Intersection is a virtual type that takes values of possibly a scalar type,
+/// or a set of Record types.
+pub const Intersection = struct {
+  scalar: ?Type,
+  types: []Type,
 
   pub inline fn pos(self: *@This()) Position {
     return Structural.pos(self);
@@ -94,66 +138,74 @@ pub const Map = struct {
   }
 };
 
-/// Type of callable entities.
-pub const Callable = struct {
-  pub const Kind = enum {function, @"type", prototype};
-  /// allocated separately to make the Structural union smaller.
-  sig: *model.Signature,
-  /// This determines the position of this type in the type hierarchy.
-  /// For a Callable c,
-  ///    c < Type iff c.kind == type
-  ///    c < Prototype iff c.kind == prototype
-  /// no relation to Type resp. Prototype otherwise.
-  kind: Kind,
-  /// representative of this type in the type lattice.
-  /// the representative has no primary, varmap, or auto_swallow value, and
-  /// its parameters have empty names, always default-capture, and have
-  /// neither config nor default.
-  ///
-  /// undefined for keywords which cannot be used as Callable values and
-  /// therefore never interact with the type lattice.
-  repr: *Callable,
+/// A Numeric type, which has a minimum value, a maximum value, and a defined
+/// number of decimal digits. std.math.minInt(i64) and std.math.maxInt(i64)
+/// serve as the implementation-defined smallest and largest possible numbers.
+pub const Numeric = struct {
+  constructor: *Callable,
+  min: i64,
+  max: i64,
+  decimals: u8,
+
+  pub inline fn pos(self: *@This()) Position {
+    return Instantiated.pos(self);
+  }
+
+  pub inline fn typedef(self: *const @This()) Type {
+    return Instantiated.typedef(self);
+  }
+
+  pub inline fn instantiated(self: *const @This()) *Instantiated {
+    return Instantiated.parent(self);
+  }
+};
+
+/// Optional virtual type with an inner type.
+pub const Optional = struct {
+  inner: Type,
+
+  pub inline fn pos(self: *@This()) Position {
+    return Structural.pos(self);
+  }
 
   pub inline fn typedef(self: *const @This()) Type {
     return Structural.typedef(self);
   }
 };
 
-/// types with structural equivalence
-pub const Structural = union(enum) {
-  optional: Optional,
-  concat: Concat,
-  paragraphs: Paragraphs,
-  list: List,
-  map: Map,
-  /// general type for anything callable, has flag for whether it's a type
-  callable: Callable,
-  intersection: Intersection,
+/// Paragraphs type, with a set of inner types, and possibly a callable
+/// auto-type which will be used to implicitly wrap paragraphs that are not
+/// assignable to any inner type.
+pub const Paragraphs = struct {
+  inner: []Type,
+  /// index into inner, if set.
+  auto: ?u21,
 
-  fn parent(it: anytype) *Structural {
-    const t = @typeInfo(@TypeOf(it)).Pointer.child;
-    const addr = @ptrToInt(it) - switch (t) {
-      Optional => offset(Structural, "optional"),
-      Concat => offset(Structural, "concat"),
-      Paragraphs => offset(Structural, "paragraphs"),
-      List => offset(Structural, "list"),
-      Map => offset(Structural, "map"),
-      Callable => offset(Structural, "callable"),
-      Intersection => offset(Structural, "intersection"),
-      else => unreachable
-    };
-    return @intToPtr(*Structural, addr);
+  pub inline fn pos(self: *@This()) Position {
+    return Structural.pos(self);
   }
 
-  /// calculates the position from a pointer to Textual, Numeric, Float,
-  /// Enum, or Record
-  fn pos(it: anytype) Position {
-    return parent(it).at;
+  pub inline fn typedef(self: *const @This()) Type {
+    return Structural.typedef(self);
+  }
+};
+
+/// A Record type. Its fields are defined by its constructor's signature.
+pub const Record = struct {
+  /// Constructor signature.
+  /// Serves as type of the Record when used as type value.
+  constructor: *Callable,
+
+  pub fn pos(self: *@This()) Position {
+    return Instantiated.pos(self);
   }
 
-  /// returns a type, given a pointer to Structural or any of its data types.
-  pub fn typedef(it: anytype) Type {
-    return .{.structural = if (@TypeOf(it) == *Structural) it else parent(it)};
+  pub inline fn typedef(self: *const @This()) Type {
+    return Instantiated.typedef(self);
+  }
+
+  pub inline fn instantiated(self: *const @This()) *Instantiated {
+    return Instantiated.parent(self);
   }
 };
 
@@ -180,91 +232,9 @@ pub const Textual = struct {
   }
 };
 
-/// A Numeric type, which has a minimum value, a maximum value, and a defined
-/// number of decimal digits. std.math.minInt(i64) and std.math.maxInt(i64)
-/// serve as the implementation-defined smallest and largest possible numbers.
-pub const Numeric = struct {
-  constructor: *Callable,
-  min: i64,
-  max: i64,
-  decimals: u8,
-
-  pub inline fn pos(self: *@This()) Position {
-    return Instantiated.pos(self);
-  }
-
-  pub inline fn typedef(self: *const @This()) Type {
-    return Instantiated.typedef(self);
-  }
-
-  pub inline fn instantiated(self: *const @This()) *Instantiated {
-    return Instantiated.parent(self);
-  }
-};
-
-/// A Float type. While at most five structually different Float types can ever
-/// exist, Float types have name equivalence, which is why it is not five
-/// enumeration values in the Type enum.
-pub const Float = struct {
-  pub const Precision = enum {
-    half, single, double, quadruple, octuple
-  };
-
-  constructor: *Callable,
-  precision: Precision,
-
-  pub inline fn pos(self: *@This()) Position {
-    return Instantiated.pos(self);
-  }
-
-  pub inline fn typedef(self: *const @This()) Type {
-    return Instantiated.typedef(self);
-  }
-
-  pub inline fn instantiated(self: *const @This()) *Instantiated {
-    return Instantiated.parent(self);
-  }
-};
-
-/// An Enumeration type.
-pub const Enum = struct {
-  constructor: *Callable,
-  /// retains the order of the enum values.
-  /// must not be modified after creation.
-  /// the map's value is the position where the enum value has been defined.
-  values: std.StringArrayHashMapUnmanaged(model.Position),
-
-  pub inline fn pos(self: *const @This()) Position {
-    return Instantiated.pos(self);
-  }
-
-  pub inline fn typedef(self: *const @This()) Type {
-    return Instantiated.typedef(self);
-  }
-
-  pub inline fn instantiated(self: *const @This()) *Instantiated {
-    return Instantiated.parent(self);
-  }
-};
-
-/// A Record type. Its fields are defined by its constructor's signature.
-pub const Record = struct {
-  /// Constructor signature.
-  /// Serves as type of the Record when used as type value.
-  constructor: *Callable,
-
-  pub fn pos(self: *@This()) Position {
-    return Instantiated.pos(self);
-  }
-
-  pub inline fn typedef(self: *const @This()) Type {
-    return Instantiated.typedef(self);
-  }
-
-  pub inline fn instantiated(self: *const @This()) *Instantiated {
-    return Instantiated.parent(self);
-  }
-};
+//----------------------------------------------------------------------------//
+// type kinds (name-equiv vs structure equiv)                                 //
+//----------------------------------------------------------------------------//
 
 /// A type with name equivalence. This includes unique types.
 pub const Instantiated = struct {
@@ -311,6 +281,48 @@ pub const Instantiated = struct {
     };
   }
 };
+
+/// types with structural equivalence
+pub const Structural = union(enum) {
+  /// general type for anything callable, has flag for whether it's a type
+  callable: Callable,
+  concat: Concat,
+  intersection: Intersection,
+  list: List,
+  map: Map,
+  optional: Optional,
+  paragraphs: Paragraphs,
+
+  fn parent(it: anytype) *Structural {
+    const t = @typeInfo(@TypeOf(it)).Pointer.child;
+    const addr = @ptrToInt(it) - switch (t) {
+      Optional => offset(Structural, "optional"),
+      Concat => offset(Structural, "concat"),
+      Paragraphs => offset(Structural, "paragraphs"),
+      List => offset(Structural, "list"),
+      Map => offset(Structural, "map"),
+      Callable => offset(Structural, "callable"),
+      Intersection => offset(Structural, "intersection"),
+      else => unreachable
+    };
+    return @intToPtr(*Structural, addr);
+  }
+
+  /// calculates the position from a pointer to Textual, Numeric, Float,
+  /// Enum, or Record
+  fn pos(it: anytype) Position {
+    return parent(it).at;
+  }
+
+  /// returns a type, given a pointer to Structural or any of its data types.
+  pub fn typedef(it: anytype) Type {
+    return .{.structural = if (@TypeOf(it) == *Structural) it else parent(it)};
+  }
+};
+
+//----------------------------------------------------------------------------//
+// the actual Type type (should be imported directly, contains everything)    //
+//----------------------------------------------------------------------------//
 
 pub const Type = union(enum) {
   pub const Callable = local.Callable;

@@ -176,9 +176,9 @@ pub fn registerExtImpl(
   ctx: Context,
   p: *const Provider,
   name: []const u8,
-  bres: types.SigBuilderResult,
+  is_keyword: bool,
 ) !?usize {
-  return if (bres.sig.isKeyword()) blk: {
+  return if (is_keyword) blk: {
     const impl = p.getKeyword(name) orelse return null;
     try ctx.data.keyword_registry.append(ctx.global(), impl);
     break :blk ctx.data.keyword_registry.items.len - 1;
@@ -207,8 +207,9 @@ pub fn extFunc(
   ns_dependent: bool,
   p: *const Provider,
 ) !?*model.Function {
-  const index =
-    (try registerExtImpl(ctx, p, name.name, bres)) orelse return null;
+  const index = (
+    try registerExtImpl(ctx, p, name.name, bres.sig.isKeyword())
+  ) orelse return null;
   const container = try ctx.global().create(model.VariableContainer);
   container.* = .{
     .num_values = @intCast(u15, bres.sig.parameters.len),
@@ -237,7 +238,7 @@ fn typeConstructor(
 ) !types.Constructor {
   return types.Constructor{
     .callable = try bres.createCallable(ctx.global(), .@"type"),
-    .impl_index = try registerExtImpl(ctx, p, name, bres),
+    .impl_index = try registerExtImpl(ctx, p, name, bres.sig.isKeyword()),
   };
 }
 

@@ -10,6 +10,5 @@
 4:21 - 4:22 SwallowDepthWithoutDiamondClose
 5:16 - 5:17 IllegalColon
 6:15 - 6:16 SwallowDepthWithoutDiamondClose
-8:12 - 8:16 NotANumber
-  t = Integer
+8:12 - 8:16 InvalidNumber
   repr = spam

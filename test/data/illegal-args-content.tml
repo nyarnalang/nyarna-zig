@@ -18,6 +18,6 @@
   types = Literal, [type] (Raw) -> Raw
 11:20 - 11:21 IllegalNameSep
 7:11 - 7:17 UnknownSymbol
-  name = block
+  repr = block
 11:1 - 11:7 UnknownSymbol
-  name = block
+  repr = block

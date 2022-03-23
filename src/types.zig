@@ -2,6 +2,9 @@ const std = @import("std");
 const model = @import("model.zig");
 const nyarna = @import("nyarna.zig");
 const unicode = @import("unicode.zig");
+const stringOrder = @import("helpers.zig").stringOrder;
+
+const LiteralNumber = @import("parse.zig").LiteralNumber;
 
 /// a type or prototype constructor.
 pub const Constructor = struct {
@@ -62,6 +65,185 @@ const InnerIntend = enum {
   }
 };
 
+/// PrototypeFuncs contains function definitions belonging to a prototype.
+/// Those functions are to be instantiated for each instance of that prototype.
+///
+/// The functions are instantiated lazily to avoid lots of superfluous
+/// instantiations for every instance of e.g. Concat (which are often implicitly
+/// created). This type holds the function definitions and implements this
+/// instantiation.
+pub const PrototypeFuncs = struct {
+  pub const Item = struct {
+    name: *model.Value.TextScalar,
+    params: []*model.Value.Location,
+    returns: *model.Value.TypeVal,
+    impl_index: usize,
+  };
+  defs: []Item = &.{},
+
+  fn lessThan(
+    context: u0,
+    lhs: Item,
+    rhs: Item,
+  ) bool {
+    _ = context;
+    return stringOrder(lhs.name.content, rhs.name.content) == .lt;
+  }
+
+  /// given list will be consumed.
+  pub fn set(self: *PrototypeFuncs, defs: []Item) void {
+    std.sort.sort(Item, defs, @as(u0, 0), lessThan);
+    self.defs = defs;
+  }
+
+  fn find(self: *PrototypeFuncs, name: []const u8) ?usize {
+    var defs = self.defs;
+    var offset: usize = 0;
+    while (defs.len > 0) {
+      const i = @divTrunc(defs.len, 2);
+      const def = defs[i];
+      switch (stringOrder(name, def.name.content)) {
+        .lt => defs = defs[0..i],
+        .eq => return offset + i,
+        .gt => {
+          defs = defs[i+1..];
+          offset += i+1;
+        },
+      }
+    } else return null;
+  }
+};
+
+pub const InstanceFuncs = struct {
+  pt: *PrototypeFuncs,
+  syms: []?*model.Symbol,
+  instance: model.Type,
+
+  fn init(
+    pt: *PrototypeFuncs,
+    allocator: std.mem.Allocator,
+    instance: model.Type,
+  ) !InstanceFuncs {
+    var ret = InstanceFuncs{
+      .pt = pt,
+      .syms = try allocator.alloc(?*model.Symbol, pt.defs.len),
+      .instance = instance,
+    };
+    std.mem.set(?*model.Symbol, ret.syms, null);
+    return ret;
+  }
+
+  fn replacePrototypeWith(
+    pos: model.Position,
+    t: model.Type,
+    ctx: nyarna.Context,
+    instance: model.Type,
+  ) std.mem.Allocator.Error!?model.Type {
+    switch (t) {
+      .structural => |struc| switch (struc.*) {
+        .callable => unreachable,
+        .concat => |*con| {
+          if (try replacePrototypeWith(pos, con.inner, ctx, instance)) |inner| {
+            if (try ctx.types().concat(inner)) |ret| return ret;
+            if (!inner.isInst(.poison)) {
+              ctx.logger.InvalidInnerConcatType(pos, &[_]model.Type{inner});
+            }
+            return ctx.types().poison();
+          } else return null;
+        },
+        .intersection => unreachable,
+        .list => |*lst| {
+          if (try replacePrototypeWith(pos, lst.inner, ctx, instance)) |inner| {
+            if (try ctx.types().list(inner)) |ret| return ret;
+            if (!inner.isInst(.poison)) {
+              ctx.logger.InvalidInnerListType(pos, &[_]model.Type{inner});
+            }
+            return ctx.types().poison();
+          } else return null;
+        },
+        .map => |*map| {
+          var something_changed = false;
+          var inners: [2]model.Type = undefined;
+          inline for (.{.key, .value}) |f, index| {
+            if (
+              try replacePrototypeWith(
+                pos, @field(map, @tagName(f)), ctx, instance)
+            ) |replacement| {
+              inners[index] = replacement;
+              something_changed = true;
+            }
+          }
+          if (!something_changed) return null;
+          unreachable; // TODO: ctx.map(…,…)
+        },
+        .optional => |*opt| {
+          if (try replacePrototypeWith(pos, opt.inner, ctx, instance)) |inner| {
+            if (try ctx.types().optional(inner)) |ret| return ret;
+            if (!inner.isInst(.poison)) {
+              ctx.logger.InvalidInnerOptionalType(pos, &[_]model.Type{inner});
+            }
+            return ctx.types().poison();
+          } else return null;
+        },
+        .paragraphs => unreachable, // TODO
+      },
+      .instantiated => |inst| switch (inst.data) {
+        .record => unreachable,
+        else => return null,
+      },
+    }
+  }
+
+  pub fn find(
+    self: *InstanceFuncs,
+    ctx: nyarna.Context,
+    name: []const u8,
+  ) !?*model.Symbol {
+    const index = self.pt.find(name) orelse return null;
+    if (self.syms[index]) |sym| return sym;
+    const def = self.pt.defs[index];
+    const ret_type = if (
+      try replacePrototypeWith(
+        def.returns.value().origin, def.returns.t, ctx, self.instance)
+    ) |t| t else def.returns.t;
+    var finder = nyarna.types.CallableReprFinder.init(ctx.types());
+    for (def.params) |param| try finder.push(param);
+    const finder_res = try finder.finish(ret_type, false);
+    var builder = try nyarna.types.SigBuilder.init(
+      ctx, def.params.len, ret_type, finder_res.needs_different_repr
+    );
+    for (def.params) |param| try builder.push(param);
+    const builder_res = builder.finish();
+    const sym = try ctx.global().create(model.Symbol);
+    sym.* = .{
+      .defined_at = def.name.value().origin,
+      .name = def.name.content,
+      .data = undefined,
+      .parent_type = self.instance,
+    };
+
+    const container = try ctx.global().create(model.VariableContainer);
+    container.* =
+      .{.num_values = @intCast(u15, builder_res.sig.parameters.len)};
+    const func = try ctx.global().create(model.Function);
+    func.* = .{
+      .callable = try builder_res.createCallable(ctx.global(), .function),
+      .defined_at = def.name.value().origin,
+      .data = .{
+        .ext = .{
+          .ns_dependent = false,
+          .impl_index = def.impl_index,
+        },
+      },
+      .name = sym,
+      .variables = container,
+    };
+    sym.data = .{.func = func};
+    self.syms[index] = sym;
+    return sym;
+  }
+};
+
 /// this function implements the artificial total order. The total order's
 /// constraint is satisfied by ordering all intrinsic types (which do not have
 /// allocated information) before all other types, and ordering the other
@@ -106,8 +288,9 @@ fn total_order_less(_: void, a: model.Type, b: model.Type) bool {
 /// any subsequent call with the same t will return that allocated type.
 pub const Lattice = struct {
   const Self = @This();
-  /// This node is used to efficiently store and search for intersection types;
-  /// see doc on the intersections field.
+  /// This node is used to efficiently store and search for structural types
+  /// that are instantiated with a list of types.
+  /// see doc on the prefix_trees field.
   fn TreeNode(comptime Flag: type) type {
     return struct {
       key: model.Type = undefined,
@@ -151,14 +334,15 @@ pub const Lattice = struct {
     };
   }
 
+  const StructuralHashMap = std.HashMapUnmanaged(
+    model.Type, *model.Type.Structural, model.Type.HashContext,
+    std.hash_map.default_max_load_percentage);
+
   /// allocator used for data of structural types
   allocator: std.mem.Allocator,
-  optionals: std.HashMapUnmanaged(model.Type, *model.Type.Structural,
-      model.Type.HashContext, std.hash_map.default_max_load_percentage),
-  concats: std.HashMapUnmanaged(model.Type, *model.Type.Structural,
-      model.Type.HashContext, std.hash_map.default_max_load_percentage),
-  lists: std.HashMapUnmanaged(model.Type, *model.Type.Structural,
-      model.Type.HashContext, std.hash_map.default_max_load_percentage),
+  optionals: StructuralHashMap,
+  concats  : StructuralHashMap,
+  lists    : StructuralHashMap,
   /// this is the list type that contains itself. This is a special case and the
   /// only pure structural self-referential type structure (i.e. the only
   /// recursive type that is composed of nothing but structural types).
@@ -206,8 +390,8 @@ pub const Lattice = struct {
   /// assumed that this is fine.
   prefix_trees: struct {
     intersection: TreeNode(void),
-    paragraphs: TreeNode(void),
-    callable: TreeNode(bool),
+    paragraphs  : TreeNode(void),
+    callable    : TreeNode(bool),
   },
   /// Constructors for all types that have constructors.
   /// These are to be queried via typeConstructor() and prototypeConstructor().
@@ -259,10 +443,29 @@ pub const Lattice = struct {
   /// types defined in system.ny. these are available as soon as system.ny has
   /// been loaded and must not be accessed earlier.
   system: struct {
-    boolean: model.Type,
-    integer: model.Type,
+    boolean         : model.Type,
+    integer         : model.Type,
+    natural         : model.Type,
     unicode_category: model.Type,
   },
+  /// prototype functions defined on every type of a prototype.
+  prototype_funcs: struct {
+    concat      : PrototypeFuncs = .{},
+    @"enum"     : PrototypeFuncs = .{},
+    float       : PrototypeFuncs = .{},
+    intersection: PrototypeFuncs = .{},
+    list        : PrototypeFuncs = .{},
+    map         : PrototypeFuncs = .{},
+    numeric     : PrototypeFuncs = .{},
+    optional    : PrototypeFuncs = .{},
+    paragraphs  : PrototypeFuncs = .{},
+    record      : PrototypeFuncs = .{},
+    textual     : PrototypeFuncs = .{},
+  } = .{},
+  /// holds instance functions for every non-unique type. These are instances
+  /// of the functions that are defined on the prototype of the subject type.
+  instance_funcs: std.HashMapUnmanaged(model.Type, InstanceFuncs,
+    model.Type.HashContext, std.hash_map.default_max_load_percentage) = .{},
 
   pub fn init(ctx: nyarna.Context) !Lattice {
     var ret = Lattice{
@@ -786,6 +989,33 @@ pub const Lattice = struct {
     };
   }
 
+  pub fn instanceFuncsOf(self: *Lattice, t: model.Type) !?*InstanceFuncs {
+    const pt = switch (t) {
+      .structural => |struc| switch (struc.*) {
+        .callable => return null,
+        .concat => &self.prototype_funcs.concat,
+        .intersection => &self.prototype_funcs.intersection,
+        .list => &self.prototype_funcs.list,
+        .map => &self.prototype_funcs.map,
+        .optional => &self.prototype_funcs.optional,
+        .paragraphs => &self.prototype_funcs.paragraphs,
+      },
+      .instantiated => |inst| switch (inst.data) {
+        .textual => &self.prototype_funcs.textual,
+        .numeric => &self.prototype_funcs.numeric,
+        .float => &self.prototype_funcs.float,
+        .tenum => &self.prototype_funcs.@"enum",
+        .record => &self.prototype_funcs.record,
+        else => return null,
+      },
+    };
+    const res = try self.instance_funcs.getOrPut(self.allocator, t);
+    if (!res.found_existing) {
+      res.value_ptr.* = try InstanceFuncs.init(pt, self.allocator, t);
+    }
+    return res.value_ptr;
+  }
+
   /// given the actual type of a value and the target type of an expression,
   /// calculate the expected type in E_(target) to which the value is to be
   /// coerced [8.3].
@@ -1175,33 +1405,59 @@ pub const NumericTypeBuilder = struct {
         .constructor = undefined,
         .min = std.math.minInt(i64),
         .max = std.math.maxInt(i64),
+        // can be maximal 32. set to 33 to indicate errors during construction.
         .decimals = 0,
       }},
     };
     return Self{.ctx = ctx, .ret = &inst.data.numeric, .pos = pos};
   }
 
-  pub fn min(self: *Self, value: i64) void {
-    self.ret.min = value;
-  }
-
-  pub fn max(self: *Self, value: i64) void {
-    self.ret.max = value;
-  }
-
-  pub fn decimals(self: *Self, value: i64, pos: model.Position) void {
-    if (value > 32 or value < 0) {
-      // TODO: type and decimal repr
-      self.ctx.logger.OutOfRange(pos, undefined, undefined);
+  pub fn min(self: *Self, num: LiteralNumber, pos: model.Position) void {
+    if (num.decimals > self.ret.decimals) {
+      self.ctx.logger.TooManyDecimals(pos, num.repr);
       self.ret.decimals = 33;
-    } else self.ret.decimals = @intCast(u8, value);
+    } else if (
+      @mulWithOverflow(i64, num.value,
+      std.math.pow(i64, 10, @intCast(i64, self.ret.decimals - num.decimals)),
+        &self.ret.min)
+    ) {
+      self.ctx.logger.NumberTooLarge(pos, num.repr);
+      self.ret.decimals = 33;
+    }
+  }
+
+  pub fn max(self: *Self, num: LiteralNumber, pos: model.Position) void {
+    if (num.decimals > self.ret.decimals) {
+      self.ctx.logger.TooManyDecimals(pos, num.repr);
+      self.ret.decimals = 33;
+    } else if (
+      @mulWithOverflow(i64, num.value,
+        std.math.pow(i64, 10, @intCast(i64, self.ret.decimals - num.decimals)),
+        &self.ret.max)
+    ) {
+      self.ctx.logger.NumberTooLarge(pos, num.repr);
+      self.ret.decimals = 33;
+    }
+  }
+
+  pub fn decimals(self: *Self, num: LiteralNumber, pos: model.Position) void {
+    if (num.value > 32 or num.value < 0 or num.decimals > 0) {
+      self.ctx.logger.InvalidDecimals(pos, num.repr);
+      self.ret.decimals = 33;
+    } else if (self.ret.decimals != 33) {
+      self.ret.decimals = @intCast(u8, num.value);
+    }
   }
 
   pub fn finish(self: *Self) !?*model.Type.Numeric {
     if (self.ret.min > self.ret.max) {
       self.ctx.logger.IllegalNumericInterval(self.pos);
+      self.ret.decimals = 33;
+    }
+    if (self.ret.decimals > 32) {
+      self.abort();
       return null;
-    } else if (self.ret.decimals > 32) return null;
+    }
     var sb = try SigBuilder.init(
       self.ctx, 1, self.ret.typedef(), true);
     try sb.push((try self.ctx.values.location(
@@ -1211,6 +1467,10 @@ pub const NumericTypeBuilder = struct {
     self.ret.constructor =
       try sb.finish().createCallable(self.ctx.global(), .type);
     return self.ret;
+  }
+
+  pub fn abort(self: *Self) void {
+    self.ctx.global().destroy(self.ret.instantiated());
   }
 };
 

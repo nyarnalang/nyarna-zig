@@ -107,7 +107,7 @@ pub const Resolver = struct {
     intpr: *interpret.Interpreter,
     t: model.Type,
     name: []const u8
-  ) ?SearchResult {
+  ) !?SearchResult {
     switch (t) {
       .instantiated => |inst| switch (inst.data) {
         .record => |*rec| {
@@ -123,6 +123,11 @@ pub const Resolver = struct {
     }
     if (intpr.type_namespaces.get(t)) |ns| {
       if (ns.data.get(name)) |sym| return SearchResult{.symbol = sym};
+    }
+    if (try intpr.ctx.types().instanceFuncsOf(t)) |funcs| {
+      if (try funcs.find(intpr.ctx, name)) |sym| {
+        return SearchResult{.symbol = sym};
+      }
     }
     return null;
   }
@@ -190,7 +195,7 @@ pub const Resolver = struct {
       // access on an unknown function. can't be resolved.
       .function_returning => |*fr| fr.ns,
       .runtime_chain => |*rc| blk: {
-        if (searchAccessible(self.intpr, rc.t, uacc.id)) |sr| switch (sr) {
+        if (try searchAccessible(self.intpr, rc.t, uacc.id)) |sr| switch (sr) {
           .field => |field| {
             try rc.indexes.append(self.intpr.allocator, field.index);
             rc.t = field.t;
@@ -215,9 +220,10 @@ pub const Resolver = struct {
         }
         switch (ref.sym.data) {
           .func => |func| {
-            const target = searchAccessible(
-              self.intpr, func.callable.typedef(), uacc.id)
-            orelse break :blk ref.ns;
+            const target = (
+              try searchAccessible(
+                self.intpr, func.callable.typedef(), uacc.id)
+            ) orelse break :blk ref.ns;
             switch (target) {
               .field => unreachable, // TODO: do functions have fields?
               .symbol => |sym| {
@@ -228,8 +234,9 @@ pub const Resolver = struct {
             }
           },
           .@"type" => |t| {
-            const target = searchAccessible(self.intpr, t, uacc.id)
-            orelse break :blk ref.ns;
+            const target = (
+              try searchAccessible(self.intpr, t, uacc.id)
+            ) orelse break :blk ref.ns;
             switch (target) {
               .field => {
                 self.intpr.ctx.logger.FieldAccessWithoutInstance(

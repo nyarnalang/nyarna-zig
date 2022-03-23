@@ -3,4 +3,4 @@
 \Integer::foo
 --- errors:expr
 3:11 - 3:14 UnknownSymbol
-  name = foo
+  repr = foo
