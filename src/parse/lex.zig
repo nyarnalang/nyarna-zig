@@ -713,9 +713,13 @@ pub const Lexer = struct {
       self.level = self.levels.pop();
     } else {
       self.recent_expected_id = self.level.id;
-      var i = @enumToInt(res) + 1;
-      while (i >= @enumToInt(Token.skipping_call_id)) : (i = i - 1) {
-        self.level = self.levels.pop();
+      if (res == .wrong_call_id and self.levels.items.len == 0) {
+        res = .no_block_call_id;
+      }  else {
+        var i = @enumToInt(res) + 1;
+        while (i >= @enumToInt(Token.skipping_call_id)) : (i = i - 1) {
+          self.level = self.levels.pop();
+        }
       }
     }
     if (self.comments_disabled_at) |depth| {

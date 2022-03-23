@@ -787,6 +787,7 @@ pub const Parser = struct {
       .illegal_indentation => errors.Handler.IllegalIndentation,
       .illegal_content_at_header => errors.Handler.IllegalContentAtHeader,
       .invalid_end_command => errors.Handler.InvalidEndCommand,
+      .no_block_call_id => unreachable,
       .wrong_call_id => unreachable,
       .skipping_call_id => unreachable,
       else => |t| {
@@ -899,17 +900,26 @@ pub const Parser = struct {
 
   inline fn procEndCommand(self: *Parser) !void {
     self.advance();
-    switch (self.cur) {
-      .call_id => {},
-      .wrong_call_id => {
+    const do_shift = switch (self.cur) {
+      .call_id => blk: {
+        try self.leaveLevel();
+        break :blk true;
+      },
+      .wrong_call_id => blk: {
         const cmd_start =
           self.levels.items[self.levels.items.len - 2].command.start;
         self.logger().WrongCallId(
           self.lexer.walker.posFrom(self.cur_start),
           self.lexer.recent_expected_id, self.lexer.recent_id,
           self.intpr().input.at(cmd_start));
+        try self.leaveLevel();
+        break :blk true;
       },
-      else => {
+      .no_block_call_id => blk: {
+        self.logger().NoBlockToEnd(self.lexer.walker.posFrom(self.cur_start));
+        break :blk false;
+      },
+      else => blk: {
         std.debug.assert(@enumToInt(self.cur) >=
           @enumToInt(model.Token.skipping_call_id));
         const cmd_start =
@@ -925,9 +935,10 @@ pub const Parser = struct {
           try lvl.command.shift(self.intpr(), self.cur_start, lvl.fullast);
           try lvl.append(self.intpr(), lvl.command.info.unknown);
         }
+        try self.leaveLevel();
+        break :blk true;
       },
-    }
-    try self.leaveLevel();
+    };
     self.advance();
     if (self.cur == .list_end) {
       self.advance();
@@ -935,9 +946,11 @@ pub const Parser = struct {
       self.logger().MissingClosingParenthesis(
         self.intpr().input.at(self.cur_start));
     }
-    self.state = .command;
-    try self.curLevel().command.shift(
-      self.intpr(), self.cur_start, self.curLevel().fullast);
+    if (do_shift) {
+      self.state = .command;
+      try self.curLevel().command.shift(
+        self.intpr(), self.cur_start, self.curLevel().fullast);
+    }
   }
 
   inline fn procIllegalNameSep(self: *Parser) void {

@@ -89,7 +89,7 @@
   List = \prototype:
     inner: \Ast {primary}
   :funcs:
-    length = \builtin(return=\Natural):
+    len = \builtin(return=\Natural):
       this: \This
     \end(builtin)
   \end(prototype)

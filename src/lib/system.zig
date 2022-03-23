@@ -460,7 +460,7 @@ pub const Impl = lib.Provider.Wrapper(struct {
     return try (try Proc.init(intpr, ns, pos)).node(defs);
   }
 
-  pub fn @"List::length"(
+  pub fn @"List::len"(
     eval: *nyarna.Evaluator,
     pos: model.Position,
     list: *model.Value.List,

@@ -278,7 +278,10 @@ pub const Token = enum(u16) {
   invalid_end_command,
   /// '\end(' with \ being the wrong command character
   wrong_ns_end_command,
-  /// identifier inside '\end(' with unmatchable name.
+  /// identifier inside '\end(' at top level, i.e. when there's no block to end
+  no_block_call_id,
+  /// identifier inside '\end(' with unmatchable name, if there is at least one
+  /// block level to end.
   /// will be yielded for length 0 if identifier is missing but non-empty
   /// name is expected.
   wrong_call_id,

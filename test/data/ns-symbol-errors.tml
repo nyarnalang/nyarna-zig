@@ -4,7 +4,7 @@
   bar = \func:
     input : \Raw
   :body:
-    \input::length()
+    \input::len()
   \end(func)
 \end(declare)
 --- input
