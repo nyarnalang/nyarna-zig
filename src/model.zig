@@ -465,7 +465,7 @@ pub const Signature = struct {
     pos: Position,
     name: []const u8,
     ptype: Type,
-    capture: enum {default, varargs, mutable},
+    capture: enum {default, varargs, borrow},
     default: ?*Expression,
     config: ?BlockConfig,
   };

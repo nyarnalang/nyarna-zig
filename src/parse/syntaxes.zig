@@ -50,7 +50,7 @@ pub const SymbolDefs = struct {
   primary: ?model.Position,
   varargs: ?model.Position,
   varmap: ?model.Position,
-  mutable: ?model.Position,
+  borrow: ?model.Position,
   root: ?model.Position,
   header: ?*model.Value.BlockHeader,
   @"type": ?*model.Node,
@@ -121,7 +121,7 @@ pub const SymbolDefs = struct {
     l.primary = null;
     l.varargs = null;
     l.varmap = null;
-    l.mutable = null;
+    l.borrow = null;
     l.header = null;
     l.root = null;
     l.@"type" = null;
@@ -406,7 +406,7 @@ pub const SymbolDefs = struct {
           const target = switch (std.hash.Adler32.hash(id)) {
             std.hash.Adler32.hash("primary") => &self.primary,
             std.hash.Adler32.hash("varargs") => &self.varargs,
-            std.hash.Adler32.hash("mutable") => &self.mutable,
+            std.hash.Adler32.hash("borrow") => &self.borrow,
             std.hash.Adler32.hash("varmap") => &self.varmap,
             std.hash.Adler32.hash("root") => &self.root,
             else => {
@@ -798,11 +798,11 @@ pub const SymbolDefs = struct {
           if (self.root) |rpos| self.logger().NonLocationFlag(rpos);
           break :blk self.genLineNode(
             name, line_pos, "location", "default", "additionals",
-            &[_][]const u8{"primary", "varargs", "varmap", "mutable", "header"},
+            &[_][]const u8{"primary", "varargs", "varmap", "borrow", "header"},
             &[_][]const u8{"type"});
         },
         .defs => blk: {
-          inline for (.{"primary", "varargs", "varmap", "mutable"}) |item| {
+          inline for (.{"primary", "varargs", "varmap", "borrow"}) |item| {
             if (@field(self, item)) |p|
               self.logger().NonDefinitionFlag(p);
           }

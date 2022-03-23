@@ -571,13 +571,13 @@ pub const Interpreter = struct {
         if (add.varargs) |varargs| {
           self.ctx.logger.IncompatibleFlag("varmap", varmap, varargs);
           add.varmap = null;
-        } else if (add.mutable) |mutable| {
-          self.ctx.logger.IncompatibleFlag("varmap", varmap, mutable);
+        } else if (add.borrow) |borrow| {
+          self.ctx.logger.IncompatibleFlag("varmap", varmap, borrow);
           add.varmap = null;
         }
-      } else if (add.varargs) |varargs| if (add.mutable) |mutable| {
-        self.ctx.logger.IncompatibleFlag("mutable", mutable, varargs);
-        add.mutable = null;
+      } else if (add.varargs) |varargs| if (add.borrow) |borrow| {
+        self.ctx.logger.IncompatibleFlag("borrow", borrow, varargs);
+        add.borrow = null;
       };
       // TODO: check whether given flags are allowed for types.
     }
@@ -593,7 +593,7 @@ pub const Interpreter = struct {
     loc_val.primary = if (loc.additionals) |add| add.primary else null;
     loc_val.varargs = if (loc.additionals) |add| add.varargs else null;
     loc_val.varmap  = if (loc.additionals) |add| add.varmap  else null;
-    loc_val.mutable = if (loc.additionals) |add| add.mutable else null;
+    loc_val.borrow =  if (loc.additionals) |add| add.borrow  else null;
     loc_val.header  = if (loc.additionals) |add| add.header  else null;
     return try self.ctx.createValueExpr(loc_val.value());
   }
@@ -861,6 +861,7 @@ pub const Interpreter = struct {
               .container = func.variables,
               .offset = func.variables.num_values + @intCast(u15, index),
               .assignable = false,
+              .borrowed = if (nl.additionals) |a| a.borrow != null else false,
             },
           },
           .parent_type = null,
@@ -873,6 +874,7 @@ pub const Interpreter = struct {
             .container = func.variables,
             .offset = func.variables.num_values + @intCast(u15, index),
             .assignable = false,
+            .borrowed = vl.borrow != null,
           }},
           .parent_type = null,
         },

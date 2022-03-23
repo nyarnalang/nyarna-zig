@@ -72,7 +72,7 @@
     primary = \Bool(false)
     varargs = \Bool(false)
     varmap  = \Bool(false)
-    mutable = \Bool(false)
+    borrow  = \Bool(false)
     default : \Optional(\Ast) {primary}
   \end(unique)
 
@@ -90,7 +90,7 @@
     inner: \Ast {primary}
   :funcs:
     len = \builtin(return=\Natural):
-      this: \This
+      this: \This {borrow}
     \end(builtin)
   \end(prototype)
 

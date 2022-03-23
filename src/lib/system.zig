@@ -296,7 +296,7 @@ pub const Impl = lib.Provider.Wrapper(struct {
               loc.default orelse (try self.defaultValue(t, n.pos)) orelse {
                 self.ip.ctx.logger.MissingInitialValue(loc.name.node().pos);
                 return try self.empty();
-              });
+              }, if (loc.additionals) |a| a.borrow != null else false);
           },
           .concat => |*con| {
             const items =
@@ -346,7 +346,8 @@ pub const Impl = lib.Provider.Wrapper(struct {
                 continue;
               };
               items[index] = try self.variable(
-                loc.name.value().origin, loc.tloc, loc.name.content, initial);
+                loc.name.value().origin, loc.tloc, loc.name.content, initial,
+                loc.borrow != null);
             }
             return (try self.ip.node_gen.concat(
               self.keyword_pos, .{.items = items})).node();
@@ -361,6 +362,7 @@ pub const Impl = lib.Provider.Wrapper(struct {
         t: model.Type,
         name: []const u8,
         initial: *model.Node,
+        borrowed: bool,
       ) !*model.Node {
         const sym = try self.ip.ctx.global().create(model.Symbol);
         const offset =
@@ -373,6 +375,7 @@ pub const Impl = lib.Provider.Wrapper(struct {
             .container = self.ac.container,
             .offset = offset,
             .assignable = true,
+            .borrowed = borrowed,
           }},
           .parent_type = null,
         };

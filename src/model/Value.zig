@@ -146,14 +146,14 @@ pub const FuncRef = struct {
 };
 
 pub const Location = struct {
-  name: *Value.TextScalar,
-  tloc: Type,
-  default: ?*Expression = null,
+  name   : *Value.TextScalar,
+  tloc   : Type,
+  default: ?*Expression    = null,
   primary: ?model.Position = null,
   varargs: ?model.Position = null,
-  varmap: ?model.Position = null,
-  mutable: ?model.Position = null,
-  header: ?*BlockHeader = null,
+  varmap : ?model.Position = null,
+  borrow : ?model.Position = null,
+  header : ?*BlockHeader   = null,
 
   pub inline fn value(self: *@This()) *Value {
     return Value.parent(self);

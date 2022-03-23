@@ -38,7 +38,7 @@ pub const Types = lib.Provider.Wrapper(struct {
     primary: *model.Value.Enum,
     varargs: *model.Value.Enum,
     varmap: *model.Value.Enum,
-    mutable: *model.Value.Enum,
+    borrow: *model.Value.Enum,
     header: ?*model.Value.BlockHeader,
     default: ?*model.Value.Ast,
   ) nyarna.Error!*model.Node {
@@ -64,21 +64,21 @@ pub const Types = lib.Provider.Wrapper(struct {
     // TODO: check various things here:
     // - varargs must have List type
     // - varmap must have Map type
-    // - mutable must have non-virtual type
+    // - borrow must have non-virtual type
     // - special syntax in block config must yield expected type (?)
     if (varmap.index == 1) {
       if (varargs.index == 1) {
         intpr.ctx.logger.IncompatibleFlag("varmap",
           varmap.value().origin, varargs.value().origin);
         return intpr.node_gen.poison(pos);
-      } else if (mutable.index == 1) {
+      } else if (borrow.index == 1) {
         intpr.ctx.logger.IncompatibleFlag("varmap",
-          varmap.value().origin, mutable.value().origin);
+          varmap.value().origin, borrow.value().origin);
         return intpr.node_gen.poison(pos);
       }
-    } else if (varargs.index == 1) if (mutable.index == 1) {
-      intpr.ctx.logger.IncompatibleFlag("mutable",
-        mutable.value().origin, varargs.value().origin);
+    } else if (varargs.index == 1) if (borrow.index == 1) {
+      intpr.ctx.logger.IncompatibleFlag("borrow",
+        borrow.value().origin, varargs.value().origin);
       return intpr.node_gen.poison(pos);
     };
 
@@ -87,7 +87,7 @@ pub const Types = lib.Provider.Wrapper(struct {
     loc_val.primary = if (primary.index == 1) primary.value().origin else null;
     loc_val.varargs = if (varargs.index == 1) varargs.value().origin else null;
     loc_val.varmap  = if (varmap.index  == 1)  varmap.value().origin else null;
-    loc_val.mutable = if (mutable.index == 1) mutable.value().origin else null;
+    loc_val.borrow  = if (borrow.index  == 1)  borrow.value().origin else null;
     loc_val.header = header;
     return intpr.genValueNode(loc_val.value());
   }

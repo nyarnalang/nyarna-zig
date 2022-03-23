@@ -155,11 +155,11 @@ pub fn locationFromValue(
   });
   if (
     value.primary != null or value.varargs != null or value.varmap != null or
-    value.mutable != null or value.header != null
+    value.borrow != null or value.header != null
   ) {
     const add = try self.allocator.create(Node.Location.Additionals);
     inline for ([_][]const u8{
-        "primary", "varargs", "varmap", "mutable", "header"}) |field|
+        "primary", "varargs", "varmap", "borrow", "header"}) |field|
       @field(add, field) = @field(value, field);
     loc_node.additionals = add;
   }

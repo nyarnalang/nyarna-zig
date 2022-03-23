@@ -141,7 +141,7 @@ pub const Location = struct {
     primary: ?model.Position,
     varargs: ?model.Position,
     varmap: ?model.Position,
-    mutable: ?model.Position,
+    borrow: ?model.Position,
     header: ?*Value.BlockHeader,
   };
   name: *Node.Literal,

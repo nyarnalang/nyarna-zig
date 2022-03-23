@@ -66,7 +66,7 @@ const AdditionalsWithGlobal = struct {
   ) !void {
     try writer.writeByte('{');
     var first = true;
-    inline for ([_][]const u8{"primary", "varargs", "varmap", "mutable"}) |f| {
+    inline for ([_][]const u8{"primary", "varargs", "varmap", "borrow"}) |f| {
       if (@field(self.value, f) != null) {
         if (first) first = false else try writer.writeAll(", ");
         try writer.writeAll(f);
@@ -300,7 +300,7 @@ const AstEmitter = struct {
         if (loc.additionals) |a| {
           if (
             a.primary != null or a.varargs != null or a.varmap != null or
-            a.mutable != null or a.header != null
+            a.borrow != null or a.header != null
           ) {
             const fmt = (
               AdditionalsWithGlobal{.value = a, .data = self.data}
@@ -643,7 +643,7 @@ const AstEmitter = struct {
       .location => |loc| {
         const wrap = try self.pushWithKey("LOC", loc.name.content, null);
         try self.processType(loc.tloc);
-        inline for ([_][]const u8{"primary", "varargs", "varmap", "mutable"})
+        inline for ([_][]const u8{"primary", "varargs", "varmap", "borrow"})
             |flag| {
           if (@field(loc, flag) != null)
             try self.emitLine("=FLAG {s}", .{flag});

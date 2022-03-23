@@ -375,7 +375,7 @@ pub const Lattice = struct {
   /// `children` pointer.
   ///
   /// TreeNodes for Callable types have an additional boolean flag which is true
-  /// iff the parameter is mutable. On the return type, this flag is true iff
+  /// iff the parameter is borrowed. On the return type, this flag is true iff
   /// the Callable is a type.
   ///
   /// The worst-case time of discovering an intersection or paragraphs type for
@@ -1190,8 +1190,8 @@ pub const SigBuilder = struct {
       .pos = loc.value().origin,
       .name = loc.name.content,
       .ptype = loc.tloc,
-      .capture = if (loc.varargs) |_| .varargs else if (loc.mutable) |_|
-        @as(@TypeOf(param.capture), .mutable) else .default,
+      .capture = if (loc.varargs) |_| .varargs else if (loc.borrow) |_|
+        @as(@TypeOf(param.capture), .borrow) else .default,
       .default = loc.default,
       .config = if (loc.header) |bh| bh.config else null,
     };
@@ -1276,7 +1276,7 @@ pub const CallableReprFinder = struct {
 
   pub fn push(self: *Self, loc: *model.Value.Location) !void {
     self.count += 1;
-    try self.iter.descend(loc.tloc, loc.mutable != null);
+    try self.iter.descend(loc.tloc, loc.borrow != null);
     if (loc.default != null or loc.primary != null or loc.varargs != null or
         loc.varmap != null or loc.header != null)
       self.needs_different_repr = true;

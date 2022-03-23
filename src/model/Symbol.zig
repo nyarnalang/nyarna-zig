@@ -17,6 +17,8 @@ pub const Variable = struct {
   /// whether this variable can be assigned a new value. false for argument
   /// and const variables.
   assignable: bool,
+  /// whether this variable points to a borrowed value.
+  borrowed: bool,
 
   pub inline fn sym(self: *Variable) *Symbol {
     return Symbol.parent(self);
