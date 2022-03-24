@@ -17,12 +17,14 @@ foo
   =VOID
 -RCALL
 --- expr
-+BRANCHES
-  =ENUM Bool "true"
-  >BRANCH 0
-  =VOID
-  >BRANCH 1
-  =TEXT Literal "foo"
--BRANCHES
++CONVERT Raw
+  +BRANCHES
+    =ENUM Bool "true"
+    >BRANCH 0
+    =VOID
+    >BRANCH 1
+    =TEXT Literal "foo"
+  -BRANCHES
+-CONVERT
 --- document
 =RAW Raw "foo"

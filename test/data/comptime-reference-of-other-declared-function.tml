@@ -10,6 +10,8 @@
   \end(func)
 \end(declare)
 
+\fragment(\Intersection(\Raw, \Empty))
+
 \idem(spam)
 --- expr
 +CALL

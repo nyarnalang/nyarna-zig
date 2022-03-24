@@ -511,7 +511,7 @@ pub const Module = struct {
 
 /// A document is the final result of loading a main module.
 pub const Document = struct {
-  main: *Module,
+  root: *Value,
   globals: *nyarna.Globals,
 
   pub fn destroy(self: *Document) void {

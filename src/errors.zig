@@ -100,7 +100,7 @@ pub const PreviousOccurenceError = enum {
   DuplicateBlockHeader, IncompatibleFlag, DuplicateAutoSwallow,
   DuplicateParameterArgument, MissingParameterArgument, DuplicateSymbolName,
   MultipleScalarTypesInIntersection, MissingEndCommand, CannotAssignToConst,
-  DuplicateEnumValue,
+  DuplicateEnumValue, MultipleModuleKinds,
 
   fn errorMsg(e: PreviousOccurenceError) []const u8 {
     return switch (e) {
@@ -121,6 +121,7 @@ pub const PreviousOccurenceError = enum {
       .MissingEndCommand => " is missing and explict end",
       .CannotAssignToConst => " is constant and cannot be assigned to",
       .DuplicateEnumValue => " occurs multiple times",
+      .MultipleModuleKinds => " has already been set",
     };
   }
 
@@ -136,6 +137,7 @@ pub const PreviousOccurenceError = enum {
       .MissingEndCommand => "command",
       .CannotAssignToConst => "variable",
       .DuplicateEnumValue => "enum value",
+      .MultipleModuleKinds => "module kind",
     };
   }
 
@@ -151,6 +153,7 @@ pub const PreviousOccurenceError = enum {
       .MissingEndCommand => "here",
       .CannotAssignToConst => "variable definition",
       .DuplicateEnumValue => "first seen",
+      .MultipleModuleKinds => "set",
     };
   }
 };

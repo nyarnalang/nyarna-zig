@@ -127,8 +127,6 @@ pub const Impl = lib.Provider.Wrapper(struct {
     public: ?*model.Node,
     private: ?*model.Node,
   ) nyarna.Error!*model.Node {
-
-
     var collector = DefCollector{.dt = intpr.ctx.types().definition()};
     for ([_]?*model.Node{public, private}) |item| {
       if (item) |node| try collector.collect(node, intpr);
@@ -201,21 +199,8 @@ pub const Impl = lib.Provider.Wrapper(struct {
     const pnode = params orelse try intpr.node_gen.void(pos);
     // TODO: can body.container be null here?
     return (try intpr.node_gen.funcgen(
-      pos, @"return", pnode, ns, body.root, body.container.?, false
+      pos, @"return", pnode, ns, body.root, body.container.?
     )).node();
-  }
-
-  pub fn method(
-    intpr: *Interpreter,
-    pos: model.Position,
-    ns: u15,
-    @"return": ?*model.Node,
-    params: ?*model.Node,
-    body: *model.Value.Ast,
-  ) nyarna.Error!*model.Node {
-    const pnode = params orelse try intpr.node_gen.void(pos);
-    return (try intpr.node_gen.funcgen(
-      pos, @"return", pnode, ns, body.root, body.container.?, true)).node();
   }
 
   pub fn keyword(
@@ -463,6 +448,73 @@ pub const Impl = lib.Provider.Wrapper(struct {
     return try (try Proc.init(intpr, ns, pos)).node(defs);
   }
 
+  pub fn library(
+    intpr: *Interpreter,
+    pos: model.Position,
+    params: ?*model.Node,
+  ) nyarna.Error!*model.Node {
+    _ = params; // TODO
+    switch (intpr.specified_content) {
+      .library => |lpos|
+        intpr.ctx.logger.MultipleModuleKinds("library", pos, lpos),
+      .standalone => |*s|
+        intpr.ctx.logger.MultipleModuleKinds("standalone", pos, s.pos),
+      .fragment => |*f|
+        intpr.ctx.logger.MultipleModuleKinds("fragment", pos, f.pos),
+      .unspecified => {
+        intpr.specified_content = .{.library = pos};
+      }
+    }
+    return intpr.node_gen.@"void"(pos);
+  }
+
+  pub fn standalone(
+    intpr: *Interpreter,
+    pos: model.Position,
+    params: ?*model.Node,
+  ) nyarna.Error!*model.Node {
+    _ = params; // TODO
+    switch (intpr.specified_content) {
+      .library => |lpos|
+        intpr.ctx.logger.MultipleModuleKinds("library", pos, lpos),
+      .standalone => |*s|
+        intpr.ctx.logger.MultipleModuleKinds("standalone", pos, s.pos),
+      .fragment => |*f|
+        intpr.ctx.logger.MultipleModuleKinds("fragment", pos, f.pos),
+      .unspecified => {
+        intpr.specified_content = .{.standalone = .{
+          .pos = pos,
+          .root_type = intpr.ctx.types().raw(), // TODO
+        }};
+      }
+    }
+    return intpr.node_gen.@"void"(pos);
+  }
+
+  pub fn fragment(
+    intpr: *Interpreter,
+    pos: model.Position,
+    root: *model.Value.TypeVal,
+    params: ?*model.Node,
+  ) nyarna.Error!*model.Node {
+    _ = params; // TODO
+    switch (intpr.specified_content) {
+      .library => |lpos|
+        intpr.ctx.logger.MultipleModuleKinds("library", pos, lpos),
+      .standalone => |*s|
+        intpr.ctx.logger.MultipleModuleKinds("standalone", pos, s.pos),
+      .fragment => |*f|
+        intpr.ctx.logger.MultipleModuleKinds("fragment", pos, f.pos),
+      .unspecified => {
+        intpr.specified_content = .{.fragment = .{
+          .pos = pos,
+          .root_type = root.t,
+        }};
+      }
+    }
+    return intpr.node_gen.@"void"(pos);
+  }
+
   pub fn @"List::len"(
     eval: *nyarna.Evaluator,
     pos: model.Position,
@@ -548,8 +600,11 @@ pub const Checker = struct {
     .{"UnicodeCategory", .tenum, .unicode_category},
     .{"Void", .void},
     .{"builtin", .keyword},
+    .{"fragment", .keyword},
     .{"if", .keyword},
     .{"keyword", .keyword},
+    .{"library", .keyword},
+    .{"standalone", .keyword},
   });
 
   data: ExpectedDataInst.Array,

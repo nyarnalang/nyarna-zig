@@ -156,6 +156,21 @@ pub const Interpreter = struct {
   var_containers: std.ArrayListUnmanaged(ActiveVarContainer),
   /// the implementation of builtin functions for this module, if any.
   builtin_provider: ?*const lib.Provider,
+  /// the content of the current file, as specified by \library, \standalone or
+  /// \fragment.
+  specified_content: union(enum) {
+    library: model.Position,
+    standalone: struct {
+      pos: model.Position,
+      root_type: model.Type,
+      // TODO: schema (?)
+    },
+    fragment: struct {
+      pos: model.Position,
+      root_type: model.Type,
+    },
+    unspecified,
+  } = .unspecified,
 
   /// creates an interpreter.
   pub fn create(
@@ -819,27 +834,11 @@ pub const Interpreter = struct {
     self: *Interpreter,
     func: *model.Node.Funcgen,
     stage: Stage,
-    this_type: ?model.Type,
   ) !bool {
     if (!(try self.locationsCanGenVars(func.params.unresolved, stage))) {
       return false;
     }
-    // refuse params creation if this is a \method and the \this type is not yet
-    // available.
-    switch (stage.kind) {
-      .intermediate, .resolve =>
-        if (func.needs_this_inject and this_type == null) return false,
-      else => {},
-    }
     var locs = std.ArrayList(model.locations.Ref).init(self.allocator);
-    if (func.needs_this_inject) {
-      if (this_type) |t| {
-        try locs.append(.{.value = try self.ctx.values.location(
-          func.node().pos, self.ctx.thisName(), t)});
-      } else {
-        self.ctx.logger.MethodOutsideDeclare(func.node().pos);
-      }
-    }
     try self.collectLocations(func.params.unresolved, &locs);
     var variables =
       try self.allocator.alloc(*model.Symbol.Variable, locs.items.len);
@@ -880,7 +879,6 @@ pub const Interpreter = struct {
         },
       };
       variables[index] = &sym.data.variable;
-      func.variables.num_values += 1;
     }
     func.params = .{
       .resolved = .{.locations = locs.items},
@@ -935,7 +933,7 @@ pub const Interpreter = struct {
   ) nyarna.Error!?*model.Function {
     switch (func.params) {
       .unresolved =>
-        if (!try self.tryInterpretFuncParams(func, stage, null)) return null,
+        if (!try self.tryInterpretFuncParams(func, stage)) return null,
       .resolved => {},
       .pregen => |pregen| return pregen,
     }
@@ -1020,7 +1018,7 @@ pub const Interpreter = struct {
       var failed_parts = false;
       switch (func.params) {
         .unresolved => {
-          if (!try self.tryInterpretFuncParams(func, stage, null)) {
+          if (!try self.tryInterpretFuncParams(func, stage)) {
             failed_parts = true;
           }
         },
@@ -1799,6 +1797,15 @@ pub const Interpreter = struct {
     else try self.ctx.createValueExpr(try self.ctx.values.poison(input.pos));
   }
 
+  pub fn interpretAs(
+    self: *Interpreter,
+    input: *model.Node,
+    t: model.Type,
+  ) nyarna.Error!*model.Expression {
+    return if (try self.associate(input, t, .{.kind = .final})) |expr| expr
+    else try self.ctx.createValueExpr(try self.ctx.values.poison(input.pos));
+  }
+
   pub fn resolveSymbol(
     self: *Interpreter,
     pos: model.Position,
@@ -2301,7 +2308,49 @@ pub const Interpreter = struct {
         expr.expected_type = t;
         break :blk expr;
       }
-      // TODO: semantic conversions here
+      switch (expr.expected_type) {
+        .instantiated => |inst| switch (inst.data) {
+          .void => switch (t) {
+            .instantiated => |tinst| switch (tinst.data) {
+              .literal, .space, .raw, .textual => {
+                const conv = try self.ctx.global().create(model.Expression);
+                conv.* = .{
+                  .pos = expr.pos,
+                  .data = .{.conversion = .{
+                    .inner = expr,
+                    .target_type = t,
+                  }},
+                  .expected_type = t,
+                };
+                break :blk conv;
+              },
+              else => {},
+            },
+            // TODO: semantic conversions of concats, paragraphs here
+            .structural => {}
+          },
+          else => {},
+        },
+        .structural => |struc| switch (struc.*) {
+          .optional => |*opt| if (
+            opt.inner.isScalar() and
+            self.ctx.types().lesserEqual(opt.inner, t)
+          ) {
+            const conv = try self.ctx.global().create(model.Expression);
+            conv.* = .{
+              .pos = expr.pos,
+              .data = .{.conversion = .{
+                .inner = expr,
+                .target_type = t,
+              }},
+              .expected_type = t,
+            };
+            break :blk conv;
+          },
+          else => {},
+        },
+      }
+
       self.ctx.logger.ExpectedExprOfTypeXGotY(
         node.pos, &[_]model.Type{t, expr.expected_type});
       expr.data = .{.value = try self.ctx.values.poison(expr.pos)};

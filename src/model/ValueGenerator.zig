@@ -79,7 +79,7 @@ pub inline fn record(
   t: *const Type.Record,
 ) !*Value.Record {
   const fields =
-    try self.allocator().alloc(*Value, t.callable.sig.parameters.len);
+    try self.allocator().alloc(*Value, t.constructor.sig.parameters.len);
   errdefer self.allocator().free(fields);
   return &(try self.value(
     pos, .{.record = .{.t = t, .fields = fields}})).data.record;

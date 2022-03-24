@@ -40,7 +40,7 @@
   >ARG recurse
   =ENUM Bool "true"
 -CALL
-=TEXT Literal "\n"
+=TEXT Raw "\n"
 +CALL
   =FUNCREF .doc.input.bar
   >ARG recurse

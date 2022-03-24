@@ -19,6 +19,15 @@ pub const Call = struct {
   }
 };
 
+pub const Conversion = struct {
+  inner: *Expression,
+  target_type: model.Type,
+
+  pub fn expr(self: *@This()) *Expression {
+    return Expression.parent(self);
+  }
+};
+
 /// assignment to a variable or one of its inner values
 pub const Assignment = struct {
   target: *Symbol.Variable,
@@ -26,6 +35,10 @@ pub const Assignment = struct {
   /// assigned.
   path: []const usize,
   expr: *Expression,
+
+  pub fn expr(self: *@This()) *Expression {
+    return Expression.parent(self);
+  }
 };
 
 /// retrieval of the value of a substructure
@@ -34,11 +47,19 @@ pub const Access = struct {
   /// list of indexes that identify which part of the value is to be
   /// retrieved.
   path: []const usize,
+
+  pub fn expr(self: *@This()) *Expression {
+    return Expression.parent(self);
+  }
 };
 
 /// retrieval of a variable's value
 pub const VarRetrieval = struct {
   variable: *Symbol.Variable,
+
+  pub fn expr(self: *@This()) *Expression {
+    return Expression.parent(self);
+  }
 };
 
 /// concatenation
@@ -48,17 +69,29 @@ pub const Concatenation = []*Expression;
 pub const Branches = struct {
   condition: *Expression,
   branches: []*Expression,
+
+  pub fn expr(self: *@This()) *Expression {
+    return Expression.parent(self);
+  }
 };
 
 /// an ast subtree
 pub const Ast = struct {
   root: *Node,
+
+  pub fn expr(self: *@This()) *Expression {
+    return Expression.parent(self);
+  }
 };
 
 /// part of a Paragraphs expression.
 pub const Paragraph = struct {
   content: *Expression,
   lf_after: usize,
+
+  pub fn expr(self: *@This()) *Expression {
+    return Expression.parent(self);
+  }
 };
 
 pub const Paragraphs = []Paragraph;
@@ -72,18 +105,23 @@ pub const Varargs = struct {
   };
 
   items: []Item,
+
+  pub fn expr(self: *@This()) *Expression {
+    return Expression.parent(self);
+  }
 };
 
 pub const Data = union(enum) {
-  access: Access,
-  assignment: Assignment,
-  branches: Branches,
-  call: Call,
+  access       : Access,
+  assignment   : Assignment,
+  branches     : Branches,
+  call         : Call,
   concatenation: Concatenation,
-  paragraphs: Paragraphs,
+  conversion   : Conversion,
+  paragraphs   : Paragraphs,
   var_retrieval: VarRetrieval,
-  value: *Value,
-  varargs: Varargs,
+  value        : *Value,
+  varargs      : Varargs,
   poison, void,
 };
 

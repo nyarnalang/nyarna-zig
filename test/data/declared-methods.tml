@@ -1,18 +1,19 @@
 === Declared Methods
 --- input
 \declare:
-  foo = \record:
+  foo = \Record:
     a : \Bool; b, c : \Raw
-  \end(record)
+  \end(Record)
 \end(declare)
 
 \declare(\foo):
   get = \func:
+    this: \foo
   :body:
     \if(\this::a, \this::b, \this::c)
-  \end(func);
+  \end(func)
 \end(declare)
 
 \foo(true, foo, bar)::get()\foo(false, foo, bar)::get()
 --- document
-=RAW Raw "foobar"
+=TEXT Raw "foobar"

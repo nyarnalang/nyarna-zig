@@ -27,6 +27,8 @@ pub const Evaluator = struct {
       return nyarna.Error.nyarna_stack_overflow;
     }
     const ret = data.stack_ptr;
+    //std.debug.print("[stack] {} frame with {} parameters\n",
+    //  .{@ptrToInt(ret), sig.parameters.len});
     data.stack_ptr += num_params + 1;
     ret.* = .{.frame_ref = prev_frame};
     return ret;
@@ -37,6 +39,7 @@ pub const Evaluator = struct {
     frame_ptr: *?[*]model.StackItem,
     sig: *const model.Signature,
   ) void {
+    //std.debug.print("[stack] {} pop\n", .{@ptrToInt(frame_ptr.*.?)});
     frame_ptr.* = frame_ptr.*.?[0].frame_ref;
     self.ctx.data.stack_ptr -= sig.parameters.len + 1;
   }
@@ -49,6 +52,8 @@ pub const Evaluator = struct {
     var seen_poison = false;
     for (exprs) |expr, i| {
       const val = try self.evaluate(expr);
+      //std.debug.print(
+      //  "[stack] {} <- {s}\n", .{@ptrToInt(&frame[i]), @tagName(val.data)});
       frame[i] = .{.value = val};
       if (val.data == .poison) seen_poison = true;
     }
@@ -172,6 +177,30 @@ pub const Evaluator = struct {
         }
       },
       .@"type" => |tv| {
+        if (@TypeOf(impl_ctx) == *Evaluator) switch (tv.t) {
+          .instantiated => |inst| switch (inst.data) {
+            .record => |*rec| {
+              std.debug.assert(
+                call.exprs.len == rec.constructor.sig.parameters.len);
+              var frame: ?[*]model.StackItem =
+                try self.setupParameterStackFrame(
+                  rec.constructor.sig, false, null);
+              defer self.resetParameterStackFrame(&frame, rec.constructor.sig);
+              if (
+                try self.fillParameterStackFrame(call.exprs, frame.? + 1)
+              ) {
+                const ret = try self.ctx.values.record(call.expr().pos, rec);
+                const first_value = frame.? + 1;
+                for (ret.fields) |*field, index| {
+                  field.* = first_value[index].value;
+                }
+                return ret.value();
+              } else return poison(impl_ctx, call.expr().pos);
+            },
+            else => {},
+          },
+          else => {},
+        } else unreachable;
         const constr = self.ctx.types().typeConstructor(tv.t);
         self.target_type = tv.t;
         return self.callConstructor(impl_ctx, call, constr);
@@ -242,6 +271,34 @@ pub const Evaluator = struct {
         for (concat) |item| try builder.push(try self.evaluate(item));
         return try builder.finish();
       },
+      .conversion => |*convert| {
+        const inner_val = try self.evaluate(convert.inner);
+        const inner_type = self.ctx.types().valueType(inner_val);
+        if (inner_type.isInst(.poison)) return inner_val;
+        if (self.ctx.types().lesserEqual(inner_type, convert.target_type)) {
+          return try self.coerce(inner_val, convert.target_type);
+        }
+        switch (convert.target_type) {
+          .instantiated => |inst| switch (inst.data) {
+            .literal, .space, .raw, .textual => {
+              switch (inner_type.instantiated.data) {
+                .void => {
+                  return (try self.ctx.values.textScalar(
+                    inner_val.origin, convert.target_type, "")).value();
+                },
+                .literal, .space, .raw, .textual => {
+                  return (try self.ctx.values.textScalar(
+                    inner_val.origin, convert.target_type,
+                    inner_val.data.text.content)).value();
+                },
+                else => unreachable,
+              }
+            },
+            else => unreachable,
+          },
+          .structural => unreachable, // TODO
+        }
+      },
       .value => |value| return value,
       .paragraphs => |paras| {
         const gen_para = switch (expr.expected_type) {
@@ -291,7 +348,12 @@ pub const Evaluator = struct {
         }
         return list.value();
       },
-      .var_retrieval => |*var_retr| return var_retr.variable.curPtr().*,
+      .var_retrieval => |*var_retr| {
+        const ret = var_retr.variable.curPtr().*;
+        //std.debug.print("[stack] {} -> {s}\n",
+        //  .{@ptrToInt(var_retr.variable.curPtr()), @tagName(ret.data)});
+        return ret;
+      },
       .poison => return self.ctx.values.poison(expr.pos),
       .void => return self.ctx.values.void(expr.pos),
     }

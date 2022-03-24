@@ -80,9 +80,6 @@ pub const Globals = struct {
   stack: []model.StackItem,
   /// current top of the stack, where new stack allocations happen.
   stack_ptr: [*]model.StackItem,
-  /// TextScalar containing the name "this" which is used as variable name for
-  /// methods.
-  this_name: model.Value,
   /// modules that have already been referenced. the key is the absolute
   /// locator. The first reference will add the module as .loading. The
   /// loading process will load the last not onloaded module in a loop
@@ -109,7 +106,6 @@ pub const Globals = struct {
       .storage = std.heap.ArenaAllocator.init(backing_allocator),
       .stack = undefined,
       .stack_ptr = undefined,
-      .this_name = undefined,
       .resolvers = resolvers,
     };
     errdefer backing_allocator.destroy(ret);
@@ -122,10 +118,6 @@ pub const Globals = struct {
     var init_ctx = Context{.data = ret, .logger = &logger};
     ret.types = try types.Lattice.init(init_ctx);
     errdefer ret.types.deinit();
-    ret.this_name = .{
-      .origin = model.Position.intrinsic(),
-      .data = .{.text = .{.t = ret.types.literal(), .content = "this"}},
-    };
     if (logger.count > 0) {
       return Error.init_error;
     }
@@ -241,10 +233,6 @@ pub const Context = struct {
     return &self.data.types;
   }
 
-  pub inline fn thisName(self: *const Context) *model.Value.TextScalar {
-    return &self.data.this_name.data.text;
-  }
-
   pub inline fn createValueExpr(
     self: *const Context,
     content: *model.Value,
@@ -323,17 +311,32 @@ pub const Processor = struct {
     /// finish loading the document.
     pub fn finalize(self: *MainLoader) !?*model.Document {
       errdefer self.deinit();
-      try self.globals.work();
+      const module = try self.finishMainModule();
       if (self.globals.seen_error) {
+        self.deinit();
+        return null;
+      }
+      var logger = errors.Handler{.reporter = self.globals.reporter};
+      const root = try (
+        Context{.data = self.globals, .logger = &logger}
+      ).evaluator().evaluate(module.root);
+      if (logger.count > 0) {
         self.deinit();
         return null;
       }
       const doc = try self.globals.storage.allocator().create(model.Document);
       doc.* = .{
-        .main = self.globals.known_modules.values()[1].loaded,
+        .root = root,
         .globals = self.globals,
       };
       return doc;
+    }
+
+    /// finish interpreting the main module and returns it. Does not finalize
+    /// the MainLoader. finalize() or deinit() must still be called afterwards.
+    pub fn finishMainModule(self: *MainLoader) !*model.Module {
+      try self.globals.work();
+      return self.globals.known_modules.values()[1].loaded;
     }
   };
 

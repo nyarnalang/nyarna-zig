@@ -7,14 +7,16 @@
 \end(declare)
 
 \declare(\Foo):
-  double = \method:
+  double = \func:
+    this: \Foo
   :body:
     \this::concat()\this::concat()
-  \end(method)
-  concat = \method:
+  \end(func)
+  concat = \func:
+    this: \Foo
   :body:
     \this::a\this::b
-  \end(method)
+  \end(func)
 \end(declare)
 
 \Foo(foo, bar)::double()
@@ -31,4 +33,4 @@
   -CALL
 -CALL
 --- document
-=RAW Raw "foobarfoobar"
+=TEXT Raw "foobarfoobar"

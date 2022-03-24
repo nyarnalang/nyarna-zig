@@ -1,9 +1,9 @@
 === Func Body in Param Defs
 --- input
 \declare(\Integer):
-  double = \method:
+  double = \func:
     \this::mult(2)
-  \end(method)
+  \end(func)
 \end(declare)
 
 \Integer(42)::double()
@@ -11,3 +11,4 @@
 5:5 - 5:19 IllegalItem
   expected = {identifier}
   got = <node>
+9:1 - 9:13 TooManyArguments

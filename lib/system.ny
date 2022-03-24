@@ -29,7 +29,7 @@
     private  : \Optional(\Ast) {}:<syntax definitions>
   \end(keyword)
 
-  func, method = \keyword:
+  func = \keyword:
     return: \Optional(\Ast)
     params: \Optional(\Ast) {primary}:<syntax locations>
     body  : \FrameRoot
@@ -126,6 +126,20 @@
     values: \List(\Ast) {varargs}
   \end(prototype)
 
+  library    = \keyword:
+    params: \Optional(\Ast) {primary}:<syntax locations>
+  \end(keyword)
+
+  standalone = \keyword:
+    params: \Optional(\Ast) {primary}:<syntax locations>
+    # TODO: schema
+  \end(keyword)
+
+  fragment = \keyword:
+    root  : \Type
+    params: \Optional(\Ast)
+  \end(keyword)
+
   if = \keyword:
     condition: \Ast
     then: \Optional(\Ast) {primary}
@@ -146,3 +160,5 @@
   BlockHeader = \unique()
   Space       = \unique()
 \end(declare)
+
+\library()

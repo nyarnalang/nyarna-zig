@@ -775,12 +775,8 @@ pub const DeclareResolution = struct {
             },
             .funcgen => |*fgen| {
               if (fgen.params == .unresolved) {
-                const success = switch (self.in) {
-                  .ns => try self.intpr.tryInterpretFuncParams(
-                    fgen, .{.kind = .final, .resolve = &tr.ctx}, null),
-                  .t => |t| try self.intpr.tryInterpretFuncParams(
-                    fgen, .{.kind = .final, .resolve = &tr.ctx}, t),
-                };
+                const success = try self.intpr.tryInterpretFuncParams(
+                    fgen, .{.kind = .final, .resolve = &tr.ctx});
                 if (!success) {
                   const sym = try self.genSym(def.name, .poison, def.public);
                   _ = try ns_data.tryRegister(self.intpr, sym);

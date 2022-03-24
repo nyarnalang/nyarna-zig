@@ -102,6 +102,12 @@ pub fn main() !void {
       .func_name = "interpretTest",
       .err_func_name = "interpretErrorTest",
     },
+    .{
+      .file = undefined,
+      .tml_item = "document",
+      .func_name = "loadTest",
+      .err_func_name = "loadErrorTest",
+    }
   };
   sets[0].file = try std.fs.cwd().createFile("lex_test.zig", .{});
   defer sets[0].file.close();
@@ -109,5 +115,7 @@ pub fn main() !void {
   defer sets[1].file.close();
   sets[2].file = try std.fs.cwd().createFile("interpret_test.zig", .{});
   defer sets[2].file.close();
+  sets[3].file = try std.fs.cwd().createFile("load_test.zig", .{});
+  defer sets[3].file.close();
   try genTests(&datadir, &sets);
 }

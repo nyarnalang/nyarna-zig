@@ -90,11 +90,10 @@ pub inline fn funcgen(
   params_ns: u15,
   body: *Node,
   variables: *model.VariableContainer,
-  inject_this: bool,
 ) !*Node.Funcgen {
   return &(try self.node(pos, .{.funcgen = .{
     .returns = returns, .params = .{.unresolved = params},
-    .params_ns = params_ns, .body = body, .needs_this_inject = inject_this,
+    .params_ns = params_ns, .body = body,
     .variables = variables, .cur_returns = self.types.every(),
   }})).data.funcgen;
 }

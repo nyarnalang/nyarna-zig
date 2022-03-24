@@ -212,6 +212,17 @@ const AstEmitter = struct {
     return Popper{.e = self, .name = name};
   }
 
+  fn pushWithType(
+    self: *Self,
+    comptime name: []const u8,
+    t: model.Type,
+  ) !Popper {
+    const t_fmt = t.formatter();
+    try self.emitLine("+{s} {}", .{name, t_fmt});
+    self.depth += 1;
+    return Popper{.e = self, .name = name};
+  }
+
   pub fn process(self: *Self, n: *model.Node) anyerror!void {
     switch (n.data) {
       .assign => |a| {
@@ -546,6 +557,11 @@ const AstEmitter = struct {
         try c.pop();
       },
       .concatenation => |c| for (c) |expr| try self.processExpr(expr),
+      .conversion => |c| {
+        const conv = try self.pushWithType("CONVERT", c.target_type);
+        try self.processExpr(c.inner);
+        try conv.pop();
+      },
       .value => |value| try self.processValue(value),
       .paragraphs => |paras| {
         const p = try self.push("PARAGRAPHS");
@@ -996,12 +1012,12 @@ pub fn interpretTest(data: *TestDataResolver) !void {
     &data.stdlib.api);
   defer proc.deinit();
   var loader = try proc.startLoading(&data.api, "input");
-  if (try loader.finalize()) |document| {
-    var emitter = AstEmitter.init(document.globals, &checker);
-    try emitter.processExpr(document.main.root);
-    defer document.destroy();
-    try checker.finish();
-  } else return error.TestUnexpectedResult;
+  defer loader.deinit();
+  const module = try loader.finishMainModule();
+  try std.testing.expect(!loader.globals.seen_error);
+  var emitter = AstEmitter.init(loader.globals, &checker);
+  try emitter.processExpr(module.root);
+  try checker.finish();
 }
 
 pub fn interpretErrorTest(data: *TestDataResolver) !void {
@@ -1015,6 +1031,41 @@ pub fn interpretErrorTest(data: *TestDataResolver) !void {
   var loader = try proc.startLoading(&data.api, "input");
   if (try loader.finalize()) |doc| {
     doc.destroy();
+    return error.TestUnexpectedResult;
+  }
+  try checker.finish();
+}
+
+pub fn loadTest(data: *TestDataResolver) !void {
+  var checker = Checker.init(data, "document");
+  defer checker.deinit();
+  var r = errors.CmdLineReporter.init();
+  var proc = try nyarna.Processor.init(
+    std.testing.allocator, nyarna.default_stack_size, &r.reporter,
+    &data.stdlib.api);
+  defer proc.deinit();
+  var loader = try proc.startLoading(&data.api, "input");
+  if (try loader.finalize()) |document| {
+    defer document.destroy();
+    var emitter = AstEmitter.init(document.globals, &checker);
+    try emitter.processValue(document.root);
+    try checker.finish();
+  }
+}
+
+pub fn loadErrorTest(data: *TestDataResolver) !void {
+  var checker = Checker.initErrorChecker(data, "document");
+  defer checker.deinit();
+  var reporter = ErrorEmitter.init(&checker);
+  var proc = try nyarna.Processor.init(
+    std.testing.allocator, nyarna.default_stack_size, &reporter.api,
+    &data.stdlib.api);
+  defer proc.deinit();
+  var loader = try proc.startLoading(&data.api, "input");
+  _ = try loader.finishMainModule();
+  try std.testing.expect(!loader.globals.seen_error);
+  if (try loader.finalize()) |document| {
+    document.destroy();
     return error.TestUnexpectedResult;
   }
   try checker.finish();

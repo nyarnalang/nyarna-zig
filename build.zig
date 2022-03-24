@@ -81,6 +81,16 @@ pub fn build(b: *Builder) !void {
   var interpret_test_step = b.step("interpretTest", "Run interpreter tests");
   interpret_test_step.dependOn(&interpret_test.step);
 
+  var load_test = b.addTest("test/load_test.zig");
+  load_test.step.dependOn(&testgen_cmd.step);
+  load_test.step.dependOn(&ehgen_cmd.step);
+  load_test.addPackage(testing_pkg);
+  load_test.setFilter(test_filter);
+  load_test.emit_bin = testEmitOption(emit_bin, "load_test");
+
+  var load_test_step = b.step("loadTest", "Run loading tests");
+  load_test_step.dependOn(&load_test.step);
+
   var type_test = b.addTest("test/type_test.zig");
   type_test.step.dependOn(&ehgen_cmd.step);
   type_test.addPackage(nyarna_pkg);
