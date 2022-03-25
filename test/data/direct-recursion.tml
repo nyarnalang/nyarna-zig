@@ -32,4 +32,4 @@
   =TEXT Raw "two"
 -CALL
 --- document
-=RAW Raw "onetwothreefour\nonetwo"
+=TEXT Raw "onetwothreefour\nonetwo"

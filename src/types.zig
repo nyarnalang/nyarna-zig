@@ -1315,7 +1315,7 @@ pub const ParagraphTypeBuilder = struct {
   }
 
   pub fn push(self: *ParagraphTypeBuilder, t: model.Type) !void {
-    if (t.isInst(.void)) return;
+    if (t.isInst(.void) or t.isInst(.space)) return;
     if (t.isInst(.poison)) {
       self.poison = true;
       return;

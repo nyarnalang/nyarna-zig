@@ -1978,11 +1978,14 @@ pub const Interpreter = struct {
         var builder =
           nyarna.types.ParagraphTypeBuilder.init(self.ctx.types(), false);
         var seen_unfinished = false;
-        for (para.items) |*item|
-          try builder.push((try self.probeType(item.content, stage)) orelse {
+        for (para.items) |*item| {
+          _ = try builder.push((
+            try self.probeType(item.content, stage)
+          ) orelse {
             seen_unfinished = true;
             continue;
           });
+        }
         return if (seen_unfinished) null else
           (try builder.finish()).resulting_type;
       },
@@ -2135,7 +2138,7 @@ pub const Interpreter = struct {
 
   /// Same as tryInterpret, but takes a target type that may be used to generate
   /// typed literal values from text literals. The target type *must* be a
-  /// scalar type.
+  /// scalar type or .void, in which case .space literals will be removed.
   pub fn interpretWithTargetScalar(
     self: *Interpreter,
     input: *model.Node,
@@ -2146,8 +2149,8 @@ pub const Interpreter = struct {
     std.debug.assert(switch (t) {
       .structural => false,
       .instantiated => |inst| switch (inst.data) {
-        .textual, .numeric, .float, .tenum, .literal, .space, .raw, .every =>
-          true,
+        .textual, .numeric, .float, .tenum, .literal, .space, .raw, .every,
+        .void => true,
         else => false,
       },
     });
@@ -2161,6 +2164,10 @@ pub const Interpreter = struct {
         if (try self.tryInterpret(input, stage)) |expr| {
           if (types.containedScalar(expr.expected_type)) |scalar_type| {
             if (self.ctx.types().lesserEqual(scalar_type, t)) return expr;
+            if (expr.expected_type.isInst(.space) and t.isInst(.void)) {
+              expr.expected_type = t;
+              return expr;
+            }
             // TODO: conversion
             self.ctx.logger.ScalarTypesMismatch(
               input.pos, &[_]model.Type{t, scalar_type});
@@ -2191,8 +2198,9 @@ pub const Interpreter = struct {
               self.ctx.createValueExpr(try self.ctx.values.poison(input.pos));
           }
         };
-        const actual_type =
+        var actual_type =
           (try self.probeNodeList(br.branches, stage)) orelse return null;
+        if (actual_type.isInst(.space) and t.isInst(.void)) actual_type = t;
         if (try self.poisonIfNotCompat(input.pos, actual_type, t)) |expr| {
           return expr;
         }
@@ -2212,13 +2220,14 @@ pub const Interpreter = struct {
       .concat => |con| {
         const inner =
           (try self.probeNodeList(con.items, stage)) orelse return null;
-        const actual_type = (try self.ctx.types().concat(inner))
+        var actual_type = (try self.ctx.types().concat(inner))
           orelse {
             self.ctx.logger.InvalidInnerConcatType(
               input.pos, &[_]model.Type{inner});
             return try self.ctx.createValueExpr(
               try self.ctx.values.poison(input.pos));
           };
+        if (actual_type.isInst(.space) and t.isInst(.void)) actual_type = t;
         if (try self.poisonIfNotCompat(input.pos, actual_type, t)) |expr| {
           return expr;
         }
@@ -2244,6 +2253,8 @@ pub const Interpreter = struct {
       .expression => |expr| return expr,
       // for text literals, do compile-time type conversions if possible
       .literal => |*l| {
+        if (t.isInst(.void)) return try self.ctx.createValueExpr(
+          try self.ctx.values.void(input.pos));
         const expr = try self.ctx.global().create(model.Expression);
         expr.pos = input.pos;
         expr.data = .{.value = try self.createTextLiteral(l, t)};
@@ -2251,18 +2262,21 @@ pub const Interpreter = struct {
         return expr;
       },
       .paras => |paras| {
-        const probed = (try self.probeType(input, stage)) orelse return null;
+        var probed = (try self.probeType(input, stage)) orelse return null;
+        if (probed.isInst(.space) and t.isInst(.void)) probed = t;
         if (try self.poisonIfNotCompat(input.pos, probed, t)) |expr| {
           return expr;
         }
         const res = try self.ctx.global().alloc(
           model.Expression.Paragraph, paras.items.len);
         for (paras.items) |item, i| {
-          res[i] = .{
-            .content =
-              (try self.interpretWithTargetScalar(item.content, t, stage)).?,
-            .lf_after = item.lf_after,
-          };
+          const para_type = (try self.probeType(item.content, stage)).?;
+          const target_type =
+            if (para_type.isInst(.space)) self.ctx.types().void() else t;
+          const content = (
+            try self.interpretWithTargetScalar(item.content, target_type, stage)
+          ).?;
+          res[i] = .{.content = content, .lf_after = item.lf_after};
         }
         const expr = try self.ctx.global().create(model.Expression);
         expr.* = .{

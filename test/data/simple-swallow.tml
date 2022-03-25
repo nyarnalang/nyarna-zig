@@ -27,4 +27,4 @@ foo
   -BRANCHES
 -CONVERT
 --- document
-=RAW Raw "foo"
+=TEXT Raw "foo"

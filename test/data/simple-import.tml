@@ -11,4 +11,4 @@ Dolor sit amet
 =TEXT Raw "\n"
 =TEXT Raw "Dolor sit amet"
 --- document
-=RAW Raw "Lorem ipsum\nDolor sit amet"
+=TEXT Raw "Lorem ipsum\nDolor sit amet"

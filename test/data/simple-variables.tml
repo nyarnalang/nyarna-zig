@@ -5,9 +5,9 @@
   bar: \Raw
 \end(var)
 
-\foo:=(42)#
-\bar:=(Foobar)#
-\foo:=(23)#
+\foo:=(42)
+\bar:=(Foobar)
+\foo:=(23)
 
 \bar\foo
 --- expr
@@ -44,4 +44,4 @@
   =GETVAR foo
 -PARAGRAPHS
 --- document
-=RAW Raw "Foobar23"
+=TEXT Raw "Foobar23"

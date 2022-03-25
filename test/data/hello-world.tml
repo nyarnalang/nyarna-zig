@@ -16,4 +16,4 @@
   =TEXT Raw "World"
 -CALL
 --- document
-=RAW Raw "Hello, World!"
+=TEXT Raw "Hello, World!"
