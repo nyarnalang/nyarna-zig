@@ -316,10 +316,11 @@ pub const Processor = struct {
         self.deinit();
         return null;
       }
+
       var logger = errors.Handler{.reporter = self.globals.reporter};
       const root = try (
         Context{.data = self.globals, .logger = &logger}
-      ).evaluator().evaluate(module.root);
+      ).evaluator().evaluateRootModule(module);
       if (logger.count > 0) {
         self.deinit();
         return null;

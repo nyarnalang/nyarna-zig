@@ -11,37 +11,47 @@ pub const Evaluator = struct {
   // behave depending on the target type
   target_type: model.Type = undefined,
 
-  fn setupParameterStackFrame(
+  fn allocateStackFrame(
     self: *Evaluator,
-    sig: *const model.Signature,
-    ns_dependent: bool,
-    prev_frame: ?[*]model.StackItem,
+    num_variables: usize,
+    prev_frame: ?[*]model.StackItem
   ) ![*]model.StackItem {
     const data = self.ctx.data;
-    const num_params =
-      sig.parameters.len + if (ns_dependent) @as(usize, 1) else 0;
     if (
       (@ptrToInt(data.stack_ptr) - @ptrToInt(data.stack.ptr))
-      / @sizeOf(model.StackItem) + num_params > data.stack.len
+      / @sizeOf(model.StackItem) + num_variables > data.stack.len
     ) {
       return nyarna.Error.nyarna_stack_overflow;
     }
     const ret = data.stack_ptr;
     //std.debug.print("[stack] {} frame with {} parameters\n",
     //  .{@ptrToInt(ret), sig.parameters.len});
-    data.stack_ptr += num_params + 1;
+    data.stack_ptr += num_variables + 1;
     ret.* = .{.frame_ref = prev_frame};
     return ret;
   }
 
-  fn resetParameterStackFrame(
+  fn setupParameterStackFrame(
+    self: *Evaluator,
+    sig: *const model.Signature,
+    ns_dependent: bool,
+    prev_frame: ?[*]model.StackItem,
+  ) ![*]model.StackItem {
+    const num_params =
+      sig.parameters.len + if (ns_dependent) @as(usize, 1) else 0;
+    return self.allocateStackFrame(num_params, prev_frame);
+  }
+
+  fn resetStackFrame(
     self: *Evaluator,
     frame_ptr: *?[*]model.StackItem,
-    sig: *const model.Signature,
+    num_variables: usize,
+    ns_dependent: bool,
   ) void {
     //std.debug.print("[stack] {} pop\n", .{@ptrToInt(frame_ptr.*.?)});
     frame_ptr.* = frame_ptr.*.?[0].frame_ref;
-    self.ctx.data.stack_ptr -= sig.parameters.len + 1;
+    self.ctx.data.stack_ptr -= num_variables + 1;
+    if (ns_dependent) self.ctx.data.stack_ptr -= 1;
   }
 
   fn fillParameterStackFrame(
@@ -112,7 +122,7 @@ pub const Evaluator = struct {
       call.exprs.len == callable.sig.parameters.len);
     var frame: ?[*]model.StackItem = try self.setupParameterStackFrame(
       callable.sig, false, null);
-    defer self.resetParameterStackFrame(&frame, callable.sig);
+    defer self.resetStackFrame(&frame, callable.sig.parameters.len, false);
     return if (try self.fillParameterStackFrame(
         call.exprs, frame.? + 1))
       target_impl(impl_ctx, call.expr().pos, frame.? + 1)
@@ -152,8 +162,9 @@ pub const Evaluator = struct {
               frame_ptr.* = .{.value = &ns_val};
               frame_ptr += 1;
             }
-            defer self.resetParameterStackFrame(
-              &fr.func.variables.cur_frame, fr.func.sig());
+            defer self.resetStackFrame(
+              &fr.func.variables.cur_frame, fr.func.sig().parameters.len,
+              ef.ns_dependent);
             return if (try self.fillParameterStackFrame(
                 call.exprs, frame_ptr))
               target_impl(impl_ctx, call.expr().pos, fr.func.argStart())
@@ -162,8 +173,9 @@ pub const Evaluator = struct {
           .ny => |*nf| {
             fr.func.variables.cur_frame = try self.setupParameterStackFrame(
               fr.func.sig(), false, fr.func.variables.cur_frame);
-            defer self.resetParameterStackFrame(
-              &fr.func.variables.cur_frame, fr.func.sig());
+            defer self.resetStackFrame(
+              &fr.func.variables.cur_frame, fr.func.sig().parameters.len, false
+            );
             if (try self.fillParameterStackFrame(
                 call.exprs, fr.func.argStart())) {
               const val = try self.evaluate(nf.body);
@@ -185,7 +197,8 @@ pub const Evaluator = struct {
               var frame: ?[*]model.StackItem =
                 try self.setupParameterStackFrame(
                   rec.constructor.sig, false, null);
-              defer self.resetParameterStackFrame(&frame, rec.constructor.sig);
+              defer self.resetStackFrame(
+                &frame, rec.constructor.sig.parameters.len, false);
               if (
                 try self.fillParameterStackFrame(call.exprs, frame.? + 1)
               ) {
@@ -315,15 +328,19 @@ pub const Evaluator = struct {
           }
           return try builder.finish(expr.pos);
         } else {
-          var ret: ?*model.Value = null;
-          for (paras) |para| {
-            const cur = try self.evaluate(para.content);
-            if (cur.data != .void and cur.data != .poison) {
-              std.debug.assert(ret == null);
-              ret = cur;
+          var builder = ConcatBuilder.init(
+            self.ctx, expr.pos, expr.expected_type);
+          for (paras) |para, index| {
+            const value = try self.evaluate(para.content);
+            if (!self.ctx.types().valueType(value).isInst(.void)) {
+              try builder.push(value);
+              if (
+                index != paras.len - 1 and
+                !paras[index + 1].content.expected_type.isInst(.void)
+              ) try builder.pushSpace(para.lf_after);
             }
           }
-          return ret orelse try self.ctx.values.void(expr.pos);
+          return try builder.finish();
         }
       },
       .varargs => |*varargs| {
@@ -442,6 +459,28 @@ pub const Evaluator = struct {
       self.ctx.types().valueType(res), expr.expected_type);
     return try self.coerce(res, expected_type);
   }
+
+  /// evaluates the root module of the current document. Allocates all global
+  /// variables on the stack, then evaluates the root expression of the given
+  /// module.
+  pub fn evaluateRootModule(
+    self: *Evaluator,
+    module: *model.Module,
+  ) nyarna.Error!*model.Value {
+    // allocate all global variables
+    var num_globals: usize = 0;
+    for (self.ctx.data.known_modules.values()) |entry| {
+      num_globals += entry.loaded.container.num_values;
+    }
+    var frame: ?[*]model.StackItem =
+      try self.allocateStackFrame(num_globals, null);
+    defer self.resetStackFrame(&frame, num_globals, false);
+    for (self.ctx.data.known_modules.values()) |entry| {
+      const container = entry.loaded.container;
+      container.cur_frame = frame;
+    }
+    return self.evaluate(module.root);
+  }
 };
 
 const ConcatBuilder = struct {
@@ -523,37 +562,69 @@ const ConcatBuilder = struct {
   }
 
   pub fn push(self: *ConcatBuilder, item: *model.Value) !void {
+    if (item.data == .void) return;
+    const value = switch (item.data) {
+      .text, .number, .float, .@"enum" =>
+        try self.ctx.evaluator().coerce(item, self.scalar_type),
+      else => item,
+    };
     switch (self.state) {
       .initial => {
-        if (item.data == .text) {
-          self.state = .{.first_text = item};
-        } else try self.enqueue(item);
+        if (value.data == .text) {
+          self.state = .{.first_text = value};
+        } else try self.enqueue(value);
       },
       .first_text => |start| {
-        if (item.data == .text) {
+        if (value.data == .text) {
           self.state = .{.more_text = .{.pos = start.origin}};
           try self.state.more_text.content.appendSlice(
             self.ctx.global(), start.data.text.content);
           try self.state.more_text.content.appendSlice(
-            self.ctx.global(), item.data.text.content);
-          self.state.more_text.pos.end = item.origin.end;
+            self.ctx.global(), value.data.text.content);
+          self.state.more_text.pos.end = value.origin.end;
         } else {
           try self.enqueue(start);
-          try self.enqueue(item);
+          try self.enqueue(value);
           self.state = .initial;
         }
       },
       .more_text => |*more| {
-        if (item.data == .text) {
+        if (value.data == .text) {
           try more.content.appendSlice(
-            self.ctx.global(), item.data.text.content);
-          more.pos.end = item.origin.end;
+            self.ctx.global(), value.data.text.content);
+          more.pos.end = value.origin.end;
         } else {
           try self.finishText(more);
-          try self.enqueue(item);
+          try self.enqueue(value);
           self.state = .initial;
         }
       }
+    }
+  }
+
+  pub fn pushSpace(self: *ConcatBuilder, lf_count: usize) !void {
+    switch (self.state) {
+      .initial => {
+        const content = try self.ctx.global().alloc(u8, lf_count);
+        std.mem.set(u8, content, '\n');
+        self.state = .{.first_text = (
+          try self.ctx.values.textScalar(
+            model.Position.intrinsic(), self.ctx.types().space(), content
+          )).value()
+        };
+      },
+      .first_text => |start| {
+        self.state = .{.more_text = .{.pos = start.origin}};
+        const content = &self.state.more_text.content;
+        try content.appendSlice(self.ctx.global(), start.data.text.content);
+        try content.resize(self.ctx.global(), content.items.len + lf_count);
+        std.mem.set(u8, content.items[content.items.len - lf_count..], '\n');
+      },
+      .more_text => |*more| {
+        const content = &more.content;
+        try content.resize(self.ctx.global(), content.items.len + lf_count);
+        std.mem.set(u8, content.items[content.items.len - lf_count..], '\n');
+      },
     }
   }
 

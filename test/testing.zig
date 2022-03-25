@@ -1050,7 +1050,7 @@ pub fn loadTest(data: *TestDataResolver) !void {
     var emitter = AstEmitter.init(document.globals, &checker);
     try emitter.processValue(document.root);
     try checker.finish();
-  }
+  } else return error.TestUnexpectedResult;
 }
 
 pub fn loadErrorTest(data: *TestDataResolver) !void {
@@ -1062,8 +1062,11 @@ pub fn loadErrorTest(data: *TestDataResolver) !void {
     &data.stdlib.api);
   defer proc.deinit();
   var loader = try proc.startLoading(&data.api, "input");
-  _ = try loader.finishMainModule();
-  try std.testing.expect(!loader.globals.seen_error);
+  {
+    errdefer loader.deinit();
+    _ = try loader.finishMainModule();
+    try std.testing.expect(!loader.globals.seen_error);
+  }
   if (try loader.finalize()) |document| {
     document.destroy();
     return error.TestUnexpectedResult;

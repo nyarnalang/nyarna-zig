@@ -46,7 +46,7 @@
   >BRANCH 1
   =TEXT Literal "foo"
 -BRANCHES
-=TEXT Raw "\n"
+=TEXT Rawzi "\n"
 +BRANCHES
   =ENUM Bool "false"
   >BRANCH 0

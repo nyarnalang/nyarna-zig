@@ -894,8 +894,34 @@ pub const Parser = struct {
   }
 
   inline fn procBlockNameStart(self: *Parser) !void {
-    try self.leaveLevel();
-    self.state = .block_name;
+    if (self.levels.items.len == 1) {
+      const start = self.cur_start;
+      while (true) {
+        self.advance();
+        if (
+          self.cur == .block_name_sep or
+          self.cur == .missing_block_name_sep
+        ) break;
+      }
+      if (self.cur == .block_name_sep) {
+        self.advance();
+        var colon_start: ?model.Position = null;
+        const check_swallow = if (self.cur == .diamond_open) blk: {
+          try BlockConfigParser.init(
+            &self.config_buffer, self.allocator(), self).parse();
+          if (self.cur == .blocks_sep) {
+            colon_start = self.lexer.walker.posFrom(self.cur_start);
+            self.advance();
+            break :blk true;
+          } else break :blk false;
+        } else true;
+        if (check_swallow) _ = self.checkSwallow(colon_start);
+        self.logger().BlockNameAtTopLevel(self.lexer.walker.posFrom(start));
+      } else self.advance();
+    } else {
+      try self.leaveLevel();
+      self.state = .block_name;
+    }
   }
 
   inline fn procEndCommand(self: *Parser) !void {
