@@ -1,18 +1,11 @@
 === Integer Fragment
 --- input
-\fragment(type=\Integer):
-:content:>
+\fragment(\Integer)
 
 \Integer(42)
---- ast
-+ROOT "fragment"
-  >CONTENT
-  +CALL
-    +TARGET
-      =TYPE Integer
-    -TARGET
-    +PROTO "value"
-      =RAW Raw "42"
-    -PROTO
-  -CALL
--ROOT
+--- expr
++CALL
+  =TYPE numeric .std.system.Integer
+  >ARG input
+  =TEXT Raw "42"
+-CALL

@@ -943,7 +943,7 @@ pub const Lattice = struct {
   pub fn list(self: *Self, t: model.Type) std.mem.Allocator.Error!?model.Type {
     switch (t) {
       .instantiated => |inst| switch (inst.data) {
-        .void, .prototype, .schema, .extension => return null,
+        .void, .schema, .extension => return null,
         else => {},
       },
       .structural => {},

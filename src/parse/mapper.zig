@@ -276,7 +276,7 @@ pub const SignatureMapper = struct {
       } else break :blk content;
     } else blk: {
       if (try self.intpr.associate(
-          content, param.ptype, .{.kind = .intermediate})) |expr| {
+          content, target_type, .{.kind = .intermediate})) |expr| {
         content.data = .{.expression = expr};
       }
       break :blk content;

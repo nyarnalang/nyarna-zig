@@ -1265,8 +1265,13 @@ pub const Interpreter = struct {
         break :blk null;
       }
     } else blk: {
-      const t = (try @field(self.ctx.types(), name)(inner))
-        orelse break :blk null;
+      const t = (
+        try @field(self.ctx.types(), name)(inner)
+      ) orelse {
+        @field(self.ctx.logger, error_name)(
+          input.inner.pos, &[_]model.Type{inner});
+        break :blk null;
+      };
       if (t.isStruc(@field(model.Type.Structural, name))) break :blk t
       else {
         @field(self.ctx.logger, error_name)(
