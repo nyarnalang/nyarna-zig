@@ -624,8 +624,6 @@ pub const Parser = struct {
   levels: std.ArrayListUnmanaged(ContentLevel),
   /// currently parsed block config. Filled in the .config state.
   config: ?*model.BlockConfig,
-  /// buffer for inline block config.
-  config_buffer: model.BlockConfig,
   /// stack of currently active namespace mapping statuses.
   /// namespace mappings create a new namespace, disable a namespace, or map a
   /// namespace from one character to another.
@@ -641,7 +639,6 @@ pub const Parser = struct {
   pub fn init() Parser {
     return Parser{
       .config = null,
-      .config_buffer = undefined,
       .levels = .{},
       .ns_mapping_stack = .{},
       .lexer = undefined,
@@ -906,9 +903,10 @@ pub const Parser = struct {
       if (self.cur == .block_name_sep) {
         self.advance();
         var colon_start: ?model.Position = null;
+        var buffer: model.BlockConfig = undefined;
         const check_swallow = if (self.cur == .diamond_open) blk: {
           try BlockConfigParser.init(
-            &self.config_buffer, self.allocator(), self).parse();
+            &buffer, self.allocator(), self).parse();
           if (self.cur == .blocks_sep) {
             colon_start = self.lexer.walker.posFrom(self.cur_start);
             self.advance();
@@ -1446,8 +1444,8 @@ pub const Parser = struct {
     // position of the colon *after* a block header, for additional swallow
     var colon_start: ?model.Position = null;
     const check_swallow = if (self.cur == .diamond_open) blk: {
-      try BlockConfigParser.init(
-        &self.config_buffer, self.allocator(), self).parse();
+      const config = try self.allocator().create(model.BlockConfig);
+      try BlockConfigParser.init(config, self.allocator(), self).parse();
       const pos = self.intpr().input.at(self.cur_start);
       if (pb_exists) |ind| {
         try parent.command.pushPrimary(pos, true);
@@ -1455,7 +1453,7 @@ pub const Parser = struct {
           if (parent.command.choseAstNodeParam()) false else parent.fullast);
         ind.* = .yes;
       }
-      try self.applyBlockConfig(pos, &self.config_buffer);
+      try self.applyBlockConfig(pos, config);
       if (self.cur == .blocks_sep) {
         colon_start = self.lexer.walker.posFrom(self.cur_start);
         self.advance();
@@ -1642,35 +1640,35 @@ pub const Parser = struct {
         const from_index = resolved_indexes[i];
         if (mapping.to != 0 and from_index != ns_mapping_no_from) {
           try self.ns_mapping_stack.append(self.allocator(), blk: {
-            if (from_index != ns_mapping_failed) {
-              if (self.intpr().command_characters.get(mapping.to)) |_| {
-                // check if an upcoming remapping will remove this character
-                var found = false;
-                for (config.map[i+1..]) |upcoming| {
-                  if (upcoming.from == mapping.to) {
-                    found = true;
-                    break;
-                  }
-                }
-                if (!found) {
-                  const ec = unicode.EncodedCharacter.init(mapping.to);
-                  self.logger().AlreadyANamespaceCharacter(
-                    ec.repr(), pos, mapping.pos);
-                  break :blk ns_mapping_failed;
+            if (from_index == ns_mapping_failed) break :blk ns_mapping_failed;
+
+            if (self.intpr().command_characters.get(mapping.to)) |_| {
+              // check if an upcoming remapping will remove this character
+              var found = false;
+              for (config.map[i+1..]) |upcoming| {
+                if (upcoming.from == mapping.to) {
+                  found = true;
+                  break;
                 }
               }
-              try self.intpr().command_characters.put(
-                self.allocator(), mapping.to, @intCast(u15, from_index));
-              // only remove old command character if it has not previously been
-              // remapped.
-              if (self.intpr().command_characters.get(mapping.from))
-                  |cur_from_index| {
-                if (cur_from_index == from_index) {
-                  _ = self.intpr().command_characters.remove(mapping.from);
-                }
+              if (!found) {
+                const ec = unicode.EncodedCharacter.init(mapping.to);
+                self.logger().AlreadyANamespaceCharacter(
+                  ec.repr(), pos, mapping.pos);
+                break :blk ns_mapping_failed;
               }
-              break :blk ns_mapping_succeeded;
-            } else break :blk ns_mapping_failed;
+            }
+            try self.intpr().command_characters.put(
+              self.allocator(), mapping.to, @intCast(u15, from_index));
+            // only remove old command character if it has not previously been
+            // remapped.
+            if (self.intpr().command_characters.get(mapping.from))
+                |cur_from_index| {
+              if (cur_from_index == from_index) {
+                _ = self.intpr().command_characters.remove(mapping.from);
+              }
+            }
+            break :blk ns_mapping_succeeded;
           });
         }
       }
@@ -1716,9 +1714,13 @@ pub const Parser = struct {
       var i = config.map.len - 1;
       while (true) : (i = i - 1) {
         const mapping = &config.map[i];
-        if (mapping.from == 0 and mapping.to != 0) {
+        if (mapping.from == 0) {
           if (self.ns_mapping_stack.pop() == ns_mapping_succeeded) {
-            self.intpr().removeNamespace(mapping.to);
+            if (mapping.to == 0) {
+              std.mem.swap(std.hash_map.AutoHashMapUnmanaged(u21, u15),
+                &self.intpr().command_characters,
+                &self.intpr().stored_command_characters);
+            } else self.intpr().removeNamespace(mapping.to);
           }
         }
         if (i == 0) break;
@@ -1729,45 +1731,48 @@ pub const Parser = struct {
       defer alloc.free(ns_indexes);
       for (config.map) |mapping, j| {
         if (mapping.from != 0 and mapping.to != 0) {
-          ns_indexes[j] = self.intpr().command_characters.get(mapping.to).?;
+          // command_characters may not have the .to character in case of
+          // failure. we assign undefined here because this will be checked in
+          // the next while loop.
+          ns_indexes[j] =
+            self.intpr().command_characters.get(mapping.to) orelse undefined;
         }
       }
 
-      // reverse namespace remappings and re-enable characters that have been
-      // disabled. This can be done in one run.
+      // reverse namespace remappings
       i = config.map.len - 1;
       while (true) : (i = i - 1) {
         const mapping = &config.map[i];
-        if (mapping.from != 0) {
-          if (mapping.to != 0) {
-            if (self.ns_mapping_stack.pop() == ns_mapping_succeeded) {
-              const ns_index = ns_indexes[i];
-              // only remove command character if it has not already been reset
-              // to another namespace.
-              if (
-                self.intpr().command_characters.get(mapping.to).? == ns_index
-              ) {
-                _ = self.intpr().command_characters.remove(mapping.to);
-              }
-              // this cannot fail because command_characters will always be
-              // large enough to add another item without requiring allocation.
-              self.intpr().command_characters.put(
-                self.allocator(), mapping.from, ns_index) catch unreachable;
-            }
-          } else {
-            const ns_index = self.ns_mapping_stack.pop();
-            if (ns_index != ns_mapping_failed) {
-              // like above
-              self.intpr().command_characters.put(
-                self.allocator(), mapping.from, @intCast(u15, ns_index))
-                catch unreachable;
-            }
-          }
-        } else if (mapping.to == 0) {
+        if (mapping.from != 0 and mapping.to != 0) {
           if (self.ns_mapping_stack.pop() == ns_mapping_succeeded) {
-            std.mem.swap(std.hash_map.AutoHashMapUnmanaged(u21, u15),
-              &self.intpr().command_characters,
-              &self.intpr().stored_command_characters);
+            const ns_index = ns_indexes[i];
+            // only remove command character if it has not already been reset
+            // to another namespace.
+            if (
+              self.intpr().command_characters.get(mapping.to).? == ns_index
+            ) {
+              _ = self.intpr().command_characters.remove(mapping.to);
+            }
+            // this cannot fail because command_characters will always be
+            // large enough to add another item without requiring allocation.
+            self.intpr().command_characters.put(
+              self.allocator(), mapping.from, ns_index) catch unreachable;
+          }
+        }
+        if (i == 0) break;
+      }
+
+      // re-enable characters that have been disabled.
+      i = config.map.len - 1;
+      while (true) : (i = i - 1) {
+        const mapping = &config.map[i];
+        if (mapping.from != 0 and mapping.to == 0) {
+          const ns_index = self.ns_mapping_stack.pop();
+          if (ns_index != ns_mapping_failed) {
+            // like above
+            self.intpr().command_characters.put(
+              self.allocator(), mapping.from, @intCast(u15, ns_index))
+              catch unreachable;
           }
         }
         if (i == 0) break;

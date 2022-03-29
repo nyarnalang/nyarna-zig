@@ -24,7 +24,6 @@ fn genTests(dir: *std.fs.Dir, sets: []TestSet) !void {
     "auto-paragraphs.tml", // missing: intrinsic funcs
     "doc-param.tml", // missing: document parameters
     "integer-fragment.tml", // missing: intrinsic funcs, module kinds
-    "ns-symbol-errors.tml", // TODO: ::len on Raw
     "flag-errors.tml", // TODO: integer functions
     "invalid-comptime-call-in-declare.tml", // TODO: can user define comptime fn
   };
