@@ -1595,6 +1595,9 @@ pub const Interpreter = struct {
         },
         .pregen => {},
       }
+      if (gp.constructor) |c| if (try self.tryInterpret(c, stage)) |expr| {
+        c.data = .{.expression = expr};
+      };
       if (gp.funcs) |funcs| _ = try self.tryInterpret(funcs, stage);
       return false;
     }
@@ -2063,8 +2066,10 @@ pub const Interpreter = struct {
       .instantiated => |ti| switch (ti.data) {
         .textual => unreachable, // TODO
         .numeric => |*n| {
-          return if (try self.ctx.numberFrom(l.node().pos, l.content, n)) |nv|
-            nv.value() else try self.ctx.values.poison(l.node().pos);
+          return if (
+            try self.ctx.numberFromText(l.node().pos, l.content, n)
+          ) |nv| nv.value()
+          else try self.ctx.values.poison(l.node().pos);
         },
         .float => unreachable, // TODO
         .tenum => |*e| {

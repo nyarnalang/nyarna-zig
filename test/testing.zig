@@ -1065,7 +1065,10 @@ pub fn loadErrorTest(data: *TestDataResolver) !void {
   {
     errdefer loader.deinit();
     _ = try loader.finishMainModule();
-    try std.testing.expect(!loader.globals.seen_error);
+    if (loader.globals.seen_error) {
+      try checker.finish();
+      return error.TestUnexpectedResult;
+    }
   }
   if (try loader.finalize()) |document| {
     document.destroy();

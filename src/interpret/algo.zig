@@ -385,6 +385,36 @@ pub const DeclareResolution = struct {
     } else return null;
   }
 
+  fn genParams(
+    self: *DeclareResolution,
+    refs: []model.locations.Ref,
+  ) ![]*model.Value.Location {
+    const locs =
+      try self.intpr.ctx.global().alloc(*model.Value.Location, refs.len);
+    var next_loc: usize = 0;
+    for (refs) |input| {
+      switch (input) {
+        .node => |node| {
+          const expr = try self.intpr.interpret(node.node());
+          const value = try self.intpr.ctx.evaluator().evaluate(expr);
+          switch (value.data) {
+            .poison => {},
+            .location => |*lvalue| {
+              locs[next_loc] = lvalue;
+              next_loc += 1;
+            },
+            else => unreachable,
+          }
+        },
+        .value => |value| {
+          locs[next_loc] = value;
+          next_loc += 1;
+        }
+      }
+    }
+    return locs[0..next_loc];
+  }
+
   fn definePrototype(
     self: *DeclareResolution,
     def: *model.Node.Definition,
@@ -515,34 +545,12 @@ pub const DeclareResolution = struct {
               continue;
             };
 
-            const locs = try self.intpr.ctx.global().alloc(
-              *model.Value.Location, bg.params.resolved.locations.len);
-            var next_loc: usize = 0;
-            for (bg.params.resolved.locations) |input| {
-              switch (input) {
-                .node => |node| {
-                  const expr = try self.intpr.interpret(node.node());
-                  const value = try self.intpr.ctx.evaluator().evaluate(expr);
-                  switch (value.data) {
-                    .poison => {},
-                    .location => |*lvalue| {
-                      locs[next_loc] = lvalue;
-                      next_loc += 1;
-                    },
-                    else => unreachable,
-                  }
-                },
-                .value =>  |value| {
-                  locs[next_loc] = value;
-                  next_loc += 1;
-                }
-              }
-            }
+
             def_items[next] = .{
               .name = try self.intpr.ctx.values.textScalar(
                 fdef.node().pos, types.raw(),
                 try self.intpr.ctx.global().dupe(u8, fdef.name.content)),
-              .params = locs[0..next_loc],
+              .params = try self.genParams(bg.params.resolved.locations),
               .returns = bg.returns.value,
               .impl_index = impl_index,
             };
@@ -561,6 +569,24 @@ pub const DeclareResolution = struct {
         }
       }
       pt.set(def_items[0..next]);
+    }
+    if (gp.constructor) |constr| {
+      const impl_index = (
+        try lib.registerExtImpl(self.intpr.ctx,
+          &lib.constructors.types.provider, def.name.content, false)
+      ) orelse {
+        self.intpr.ctx.logger.DoesntHaveConstructor(
+          constr.pos, def.name.content);
+        return true;
+      };
+
+      var list: model.locations.List(void) = .{.unresolved = constr};
+      if (try self.intpr.tryInterpretLocationsList(&list, .{.kind = .final})) {
+        pt.constructor = .{
+          .impl_index = impl_index,
+          .params = try self.genParams(list.resolved.locations),
+        };
+      }
     }
     return true;
   }
@@ -759,11 +785,11 @@ pub const DeclareResolution = struct {
                 .location, .definition => self.intpr.ctx.types().ast(),
                 else => gu.generated,
               };
-              const type_constr = lib.constructors.Types.init();
               var locs: model.locations.List(void) = .{.unresolved = params};
               const constructor = (
                 try self.genConstructor(
-                  def, &locs, ret_type, &type_constr.provider, &tr.ctx)
+                  def, &locs, ret_type, &lib.constructors.types.provider,
+                  &tr.ctx)
               ) orelse continue;
               const types = self.intpr.ctx.types();
               switch (gu.generated.instantiated.data) {
@@ -854,11 +880,32 @@ pub const DeclareResolution = struct {
                 for (locations.*) |loc| try builder.push(loc.value);
                 const builder_res = builder.finish();
 
+                const impl_name = switch (self.in) {
+                  .ns => def.name.content,
+                  .t => |t| tblk: {
+                    const t_name = switch (t) {
+                      .instantiated => |inst| inst.name.?.name,
+                      .structural => |struc| @tagName(struc.*),
+                    };
+                    const buffer = try self.intpr.allocator.alloc(
+                      u8, t_name.len + 2 + def.name.content.len);
+                    std.mem.copy(u8, buffer, t_name);
+                    std.mem.copy(u8, buffer[t_name.len..], "::");
+                    std.mem.copy(
+                      u8, buffer[t_name.len + 2..], def.name.content);
+                    break :tblk buffer;
+                  }
+                };
+                defer if (self.in == .t) self.intpr.allocator.free(impl_name);
+
                 const sym = try self.genSym(def.name, undefined, def.public);
                 sym.data = if (
                   try lib.extFunc(
-                    self.intpr.ctx, sym, builder_res, false, provider)
-                ) |func| .{.func = func} else ublk: {
+                    self.intpr.ctx, impl_name, builder_res, false, provider)
+                ) |func| fblk: {
+                  func.name = sym;
+                  break :fblk .{.func = func};
+                } else ublk: {
                   self.intpr.ctx.logger.UnknownBuiltin(
                     def.content.pos, def.name.content);
                   break :ublk .poison;

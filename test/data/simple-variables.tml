@@ -23,17 +23,19 @@
     >EXPR
     =TEXT Raw ""
   -ASSIGNMENT
-  >PARA 1
+  >PARA 2
   +ASSIGNMENT
     =TARGET foo
     >EXPR
     =NUMBER Integer 42
   -ASSIGNMENT
+  =VOID
   +ASSIGNMENT
     =TARGET bar
     >EXPR
     =TEXT Raw "Foobar"
   -ASSIGNMENT
+  =VOID
   +ASSIGNMENT
     =TARGET foo
     >EXPR

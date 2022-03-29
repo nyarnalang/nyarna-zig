@@ -134,7 +134,7 @@ pub const Types = lib.Provider.Wrapper(struct {
     pos: model.Position,
     input: *model.Value.TextScalar,
   ) nyarna.Error!*model.Value {
-    return if (try eval.ctx.numberFrom(input.value().origin, input.content,
+    return if (try eval.ctx.numberFromText(input.value().origin, input.content,
       &eval.target_type.instantiated.data.numeric)) |nv| nv.value()
     else try eval.ctx.values.poison(pos);
   }

@@ -243,15 +243,7 @@ const ContentLevel = struct {
         const node = self.nodes.items[0];
         break :blk switch (node.data) {
           .void => null,
-          .expression => |expr| if (
-            switch (expr.expected_type) {
-              .instantiated => |inst| switch (inst.data) {
-                .void, .space => false,
-                else => true,
-              },
-              else => true,
-            }
-          ) node else null,
+          .expression => |expr| if (expr.data == .void) null else node,
           else => node,
         };
       },

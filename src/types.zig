@@ -79,6 +79,10 @@ pub const PrototypeFuncs = struct {
     returns: *model.Value.TypeVal,
     impl_index: usize,
   };
+  constructor: ?struct {
+    params: []*model.Value.Location,
+    impl_index: usize,
+  } = null,
   defs: []Item = &.{},
 
   fn lessThan(
@@ -189,6 +193,7 @@ pub const InstanceFuncs = struct {
       },
       .instantiated => |inst| switch (inst.data) {
         .record => unreachable,
+        .prototype => return instance,
         else => return null,
       },
     }
@@ -207,12 +212,28 @@ pub const InstanceFuncs = struct {
         def.returns.value().origin, def.returns.t, ctx, self.instance)
     ) |t| t else def.returns.t;
     var finder = nyarna.types.CallableReprFinder.init(ctx.types());
-    for (def.params) |param| try finder.push(param);
+    for (def.params) |param| {
+      const orig_type = param.tloc;
+      param.tloc = if (
+        try replacePrototypeWith(
+          param.value().origin, orig_type, ctx, self.instance)
+      ) |t| t else orig_type;
+      try finder.push(param);
+      param.tloc = orig_type;
+    }
     const finder_res = try finder.finish(ret_type, false);
     var builder = try nyarna.types.SigBuilder.init(
       ctx, def.params.len, ret_type, finder_res.needs_different_repr
     );
-    for (def.params) |param| try builder.push(param);
+    for (def.params) |param| {
+      const orig_type = param.tloc;
+      param.tloc = if (
+        try replacePrototypeWith(
+          param.value().origin, orig_type, ctx, self.instance)
+      ) |t| t else orig_type;
+      try builder.push(param);
+      param.tloc = orig_type;
+    }
     const builder_res = builder.finish();
     const sym = try ctx.global().create(model.Symbol);
     sym.* = .{
@@ -393,22 +414,14 @@ pub const Lattice = struct {
     paragraphs  : TreeNode(void),
     callable    : TreeNode(bool),
   },
-  /// Constructors for all types that have constructors.
+  /// Constructors for all unique types and prototypes that have constructors.
   /// These are to be queried via typeConstructor() and prototypeConstructor().
+  ///
+  /// constructors of non-unique types are stored in PrototypeFuncs.
   constructors: struct {
     raw       : Constructor = .{},
     location  : Constructor = .{},
     definition: Constructor = .{},
-
-    // the signature of instantiated types' constructors differ per type.
-    // they use the same implementation though. Those implementations' indexes
-    // are given here.
-    generic: struct {
-      textual: usize,
-      numeric: usize,
-      float  : usize,
-      @"enum": usize,
-    } = undefined,
 
     /// Prototype implementations that generate types.
     prototypes: struct {
@@ -566,19 +579,19 @@ pub const Lattice = struct {
       .instantiated => |inst| switch (inst.data) {
         .textual    => |*text| Constructor{
           .callable   = text.constructor,
-          .impl_index = self.constructors.generic.textual,
+          .impl_index = self.prototype_funcs.textual.constructor.?.impl_index,
         },
         .numeric    => |*numeric| Constructor{
           .callable   = numeric.constructor,
-          .impl_index = self.constructors.generic.numeric,
+          .impl_index = self.prototype_funcs.numeric.constructor.?.impl_index,
         },
         .float      => |*float| Constructor{
           .callable   = float.constructor,
-          .impl_index = self.constructors.generic.float,
+          .impl_index = self.prototype_funcs.float.constructor.?.impl_index,
         },
         .tenum      => |*tenum| Constructor{
           .callable   = tenum.constructor,
-          .impl_index = self.constructors.generic.@"enum",
+          .impl_index = self.prototype_funcs.@"enum".constructor.?.impl_index,
         },
         .location   => self.constructors.location,
         .definition => self.constructors.definition,
@@ -1376,13 +1389,10 @@ pub const EnumTypeBuilder = struct {
   }
 
   pub fn finish(self: *Self) !*model.Type.Enum {
+    const constructor = &self.ctx.types().prototype_funcs.@"enum".constructor.?;
     var sb = try SigBuilder.init(
-      self.ctx, 1, self.ret.typedef(), true);
-    try sb.push((try self.ctx.values.location(
-      self.ret.instantiated().at, try self.ctx.values.textScalar(
-        model.Position.intrinsic(), self.ctx.types().raw(),
-        "input"
-      ), self.ret.typedef())).withPrimary(model.Position.intrinsic()));
+      self.ctx, constructor.params.len, self.ret.typedef(), true);
+    for (constructor.params) |param| try sb.push(param);
     self.ret.constructor =
       try sb.finish().createCallable(self.ctx.global(), .type);
     return self.ret;
@@ -1458,12 +1468,10 @@ pub const NumericTypeBuilder = struct {
       self.abort();
       return null;
     }
+    const constructor = &self.ctx.types().prototype_funcs.numeric.constructor.?;
     var sb = try SigBuilder.init(
-      self.ctx, 1, self.ret.typedef(), true);
-    try sb.push((try self.ctx.values.location(
-      self.ret.instantiated().at, try self.ctx.values.textScalar(
-        model.Position.intrinsic(), self.ctx.types().raw(), "input"
-      ), self.ret.typedef())).withPrimary(model.Position.intrinsic()));
+      self.ctx, constructor.params.len, self.ret.typedef(), true);
+    for (constructor.params) |param| try sb.push(param);
     self.ret.constructor =
       try sb.finish().createCallable(self.ctx.global(), .type);
     return self.ret;

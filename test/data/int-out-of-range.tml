@@ -2,4 +2,6 @@
 --- input
 \Natural(13)::sub(42)
 --- errors:document
-3:13 - 3:22 IntegerOutOfRange
+3:1 - 3:22 OutOfRange
+  t = Natural
+  repr = -29

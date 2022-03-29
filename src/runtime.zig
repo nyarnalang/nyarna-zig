@@ -9,6 +9,11 @@ pub const Evaluator = struct {
   ctx: nyarna.Context,
   // current type that is being called. used by type constructors that need to
   // behave depending on the target type
+
+  /// current context type. This is used for:
+  /// - type constructors that need to behave depending on the returned type
+  /// - builtin functions in the namespace of a type, which could result from
+  ///   prototype functions and thus might not know the type they're called on.
   target_type: model.Type = undefined,
 
   fn allocateStackFrame(
@@ -165,6 +170,9 @@ pub const Evaluator = struct {
             defer self.resetStackFrame(
               &fr.func.variables.cur_frame, fr.func.sig().parameters.len,
               ef.ns_dependent);
+            if (fr.func.name) |fname| if (fname.parent_type) |ptype| {
+              self.target_type = ptype;
+            };
             return if (try self.fillParameterStackFrame(
                 call.exprs, frame_ptr))
               target_impl(impl_ctx, call.expr().pos, fr.func.argStart())
@@ -386,7 +394,9 @@ pub const Evaluator = struct {
     expected_type: model.Type,
   ) std.mem.Allocator.Error!*model.Value {
     const value_type = self.ctx.types().valueType(value);
-    if (value_type.eql(expected_type)) return value;
+    if (value_type.eql(expected_type) or value_type.isInst(.poison)) {
+      return value;
+    }
     switch (expected_type) {
       .structural => |strct| switch (strct.*) {
         // these are virtual types and thus can never be the expected type.

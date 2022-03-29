@@ -112,18 +112,33 @@
 
   Textual = \prototype:
     cats, include, exclude: \Optional(\Ast)
+  :constructor:
+    input: \Raw {primary}
   \end(prototype)
 
   Numeric = \prototype:
     min, max, decimals: \Optional(\Ast)
+  :constructor:
+    input: \Raw {primary}
+  :funcs:
+    add = \builtin(return=\This):
+      values: \List(\This) {varargs}
+    \end(builtin)
+    sub = \builtin(return=\This):
+      minuend, subtrahend: \This
+    \end(builtin)
   \end(prototype)
 
   Float = \prototype:
     precision: \Ast
+  :constructor:
+    input: \Raw {primary}
   \end(prototype)
 
   Enum = \prototype:
     values: \List(\Ast) {varargs}
+  :constructor:
+    input: \Raw {primary}
   \end(prototype)
 
   library    = \keyword:
@@ -159,6 +174,12 @@
   Literal     = \unique()
   BlockHeader = \unique()
   Space       = \unique()
+\end(declare)
+
+\declare(\Raw):
+  len = \builtin(return=\Natural):
+    self: \Raw
+  \end(builtin)
 \end(declare)
 
 \library()

@@ -22,7 +22,7 @@
   repr = elst
 3:1 - 7:9 MissingParameterArgument
   repr = condition
-  previous = /Users/flyx/Projects/nyarna-zig/lib/system.ny(144:5)
+  previous = /Users/flyx/Projects/nyarna-zig/lib/system.ny(153:5)
 8:9 - 8:14 UnknownParameter
   repr = warbl
 8:29 - 8:29 UnexpectedPrimaryBlock

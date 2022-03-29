@@ -192,9 +192,9 @@ pub const ConstructionError = enum {
 };
 
 pub const SystemNyError = enum {
-  MissingType, MissingPrototype, MissingKeyword,
-  ShouldBeType, ShouldBePrototype, ShouldBeKeyword,
-  WrongType, UnknownSystemSymbol,
+  MissingType, MissingPrototype, MissingKeyword, MissingBuiltin,
+  ShouldBeType, ShouldBePrototype, ShouldBeKeyword, ShouldBeBuiltin,
+  WrongType, UnknownSystemSymbol, MissingConstructor,
 };
 
 pub const FileError = enum {
@@ -404,7 +404,7 @@ pub const CmdLineReporter = struct {
       .TooManyDecimals       => "numeric literal has too many decimal digits",
       .InvalidDecimals       => "not an integer between 0 and 32",
     };
-    self.renderError("unknown {s}: '{s}'", .{entity, repr});
+    self.renderError("{s}: '{s}'", .{entity, repr});
   }
 
   fn wrongIdError(

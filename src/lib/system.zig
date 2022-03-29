@@ -515,6 +515,47 @@ pub const Impl = lib.Provider.Wrapper(struct {
     return intpr.node_gen.@"void"(pos);
   }
 
+  pub fn @"Raw::len"(
+    eval: *nyarna.Evaluator,
+    pos: model.Position,
+    self: *model.Value.TextScalar,
+  ) nyarna.Error!*model.Value {
+    return (try eval.ctx.values.number(
+      pos, &eval.ctx.types().system.natural.instantiated.data.numeric,
+      @intCast(i64, self.content.len))).value();
+  }
+
+  pub fn @"Numeric::add"(
+    eval: *nyarna.Evaluator,
+    pos: model.Position,
+    list: *model.Value.List,
+  ) nyarna.Error!*model.Value {
+    var ret: i64 = 0;
+    for (list.content.items) |item| {
+      if (@addWithOverflow(i64, ret, item.data.number.content, &ret)) {
+        eval.ctx.logger.OutOfRange(pos, eval.target_type, "<overflow>");
+        return try eval.ctx.values.poison(pos);
+      }
+    }
+    return try eval.ctx.numberFromInt(
+      pos, ret, &eval.target_type.instantiated.data.numeric);
+  }
+
+  pub fn @"Numeric::sub"(
+    eval: *nyarna.Evaluator,
+    pos: model.Position,
+    minuend: *model.Value.Number,
+    subtrahend: *model.Value.Number,
+  ) nyarna.Error!*model.Value {
+    var ret: i64 = undefined;
+    if (@subWithOverflow(i64, minuend.content, subtrahend.content, &ret)) {
+      eval.ctx.logger.OutOfRange(pos, eval.target_type, "<overflow>");
+      return try eval.ctx.values.poison(pos);
+    }
+    return try eval.ctx.numberFromInt(
+      pos, ret, &eval.target_type.instantiated.data.numeric);
+  }
+
   pub fn @"List::len"(
     eval: *nyarna.Evaluator,
     pos: model.Position,
@@ -534,7 +575,7 @@ pub const Checker = struct {
     name: []const u8,
     kind: union(enum) {
       @"type": TagType,
-      prototype, keyword,
+      prototype, keyword, builtin,
     },
     seen: bool = false,
     /// pointer into types.Lattice where the type should be hooked into
@@ -562,6 +603,10 @@ pub const Checker = struct {
             comptime std.mem.eql(u8, @tagName(tuple.@"1"), "keyword")
           ) {
             ret[i] = .{.name = tuple.@"0", .kind = .keyword};
+          } else if (
+            comptime std.mem.eql(u8, @tagName(tuple.@"1"), "builtin")
+          ) {
+            ret[i] = .{.name = tuple.@"0", .kind = .builtin};
           } else {
             ret[i] = .{
               .name = tuple.@"0",
@@ -594,6 +639,7 @@ pub const Checker = struct {
     .{"Optional", .prototype},
     .{"Paragraphs", .prototype},
     .{"Raw", .raw},
+    .{"Raw::len", .builtin},
     .{"Record", .prototype},
     .{"Textual", .prototype},
     .{"Type", .@"type"},
@@ -609,6 +655,7 @@ pub const Checker = struct {
 
   data: ExpectedDataInst.Array,
   logger: *nyarna.errors.Handler,
+  buffer: [256]u8 = undefined,
 
   pub inline fn init(
     lattice: *nyarna.types.Lattice,
@@ -620,19 +667,34 @@ pub const Checker = struct {
     };
   }
 
+  fn implName(self: *Checker, sym: *model.Symbol) []const u8 {
+    return if (sym.parent_type) |t| blk: {
+      const t_name = switch (t) {
+        .instantiated => |inst| inst.name.?.name,
+        .structural => |struc| @tagName(struc.*),
+      };
+      std.mem.copy(u8, &self.buffer, t_name);
+      std.mem.copy(u8, self.buffer[t_name.len..], "::");
+      std.mem.copy(u8, self.buffer[t_name.len + 2..], sym.name);
+      break :blk self.buffer[0..t_name.len + 2 + sym.name.len];
+    } else sym.name;
+  }
+
   pub fn check(self: *Checker, sym: *model.Symbol) void {
+    const impl_name = self.implName(sym);
+
     // list of expected items is sorted by name, so we'll do a binary search
     var data: []ExpectedSymbol = &self.data;
     while (data.len > 0) {
       const index = @divTrunc(data.len, 2);
       const cur = &data[index];
-      data = switch (stringOrder(sym.name, cur.name)) {
+      data = switch (stringOrder(impl_name, cur.name)) {
         .lt => data[0..index],
         .gt => data[index+1..],
         .eq => {
           switch (cur.kind) {
             .prototype => if (sym.data != .prototype) {
-              self.logger.ShouldBePrototype(sym.defined_at, sym.name);
+              self.logger.ShouldBePrototype(sym.defined_at, impl_name);
             },
             .@"type" => |t| switch (sym.data) {
               .@"type" => |st| if (
@@ -640,23 +702,30 @@ pub const Checker = struct {
               ) {
                 if (cur.hook) |target| target.* = st;
               } else {
-                self.logger.WrongType(sym.defined_at, sym.name);
+                self.logger.WrongType(sym.defined_at, impl_name);
               },
-              else => self.logger.ShouldBeType(sym.defined_at, sym.name),
+              else => self.logger.ShouldBeType(sym.defined_at, impl_name),
             },
             .keyword => if (
               sym.data != .func or !sym.data.func.callable.sig.isKeyword()
-            ) self.logger.ShouldBeKeyword(sym.defined_at, sym.name),
+            ) self.logger.ShouldBeKeyword(sym.defined_at, impl_name),
+            .builtin => if (
+              sym.data != .func or sym.data.func.callable.sig.isKeyword()
+            ) self.logger.ShouldBeBuiltin(sym.defined_at, impl_name),
           }
           cur.seen = true;
           return;
         }
       };
     }
-    self.logger.UnknownSystemSymbol(sym.defined_at, sym.name);
+    self.logger.UnknownSystemSymbol(sym.defined_at, impl_name);
   }
 
-  pub fn finish(self: *Checker, desc: *const model.Source.Descriptor) void {
+  pub fn finish(
+    self: *Checker,
+    desc: *const model.Source.Descriptor,
+    types: *const nyarna.types.Lattice,
+  ) void {
     const pos = model.Position{
       .source = desc,
       .start = model.Cursor.unknown(),
@@ -667,7 +736,13 @@ pub const Checker = struct {
         .@"type" => self.logger.MissingType(pos, cur.name),
         .prototype => self.logger.MissingPrototype(pos, cur.name),
         .keyword => self.logger.MissingKeyword(pos, cur.name),
+        .builtin => self.logger.MissingBuiltin(pos, cur.name),
       };
+    }
+    inline for (.{.@"enum", .numeric, .textual, .float}) |f| {
+      if (@field(types.prototype_funcs, @tagName(f)).constructor == null) {
+        self.logger.MissingConstructor(pos, @tagName(f));
+      }
     }
   }
 };

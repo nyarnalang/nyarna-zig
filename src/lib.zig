@@ -202,13 +202,13 @@ fn registerGenericImpl(
 
 pub fn extFunc(
   ctx: Context,
-  name: *model.Symbol,
+  impl_name: []const u8,
   bres: types.SigBuilderResult,
   ns_dependent: bool,
   p: *const Provider,
 ) !?*model.Function {
   const index = (
-    try registerExtImpl(ctx, p, name.name, bres.sig.isKeyword())
+    try registerExtImpl(ctx, p, impl_name, bres.sig.isKeyword())
   ) orelse return null;
   const container = try ctx.global().create(model.VariableContainer);
   container.* = .{
@@ -224,7 +224,7 @@ pub fn extFunc(
         .impl_index = index,
       },
     },
-    .name = name,
+    .name = null,
     .variables = container,
   };
   return ret;

@@ -265,7 +265,7 @@ pub const Context = struct {
     return try self.values.@"enum"(pos, t, index);
   }
 
-  pub fn numberFrom(
+  pub fn numberFromText(
     self: *const Context,
     pos: model.Position,
     text: []const u8,
@@ -294,6 +294,19 @@ pub const Context = struct {
       }
     }
     return null;
+  }
+
+  pub fn numberFromInt(
+    self: *const Context,
+    pos: model.Position,
+    value: i64,
+    t: *const model.Type.Numeric,
+  ) !*model.Value {
+    if (value < t.min or value > t.max) {
+      const str = try std.fmt.allocPrint(self.global(), "{}", .{value});
+      self.logger.OutOfRange(pos, t.typedef(), str);
+      return try self.values.poison(pos);
+    } else return (try self.values.number(pos, t, value)).value();
   }
 };
 
@@ -393,7 +406,7 @@ pub const Processor = struct {
 
     var checker = lib.system.Checker.init(&globals.types, logger);
     for (module.symbols) |sym| checker.check(sym);
-    checker.finish(module.root.pos.source);
+    checker.finish(module.root.pos.source, &globals.types);
   }
 
   /// initialize loading of the given main module. should only be used for

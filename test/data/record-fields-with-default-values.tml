@@ -26,13 +26,13 @@
       +CALL
         =TYPE numeric .doc.input.OneToTen
         >ARG input
-        =NUMBER OneToTen 1
+        =TEXT Raw "1"
       -CALL
       >ARG second
       +CALL
         =TYPE numeric .doc.input.OneToTen
         >ARG input
-        =NUMBER OneToTen 10
+        =TEXT Raw "10"
       -CALL
     -CALL
   -ASSIGNMENT
