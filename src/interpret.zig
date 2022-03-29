@@ -552,7 +552,6 @@ pub const Interpreter = struct {
       }
       return null;
     }
-    std.debug.assert(stage.kind != .resolve); // TODO
     var incomplete = false;
     var t = if (loc.@"type") |node| blk: {
       var expr = (try self.associate(
@@ -577,10 +576,12 @@ pub const Interpreter = struct {
       if (res) |rexpr| expr = rexpr else incomplete = true;
     }
 
-    if (!incomplete and t == null and expr == null) {
+    const ltype = if (!incomplete) blk: {
+      if (t) |tval| break :blk tval;
+      if (expr) |e| break :blk e.expected_type;
       self.ctx.logger.MissingSymbolType(loc.node().pos);
-      t = self.ctx.types().poison();
-    }
+      break :blk self.ctx.types().poison();
+    } else self.ctx.types().poison();
     if (loc.additionals) |add| {
       if (add.varmap) |varmap| {
         if (add.varargs) |varargs| {
@@ -594,11 +595,37 @@ pub const Interpreter = struct {
         self.ctx.logger.IncompatibleFlag("borrow", borrow, varargs);
         add.borrow = null;
       };
-      // TODO: check whether given flags are allowed for types.
+      if (!ltype.isInst(.poison)) {
+        if (add.varmap) |varmap| if (!ltype.isStruc(.map)) {
+          self.ctx.logger.VarmapRequiresMap(
+            varmap, &[_]model.Type{ltype});
+          add.varmap = null;
+        };
+        if (add.varargs) |varargs| if (!ltype.isStruc(.list)) {
+          self.ctx.logger.VarargsRequiresList(
+            varargs, &[_]model.Type{ltype});
+          add.varargs = null;
+        };
+        if (add.borrow) |borrow| if (
+          !switch (ltype) {
+            .structural => |struc| switch (struc.*) {
+              .list, .concat, .paragraphs, .callable => true,
+              else => false,
+            },
+            .instantiated => |inst| switch (inst.data) {
+              .record, .prototype => true,
+              else => false,
+            },
+          }
+        ) {
+          self.ctx.logger.BorrowRequiresRef(
+            borrow, &[_]model.Type{ltype});
+          add.borrow = null;
+        };
+      }
     }
 
     if (incomplete) return null;
-    const ltype = if (t) |given_type| given_type else expr.?.expected_type;
 
     const name = try self.ctx.values.textScalar(
       loc.name.node().pos, self.ctx.types().literal(),

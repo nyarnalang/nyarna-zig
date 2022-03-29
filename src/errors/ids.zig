@@ -123,6 +123,12 @@ pub const WrongTypeError = enum {
    InvalidDefinitionValue,
    /// gives one type.
    CannotBranchOn,
+   /// gives one type.
+   VarmapRequiresMap,
+   /// gives one type.
+   VarargsRequiresList,
+   /// gives one type.
+   BorrowRequiresRef,
 };
 
 pub const ConstructionError = enum {

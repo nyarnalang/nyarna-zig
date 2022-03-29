@@ -300,6 +300,20 @@ fn wrongTypeError(
       const t_fmt = types[0].formatter();
       self.renderError("cannot branch on expression of type '{}'", .{t_fmt});
     },
+    .VarmapRequiresMap => {
+      const t_fmt = types[0].formatter();
+      self.renderError("`varmap` requires mapping type, got '{}'", .{t_fmt});
+    },
+    .VarargsRequiresList => {
+      const t_fmt = types[0].formatter();
+      self.renderError("`varargs` requires list type, got '{}'", .{t_fmt});
+    },
+    .BorrowRequiresRef => {
+      const t_fmt = types[0].formatter();
+      self.renderError(
+        "`borrow` requires ref type " ++
+        "(callable, concat, list, map, record), got '{}'", .{t_fmt});
+    },
   }
 }
 

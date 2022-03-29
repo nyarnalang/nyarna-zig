@@ -1,0 +1,17 @@
+=== Wrong Types for Given Flags
+--- input
+\declare:
+  a = \func:
+    b: \Optional(\Raw) {varargs}
+    c {borrow} = \Integer(42)
+    d: \List(\Integer) {varmap}
+  :body:
+  \end(func)
+\end(declare)
+--- errors:expr
+5:25 - 5:32 VarargsRequiresList
+  types = Optional<Raw>
+6:8 - 6:14 BorrowRequiresRef
+  types = Integer
+7:25 - 7:31 VarmapRequiresMap
+  types = List<Integer>
