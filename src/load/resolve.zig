@@ -49,7 +49,7 @@ pub const Resolver = struct {
     source_allocator: std.mem.Allocator,
     descriptor_allocator: std.mem.Allocator,
     cursor: *Cursor,
-    absolute_locator: []const u8,
+    absolute_locator: model.Locator,
     logger: *errors.Handler,
   ) std.mem.Allocator.Error!?*model.Source {
     const descriptor = try descriptor_allocator.create(model.Source.Descriptor);

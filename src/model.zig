@@ -51,7 +51,7 @@ pub const Position = struct {
 
   const intrinsic_source = Source.Descriptor{
     .name = "<intrinsic>",
-    .locator = ".std.intrinsic",
+    .locator = Locator.parse(".std.intrinsic") catch unreachable,
     .argument = false
   };
 
@@ -142,15 +142,15 @@ pub const Source = struct {
     /// the argument.
     name: []const u8,
     /// the absolute locator that identifies this source.
-    locator: []const u8,
+    locator: Locator,
     /// true iff the source has been given as command-line argument
     argument: bool,
 
     /// generates the value that should go into Source.locator_ctx from the
     /// absolute locator.
     pub fn genLocatorCtx(self: *const Descriptor) []const u8 {
-      const index = std.mem.lastIndexOf(u8, self.locator, ".").?;
-      return self.locator[0..index + 1]; // include the '.'
+      const index = std.mem.lastIndexOf(u8, self.locator.repr, ".").?;
+      return self.locator.repr[0..index + 1]; // include the '.'
     }
   };
 
@@ -387,7 +387,10 @@ pub const Module = struct {
   root: *Expression,
   /// for all variables at root level (i.e. not in functions, templates etc)
   container: *VariableContainer,
-  // TODO: locator (?)
+
+  pub fn locator(self: *Module) Locator {
+    return self.root.pos.source.locator;
+  }
 };
 
 /// A document is the final result of loading a main module.

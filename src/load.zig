@@ -55,7 +55,7 @@ pub const ModuleLoader = struct {
     data: *nyarna.Globals,
     input: *nyarna.Resolver.Cursor,
     resolver: *nyarna.Resolver,
-    location: []const u8,
+    location: model.Locator,
     fullast: bool,
     provider: ?*const lib.Provider,
   ) !*ModuleLoader {
@@ -268,8 +268,9 @@ pub const ModuleLoader = struct {
       return null;
     };
     // TODO: builtin provider
-    const loader =
-      try create(self.data, descriptor, resolver, abs_locator, false, null);
+    const loader = try create(
+      self.data, descriptor, resolver,
+      model.Locator.parse(abs_locator) catch unreachable, false, null);
     const res = try self.data.known_modules.getOrPut(
       self.data.storage.allocator(), abs_locator);
     std.debug.assert(!res.found_existing);

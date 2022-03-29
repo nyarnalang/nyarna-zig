@@ -352,7 +352,7 @@ const AstEmitter = struct {
       },
       .resolved_symref => |res|
         try self.emitLine("=SYMREF {s}.{s}",
-          .{res.sym.defined_at.source.locator, res.sym.name}),
+          .{res.sym.defined_at.source.locator.repr, res.sym.name}),
       .gen_concat => |gc| {
         const gen = try self.pushWithKey("TGEN", "Concat", null);
         try self.process(gc.inner);
@@ -594,7 +594,7 @@ const AstEmitter = struct {
       .structural => unreachable,
       .instantiated => |i| {
         if (i.name) |sym| try self.emitLine("=TYPE {s} {s}.{s}",
-          .{@tagName(i.data), sym.defined_at.source.locator, sym.name})
+          .{@tagName(i.data), sym.defined_at.source.locator.repr, sym.name})
         else {
           const tc = try self.pushWithKey("TYPE", @tagName(i.data), null);
           switch (i.data) {
@@ -693,7 +693,7 @@ const AstEmitter = struct {
       .@"type" => |tv| try self.processType(tv.t),
       .prototype => |pv| try self.emitLine("=PROTO {s}", .{@tagName(pv.pt)}),
       .funcref => |fr| try self.emitLine("=FUNCREF {s}.{s}",
-        .{fr.func.defined_at.source.locator, if (fr.func.name) |sym|
+        .{fr.func.defined_at.source.locator.repr, if (fr.func.name) |sym|
           sym.name else "<anonymous>"}),
       .poison => try self.emitLine("=POISON", .{}),
       .void => try self.emitLine("=VOID", .{}),

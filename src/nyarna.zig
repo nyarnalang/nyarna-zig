@@ -397,7 +397,8 @@ pub const Processor = struct {
       globals.storage.allocator(), "system", model.Position.intrinsic(),
       logger)).?;
     const system_loader = try ModuleLoader.create(
-      globals, system_ny, self.resolvers.items[1].resolver, ".std.system",
+      globals, system_ny, self.resolvers.items[1].resolver,
+      model.Locator.parse(".std.system") catch unreachable,
       false, &lib.system.instance.provider);
     _ = try system_loader.work();
     const module = try system_loader.finalize();
@@ -440,8 +441,10 @@ pub const Processor = struct {
       try ret.globals.storage.allocator().alloc(u8, main_module.len + 5);
     std.mem.copy(u8, locator, ".doc.");
     std.mem.copy(u8, locator[5..], main_module);
+    // TODO: what if main_module is misnamed?
     const ml = try ModuleLoader.create(
-      ret.globals, desc, doc_resolver, locator, fullast, null);
+      ret.globals, desc, doc_resolver,
+      model.Locator.parse(locator) catch unreachable, fullast, null);
     if (fullast) {
       try ret.globals.known_modules.put(
         ret.globals.storage.allocator(), desc.name, .{.require_module = ml});
