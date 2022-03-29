@@ -16,12 +16,12 @@ Lorem ipsum
 4:3 - 4:7 IllegalItem
   expected = {identifier}
   got = <node>
-4:8 - 4:8 MissingToken
+4:8 - 4:8 PrematureToken
   expected = {identifier}
   got = '='
 8:5 - 8:9 IllegalItem
   expected = {',', '{', '='}
   got = <node>
 8:11 - 8:11 MissingToken
-  expected = {',', '{', '='}
+  expected = {','}
   got = identifier

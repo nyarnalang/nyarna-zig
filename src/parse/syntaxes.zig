@@ -178,7 +178,7 @@ pub const SymbolDefs = struct {
       },
       .special_char => |c| switch (c) {
         '=', '{' => {
-          self.logger().MissingToken(
+          self.logger().PrematureToken(
             pos.before(),
             &[_]errors.WrongItemError.ItemDescr{.{.token = .identifier}},
             .{.character = c});
@@ -186,14 +186,14 @@ pub const SymbolDefs = struct {
           return null;
         },
         ':' => if (self.variant == .locs) {
-          self.logger().MissingToken(
+          self.logger().PrematureToken(
             pos.before(),
             &[_]errors.WrongItemError.ItemDescr{.{.token = .identifier}},
             .{.character = c});
           self.state = afterName;
           return null;
         } else {
-          self.logger().ExpectedXGotY(pos,
+          self.logger().IllegalItem(pos,
             &[_]errors.WrongItemError.ItemDescr{.{.token = .identifier}},
             .{.character = c});
           return .none;
@@ -206,7 +206,7 @@ pub const SymbolDefs = struct {
           return null;
         },
         else => {
-          self.logger().ExpectedXGotY(pos,
+          self.logger().IllegalItem(pos,
             &[_]errors.WrongItemError.ItemDescr{.{.token = .identifier}},
             .{.character = c});
           return .none;
@@ -237,7 +237,9 @@ pub const SymbolDefs = struct {
       .space => return .none,
       .literal => {
         self.logger().MissingToken(
-          pos.before(), self.afterNameItems(), .{.token = .identifier});
+          pos.before(),
+          &[_]errors.WrongItemError.ItemDescr{.{.character = ','}},
+          .{.token = .identifier});
         self.state = names;
         return null;
       },
@@ -433,7 +435,7 @@ pub const SymbolDefs = struct {
           return .none;
         },
         ',' => {
-          self.logger().MissingToken(
+          self.logger().PrematureToken(
             pos, &[_]errors.WrongItemError.ItemDescr{
               .{.token = .identifier}, .{.character = '}'},
             }, .{.character = ','});

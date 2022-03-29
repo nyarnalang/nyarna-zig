@@ -13,11 +13,11 @@
   sausage = \func:
     spam : \end(declare)
 --- errors:expr
-4:3 - 4:4 ExpectedXGotY
+4:3 - 4:4 IllegalItem
   expected = {identifier}
   got = ','
 5:10 - 5:10 MissingToken
-  expected = {',', '{', '=', ':'}
+  expected = {','}
   got = identifier
 5:13 - 6:3 MissingSymbolType
 9:6 - 10:1 MissingSymbolEntity

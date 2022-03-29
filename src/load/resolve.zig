@@ -1,6 +1,6 @@
 const std = @import("std");
 const model = @import("../model.zig");
-const errors = @import("errors");
+const errors = @import("../errors.zig");
 
 pub const Resolver = struct {
   /// Resolver-specific cursor. Describes a source that can be loaded.

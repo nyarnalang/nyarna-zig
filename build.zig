@@ -33,15 +33,9 @@ pub fn build(b: *Builder) !void {
   testgen_cmd.cwd = "test";
   testgen_cmd.step.dependOn(&testgen_exe.step);
 
-  const errors_pkg = std.build.Pkg{
-    .name = "errors",
-    .path = .{.path = "src/errors_generated.zig"},
-  };
-
   const nyarna_pkg = std.build.Pkg{
     .name = "nyarna",
     .path = .{.path = "src/nyarna.zig"},
-    .dependencies = &.{errors_pkg},
   };
 
   const testing_pkg = std.build.Pkg{
