@@ -111,7 +111,7 @@ pub const List = struct {
 };
 /// a Map value
 pub const Map = struct {
-  const Items = std.HashMap(*Value, *Value, Value.HashContext, 50);
+  pub const Items = std.HashMap(*Value, *Value, Value.HashContext, 50);
 
   t: *const Type.Map,
   items: Items,

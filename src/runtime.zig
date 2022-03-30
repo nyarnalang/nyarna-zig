@@ -16,6 +16,15 @@ pub const Evaluator = struct {
   ///   prototype functions and thus might not know the type they're called on.
   target_type: model.Type = undefined,
 
+  const line_feeds = "\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n";
+
+  fn lineFeeds(self: *Evaluator, num: usize) ![]const u8 {
+    if (num <= line_feeds.len) return line_feeds[0..num];
+    const ret = try self.ctx.global().alloc(u8, num);
+    std.mem.set(u8, ret, '\n');
+    return ret;
+  }
+
   fn allocateStackFrame(
     self: *Evaluator,
     num_variables: usize,
@@ -300,6 +309,30 @@ pub const Evaluator = struct {
     return try builder.finish();
   }
 
+  fn convertIntoConcat(
+    self: *Evaluator,
+    value: *model.Value,
+    into: *ConcatBuilder,
+  ) nyarna.Error!void {
+    switch (value.data) {
+      .concat => |*vcon| {
+        for (vcon.content.items) |item| try self.convertIntoConcat(item, into);
+      },
+      .text, .number, .float, .@"enum", .record, .void => {
+        try into.push(try self.doConvert(value, into.scalar_type));
+      },
+      .para => |*para| {
+        for (para.content.items) |p, index| {
+          try self.convertIntoConcat(p.content, into);
+          if (index != para.content.items.len - 1) {
+            try into.pushSpace(p.lf_after);
+          }
+        }
+      },
+      else => unreachable,
+    }
+  }
+
   fn doConvert(
     self: *Evaluator,
     value: *model.Value,
@@ -327,7 +360,38 @@ pub const Evaluator = struct {
         },
         else => unreachable,
       },
-      .structural => unreachable, // TODO
+      .structural => |struc| switch (struc.*) {
+        .callable => unreachable,
+        .concat => {
+          var builder = ConcatBuilder.init(self.ctx, value.origin, to);
+          try self.convertIntoConcat(value, &builder);
+          return try builder.finish();
+        },
+        .intersection => unreachable,
+        .list => |*lst| {
+          const ret = try self.ctx.values.list(value.origin, lst);
+          for (value.data.list.content.items) |item| {
+            try ret.content.append(try self.doConvert(item, lst.inner));
+          }
+          return ret.value();
+        },
+        .map => |*map| {
+          const ret = try self.ctx.values.map(value.origin, map);
+          var iter = value.data.map.items.iterator();
+          while (iter.next()) |entry| {
+            const res = try ret.items.getOrPut(
+              try self.doConvert(entry.key_ptr.*, map.key));
+            std.debug.assert(!res.found_existing);
+            res.value_ptr.* = try self.doConvert(entry.value_ptr.*, map.value);
+          }
+          return ret.value();
+        },
+        .optional => |*opt| return self.doConvert(value, opt.inner),
+        .paragraphs => |*paragraphs| {
+          _ = paragraphs;
+          unreachable; // TODO
+        }
+      }
     }
   }
 
@@ -651,8 +715,7 @@ const ConcatBuilder = struct {
   pub fn pushSpace(self: *ConcatBuilder, lf_count: usize) !void {
     switch (self.state) {
       .initial => {
-        const content = try self.ctx.global().alloc(u8, lf_count);
-        std.mem.set(u8, content, '\n');
+        const content = try self.ctx.evaluator().lineFeeds(lf_count);
         self.state = .{.first_text = (
           try self.ctx.values.textScalar(
             model.Position.intrinsic(), self.ctx.types().space(), content
