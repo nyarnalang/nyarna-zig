@@ -399,7 +399,7 @@ pub const Interpreter = struct {
         .assignment = .{
           .target = target.target,
           .path = path,
-          .expr = target_expr,
+          .rexpr = target_expr,
         },
       },
       .expected_type = self.ctx.types().void(),

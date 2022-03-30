@@ -34,7 +34,7 @@ pub const Assignment = struct {
   /// list of indexes that identify which part of the variable is to be
   /// assigned.
   path: []const usize,
-  expr: *Expression,
+  rexpr: *Expression,
 
   pub fn expr(self: *@This()) *Expression {
     return Expression.parent(self);

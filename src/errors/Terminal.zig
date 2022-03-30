@@ -335,6 +335,8 @@ fn constructionError(
     .TooManyDecimalsForType => self.renderError(
       "given value '{s}' has too many decimal digits for type {}",
       .{repr, t_fmt}),
+    .CharacterNotAllowed => self.renderError(
+      "character '{s}' is not allowed in type {}", .{repr, t_fmt}),
   }
 }
 

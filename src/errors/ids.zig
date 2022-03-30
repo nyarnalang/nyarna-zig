@@ -132,7 +132,7 @@ pub const WrongTypeError = enum {
 };
 
 pub const ConstructionError = enum {
-  NotInEnum, OutOfRange, TooManyDecimalsForType,
+  NotInEnum, OutOfRange, TooManyDecimalsForType, CharacterNotAllowed,
 };
 
 pub const SystemNyError = enum {

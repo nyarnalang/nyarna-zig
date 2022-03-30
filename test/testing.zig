@@ -534,7 +534,7 @@ const AstEmitter = struct {
         }
         try lb.finish(self.handler);
         try self.emitLine(">EXPR", .{});
-        try self.processExpr(ass.expr);
+        try self.processExpr(ass.rexpr);
         try a.pop();
       },
       .branches => |b| {

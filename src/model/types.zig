@@ -218,10 +218,12 @@ pub const Record = struct {
 pub const Textual = struct {
   constructor: *Callable,
   include: struct {
-    chars: []const u21,
+    /// not changed after creation
+    chars: std.hash_map.AutoHashMapUnmanaged(u21, void),
     categories: unicode.CategorySet,
   },
-  exclude: []const u21,
+  /// not changed after creation
+  exclude: std.hash_map.AutoHashMapUnmanaged(u21, void),
 
   pub inline fn pos(self: *@This()) Position {
     return Instantiated.pos(self);

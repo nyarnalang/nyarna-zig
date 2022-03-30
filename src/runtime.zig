@@ -134,7 +134,7 @@ pub const Evaluator = struct {
     else poison(impl_ctx, call.expr().pos);
   }
 
-  fn evaluateCall(
+  fn evalCall(
     self: *Evaluator,
     impl_ctx: anytype,
     call: *model.Expression.Call,
@@ -244,7 +244,159 @@ pub const Evaluator = struct {
     intpr: *Interpreter,
     call: *model.Expression.Call,
   ) !*model.Node {
-    return self.evaluateCall(intpr, call);
+    return self.evalCall(intpr, call);
+  }
+
+  fn evalAccess(
+    self: *Evaluator,
+    access: *model.Expression.Access,
+  ) nyarna.Error!*model.Value {
+    var cur = try self.evaluate(access.subject);
+    for (access.path) |index| {
+      cur = switch (cur.data) {
+        .record => |*record| record.fields[index],
+        .list   => |*list|   list.content.items[index],
+        else    => unreachable,
+      };
+    }
+    return cur;
+  }
+
+  fn evalAssignment(
+    self: *Evaluator,
+    ass: *model.Expression.Assignment,
+  ) nyarna.Error!*model.Value {
+    var cur_ptr = ass.target.curPtr();
+    for (ass.path) |index| {
+      cur_ptr = switch (cur_ptr.*.data) {
+        .record => |*record| &record.fields[index],
+        .list   => |*list|   &list.content.items[index],
+        else => unreachable,
+      };
+    }
+    cur_ptr.* = try self.evaluate(ass.rexpr);
+    return try model.Value.create(self.ctx.global(), ass.expr().pos, .void);
+  }
+
+  fn evalBranches(
+    self: *Evaluator,
+    br: *model.Expression.Branches,
+  ) nyarna.Error!*model.Value {
+    var condition = try self.evaluate(br.condition);
+    if (self.ctx.types().valueType(condition).isInst(.poison)) {
+      return model.Value.create(self.ctx.global(), br.expr().pos, .poison);
+    }
+    return self.evaluate(br.branches[condition.data.@"enum".index]);
+  }
+
+  fn evalConcatenation(
+    self: *Evaluator,
+    expr: *model.Expression,
+    concat: model.Expression.Concatenation,
+  ) nyarna.Error!*model.Value {
+    var builder = ConcatBuilder.init(
+      self.ctx, expr.pos, expr.expected_type);
+    for (concat) |item| try builder.push(try self.evaluate(item));
+    return try builder.finish();
+  }
+
+  fn doConvert(
+    self: *Evaluator,
+    value: *model.Value,
+    to: model.Type,
+  ) nyarna.Error!*model.Value {
+    const from = self.ctx.types().valueType(value);
+    if (from.isInst(.poison)) return value;
+    if (self.ctx.types().lesserEqual(from, to)) {
+      return try self.coerce(value, to);
+    }
+    switch (to) {
+      .instantiated => |inst| switch (inst.data) {
+        .literal, .space, .raw => {
+          std.debug.assert(from.isInst(.void));
+          return (try self.ctx.values.textScalar(value.origin, to, "")).value();
+        },
+        .textual => |*txt| {
+          const input = switch (value.data) {
+            .void => "",
+            .text => |*intxt| intxt.content,
+            .@"enum" => |*e| e.t.values.keys()[e.index],
+            else => unreachable,
+          };
+          return try self.ctx.textFromString(value.origin, input, txt);
+        },
+        else => unreachable,
+      },
+      .structural => unreachable, // TODO
+    }
+  }
+
+  fn evalConversion(
+    self: *Evaluator,
+    convert: *model.Expression.Conversion,
+  ) nyarna.Error!*model.Value {
+    const inner_val = try self.evaluate(convert.inner);
+    return self.doConvert(inner_val, convert.target_type);
+  }
+
+  fn evalParagraphs(
+    self: *Evaluator,
+    expr: *model.Expression,
+    paras: model.Expression.Paragraphs,
+  ) nyarna.Error!*model.Value {
+    const gen_para = switch (expr.expected_type) {
+      .structural => |strct| switch (strct.*) {
+        .paragraphs => true,
+        else => false
+      },
+      else => false
+    };
+    if (gen_para) {
+      var builder = ParagraphsBuilder.init(self.ctx);
+      for (paras) |para| {
+        try builder.push(try self.evaluate(para.content), para.lf_after);
+      }
+      return try builder.finish(expr.pos);
+    } else {
+      var builder = ConcatBuilder.init(self.ctx, expr.pos, expr.expected_type);
+      for (paras) |para, index| {
+        const value = try self.evaluate(para.content);
+        if (!self.ctx.types().valueType(value).isInst(.void)) {
+          try builder.push(value);
+          if (
+            index != paras.len - 1 and
+            !paras[index + 1].content.expected_type.isInst(.void)
+          ) try builder.pushSpace(para.lf_after);
+        }
+      }
+      return try builder.finish();
+    }
+  }
+
+  fn evalVarargs(
+    self: *Evaluator,
+    varargs: *model.Expression.Varargs,
+  ) nyarna.Error!*model.Value {
+    const list = try self.ctx.values.list(
+      varargs.expr().pos, &varargs.expr().expected_type.structural.list);
+    for (varargs.items) |*item| {
+      const val = try self.evaluate(item.expr);
+      if (item.direct) {
+        switch (val.data) {
+          .poison => {},
+          .list => |*inner| {
+            for (inner.content.items) |inner_item| {
+              try list.content.append(inner_item);
+            }
+          },
+          else => unreachable,
+        }
+      } else switch (val.data) {
+        .poison => {},
+        else => try list.content.append(val),
+      }
+    }
+    return list.value();
   }
 
   /// actual evaluation of expressions.
@@ -252,136 +404,20 @@ pub const Evaluator = struct {
     self: *Evaluator,
     expr: *model.Expression,
   ) nyarna.Error!*model.Value {
-    switch (expr.data) {
-      .access => |*access| {
-        var cur = try self.evaluate(access.subject);
-        for (access.path) |index| {
-          cur = switch (cur.data) {
-            .record => |*record| record.fields[index],
-            .list   => |*list|   list.content.items[index],
-            else    => unreachable,
-          };
-        }
-        return cur;
-      },
-      .assignment => |*assignment| {
-        var cur_ptr = assignment.target.curPtr();
-        for (assignment.path) |index| {
-          cur_ptr = switch (cur_ptr.*.data) {
-            .record => |*record| &record.fields[index],
-            .list   => |*list|   &list.content.items[index],
-            else => unreachable,
-          };
-        }
-        cur_ptr.* = try self.evaluate(assignment.expr);
-        return try model.Value.create(
-          self.ctx.global(), expr.pos, .void);
-      },
-      .branches => |*branches| {
-        var condition = try self.evaluate(branches.condition);
-        if (self.ctx.types().valueType(condition).isInst(.poison))
-          return model.Value.create(
-            self.ctx.global(), expr.pos, .poison);
-        return self.evaluate(
-          branches.branches[condition.data.@"enum".index]);
-      },
-      .call => |*call| return self.evaluateCall(self, call),
-      .concatenation => |concat| {
-        var builder = ConcatBuilder.init(
-          self.ctx, expr.pos, expr.expected_type);
-        for (concat) |item| try builder.push(try self.evaluate(item));
-        return try builder.finish();
-      },
-      .conversion => |*convert| {
-        const inner_val = try self.evaluate(convert.inner);
-        const inner_type = self.ctx.types().valueType(inner_val);
-        if (inner_type.isInst(.poison)) return inner_val;
-        if (self.ctx.types().lesserEqual(inner_type, convert.target_type)) {
-          return try self.coerce(inner_val, convert.target_type);
-        }
-        switch (convert.target_type) {
-          .instantiated => |inst| switch (inst.data) {
-            .literal, .space, .raw, .textual => {
-              switch (inner_type.instantiated.data) {
-                .void => {
-                  return (try self.ctx.values.textScalar(
-                    inner_val.origin, convert.target_type, "")).value();
-                },
-                .literal, .space, .raw, .textual => {
-                  return (try self.ctx.values.textScalar(
-                    inner_val.origin, convert.target_type,
-                    inner_val.data.text.content)).value();
-                },
-                else => unreachable,
-              }
-            },
-            else => unreachable,
-          },
-          .structural => unreachable, // TODO
-        }
-      },
+    return switch (expr.data) {
+      .access => |*access| self.evalAccess(access),
+      .assignment => |*assignment| self.evalAssignment(assignment),
+      .branches => |*branches| self.evalBranches(branches),
+      .call => |*call| return self.evalCall(self, call),
+      .concatenation => |concat| self.evalConcatenation(expr, concat),
+      .conversion => |*convert| self.evalConversion(convert),
       .value => |value| return value,
-      .paragraphs => |paras| {
-        const gen_para = switch (expr.expected_type) {
-          .structural => |strct| switch (strct.*) {
-            .paragraphs => true,
-            else => false
-          },
-          else => false
-        };
-        if (gen_para) {
-          var builder = ParagraphsBuilder.init(self.ctx);
-          for (paras) |para| {
-            try builder.push(try self.evaluate(para.content), para.lf_after);
-          }
-          return try builder.finish(expr.pos);
-        } else {
-          var builder = ConcatBuilder.init(
-            self.ctx, expr.pos, expr.expected_type);
-          for (paras) |para, index| {
-            const value = try self.evaluate(para.content);
-            if (!self.ctx.types().valueType(value).isInst(.void)) {
-              try builder.push(value);
-              if (
-                index != paras.len - 1 and
-                !paras[index + 1].content.expected_type.isInst(.void)
-              ) try builder.pushSpace(para.lf_after);
-            }
-          }
-          return try builder.finish();
-        }
-      },
-      .varargs => |*varargs| {
-        const list = try self.ctx.values.list(
-          expr.pos, &expr.expected_type.structural.list);
-        for (varargs.items) |*item| {
-          const val = try self.evaluate(item.expr);
-          if (item.direct) {
-            switch (val.data) {
-              .poison => {},
-              .list => |*inner| {
-                for (inner.content.items) |inner_item| {
-                  try list.content.append(inner_item);
-                }
-              },
-              else => unreachable,
-            }
-          } else switch (val.data) {
-            .poison => {},
-            else => try list.content.append(val),
-          }
-        }
-        return list.value();
-      },
-      .var_retrieval => |*var_retr| {
-        const ret = var_retr.variable.curPtr().*;
-        //std.debug.print("[stack] {} -> {s}\n",
-        //  .{@ptrToInt(var_retr.variable.curPtr()), @tagName(ret.data)});
-        return ret;
-      },
+      .paragraphs => |paras| self.evalParagraphs(expr, paras),
+      .varargs => |*varargs| self.evalVarargs(varargs),
+      .var_retrieval => |*var_retr| var_retr.variable.curPtr().*,
       .poison => return self.ctx.values.poison(expr.pos),
       .void => return self.ctx.values.void(expr.pos),
-    }
+    };
   }
 
   inline fn toString(self: *Evaluator, input: anytype) ![]u8 {

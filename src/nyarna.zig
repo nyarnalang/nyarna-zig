@@ -14,6 +14,7 @@ pub const FileSystemResolver = resolve.FileSystemResolver;
 pub const default_stack_size = 1024 * 1024; // 1MB
 
 const parse = @import("parse.zig");
+const unicode = @import("unicode.zig");
 
 pub const Error = error {
   /// occurs when any allocation failed during processing.
@@ -297,7 +298,7 @@ pub const Context = struct {
   }
 
   pub fn numberFromInt(
-    self: *const Context,
+    self: Context,
     pos: model.Position,
     value: i64,
     t: *const model.Type.Numeric,
@@ -307,6 +308,29 @@ pub const Context = struct {
       self.logger.OutOfRange(pos, t.typedef(), str);
       return try self.values.poison(pos);
     } else return (try self.values.number(pos, t, value)).value();
+  }
+
+  pub fn textFromString(
+    self: Context,
+    pos: model.Position,
+    input: []const u8,
+    t: *const model.Type.Textual,
+  ) !*model.Value {
+    var iter = std.unicode.Utf8Iterator{.bytes = input, .i = 0};
+    var seen_error = false;
+    while (iter.nextCodepoint()) |cp| {
+      if (
+        t.include.chars.get(cp) == null and
+        (t.exclude.get(cp) != null or
+         !t.include.categories.contains(unicode.category(cp)))
+      ) {
+        const e = unicode.EncodedCharacter.init(cp);
+        self.logger.CharacterNotAllowed(pos, t.typedef(), e.repr());
+        seen_error = true;
+      }
+    }
+    return if (seen_error) try self.values.poison(pos)
+    else (try self.values.textScalar(pos, t.typedef(), input)).value();
   }
 };
 
