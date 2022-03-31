@@ -315,7 +315,7 @@ pub const Context = struct {
     pos: model.Position,
     input: []const u8,
     t: *const model.Type.Textual,
-  ) !*model.Value {
+  ) !?*model.Value.TextScalar {
     var iter = std.unicode.Utf8Iterator{.bytes = input, .i = 0};
     var seen_error = false;
     while (iter.nextCodepoint()) |cp| {
@@ -329,8 +329,8 @@ pub const Context = struct {
         seen_error = true;
       }
     }
-    return if (seen_error) try self.values.poison(pos)
-    else (try self.values.textScalar(pos, t.typedef(), input)).value();
+    return if (seen_error) null
+    else try self.values.textScalar(pos, t.typedef(), input);
   }
 };
 

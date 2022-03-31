@@ -125,8 +125,9 @@ pub const Types = lib.Provider.Wrapper(struct {
     pos: model.Position,
     input: *model.Value.TextScalar,
   ) nyarna.Error!*model.Value {
-    _ = eval; _ = pos; _ = input;
-    unreachable; // TODO
+    return if (try eval.ctx.textFromString(input.value().origin, input.content,
+      &eval.target_type.instantiated.data.textual)) |nv| nv.value()
+    else try eval.ctx.values.poison(pos);
   }
 
   pub fn @"Numeric"(
@@ -272,11 +273,12 @@ pub const Prototypes = lib.Provider.Wrapper(struct {
   pub fn @"Textual"(
     intpr: *Interpreter,
     pos: model.Position,
-    cats: []*model.Node,
-    include: *model.Node,
-    exclude: *model.Node,
+    cats: *model.Node,
+    include: ?*model.Node,
+    exclude: ?*model.Node,
   ) nyarna.Error!*model.Node {
-    return (try intpr.node_gen.tgTextual(pos, cats, include, exclude)).node();
+    return (try intpr.node_gen.tgTextual(
+      pos, try nodeToVarargsItemList(intpr, cats), include, exclude)).node();
   }
 
   pub fn @"Numeric"(

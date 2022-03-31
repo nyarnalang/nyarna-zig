@@ -434,11 +434,15 @@ const AstEmitter = struct {
       .gen_textual => |gt| {
         const gen = try self.pushWithKey("TGEN", "Textual", null);
         try self.emitLine(">CATEGORIES", .{});
-        for (gt.categories) |cat| try self.process(cat);
-        try self.emitLine(">INCLUDE", .{});
-        try self.process(gt.include_chars);
-        try self.emitLine(">EXCLUDE", .{});
-        try self.process(gt.exclude_chars);
+        for (gt.categories) |cat| try self.process(cat.node);
+        if (gt.include_chars) |ic| {
+          try self.emitLine(">INCLUDE", .{});
+          try self.process(ic);
+        }
+        if (gt.exclude_chars) |ec| {
+          try self.emitLine(">EXCLUDE", .{});
+          try self.process(ec);
+        }
         try gen.pop();
       },
       .gen_unique => |gu| {

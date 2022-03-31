@@ -111,7 +111,8 @@
   \end(prototype)
 
   Textual = \prototype:
-    cats, include, exclude: \Optional(\Ast)
+    cats: \List(\Ast) {varargs}
+    include, exclude: \Optional(\Ast)
   :constructor:
     input: \Raw {primary}
   \end(prototype)
@@ -169,6 +170,8 @@
     Pc, Pd, Ps, Pe, Pi, Pf, Po, P, Sm, Sc, Sk, So, S, MPS,
     Zs, Zl, Zp, Cc, Cf, Co, Cn
   )
+  Text = \Textual()
+  Identifier = \Textual(cats = L, Nd, include = _)
 :private:
   FrameRoot   = \unique()
   Literal     = \unique()

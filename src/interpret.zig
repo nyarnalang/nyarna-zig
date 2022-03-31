@@ -11,6 +11,7 @@ const graph = @import("interpret/graph.zig");
 const algo = @import("interpret/algo.zig");
 const mapper = @import("parse/mapper.zig");
 const chains = @import("interpret/chains.zig");
+const unicode = @import("unicode.zig");
 
 pub const Errors = error {
   referred_source_unavailable,
@@ -1699,12 +1700,185 @@ pub const Interpreter = struct {
     return null;
   }
 
+  fn putIntoCategories(
+    val: *model.Value,
+    cats: *unicode.CategorySet
+  ) bool {
+    switch (val.data) {
+      .@"enum" => |*e| switch (e.index) {
+        0 => cats.include(.Lu),
+        1 => cats.include(.Ll),
+        2 => cats.include(.Lt),
+        3 => cats.include(.Lm),
+        4 => cats.include(.Lo),
+        5 => cats.includeSet(unicode.Lut),
+        6 => cats.includeSet(unicode.LC),
+        7 => cats.includeSet(unicode.L),
+        8 => cats.include(.Mn),
+        9 => cats.include(.Mc),
+        10 => cats.include(.Me),
+        11 => cats.include(.Nd),
+        12 => cats.include(.Nl),
+        13 => cats.include(.No),
+        14 => cats.includeSet(unicode.M),
+        15 => cats.include(.Pc),
+        16 => cats.include(.Pd),
+        17 => cats.include(.Ps),
+        18 => cats.include(.Pe),
+        19 => cats.include(.Pi),
+        20 => cats.include(.Pf),
+        21 => cats.include(.Po),
+        22 => cats.includeSet(unicode.P),
+        23 => cats.include(.Sm),
+        24 => cats.include(.Sc),
+        25 => cats.include(.Sk),
+        26 => cats.include(.So),
+        27 => cats.includeSet(unicode.S),
+        28 => cats.includeSet(unicode.MPS),
+        29 => cats.include(.Zs),
+        30 => cats.include(.Zl),
+        31 => cats.include(.Zp),
+        32 => cats.include(.Cc),
+        33 => cats.include(.Cf),
+        34 => cats.include(.Co),
+        35 => cats.include(.Cn),
+        else => unreachable,
+      },
+      .poison => return false,
+      else => unreachable,
+    }
+    return true;
+  }
+
   fn tryGenTextual(
     self: *Interpreter,
     gt: *model.Node.tg.Textual,
     stage: Stage,
   ) nyarna.Error!?*model.Expression {
-    _ = self; _ = gt; _ = stage; unreachable;
+    // bootstrapping for system.ny
+    const needs_local_category_enum =
+      std.mem.eql(u8, ".std.system", gt.node().pos.source.locator.repr);
+    if (needs_local_category_enum and stage.kind == .resolve) {
+      if (stage.resolve) |resolver| {
+        _ = try resolver.establishLink(self, "UnicodeCategory");
+        for (gt.categories) |cat| _ = try self.tryInterpret(cat.node, stage);
+        if (gt.exclude_chars) |ec| _ = try self.tryInterpret(ec, stage);
+        if (gt.include_chars) |ic| _ = try self.tryInterpret(ic, stage);
+      }
+      return null;
+    }
+
+    var seen_poison = false;
+    var failed_some = false;
+    var categories = unicode.CategorySet.empty();
+
+    var unicode_category = if (needs_local_category_enum) blk: {
+      if (
+        self.namespaces.items[0].data.get("UnicodeCategory")
+      ) |sym| {
+        switch (sym.data) {
+          .@"type" => |t| switch (t) {
+            .instantiated => |inst| switch (inst.data) {
+              .tenum => |e| {
+                if (e.values.count() == 36) break :blk t;
+                self.ctx.logger.WrongNumberOfEnumValues(sym.defined_at, "36");
+              },
+              else =>
+                self.ctx.logger.WrongType(sym.defined_at, "should be Enum"),
+            },
+            else => self.ctx.logger.WrongType(sym.defined_at, "should be Enum"),
+          },
+          else =>
+            self.ctx.logger.ShouldBeType(sym.defined_at, "UnicodeCategory"),
+        }
+      } else self.ctx.logger.MissingType(gt.node().pos, "UnicodeCategory");
+      return try self.ctx.createValueExpr(
+        try self.ctx.values.poison(gt.node().pos));
+    } else self.ctx.types().system.unicode_category;
+
+    for (gt.categories) |item| {
+      if (item.direct) {
+        const expr = (
+          try self.associate(
+            item.node, (try self.ctx.types().list(unicode_category)).?, stage)
+        ) orelse {
+          failed_some = true;
+          continue;
+        };
+        item.node.data = .{.expression = expr};
+        const val = try self.ctx.evaluator().evaluate(expr);
+        switch (val.data) {
+          .list => |*list| for (list.content.items) |inner| {
+            if (!putIntoCategories(inner, &categories)) seen_poison = true;
+          },
+          .poison => seen_poison = true,
+          else => unreachable,
+        }
+      } else {
+        const expr = (
+          try self.associate(item.node, unicode_category, stage)
+        ) orelse {
+          failed_some = true;
+          continue;
+        };
+        item.node.data = .{.expression = expr};
+        const val = try self.ctx.evaluator().evaluate(expr);
+        if (!putIntoCategories(val, &categories)) seen_poison = true;
+      }
+    }
+
+    var chars = [2]std.hash_map.AutoHashMapUnmanaged(u21, void){.{}, .{}};
+    for ([_]?*model.Node{gt.include_chars, gt.exclude_chars}) |item, index| {
+      if (item) |node| {
+        if (try self.associate(node, self.ctx.types().raw(), stage)) |expr| {
+          node.data = .{.expression = expr};
+          const val = try self.ctx.evaluator().evaluate(expr);
+          switch (val.data) {
+            .text => |*txt| {
+              var iter = std.unicode.Utf8Iterator{.bytes = txt.content, .i = 0};
+              while (iter.nextCodepoint()) |code_point| {
+                try chars[index].put(self.ctx.global(), code_point, .{});
+              }
+            },
+            .poison => seen_poison = true,
+            else => unreachable,
+          }
+        } else failed_some = true;
+      }
+    }
+
+    if (failed_some) {
+      for (chars) |*map| map.clearAndFree(self.ctx.global());
+      return null;
+    }
+    if (seen_poison) {
+      for (chars) |*map| map.clearAndFree(self.ctx.global());
+      return try self.ctx.createValueExpr(
+        try self.ctx.values.poison(gt.node().pos));
+    }
+
+    const inst = try self.ctx.global().create(model.Type.Instantiated);
+    inst.* = .{
+      .at = gt.node().pos,
+      .name = null,
+      .data = .{.textual = .{
+        .constructor = undefined,
+        .include = .{
+          .chars = chars[0],
+          .categories = categories,
+        },
+        .exclude = chars[1],
+      }},
+    };
+    const constructor = &self.ctx.types().prototype_funcs.textual.constructor.?;
+    var sb = try types.SigBuilder.init(
+      self.ctx, constructor.params.len, inst.typedef(), true);
+    for (constructor.params) |param| try sb.push(param);
+    inst.data.textual.constructor =
+      try sb.finish().createCallable(self.ctx.global(), .type);
+
+    return try self.ctx.createValueExpr((try self.ctx.values.@"type"(
+      inst.at, model.Type{.instantiated = inst})).value());
   }
 
   fn tryGenUnique(

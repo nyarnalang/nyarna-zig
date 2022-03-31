@@ -326,9 +326,9 @@ pub inline fn tgRecord(
 pub inline fn tgTextual(
   self: *Self,
   pos: Position,
-  categories: []*Node,
-  include_chars: *Node,
-  exclude_chars: *Node,
+  categories: []Node.Varargs.Item,
+  include_chars: ?*Node,
+  exclude_chars: ?*Node,
 ) !*Node.tg.Textual {
   return &(try self.node(
     pos, .{.gen_textual = .{

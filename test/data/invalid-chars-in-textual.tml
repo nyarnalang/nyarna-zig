@@ -1,0 +1,24 @@
+=== Invalid Chars in Textual
+--- input
+\declare:
+  Abc = \Textual(include = abc)
+  L = \Textual(cats = L)
+  NoAbc = \Textual(cats = L, exclude = abc)
+\end(declare)
+
+\Abc(abd)
+\L(a$b)
+\NoAbc(cdefa)
+--- errors:document
+9:6 - 9:9 CharacterNotAllowed
+  t = Abc
+  repr = d
+10:4 - 10:7 CharacterNotAllowed
+  t = L
+  repr = $
+11:8 - 11:13 CharacterNotAllowed
+  t = NoAbc
+  repr = c
+11:8 - 11:13 CharacterNotAllowed
+  t = NoAbc
+  repr = a

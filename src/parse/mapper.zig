@@ -147,9 +147,10 @@ pub const SignatureMapper = struct {
           const index = @intCast(u21, i);
           if ((!self.varmapAt(index) or input == .direct) and
               std.mem.eql(u8, name, p.name)) {
+            if (p.capture == .varargs) self.cur_pos = index;
             try self.checkFrameRoot(p.ptype);
             return Mapper.Cursor{.param = .{.index = index},
-              .config = flag == .block_with_config, .direct = input == .named};
+              .config = flag == .block_with_config, .direct = input == .direct};
           }
         }
         self.intpr.ctx.logger.UnknownParameter(pos, name);
@@ -314,6 +315,9 @@ pub const SignatureMapper = struct {
           .structural => |strct| switch (strct.*) {
             .optional, .concat, .paragraphs =>
               try self.intpr.node_gen.@"void"(pos),
+            .list => if (param.capture == .varargs)
+                (try self.intpr.node_gen.varargs(pos, param.ptype)).node()
+              else null,
             else => null,
           },
           .instantiated => |inst| switch (inst.data) {

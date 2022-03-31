@@ -343,9 +343,9 @@ pub const tg = struct {
     pub inline fn node(self: *@This()) *Node {return Node.parent(self);}
   };
   pub const Textual = struct {
-    categories: []*Node,
-    include_chars: *Node,
-    exclude_chars: *Node,
+    categories: []Varargs.Item,
+    include_chars: ?*Node,
+    exclude_chars: ?*Node,
     pub inline fn node(self: *@This()) *Node {return Node.parent(self);}
   };
   pub const Unique = struct {

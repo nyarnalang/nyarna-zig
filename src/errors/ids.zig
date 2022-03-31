@@ -138,7 +138,7 @@ pub const ConstructionError = enum {
 pub const SystemNyError = enum {
   MissingType, MissingPrototype, MissingKeyword, MissingBuiltin,
   ShouldBeType, ShouldBePrototype, ShouldBeKeyword, ShouldBeBuiltin,
-  WrongType, UnknownSystemSymbol, MissingConstructor,
+  WrongType, UnknownSystemSymbol, MissingConstructor, WrongNumberOfEnumValues,
 };
 
 pub const FileError = enum {

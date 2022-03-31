@@ -356,7 +356,9 @@ pub const Evaluator = struct {
             .@"enum" => |*e| e.t.values.keys()[e.index],
             else => unreachable,
           };
-          return try self.ctx.textFromString(value.origin, input, txt);
+          return if (
+            try self.ctx.textFromString(value.origin, input, txt)
+          ) |nv| nv.value() else try self.ctx.values.poison(value.origin);
         },
         else => unreachable,
       },
@@ -747,6 +749,9 @@ const ConcatBuilder = struct {
       try self.initList(single);
     };
     if (self.cur_items) |cval| {
+      if (self.inner_type.isInst(.poison)) {
+        return try self.ctx.values.poison(self.pos);
+      }
       const concat = try self.ctx.global().create(model.Value);
       const t = (try self.ctx.types().concat(self.inner_type)).?;
       std.debug.assert(t.isStruc(.concat));

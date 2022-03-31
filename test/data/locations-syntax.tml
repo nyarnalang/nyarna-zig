@@ -45,7 +45,7 @@
           =SYMREF .std.system.List
           >ARG inner
           +AST
-            =SYMREF [0]Text
+            =SYMREF .std.system.Text
           -AST
         -RCALL
       -TYPE

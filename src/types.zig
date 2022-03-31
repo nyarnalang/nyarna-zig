@@ -457,6 +457,7 @@ pub const Lattice = struct {
   /// been loaded and must not be accessed earlier.
   system: struct {
     boolean         : model.Type,
+    identifier      : model.Type,
     integer         : model.Type,
     natural         : model.Type,
     unicode_category: model.Type,
@@ -968,6 +969,7 @@ pub const Lattice = struct {
         .numeric => |*num| num.constructor.typedef(),
         .tenum   => |*enu| enu.constructor.typedef(),
         .record  => |*rec| rec.constructor.typedef(),
+        .textual => |*txt| txt.constructor.typedef(),
         .location, .definition, .literal, .space, .raw =>
           // callable may be null if currently processing system.ny. In that
           // case, the type is not callable.

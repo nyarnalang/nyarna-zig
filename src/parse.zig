@@ -1051,7 +1051,8 @@ pub const Parser = struct {
         } else {
           try parent.command.pushName(
             pos, content.items,
-            pos.end.byte_offset - pos.start.byte_offset == 2, .flow);
+            self.lexer.walker.before.byte_offset - self.cur_start.byte_offset
+              == 2, .flow);
           while (true) {
             self.advance();
             if (self.cur != .space) break;

@@ -92,6 +92,17 @@ pub const ResolutionContext = struct {
     };
   }
 
+  /// manually establish a link to the symbol of the given name. used for some
+  /// system.ny bootstrapping.
+  pub fn establishLink(
+    ctx: *ResolutionContext,
+    intpr: *Interpreter,
+    name: []const u8,
+  ) !StrippedResult {
+    const res = try ctx.resolveNameFn(ctx, name, model.Position.intrinsic());
+    return try ctx.strip(intpr.allocator, res);
+  }
+
   /// try to resolve an unresolved symbol reference in the context.
   pub fn resolveSymbol(
     ctx: *ResolutionContext,
