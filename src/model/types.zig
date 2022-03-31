@@ -456,12 +456,7 @@ pub const Type = union(enum) {
         },
       },
       .instantiated => |it| {
-        if (it.name) |sym| {
-          try writer.writeAll(sym.name);
-        } else {
-          // TODO: write given name, if any
-          try writer.writeAll(@tagName(it.data));
-        }
+        try writer.writeAll(if (it.name) |sym| sym.name else @tagName(it.data));
       },
     }
   }

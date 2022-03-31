@@ -137,7 +137,6 @@ pub const SignatureMapper = struct {
     input: Mapper.ArgKind,
     flag: Mapper.ProtoArgFlag,
   ) nyarna.Error!?Mapper.Cursor {
-    // TODO: process ProtoArgFlag (?)
     const self = @fieldParentPtr(SignatureMapper, "mapper", mapper);
 
     switch (input) {
@@ -497,10 +496,10 @@ pub const AssignmentMapper = struct {
   fn finalize(mapper: *Mapper, pos: model.Position) !*model.Node {
     const self = @fieldParentPtr(AssignmentMapper, "mapper", mapper);
     return (try self.intpr.node_gen.assign(pos, .{
-      .target = .{
-        .unresolved = self.subject,
-      },
-      .replacement = self.replacement.? // TODO: error when missing
+      .target = .{.unresolved = self.subject},
+      .replacement = self.replacement orelse (
+        try self.intpr.node_gen.@"void"(pos)
+      ),
     })).node();
   }
 };

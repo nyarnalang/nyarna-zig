@@ -197,7 +197,7 @@ pub const Impl = lib.Provider.Wrapper(struct {
     body: *model.Value.Ast,
   ) nyarna.Error!*model.Node {
     const pnode = params orelse try intpr.node_gen.void(pos);
-    // TODO: can body.container be null here?
+    // type system ensures body.container isn't null here
     return (try intpr.node_gen.funcgen(
       pos, @"return", pnode, ns, body.root, body.container.?
     )).node();

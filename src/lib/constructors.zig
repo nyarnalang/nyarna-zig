@@ -100,12 +100,16 @@ pub const Types = lib.Provider.Wrapper(struct {
     node: *model.Value.Ast,
   ) nyarna.Error!*model.Node {
     const expr = try intpr.interpret(node.root);
-    if (expr.expected_type.isInst(.poison)) {
-      return intpr.genValueNode(try intpr.ctx.values.poison(pos));
-    }
     var eval = intpr.ctx.evaluator();
     var val = try eval.evaluate(expr);
-    std.debug.assert(val.data == .@"type" or val.data == .funcref); // TODO
+    switch (val.data) {
+      .@"type", .funcref => {},
+      .poison => return intpr.node_gen.poison(pos),
+      else => {
+        intpr.ctx.logger.EntityCannotBeNamed(val.origin);
+        return intpr.node_gen.poison(pos);
+      }
+    }
     const def_val =
       try intpr.ctx.values.definition(pos, name, switch (val.data) {
         .@"type" => |tv| .{.@"type" = tv.t},
