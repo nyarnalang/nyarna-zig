@@ -133,7 +133,6 @@ pub const InstanceFuncs = struct {
   /// type, then come the user-supplied arguments to the Prototype call.
   arguments: []*model.Value.TypeVal,
   constructor: ?*model.Type.Callable,
-  working: bool = false,
 
   fn init(
     pt: *PrototypeFuncs,
@@ -313,11 +312,10 @@ pub const InstanceFuncs = struct {
     self: *InstanceFuncs,
     ctx: nyarna.Context,
   ) !void {
-    if (self.working or self.constructor != null) return;
+    if (self.constructor != null) return;
     if (self.pt.constructor) |constr| {
-      // prevent infinite recursion during bootstrapping
-      self.working = true;
-      defer self.working = false;
+      ctx.types().instantiating_instance_funcs = true;
+      defer ctx.types().instantiating_instance_funcs = false;
 
       const builder_res = try self.buildCallable(
         ctx, constr.params, self.arguments[0].t);
@@ -542,6 +540,13 @@ pub const Lattice = struct {
   /// of the functions that are defined on the prototype of the subject type.
   instance_funcs: std.HashMapUnmanaged(model.Type, InstanceFuncs,
     model.Type.HashContext, std.hash_map.default_max_load_percentage) = .{},
+  /// set to true if we're currently instantiating instance funcs.
+  /// while we're doing this, no other instance funcs will be instantiated.
+  /// this leads to types with constructors having the .type type instead of the
+  /// .callable type corresponding to their constructor.
+  ///
+  /// we do this to prevent self-referential logic during instantiation.
+  instantiating_instance_funcs: bool = false,
 
   pub fn init(ctx: nyarna.Context) !Lattice {
     var ret = Lattice{
@@ -637,8 +642,8 @@ pub const Lattice = struct {
   }
 
   fn constructorOf(self: *Self, t: model.Type) !?*model.Type.Callable {
-    const instance_funcs = try self.instanceFuncsOf(t);
-    return instance_funcs.?.constructor;
+    const instance_funcs = (try self.instanceFuncsOf(t)) orelse return null;
+    return instance_funcs.constructor;
   }
 
   /// may only be called on types that do have constructors
@@ -1127,6 +1132,7 @@ pub const Lattice = struct {
   }
 
   pub fn instanceFuncsOf(self: *Lattice, t: model.Type) !?*InstanceFuncs {
+    if (self.instantiating_instance_funcs) return null;
     const pt = switch (t) {
       .structural => |struc| switch (struc.*) {
         .callable => return null,
@@ -1148,6 +1154,8 @@ pub const Lattice = struct {
     };
     const res = try self.instance_funcs.getOrPut(self.allocator, t);
     if (!res.found_existing) {
+      self.instantiating_instance_funcs = true;
+      defer self.instantiating_instance_funcs = false;
       res.value_ptr.* = try InstanceFuncs.init(
         pt, self.allocator, try self.instanceArgs(t));
     }

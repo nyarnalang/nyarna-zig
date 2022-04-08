@@ -773,6 +773,7 @@ const ErrorEmitter = struct {
         .posChainFn          = posChain,
         .wrongTypeErrorFn    = wrongTypeError,
         .constructionErrorFn = constructionError,
+        .runtimeErrorFn      = runtimeError,
         .systemNyErrorFn     = systemNyError,
         .fileErrorFn         = fileError,
       },
@@ -905,6 +906,17 @@ const ErrorEmitter = struct {
     const t_fmt = t.formatter();
     self.forwardArg("t", "{}", t_fmt);
     self.forwardArg("repr", "{s}", repr);
+  }
+
+  fn runtimeError(
+    reporter: *errors.Reporter,
+    id: errors.RuntimeError,
+    pos: model.Position,
+    msg: []const u8,
+  ) void {
+    const self = @fieldParentPtr(ErrorEmitter, "api", reporter);
+    self.forwardError(id, pos);
+    self.forwardArg("msg", "{s}", msg);
   }
 
   fn systemNyError(

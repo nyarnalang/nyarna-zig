@@ -582,6 +582,25 @@ pub const Impl = lib.Provider.Wrapper(struct {
       pos, &eval.ctx.types().system.natural.instantiated.data.numeric,
       @intCast(i64, list.content.items.len))).value();
   }
+
+  pub fn @"List::item"(
+    eval: *nyarna.Evaluator,
+    pos: model.Position,
+    list: *model.Value.List,
+    index: *model.Value.Number,
+  ) nyarna.Error!*model.Value {
+    if (index.content > list.content.items.len) {
+      const msg = try std.fmt.allocPrint(
+        eval.ctx.global(), "<List with {} items>: {}", .{
+          list.content.items.len, index.content
+        }
+      );
+      defer eval.ctx.global().free(msg);
+      eval.ctx.logger.IndexError(pos, msg);
+      return eval.ctx.values.poison(pos);
+    }
+    return list.content.items[@intCast(usize, index.content - 1)];
+  }
 });
 
 pub const instance = Impl.init();
@@ -656,6 +675,7 @@ pub const Checker = struct {
     .{"Numeric", .prototype},
     .{"Optional", .prototype},
     .{"Paragraphs", .prototype},
+    .{"Positive", .numeric},
     .{"Raw", .raw},
     .{"Raw::len", .builtin},
     .{"Record", .prototype},

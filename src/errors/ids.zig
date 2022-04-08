@@ -135,6 +135,10 @@ pub const ConstructionError = enum {
   NotInEnum, OutOfRange, TooManyDecimalsForType, CharacterNotAllowed,
 };
 
+pub const RuntimeError = enum {
+  IndexError
+};
+
 pub const SystemNyError = enum {
   MissingType, MissingPrototype, MissingKeyword, MissingBuiltin,
   ShouldBeType, ShouldBePrototype, ShouldBeKeyword, ShouldBeBuiltin,

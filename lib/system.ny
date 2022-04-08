@@ -94,6 +94,10 @@
     len = \builtin(return=\Natural):
       this: \This {borrow}
     \end(builtin)
+    item = \builtin(return=\Inner):
+      this: \This {borrow}
+      index: \Positive
+    \end(builtin)
   \end(prototype)
 
   Paragraphs = \prototype:
@@ -167,6 +171,7 @@
   Bool = \Enum(false, true)
   Integer = \Numeric()
   Natural = \Numeric(min=0)
+  Positive = \Numeric(min=1)
   UnicodeCategory = \Enum(
     Lu, Ll, Lt, Lm, Lo, Lut, LC, L, Mn, Mc, Me, Nd, Nl, No, M,
     Pc, Pd, Ps, Pe, Pi, Pf, Po, P, Sm, Sc, Sk, So, S, MPS,

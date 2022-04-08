@@ -99,6 +99,11 @@ pub fn main() !void {
       .{"repr", "[]const u8"},
     }, "constructionErrorFn");
   try handler.writeHandlerFns(
+    ids.RuntimeError, .{
+      .{"pos", "model.Position"},
+      .{"msg", "[]const u8"},
+    }, "runtimeErrorFn");
+  try handler.writeHandlerFns(
     ids.SystemNyError, .{.{"pos", "model.Position"}, .{"msg", "[]const u8"}},
     "systemNyErrorFn");
   try handler.writeHandlerFns(

@@ -33,6 +33,7 @@ pub fn init(target: std.fs.File) @This() {
       .wrongIdErrorFn = wrongIdError,
       .wrongTypeErrorFn = wrongTypeError,
       .constructionErrorFn = constructionError,
+      .runtimeErrorFn = runtimeError,
       .systemNyErrorFn = systemNyError,
       .fileErrorFn = fileError,
     },
@@ -337,6 +338,19 @@ fn constructionError(
       .{repr, t_fmt}),
     .CharacterNotAllowed => self.renderError(
       "character '{s}' is not allowed in type {}", .{repr, t_fmt}),
+  }
+}
+
+fn runtimeError(
+  reporter: *Reporter,
+  id: errors.RuntimeError,
+  pos: model.Position,
+  msg: []const u8,
+) void {
+  const self = @fieldParentPtr(@This(), "reporter", reporter);
+  self.style(.{.bold}, "{s}", .{pos});
+  switch (id) {
+    .IndexError => self.renderError("index error: {s}", .{msg}),
   }
 }
 

@@ -68,6 +68,13 @@ constructionErrorFn: fn(
   repr: []const u8,
 ) void,
 
+runtimeErrorFn: fn(
+  reporter: *@This(),
+  id: errors.RuntimeError,
+  pos: model.Position,
+  msg: []const u8,
+) void,
+
 systemNyErrorFn: fn (
   reporter: *@This(),
   id: errors.SystemNyError,
