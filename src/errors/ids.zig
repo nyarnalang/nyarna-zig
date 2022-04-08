@@ -133,6 +133,7 @@ pub const WrongTypeError = enum {
 
 pub const ConstructionError = enum {
   NotInEnum, OutOfRange, TooManyDecimalsForType, CharacterNotAllowed,
+  InvalidFloat,
 };
 
 pub const RuntimeError = enum {

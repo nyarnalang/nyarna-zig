@@ -338,6 +338,8 @@ fn constructionError(
       .{repr, t_fmt}),
     .CharacterNotAllowed => self.renderError(
       "character '{s}' is not allowed in type {}", .{repr, t_fmt}),
+    .InvalidFloat => self.renderError(
+      "cannot parse as {}: '{s}'", .{t_fmt, repr}),
   }
 }
 

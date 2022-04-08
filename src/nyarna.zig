@@ -333,6 +333,34 @@ pub const Context = struct {
     else try self.values.textScalar(pos, t.typedef(), input);
   }
 
+  pub fn floatFromString(
+    self: Context,
+    pos: model.Position,
+    input: []const u8,
+    t: *const model.Type.Float,
+  ) !?*model.Value.FloatNumber {
+    switch (t.precision) {
+      .half => blk: {
+        const val = std.fmt.parseFloat(f16, input) catch break :blk;
+        return try self.values.float(pos, t, .{.half = val});
+      },
+      .single => blk: {
+        const val = std.fmt.parseFloat(f32, input) catch break :blk;
+        return try self.values.float(pos, t, .{.single = val});
+      },
+      .double => blk: {
+        const val = std.fmt.parseFloat(f64, input) catch break :blk;
+        return try self.values.float(pos, t, .{.double = val});
+      },
+      .quadruple, .octuple => blk: {
+        const val = std.fmt.parseFloat(f128, input) catch break :blk;
+        return try self.values.float(pos, t,.{.quadruple = val});
+      }
+    }
+    self.logger.InvalidFloat(pos, t.typedef(), input);
+    return null;
+  }
+
   pub fn unaryTypeVal(
     self: Context,
     comptime name: []const u8,

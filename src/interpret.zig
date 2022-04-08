@@ -2288,14 +2288,18 @@ pub const Interpreter = struct {
         }
       },
       .instantiated => |ti| switch (ti.data) {
-        .textual => unreachable, // TODO
+        .textual => |*txt| return if (
+          try self.ctx.textFromString(l.node().pos, l.content, txt)
+        ) |scalar| scalar.value() else try self.ctx.values.poison(l.node().pos),
         .numeric => |*n| {
           return if (
             try self.ctx.numberFromText(l.node().pos, l.content, n)
           ) |nv| nv.value()
           else try self.ctx.values.poison(l.node().pos);
         },
-        .float => unreachable, // TODO
+        .float => |*fl| return if (
+          try self.ctx.floatFromString(l.node().pos, l.content, fl)
+        ) |float| float.value() else try self.ctx.values.poison(l.node().pos),
         .tenum => |*e| {
           return if (try self.ctx.enumFrom(l.node().pos, l.content, e)) |ev|
             ev.value() else try self.ctx.values.poison(l.node().pos);
