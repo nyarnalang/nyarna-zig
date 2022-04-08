@@ -79,7 +79,7 @@
   Definition = \unique:
     name : \Literal
     root = \Bool(false)
-    item : \Ast
+    item : \Ast {primary}
   \end(unique)
 
   Concat, Optional = \prototype:
@@ -87,7 +87,9 @@
   \end(prototype)
 
   List = \prototype:
-    inner: \Ast {primary}
+    Inner: \Ast {primary}
+  :constructor:
+    items: \List(\Inner) {varargs}
   :funcs:
     len = \builtin(return=\Natural):
       this: \This {borrow}

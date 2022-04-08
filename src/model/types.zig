@@ -53,7 +53,6 @@ pub const Concat = struct {
 
 /// An Enumeration type.
 pub const Enum = struct {
-  constructor: *Callable,
   /// retains the order of the enum values.
   /// must not be modified after creation.
   /// the map's value is the position where the enum value has been defined.
@@ -80,7 +79,6 @@ pub const Float = struct {
     half, single, double, quadruple, octuple
   };
 
-  constructor: *Callable,
   precision: Precision,
 
   pub inline fn pos(self: *@This()) Position {
@@ -142,7 +140,6 @@ pub const Map = struct {
 /// number of decimal digits. std.math.minInt(i64) and std.math.maxInt(i64)
 /// serve as the implementation-defined smallest and largest possible numbers.
 pub const Numeric = struct {
-  constructor: *Callable,
   min: i64,
   max: i64,
   decimals: u8,
@@ -216,7 +213,6 @@ pub const Record = struct {
 ///  * all characters with a category in include.categories that are not in
 ///    exclude are in the set.
 pub const Textual = struct {
-  constructor: *Callable,
   include: struct {
     /// not changed after creation
     chars: std.hash_map.AutoHashMapUnmanaged(u21, void),

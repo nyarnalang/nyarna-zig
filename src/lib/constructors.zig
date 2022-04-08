@@ -162,6 +162,18 @@ pub const Types = lib.Provider.Wrapper(struct {
       &eval.target_type.instantiated.data.tenum)) |ev| ev.value()
     else try eval.ctx.values.poison(pos);
   }
+
+  pub fn @"List"(
+    _: *Evaluator,
+    pos: model.Position,
+    items: *model.Value.List,
+  ) nyarna.Error!*model.Value {
+    // implementation guarantees that items is a newly constructed list, even if
+    // the value has been given via direct named argument.
+    const ret = items.value();
+    ret.origin = pos;
+    return ret;
+  }
 });
 
 pub const types = Types.init();

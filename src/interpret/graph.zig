@@ -140,7 +140,7 @@ pub const ResolutionContext = struct {
           },
           else => {},
         }
-        const pt = (try intpr.probeType(item.subject, stage)) orelse {
+        const pt = (try intpr.probeType(item.subject, stage, false)) orelse {
           // typically means that we hit a variable in a function body. If so,
           // we just assume that this variable has the \declare type.
           // This means we'll resolve the name of this access in our defs to

@@ -1,0 +1,10 @@
+=== Coerce List Items
+--- input
+\fragment(\List(\Raw))
+
+\List(\Integer)(23, 42)
+--- document
++LIST
+  =TEXT Raw "23"
+  =TEXT Raw "42"
+-LIST

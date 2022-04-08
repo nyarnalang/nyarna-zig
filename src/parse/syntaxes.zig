@@ -751,9 +751,10 @@ pub const SymbolDefs = struct {
     ret.pos = pos;
     ret.data = @unionInit(@TypeOf(ret.data), kind, undefined);
     const val = &@field(ret.data, kind);
-    val.name = name;
+    if (@TypeOf(val.name) == *model.Node) val.name = name.node()
+    else val.name = name;
     const pos_into = if (additionals_field) |a| blk: {
-      const af = try self.intpr.allocator.create(
+      const af = try self.intpr.ctx.global().create(
         @typeInfo(
           @typeInfo(@TypeOf(@field(val, a))).Optional.child
         ).Pointer.child);

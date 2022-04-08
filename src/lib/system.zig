@@ -209,9 +209,10 @@ pub const Impl = lib.Provider.Wrapper(struct {
     params: ?*model.Node,
   ) nyarna.Error!*model.Node {
     const pnode = params orelse try intpr.node_gen.void(pos);
+    const ast_val =
+      (try intpr.ctx.values.@"type"(pos, intpr.ctx.types().ast())).value();
     return (try intpr.node_gen.builtinGen(
-      pos, pnode, .{.value =
-        try intpr.ctx.values.@"type"(pos, intpr.ctx.types().ast())})).node();
+      pos, pnode, .{.expr = try intpr.ctx.createValueExpr(ast_val)})).node();
   }
 
   pub fn builtin(
@@ -262,6 +263,19 @@ pub const Impl = lib.Provider.Wrapper(struct {
       fn node(self: *@This(), n: *model.Node) nyarna.Error!*model.Node {
         switch (n.data) {
           .location => |*loc| {
+            const name_expr = (
+              try self.ip.associate(
+                loc.name, self.ip.ctx.types().literal(), .{.kind = .keyword})
+            ) orelse return try self.empty();
+            loc.name.data = .{.expression = name_expr};
+            const name = switch (
+              (try self.ip.ctx.evaluator().evaluate(name_expr)).data
+            ) {
+              .text   => |*txt| txt.content,
+              .poison => return try self.empty(),
+              else => unreachable,
+            };
+
             const t = if (loc.@"type") |tnode| blk: {
               const expr = (try self.ip.associate(
                 tnode, self.ip.ctx.types().@"type"(),
@@ -273,13 +287,13 @@ pub const Impl = lib.Provider.Wrapper(struct {
                 .@"type" => |*tv| break :blk tv.t,
                 else => unreachable,
               }
-            } else
-              (try self.ip.probeType(loc.default.?, .{.kind = .intermediate}))
-              orelse self.ip.ctx.types().every();
-            return try self.variable(loc.name.node().pos, t,
-              try self.ip.ctx.global().dupe(u8, loc.name.content),
+            } else (
+              try self.ip.probeType(
+                loc.default.?, .{.kind = .intermediate}, false)
+            ) orelse self.ip.ctx.types().every();
+            return try self.variable(loc.name.pos, t, name,
               loc.default orelse (try self.defaultValue(t, n.pos)) orelse {
-                self.ip.ctx.logger.MissingInitialValue(loc.name.node().pos);
+                self.ip.ctx.logger.MissingInitialValue(loc.name.pos);
                 return try self.empty();
               }, if (loc.additionals) |a| a.borrow != null else false);
           },
@@ -300,7 +314,10 @@ pub const Impl = lib.Provider.Wrapper(struct {
         }
       }
 
-      fn expression(self: *@This(), expr: *model.Expression) !*model.Node {
+      fn expression(
+        self: *@This(),
+        expr: *model.Expression,
+      ) nyarna.Error!*model.Node {
         if (expr.data == .poison) return try self.empty();
         if (!self.ip.ctx.types().lesserEqual(
             expr.expected_type, self.concat_loc)) {

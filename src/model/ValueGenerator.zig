@@ -215,6 +215,10 @@ pub inline fn @"type"(
   pos: Position,
   t: Type,
 ) !*Value.TypeVal {
+  const ctx = @fieldParentPtr(nyarna.Context, "values", self);
+  if (try ctx.types().instanceFuncsOf(t)) |instf| {
+    try instf.genConstructor(ctx.*);
+  }
   return &(try self.value(
     pos, .{.@"type" = .{.t = t}})).data.@"type";
 }

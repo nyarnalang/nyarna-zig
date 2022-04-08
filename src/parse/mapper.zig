@@ -212,21 +212,9 @@ pub const SignatureMapper = struct {
     arg: *model.Node,
     direct: bool,
   ) !void {
-    const vnode = if (self.filled[index]) blk: {
-      const cur_arg = self.args[index];
-      switch (cur_arg.data) {
-        .varargs => |*varargs| break :blk varargs,
-        else => {
-          const varargs = try self.intpr.node_gen.varargs(cur_arg.pos, t);
-          try varargs.content.append(self.intpr.allocator, .{
-            .direct = true,
-            .node = cur_arg,
-          });
-          self.args[index] = varargs.node();
-          break :blk varargs;
-        }
-      }
-    } else blk: {
+    const vnode = if (self.filled[index]) (
+      &self.args[index].data.varargs
+    ) else blk: {
       const varargs = try self.intpr.node_gen.varargs(arg.pos, t);
       self.args[index] = varargs.node();
       self.filled[index] = true;
@@ -281,22 +269,18 @@ pub const SignatureMapper = struct {
       }
       break :blk content;
     };
-    if (self.varmapAt(at.param.index)) unreachable
+    if (self.varmapAt(at.param.index)) unreachable // TODO
     else switch (param.capture) {
       .varargs => {
-        try self.addToVarargs(at.param.index, param.ptype, arg, false);
+        try self.addToVarargs(at.param.index, param.ptype, arg, at.direct);
         return;
       },
       else => {}
     }
     if (self.filled[at.param.index]) {
-      if (param.capture == .varargs) {
-        try self.addToVarargs(at.param.index, param.ptype, arg, true);
-      } else {
-        self.intpr.ctx.logger.DuplicateParameterArgument(
-          self.signature.parameters[at.param.index].name, content.pos,
-          self.args[at.param.index].pos);
-      }
+      self.intpr.ctx.logger.DuplicateParameterArgument(
+        self.signature.parameters[at.param.index].name, content.pos,
+        self.args[at.param.index].pos);
     } else {
       self.args[at.param.index] = arg;
       self.filled[at.param.index] = true;

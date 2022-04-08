@@ -461,7 +461,7 @@ pub const CallContext = union(enum) {
             }};
           },
           .@"type" => |t| {
-            switch (intpr.ctx.types().typeType(t)) {
+            switch (try intpr.ctx.types().typeType(t)) {
               .structural => |strct| switch (strct.*) {
                 .callable => |*callable| {
                   return CallContext{.known = .{

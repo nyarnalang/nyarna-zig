@@ -29,39 +29,6 @@ fn subjectIsType(uacc: *model.Node.UnresolvedAccess, t: model.Type) bool {
   };
 }
 
-/// A graph.ResolutionContext that resolves the name "This" to the .prototype
-/// type. Used for loading prototype functions.
-const PrototypeFuncs = struct {
-  ctx: graph.ResolutionContext,
-  nctx: nyarna.Context,
-
-  fn init(dres: *DeclareResolution) PrototypeFuncs {
-    return .{
-      .ctx = .{
-        .resolveNameFn = resolvePt,
-        .target = dres.in,
-      },
-      .nctx = dres.intpr.ctx,
-    };
-  }
-
-  fn resolvePt(
-    ctx: *graph.ResolutionContext,
-    name: []const u8,
-    name_pos: model.Position,
-  ) nyarna.Error!graph.ResolutionContext.Result {
-    const self = @fieldParentPtr(PrototypeFuncs, "ctx", ctx);
-    if (std.mem.eql(u8, name, "This")) {
-      return graph.ResolutionContext.Result{
-        .unfinished_type = self.nctx.types().prototype(),
-      };
-    } else {
-      self.nctx.logger.UnknownSymbol(name_pos, name);
-      return graph.ResolutionContext.Result.failed;
-    }
-  }
-};
-
 /// A graph.ResolutionContext that resolves symbol references to type symbols
 /// within the same \declare call. The referenced types are unfinished and must
 /// only be used to construct types, never be called or used as value while this
@@ -239,8 +206,10 @@ const FixpointContext = struct {
         .@"type" => |*tval| break :blk tval.t,
         else => unreachable,
       }
-    } else (try fc.dres.intpr.probeType(
-      fgen.body, .{.kind = .intermediate, .resolve = &fc.ctx})) orelse blk: {
+    } else (
+      try fc.dres.intpr.probeType(
+        fgen.body, .{.kind = .intermediate, .resolve = &fc.ctx}, false)
+      ) orelse blk: {
         // this happens if there are still unknown symbols in the function
         // body. These are errors since everything resolvable has been
         // resolved at this point. we call interpret solely for issuing error
@@ -388,31 +357,32 @@ pub const DeclareResolution = struct {
   fn genParams(
     self: *DeclareResolution,
     refs: []model.locations.Ref,
-  ) ![]*model.Value.Location {
-    const locs =
-      try self.intpr.ctx.global().alloc(*model.Value.Location, refs.len);
-    var next_loc: usize = 0;
+  ) ![]*model.Expression {
+    const params =
+      try self.intpr.ctx.global().alloc(*model.Expression, refs.len);
+
+    var next: usize = 0;
     for (refs) |input| {
       switch (input) {
         .node => |node| {
-          const expr = try self.intpr.interpret(node.node());
-          const value = try self.intpr.ctx.evaluator().evaluate(expr);
-          switch (value.data) {
-            .poison => {},
-            .location => |*lvalue| {
-              locs[next_loc] = lvalue;
-              next_loc += 1;
-            },
-            else => unreachable,
-          }
+          const expr = (
+            try self.intpr.tryInterpret(node.node(), .{.kind = .final})
+          ) orelse continue;
+          params[next] = expr;
+          next += 1;
+        },
+        .expr => |expr| {
+          params[next] = expr;
+          next += 1;
         },
         .value => |value| {
-          locs[next_loc] = value;
-          next_loc += 1;
-        }
+          params[next] = try self.intpr.ctx.createValueExpr(value.value());
+          next += 1;
+        },
+        .poison => {},
       }
     }
-    return locs[0..next_loc];
+    return params[0..next];
   }
 
   fn definePrototype(
@@ -445,6 +415,42 @@ pub const DeclareResolution = struct {
     const sym =
       try self.genSym(def.name, .{.prototype = prototype}, def.public);
     _ = try ns_data.tryRegister(self.intpr, sym);
+
+    // define symbols with which the instance type (via \This) and its arguments
+    // to the prototype (via their names) can be referenced.
+    const mark = ns_data.mark();
+    defer ns_data.reset(mark);
+    const container =
+      try self.intpr.ctx.global().create(model.VariableContainer);
+    container.* = .{.num_values = switch (prototype) {
+      .@"enum", .float, .intersection, .numeric, .paragraphs, .record,
+      .textual => 1,
+      .concat, .list, .optional => 2,
+      .map => 3,
+    }};
+    const var_names: []const []const u8 = switch (prototype) {
+      .@"enum", .float, .intersection, .numeric, .paragraphs, .record,
+      .textual => &.{"This"},
+      .concat, .list, .optional => &.{"This", "Inner"},
+      .map => &.{"This", "Key", "Value"},
+    };
+    for (var_names) |var_name, i| {
+      const vsym = try self.intpr.ctx.global().create(model.Symbol);
+      vsym.* = .{
+        .defined_at = model.Position.intrinsic(),
+        .name = var_name,
+        .data = .{.variable = .{
+          .t = types.type(),
+          .container = container,
+          .offset = @intCast(u15, i),
+          .assignable = false,
+          .borrowed = true,
+        }},
+      };
+      var success = try ns_data.tryRegister(self.intpr, vsym);
+      std.debug.assert(success);
+    }
+
     const pt: *nyarna.types.PrototypeFuncs = switch (prototype) {
       .concat   => blk: {
         types.constructors.prototypes.concat       = constructor;
@@ -491,8 +497,8 @@ pub const DeclareResolution = struct {
         break :blk &types.prototype_funcs.textual;
       },
     };
+    pt.var_container = container;
     if (gp.funcs) |funcs| {
-      var pfuncs = PrototypeFuncs.init(self);
       var collector = lib.system.DefCollector{
         .dt = types.definition(),
       };
@@ -525,8 +531,7 @@ pub const DeclareResolution = struct {
       for (func_defs) |fdef| {
         switch (fdef.content.data) {
           .builtingen => |*bg| if (
-            try self.intpr.tryInterpretBuiltin(
-              bg, .{.kind = .intermediate, .resolve = &pfuncs.ctx})
+            try self.intpr.tryInterpretBuiltin(bg, .{.kind = .intermediate})
           ) {
             const impl_name = try self.intpr.allocator.alloc(
               u8, def.name.content.len + 2 + fdef.name.content.len
@@ -545,13 +550,12 @@ pub const DeclareResolution = struct {
               continue;
             };
 
-
             def_items[next] = .{
               .name = try self.intpr.ctx.values.textScalar(
                 fdef.node().pos, types.raw(),
                 try self.intpr.ctx.global().dupe(u8, fdef.name.content)),
               .params = try self.genParams(bg.params.resolved.locations),
-              .returns = bg.returns.value,
+              .returns = bg.returns.expr,
               .impl_index = impl_index,
             };
             next += 1;
@@ -741,23 +745,14 @@ pub const DeclareResolution = struct {
                  &bgen.params, .{.kind = .final, .resolve = &tr.ctx}))
               ) blk: {
                 switch (bgen.returns) {
-                  .value => continue,
+                  .expr => continue,
                   .node => |rnode| {
-                    const value = try self.intpr.ctx.evaluator().evaluate(
-                      (
-                        try self.intpr.associate(
-                          rnode, self.intpr.ctx.types().@"type"(),
-                          .{.kind = .final})
-                      ) orelse break :blk
-                    );
-                    switch (value.data) {
-                      .@"type" => |*tv| {
-                        bgen.returns = .{.value = tv};
-                        break;
-                      },
-                      .poison => break :blk,
-                      else => unreachable,
-                    }
+                    const expr = (
+                      try self.intpr.associate(
+                        rnode, self.intpr.ctx.types().@"type"(),
+                        .{.kind = .final})
+                    ) orelse break :blk;
+                    bgen.returns = .{.expr = expr};
                     continue;
                   }
                 }
@@ -869,13 +864,20 @@ pub const DeclareResolution = struct {
               try self.intpr.tryInterpretBuiltin(bgen, .{.kind = .intermediate})
             ) {
               if (self.intpr.builtin_provider) |provider| blk: {
-                const ret_type = bgen.returns.value;
+                const ret_type = switch (
+                  (try self.intpr.ctx.evaluator().evaluate(
+                    bgen.returns.expr)).data
+                ) {
+                  .@"type" => |tv| tv.t,
+                  .poison => break :blk,
+                  else => unreachable,
+                };
                 const locations = &bgen.params.resolved.locations;
                 var finder = (try self.intpr.processLocations(
                   locations, .{.kind = .final})) orelse break :blk;
-                const finder_res = try finder.finish(ret_type.t, false);
+                const finder_res = try finder.finish(ret_type, false);
                 var builder = try nyarna.types.SigBuilder.init(
-                  self.intpr.ctx, locations.len, ret_type.t,
+                  self.intpr.ctx, locations.len, ret_type,
                   finder_res.needs_different_repr);
                 for (locations.*) |loc| try builder.push(loc.value);
                 const builder_res = builder.finish();

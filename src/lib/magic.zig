@@ -66,13 +66,19 @@ const Impl = lib.Provider.Wrapper(struct {
         .funcgen => intpr.ctx.logger.NyFuncInMagic(decl.node().pos),
         .builtingen => |*bg| {
           if (try intpr.tryInterpretBuiltin(bg, .{.kind = .intermediate})) {
-            const ret_type = bg.returns.value;
+            const ret_type = switch (
+              (try intpr.ctx.evaluator().evaluate(bg.returns.expr)).data
+            ) {
+              .poison => continue,
+              .@"type" => |tv| tv.t,
+              else => unreachable,
+            };
             const locations = &bg.params.resolved.locations;
             var finder = (try intpr.processLocations(
               locations, .{.kind = .final})) orelse continue;
-            const finder_res = try finder.finish(ret_type.t, false);
+            const finder_res = try finder.finish(ret_type, false);
             var builder = try types.SigBuilder.init(
-              intpr.ctx, locations.len, ret_type.t,
+              intpr.ctx, locations.len, ret_type,
               finder_res.needs_different_repr);
             for (locations.*) |loc| try builder.push(loc.value);
             const builder_res = builder.finish();
@@ -163,7 +169,7 @@ pub fn magicModule(ctx: Context) !*model.Module {
   const module = try ctx.global().create(model.Module);
   module.root = try ctx.createValueExpr(
     try ctx.values.@"void"(model.Position.intrinsic()));
-  module.symbols = try ctx.global().alloc(*model.Symbol, 10);
+  module.symbols = try ctx.global().alloc(*model.Symbol, 9);
   var index: usize = 0;
 
   const impl = Impl.init();
@@ -266,15 +272,6 @@ pub fn magicModule(ctx: Context) !*model.Module {
   module.symbols[index] = (
     try extFuncSymbol(ctx, "prototype", true, b.finish(), &impl.provider)
   ).?;
-  index += 1;
-
-  const sym = try ctx.global().create(model.Symbol);
-  sym.* = .{
-    .defined_at = model.Position.intrinsic(),
-    .name = "This",
-    .data = .{.@"type" = t.prototype()},
-  };
-  module.symbols[index] = sym;
   index += 1;
 
   std.debug.assert(index == module.symbols.len);

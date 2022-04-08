@@ -16,12 +16,14 @@
     =SYMREF [0]block
   -TARGET
   +PROTO primary
-    +LOC spam
+    +LOC
+      =LIT text "spam"
       +TYPE
         =SYMREF .std.system.Raw
       -TYPE
     -LOC
-    +LOC egg
+    +LOC
+      =LIT text "egg"
       +DEFAULT
         +RCALL
           =SYMREF .std.system.Integer
@@ -30,7 +32,8 @@
         -RCALL
       -DEFAULT
     -LOC
-    +LOC sausage
+    +LOC
+      =LIT text "sausage"
       +DEFAULT
         +RCALL
           =SYMREF .std.system.Integer
@@ -39,11 +42,12 @@
         -RCALL
       -DEFAULT
     -LOC
-    +LOC baked
+    +LOC
+      =LIT text "baked"
       +TYPE
         +RCALL
           =SYMREF .std.system.List
-          >ARG inner
+          >ARG Inner
           +AST
             =SYMREF .std.system.Text
           -AST
@@ -51,7 +55,8 @@
       -TYPE
       =FLAGS {varargs}
     -LOC
-    +LOC beans
+    +LOC
+      =LIT text "beans"
       =FLAGS {primary}
       +DEFAULT
         +RCALL
@@ -71,7 +76,8 @@
         -RCALL
       -DEFAULT
     -LOC
-    +LOC schwurbl
+    +LOC
+      =LIT text "schwurbl"
       +TYPE
         =SYMREF .std.system.Bool
       -TYPE

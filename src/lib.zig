@@ -229,15 +229,3 @@ pub fn extFunc(
   };
   return ret;
 }
-
-fn typeConstructor(
-  ctx: Context,
-  p: *Provider,
-  name: []const u8,
-  bres: types.SigBuilderResult,
-) !types.Constructor {
-  return types.Constructor{
-    .callable = try bres.createCallable(ctx.global(), .@"type"),
-    .impl_index = try registerExtImpl(ctx, p, name, bres.sig.isKeyword()),
-  };
-}

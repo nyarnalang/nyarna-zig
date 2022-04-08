@@ -25,7 +25,7 @@ pub const Evaluator = struct {
     return ret;
   }
 
-  fn allocateStackFrame(
+  pub fn allocateStackFrame(
     self: *Evaluator,
     num_variables: usize,
     prev_frame: ?[*]model.StackItem
@@ -56,7 +56,7 @@ pub const Evaluator = struct {
     return self.allocateStackFrame(num_params, prev_frame);
   }
 
-  fn resetStackFrame(
+  pub fn resetStackFrame(
     self: *Evaluator,
     frame_ptr: *?[*]model.StackItem,
     num_variables: usize,
@@ -68,7 +68,7 @@ pub const Evaluator = struct {
     if (ns_dependent) self.ctx.data.stack_ptr -= 1;
   }
 
-  fn fillParameterStackFrame(
+  pub fn fillParameterStackFrame(
     self: *Evaluator,
     exprs: []*model.Expression,
     frame: [*]model.StackItem,
@@ -231,7 +231,7 @@ pub const Evaluator = struct {
           },
           else => {},
         } else unreachable;
-        const constr = self.ctx.types().typeConstructor(tv.t);
+        const constr = try self.ctx.types().typeConstructor(tv.t);
         self.target_type = tv.t;
         return self.callConstructor(impl_ctx, call, constr);
       },
@@ -292,7 +292,7 @@ pub const Evaluator = struct {
     br: *model.Expression.Branches,
   ) nyarna.Error!*model.Value {
     var condition = try self.evaluate(br.condition);
-    if (self.ctx.types().valueType(condition).isInst(.poison)) {
+    if ((try self.ctx.types().valueType(condition)).isInst(.poison)) {
       return model.Value.create(self.ctx.global(), br.expr().pos, .poison);
     }
     return self.evaluate(br.branches[condition.data.@"enum".index]);
@@ -338,7 +338,7 @@ pub const Evaluator = struct {
     value: *model.Value,
     to: model.Type,
   ) nyarna.Error!*model.Value {
-    const from = self.ctx.types().valueType(value);
+    const from = try self.ctx.types().valueType(value);
     if (from.isInst(.poison)) return value;
     if (self.ctx.types().lesserEqual(from, to)) {
       return try self.coerce(value, to);
@@ -405,6 +405,75 @@ pub const Evaluator = struct {
     return self.doConvert(inner_val, convert.target_type);
   }
 
+  fn evalLocation(
+    self: *Evaluator,
+    loc: *model.Expression.Location,
+  ) nyarna.Error!*model.Value {
+    const ltype = if (loc.@"type") |t| switch ((try self.evaluate(t)).data) {
+      .@"type" => |tv| tv.t,
+      .poison => self.ctx.types().poison(),
+      else => unreachable
+    } else if (loc.default) |default| default.expected_type else blk: {
+      self.ctx.logger.MissingSymbolType(loc.expr().pos);
+      break :blk self.ctx.types().poison();
+    };
+    if (loc.additionals) |add| {
+      if (add.varmap) |varmap| {
+        if (add.varargs) |varargs| {
+          self.ctx.logger.IncompatibleFlag("varmap", varmap, varargs);
+          add.varmap = null;
+        } else if (add.borrow) |borrow| {
+          self.ctx.logger.IncompatibleFlag("varmap", varmap, borrow);
+          add.varmap = null;
+        }
+      } else if (add.varargs) |varargs| if (add.borrow) |borrow| {
+        self.ctx.logger.IncompatibleFlag("borrow", borrow, varargs);
+        add.borrow = null;
+      };
+      if (!ltype.isInst(.poison)) {
+        if (add.varmap) |varmap| if (!ltype.isStruc(.map)) {
+          self.ctx.logger.VarmapRequiresMap(
+            varmap, &[_]model.Type{ltype});
+          add.varmap = null;
+        };
+        if (add.varargs) |varargs| if (!ltype.isStruc(.list)) {
+          self.ctx.logger.VarargsRequiresList(
+            varargs, &[_]model.Type{ltype});
+          add.varargs = null;
+        };
+        if (add.borrow) |borrow| if (
+          !switch (ltype) {
+            .structural => |struc| switch (struc.*) {
+              .list, .concat, .paragraphs, .callable => true,
+              else => false,
+            },
+            .instantiated => |inst| switch (inst.data) {
+              .record, .prototype => true,
+              else => false,
+            },
+          }
+        ) {
+          self.ctx.logger.BorrowRequiresRef(
+            borrow, &[_]model.Type{ltype});
+          add.borrow = null;
+        };
+      }
+    }
+    const name = switch ((try self.evaluate(loc.name)).data) {
+      .text => |*txt| txt,
+      .poison => return try self.ctx.values.poison(loc.expr().pos),
+      else => unreachable,
+    };
+    const loc_val = try self.ctx.values.location(loc.expr().pos, name, ltype);
+    loc_val.default = loc.default;
+    loc_val.primary = if (loc.additionals) |add| add.primary else null;
+    loc_val.varargs = if (loc.additionals) |add| add.varargs else null;
+    loc_val.varmap  = if (loc.additionals) |add| add.varmap  else null;
+    loc_val.borrow =  if (loc.additionals) |add| add.borrow  else null;
+    loc_val.header  = if (loc.additionals) |add| add.header  else null;
+    return loc_val.value();
+  }
+
   fn evalParagraphs(
     self: *Evaluator,
     expr: *model.Expression,
@@ -427,7 +496,7 @@ pub const Evaluator = struct {
       var builder = ConcatBuilder.init(self.ctx, expr.pos, expr.expected_type);
       for (paras) |para, index| {
         const value = try self.evaluate(para.content);
-        if (!self.ctx.types().valueType(value).isInst(.void)) {
+        if (!(try self.ctx.types().valueType(value)).isInst(.void)) {
           try builder.push(value);
           if (
             index != paras.len - 1 and
@@ -465,24 +534,45 @@ pub const Evaluator = struct {
     return list.value();
   }
 
+  fn evalGenUnary(
+    self: *Evaluator,
+    comptime name: []const u8,
+    input: anytype,
+    comptime error_name: []const u8,
+  ) nyarna.Error!*model.Value {
+    switch ((try self.evaluate(input.inner)).data) {
+      .@"type" => |tv| return try self.ctx.unaryTypeVal(
+        name, input.expr().pos, tv.t, input.inner.pos, error_name),
+      .poison => return self.ctx.values.poison(input.expr().pos),
+      else => unreachable,
+    }
+  }
+
   /// actual evaluation of expressions.
   fn doEvaluate(
     self: *Evaluator,
     expr: *model.Expression,
   ) nyarna.Error!*model.Value {
     return switch (expr.data) {
-      .access => |*access| self.evalAccess(access),
-      .assignment => |*assignment| self.evalAssignment(assignment),
-      .branches => |*branches| self.evalBranches(branches),
-      .call => |*call| return self.evalCall(self, call),
-      .concatenation => |concat| self.evalConcatenation(expr, concat),
-      .conversion => |*convert| self.evalConversion(convert),
-      .value => |value| return value,
-      .paragraphs => |paras| self.evalParagraphs(expr, paras),
-      .varargs => |*varargs| self.evalVarargs(varargs),
-      .var_retrieval => |*var_retr| var_retr.variable.curPtr().*,
-      .poison => return self.ctx.values.poison(expr.pos),
-      .void => return self.ctx.values.void(expr.pos),
+      .access        => |*access|     self.evalAccess(access),
+      .assignment    => |*assignment| self.evalAssignment(assignment),
+      .branches      => |*branches|   self.evalBranches(branches),
+      .call          => |*call|       return self.evalCall(self, call),
+      .concatenation => |concat|      self.evalConcatenation(expr, concat),
+      .conversion    => |*convert|    self.evalConversion(convert),
+      .location      => |*loc|        self.evalLocation(loc),
+      .value         => |value|       return value,
+      .paragraphs    => |paras|       self.evalParagraphs(expr, paras),
+      .tg_concat     => |*tgc|
+        self.evalGenUnary("concat", tgc, "InvalidInnerConcatType"),
+      .tg_list       => |*tgl|
+        self.evalGenUnary("list", tgl, "InvalidInnerListType"),
+      .tg_optional   => |*tgo|
+        self.evalGenUnary("optional", tgo, "InvalidInnerOptionalType"),
+      .varargs       => |*varargs|    self.evalVarargs(varargs),
+      .var_retrieval => |*var_retr|   var_retr.variable.curPtr().*,
+      .poison        =>               return self.ctx.values.poison(expr.pos),
+      .void          =>               return self.ctx.values.void(expr.pos),
     };
   }
 
@@ -495,7 +585,7 @@ pub const Evaluator = struct {
     value: *model.Value,
     expected_type: model.Type,
   ) std.mem.Allocator.Error!*model.Value {
-    const value_type = self.ctx.types().valueType(value);
+    const value_type = try self.ctx.types().valueType(value);
     if (value_type.eql(expected_type) or value_type.isInst(.poison)) {
       return value;
     }
@@ -522,7 +612,23 @@ pub const Evaluator = struct {
           }
           return lv.value();
         },
-        .list, .map => unreachable, // TODO: implement coercion of inner values.
+        .list => |*list| {
+          const coerced = try self.ctx.values.list(value.origin, list);
+          for (value.data.list.content.items) |item| {
+            try coerced.content.append(try self.coerce(item, list.inner));
+          }
+          return coerced.value();
+        },
+        .map => |*map| {
+          const coerced = try self.ctx.values.map(value.origin, map);
+          var iter = value.data.map.items.iterator();
+          while (iter.next()) |entry| {
+            const key = try self.coerce(entry.key_ptr.*, map.key);
+            const val = try self.coerce(entry.value_ptr.*, map.value);
+            try coerced.items.put(key, val);
+          }
+          return coerced.value();
+        },
         .callable => unreachable, // TODO: implement callable wrapper.
       },
       .instantiated => |inst| switch (inst.data) {
@@ -568,7 +674,7 @@ pub const Evaluator = struct {
   ) nyarna.Error!*model.Value {
     const res = try self.doEvaluate(expr);
     const expected_type = self.ctx.types().expectedType(
-      self.ctx.types().valueType(res), expr.expected_type);
+      try self.ctx.types().valueType(res), expr.expected_type);
     return try self.coerce(res, expected_type);
   }
 
@@ -661,7 +767,7 @@ const ConcatBuilder = struct {
       self.cur = null;
     }
     self.inner_type = try self.ctx.types().sup(
-      self.inner_type, self.ctx.types().valueType(item));
+      self.inner_type, try self.ctx.types().valueType(item));
 
     if (self.cur_items) |*content| try content.append(item)
     else self.cur = item;
@@ -794,7 +900,7 @@ const ParagraphsBuilder = struct {
 
   fn enqueue(self: *@This(), item: model.Value.Para.Item) !void {
     try self.content.append(item);
-    const item_type = self.ctx.types().valueType(item.content);
+    const item_type = try self.ctx.types().valueType(item.content);
     try self.t_builder.push(item_type);
   }
 

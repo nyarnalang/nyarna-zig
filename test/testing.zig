@@ -264,7 +264,7 @@ const AstEmitter = struct {
         const lvl = try self.push("BUILTINGEN");
         switch (bg.returns) {
           .node => |rnode| try self.process(rnode),
-          .value => |tv| try self.processValue(tv.value()),
+          .expr => |expr| try self.processExpr(expr),
         }
         try self.emitLine(">PARAMS", .{});
         try self.process(bg.params.unresolved);
@@ -302,7 +302,8 @@ const AstEmitter = struct {
         try func.pop();
       },
       .location => |loc| {
-        const l = try self.pushWithKey("LOC", loc.name.content, null);
+        const l = try self.push("LOC");
+        try self.process(loc.name);
         if (loc.@"type") |t| {
           const tnode = try self.push("TYPE");
           try self.process(t);
@@ -425,7 +426,9 @@ const AstEmitter = struct {
           .unresolved => |node| try self.process(node),
           .resolved => |*res| for (res.locations) |loc| switch (loc) {
             .node => |lnode| try self.process(lnode.node()),
+            .expr => |lexpr| try self.processExpr(lexpr),
             .value => |lval| try self.processValue(lval.value()),
+            .poison => try self.emitLine("=POISON", .{}),
           },
           .pregen => try self.processType(.{.instantiated = gr.generated.?}),
         }
@@ -566,6 +569,46 @@ const AstEmitter = struct {
         try self.processExpr(c.inner);
         try conv.pop();
       },
+      .location => |loc| {
+        const l = try self.push("LOC");
+        try self.emitLine(">NAME", .{});
+        try self.processExpr(loc.name);
+        if (loc.@"type") |t| {
+          try self.emitLine(">TYPE", .{});
+          try self.processExpr(t);
+        }
+        if (loc.additionals) |a| {
+          if (
+            a.primary != null or a.varargs != null or a.varmap != null or
+            a.borrow != null or a.header != null
+          ) {
+            const fmt = (
+              AdditionalsWithGlobal{.value = a, .data = self.data}
+            ).formatter();
+            try self.emitLine("=FLAGS {}", .{fmt});
+          }
+        }
+        if (loc.default) |d| {
+          try self.emitLine(">DEFAULT", .{});
+          try self.processExpr(d);
+        }
+        try l.pop();
+      },
+      .tg_concat => |tgc| {
+        const c = try self.push("TG_CONCAT");
+        try self.processExpr(tgc.inner);
+        try c.pop();
+      },
+      .tg_list => |tgl| {
+        const l = try self.push("TG_LIST");
+        try self.processExpr(tgl.inner);
+        try l.pop();
+      },
+      .tg_optional => |tgo| {
+        const o = try self.push("TG_OPTIONAL");
+        try self.processExpr(tgo.inner);
+        try o.pop();
+      },
       .value => |value| try self.processValue(value),
       .paragraphs => |paras| {
         const p = try self.push("PARAGRAPHS");
@@ -654,8 +697,10 @@ const AstEmitter = struct {
       .para => |_| {
         unreachable;
       },
-      .list => |_| {
-        unreachable;
+      .list => |lst| {
+        const l = try self.push("LIST");
+        for (lst.content.items) |item| try self.processValue(item);
+        try l.pop();
       },
       .map => |_| {
         unreachable;

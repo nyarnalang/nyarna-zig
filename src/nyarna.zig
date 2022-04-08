@@ -242,7 +242,7 @@ pub const Context = struct {
     e.* = .{
       .pos = content.origin,
       .data = .{.value = content},
-      .expected_type = self.types().valueType(content),
+      .expected_type = try self.types().valueType(content),
     };
     return e;
   }
@@ -331,6 +331,23 @@ pub const Context = struct {
     }
     return if (seen_error) null
     else try self.values.textScalar(pos, t.typedef(), input);
+  }
+
+  pub fn unaryTypeVal(
+    self: Context,
+    comptime name: []const u8,
+    pos: model.Position,
+    inner: model.Type,
+    inner_pos: model.Position,
+    comptime error_name: []const u8
+  ) !*model.Value {
+    if (try @field(self.types(), name)(inner)) |t| {
+      if (t.isStruc(@field(model.Type.Structural, name))) {
+        return (try self.values.@"type"(pos, t)).value();
+      }
+    }
+    @field(self.logger, error_name)(inner_pos, &[_]model.Type{inner});
+    return try self.values.poison(pos);
   }
 };
 

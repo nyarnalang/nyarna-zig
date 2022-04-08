@@ -26,12 +26,14 @@
           =SYMREF .std.system.Record
           >ARG fields
           +AST
-            +LOC a
+            +LOC
+              =LIT text "a"
               +TYPE
                 =SYMREF .std.system.Raw
               -TYPE
             -LOC
-            +LOC b
+            +LOC
+              =LIT text "b"
               +TYPE
                 =SYMREF .std.system.Raw
               -TYPE
@@ -46,7 +48,8 @@
           =VOID
           >ARG params
           +AST
-            +LOC data
+            +LOC
+              =LIT text "data"
               +TYPE
                 =SYMREF [0]Data
               -TYPE

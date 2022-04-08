@@ -73,17 +73,25 @@ const InnerIntend = enum {
 /// created). This type holds the function definitions and implements this
 /// instantiation.
 pub const PrototypeFuncs = struct {
+
   pub const Item = struct {
     name: *model.Value.TextScalar,
-    params: []*model.Value.Location,
-    returns: *model.Value.TypeVal,
+    /// each parameter is an expression that will evaluate to a location value.
+    /// the parameters may reference the prototype's variables, defined below.
+    params: []*model.Expression,
+    /// expression that returns a type, may reference prototype variables.
+    returns: *model.Expression,
     impl_index: usize,
   };
   constructor: ?struct {
-    params: []*model.Value.Location,
+    params: []*model.Expression,
     impl_index: usize,
   } = null,
   defs: []Item = &.{},
+  /// used by the variables referencing an instance's arguments. Must be filled
+  /// when instantiating a prototype func. the first variable will be \This, the
+  /// reference to the instantiated type.
+  var_container: *model.VariableContainer = undefined,
 
   fn lessThan(
     context: u0,
@@ -121,17 +129,22 @@ pub const PrototypeFuncs = struct {
 pub const InstanceFuncs = struct {
   pt: *PrototypeFuncs,
   syms: []?*model.Symbol,
-  instance: model.Type,
+  /// arguments of the instantiation. The first argument is always the resulting
+  /// type, then come the user-supplied arguments to the Prototype call.
+  arguments: []*model.Value.TypeVal,
+  constructor: ?*model.Type.Callable,
+  working: bool = false,
 
   fn init(
     pt: *PrototypeFuncs,
     allocator: std.mem.Allocator,
-    instance: model.Type,
+    arguments: []*model.Value.TypeVal,
   ) !InstanceFuncs {
     var ret = InstanceFuncs{
       .pt = pt,
       .syms = try allocator.alloc(?*model.Symbol, pt.defs.len),
-      .instance = instance,
+      .arguments = arguments,
+      .constructor = null,
     };
     std.mem.set(?*model.Symbol, ret.syms, null);
     return ret;
@@ -199,6 +212,57 @@ pub const InstanceFuncs = struct {
     }
   }
 
+  fn buildCallableRes(comptime ret_t: type) type {
+    return if (ret_t == *model.Expression) ?SigBuilderResult
+    else SigBuilderResult;
+  }
+
+  fn buildCallable(
+    self: *InstanceFuncs,
+    ctx: nyarna.Context,
+    params: []*model.Expression,
+    ret: anytype,
+  ) !buildCallableRes(@TypeOf(ret)) {
+    // fill variable container with argument values.
+    var eval = ctx.evaluator();
+    self.pt.var_container.cur_frame = try eval.allocateStackFrame(
+      self.pt.var_container.num_values, self.pt.var_container.cur_frame);
+    const frame = self.pt.var_container.cur_frame.? + 1;
+    defer eval.resetStackFrame(
+      &self.pt.var_container.cur_frame, self.pt.var_container.num_values, false
+    );
+    for (self.arguments) |arg, i| frame[i] = .{.value = arg.value()};
+
+    const ret_type = if (@TypeOf(ret) == *model.Expression) switch (
+      (try eval.evaluate(ret)).data
+    ) {
+      .@"type" => |tv| tv.t,
+      .poison => return null,
+      else => unreachable,
+    } else ret;
+
+    // since this is language defined, we can be sure no func has more than 10
+    // args.
+    var locs: [10]?*model.Value.Location = undefined;
+
+    var finder = nyarna.types.CallableReprFinder.init(ctx.types());
+    for (params) |param, i| switch ((try eval.evaluate(param)).data) {
+      .location => |*loc| {
+        try finder.push(loc);
+        locs[i] = loc;
+      },
+      .poison   => locs[i] = null,
+      else      => unreachable,
+    };
+
+    const finder_res = try finder.finish(ret_type, false);
+    var builder = try nyarna.types.SigBuilder.init(
+      ctx, params.len, ret_type, finder_res.needs_different_repr
+    );
+    for (params) |_, i| if (locs[i]) |loc| try builder.push(loc);
+    return builder.finish();
+  }
+
   pub fn find(
     self: *InstanceFuncs,
     ctx: nyarna.Context,
@@ -207,40 +271,21 @@ pub const InstanceFuncs = struct {
     const index = self.pt.find(name) orelse return null;
     if (self.syms[index]) |sym| return sym;
     const def = self.pt.defs[index];
-    const ret_type = if (
-      try replacePrototypeWith(
-        def.returns.value().origin, def.returns.t, ctx, self.instance)
-    ) |t| t else def.returns.t;
-    var finder = nyarna.types.CallableReprFinder.init(ctx.types());
-    for (def.params) |param| {
-      const orig_type = param.tloc;
-      param.tloc = if (
-        try replacePrototypeWith(
-          param.value().origin, orig_type, ctx, self.instance)
-      ) |t| t else orig_type;
-      try finder.push(param);
-      param.tloc = orig_type;
-    }
-    const finder_res = try finder.finish(ret_type, false);
-    var builder = try nyarna.types.SigBuilder.init(
-      ctx, def.params.len, ret_type, finder_res.needs_different_repr
-    );
-    for (def.params) |param| {
-      const orig_type = param.tloc;
-      param.tloc = if (
-        try replacePrototypeWith(
-          param.value().origin, orig_type, ctx, self.instance)
-      ) |t| t else orig_type;
-      try builder.push(param);
-      param.tloc = orig_type;
-    }
-    const builder_res = builder.finish();
+
     const sym = try ctx.global().create(model.Symbol);
     sym.* = .{
       .defined_at = def.name.value().origin,
       .name = def.name.content,
       .data = undefined,
-      .parent_type = self.instance,
+      .parent_type = self.arguments[0].t,
+    };
+
+    const builder_res = (
+      try self.buildCallable(ctx, def.params, def.returns)
+    ) orelse {
+      sym.data = .poison;
+      self.syms[index] = sym;
+      return sym;
     };
 
     const container = try ctx.global().create(model.VariableContainer);
@@ -262,6 +307,23 @@ pub const InstanceFuncs = struct {
     sym.data = .{.func = func};
     self.syms[index] = sym;
     return sym;
+  }
+
+  pub fn genConstructor(
+    self: *InstanceFuncs,
+    ctx: nyarna.Context,
+  ) !void {
+    if (self.working or self.constructor != null) return;
+    if (self.pt.constructor) |constr| {
+      // prevent infinite recursion during bootstrapping
+      self.working = true;
+      defer self.working = false;
+
+      const builder_res = try self.buildCallable(
+        ctx, constr.params, self.arguments[0].t);
+      const callable = try builder_res.createCallable(ctx.global(), .@"type");
+      self.constructor = callable;
+    }
   }
 };
 
@@ -574,24 +636,29 @@ pub const Lattice = struct {
     return self.predefined.block_header.typedef();
   }
 
+  fn constructorOf(self: *Self, t: model.Type) !?*model.Type.Callable {
+    const instance_funcs = try self.instanceFuncsOf(t);
+    return instance_funcs.?.constructor;
+  }
+
   /// may only be called on types that do have constructors
-  pub fn typeConstructor(self: *const Self, t: model.Type) Constructor {
+  pub fn typeConstructor(self: *Self, t: model.Type) !Constructor {
     return switch (t) {
       .instantiated => |inst| switch (inst.data) {
-        .textual    => |*text| Constructor{
-          .callable   = text.constructor,
+        .textual    => Constructor{
+          .callable = (try self.constructorOf(t)).?,
           .impl_index = self.prototype_funcs.textual.constructor.?.impl_index,
         },
-        .numeric    => |*numeric| Constructor{
-          .callable   = numeric.constructor,
+        .numeric    => Constructor{
+          .callable = (try self.constructorOf(t)).?,
           .impl_index = self.prototype_funcs.numeric.constructor.?.impl_index,
         },
-        .float      => |*float| Constructor{
-          .callable   = float.constructor,
+        .float      => Constructor{
+          .callable = (try self.constructorOf(t)).?,
           .impl_index = self.prototype_funcs.float.constructor.?.impl_index,
         },
-        .tenum      => |*tenum| Constructor{
-          .callable   = tenum.constructor,
+        .tenum      => Constructor{
+          .callable = (try self.constructorOf(t)).?,
           .impl_index = self.prototype_funcs.@"enum".constructor.?.impl_index,
         },
         .location   => self.constructors.location,
@@ -599,7 +666,13 @@ pub const Lattice = struct {
         .raw,       => self.constructors.raw,
         else => unreachable,
       },
-      .structural => unreachable,
+      .structural => |strct| switch (strct.*) {
+        .list => Constructor{
+          .callable = (try self.constructorOf(t)).?,
+          .impl_index = self.prototype_funcs.list.constructor.?.impl_index,
+        },
+        else => unreachable,
+      },
     };
   }
 
@@ -735,26 +808,17 @@ pub const Lattice = struct {
       // we're handling some special cases here, but most are handled by the
       // switch below.
       .structural => |other_struc| switch (struc.*) {
-        .optional => |*op| switch (other_struc.*) {
-          .optional => |*other_op| return
-            (try self.optional(try self.sup(other_op.inner, op.inner))) orelse
+        .concat => |*con| switch (other_struc.*) {
+          .optional => |*op| return
+            (try self.concat(try self.sup(op.inner, con.inner))) orelse
               self.poison(),
           .concat => |*other_con| return
-            (try self.concat(try self.sup(other_con.inner, op.inner))) orelse
-              self.poison(),
-          else => {},
-        },
-        .concat => |*other_con| switch (struc.*) {
-          .optional => |*op| return
-            (try self.concat(try self.sup(op.inner, other_con.inner))) orelse
-              self.poison(),
-          .concat => |*con| return
             (try self.concat(try self.sup(other_con.inner, con.inner))) orelse
               self.poison(),
           else => {},
         },
-        .intersection => |*other_inter| switch (struc.*) {
-          .intersection => |*inter| {
+        .intersection => |*inter| switch (other_struc.*) {
+          .intersection => |*other_inter| {
             const scalar_type = if (inter.scalar) |inter_scalar|
               if (other_inter.scalar) |other_scalar| try
                 self.sup(inter_scalar, other_scalar)
@@ -766,6 +830,21 @@ pub const Lattice = struct {
             else IntersectionTypeBuilder.calcFrom(
               self, .{inter.types, other_inter.types});
           },
+          else => {},
+        },
+        .list => |*lst| switch (other_struc.*) {
+          .list => |*other_lst| return (
+            try (self.list(try self.sup(lst.inner, other_lst.inner)))
+          ) orelse self.poison(),
+          else => {},
+        },
+        .optional => |*op| switch (other_struc.*) {
+          .optional => |*other_op| return
+            (try self.optional(try self.sup(other_op.inner, op.inner))) orelse
+              self.poison(),
+          .concat => |*other_con| return
+            (try self.concat(try self.sup(other_con.inner, op.inner))) orelse
+              self.poison(),
           else => {},
         },
         else => {},
@@ -962,25 +1041,36 @@ pub const Lattice = struct {
   }
 
   /// returns the type of the given type if it was a Value.
-  pub fn typeType(self: *Lattice, t: model.Type) model.Type {
+  pub fn typeType(self: *Lattice, t: model.Type) !model.Type {
     return switch (t) {
-      .structural => self.@"type"(), // TODO
+      .structural => |struc| switch (struc.*) {
+        .list => blk: {
+          const constructor = (
+            try self.constructorOf(t)
+          ) orelse break :blk self.@"type"(); // workaround for system.ny
+          break :blk constructor.typedef();
+        },
+        else => self.@"type"(), // TODO
+      },
       .instantiated => |inst| switch (inst.data) {
-        .numeric => |*num| num.constructor.typedef(),
-        .tenum   => |*enu| enu.constructor.typedef(),
+        .numeric, .tenum, .textual => {
+          const constructor = (
+            try self.constructorOf(t)
+          ) orelse return self.@"type"();
+          return constructor.typedef();
+        },
         .record  => |*rec| rec.constructor.typedef(),
-        .textual => |*txt| txt.constructor.typedef(),
         .location, .definition, .literal, .space, .raw =>
           // callable may be null if currently processing system.ny. In that
           // case, the type is not callable.
-          if (self.typeConstructor(t).callable) |c| c.typedef()
+          if ((try self.typeConstructor(t)).callable) |c| c.typedef()
           else self.@"type"(),
         else     => self.@"type"(), // TODO
       },
     };
   }
 
-  pub fn valueType(self: *Lattice, v: *model.Value) model.Type {
+  pub fn valueType(self: *Lattice, v: *model.Value) !model.Type {
     return switch (v.data) {
       .text => |*txt| txt.t,
       .number => |*num| num.t.typedef(),
@@ -991,7 +1081,7 @@ pub const Lattice = struct {
       .para => |*para| para.t.typedef(),
       .list => |*list| list.t.typedef(),
       .map => |*map| map.t.typedef(),
-      .@"type" => |tv| return self.typeType(tv.t),
+      .@"type" => |tv| try self.typeType(tv.t),
       .prototype => |pv| self.prototypeConstructor(pv.pt).callable.?.typedef(),
       .funcref => |*fr| fr.func.callable.typedef(),
       .location => self.location(),
@@ -1001,6 +1091,38 @@ pub const Lattice = struct {
       .block_header => self.blockHeader(),
       .void => self.void(),
       .poison => self.poison(),
+    };
+  }
+
+  fn valForType(self: Lattice, t: model.Type) !*model.Value.TypeVal {
+    const ret = try self.allocator.create(model.Value);
+    ret.* = .{
+      .origin = model.Position.intrinsic(),
+      .data = .{.@"type" = .{.t = t}},
+    };
+    return &ret.data.@"type";
+  }
+
+  fn typeArr(self: Lattice, types: []model.Type) ![]*model.Value.TypeVal {
+    const ret = try self.allocator.alloc(*model.Value.TypeVal, types.len);
+    for (types) |t, i| {
+      ret[i] = try self.valForType(t);
+    }
+    return ret;
+  }
+
+  fn instanceArgs(self: Lattice, t: model.Type) ![]*model.Value.TypeVal {
+    return try switch (t) {
+      .structural => |struc| switch (struc.*) {
+        .callable     => self.typeArr(&.{t}),
+        .concat       => |*con| self.typeArr(&.{t, con.inner}),
+        .intersection => self.typeArr(&.{t}),
+        .list         => |*lst| self.typeArr(&.{t, lst.inner}),
+        .map          => |*map| self.typeArr(&.{t, map.key, map.value}),
+        .optional     => |*opt| self.typeArr(&.{t, opt.inner}),
+        .paragraphs   => self.typeArr(&.{t}), // TODO
+      },
+      .instantiated => self.typeArr(&.{t}),
     };
   }
 
@@ -1026,7 +1148,8 @@ pub const Lattice = struct {
     };
     const res = try self.instance_funcs.getOrPut(self.allocator, t);
     if (!res.found_existing) {
-      res.value_ptr.* = try InstanceFuncs.init(pt, self.allocator, t);
+      res.value_ptr.* = try InstanceFuncs.init(
+        pt, self.allocator, try self.instanceArgs(t));
     }
     return res.value_ptr;
   }
@@ -1381,7 +1504,7 @@ pub const EnumTypeBuilder = struct {
     inst.* = .{
       .at = pos,
       .name = null,
-      .data = .{.tenum = .{.constructor = undefined, .values = .{}}},
+      .data = .{.tenum = .{.values = .{}}},
     };
     return Self{.ctx = ctx, .ret = &inst.data.tenum};
   }
@@ -1390,13 +1513,7 @@ pub const EnumTypeBuilder = struct {
     try self.ret.values.put(self.ctx.global(), value, pos);
   }
 
-  pub fn finish(self: *Self) !*model.Type.Enum {
-    const constructor = &self.ctx.types().prototype_funcs.@"enum".constructor.?;
-    var sb = try SigBuilder.init(
-      self.ctx, constructor.params.len, self.ret.typedef(), true);
-    for (constructor.params) |param| try sb.push(param);
-    self.ret.constructor =
-      try sb.finish().createCallable(self.ctx.global(), .type);
+  pub fn finish(self: *Self) *model.Type.Enum {
     return self.ret;
   }
 };
@@ -1414,7 +1531,6 @@ pub const NumericTypeBuilder = struct {
       .at = pos,
       .name = null,
       .data = .{.numeric = .{
-        .constructor = undefined,
         .min = std.math.minInt(i64),
         .max = std.math.maxInt(i64),
         // can be maximal 32. set to 33 to indicate errors during construction.
@@ -1461,7 +1577,7 @@ pub const NumericTypeBuilder = struct {
     }
   }
 
-  pub fn finish(self: *Self) !?*model.Type.Numeric {
+  pub fn finish(self: *Self) ?*model.Type.Numeric {
     if (self.ret.min > self.ret.max) {
       self.ctx.logger.IllegalNumericInterval(self.pos);
       self.ret.decimals = 33;
@@ -1470,12 +1586,6 @@ pub const NumericTypeBuilder = struct {
       self.abort();
       return null;
     }
-    const constructor = &self.ctx.types().prototype_funcs.numeric.constructor.?;
-    var sb = try SigBuilder.init(
-      self.ctx, constructor.params.len, self.ret.typedef(), true);
-    for (constructor.params) |param| try sb.push(param);
-    self.ret.constructor =
-      try sb.finish().createCallable(self.ctx.global(), .type);
     return self.ret;
   }
 

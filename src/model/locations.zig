@@ -3,12 +3,17 @@
 //! take either use the types defined herein to store those.
 
 const Node = @import("Node.zig");
+const Expression = @import("Expression.zig");
 const Value = @import("Value.zig");
 
-/// reference to a location given either as node or as value
+/// reference to a location given either as node, expression or value
 pub const Ref = union(enum) {
   node: *Node.Location,
+  expr: *Expression,
   value: *Value.Location,
+  /// marks that previous processing determined that this location has errors
+  /// and is to be ignored.
+  poison,
 };
 
 /// a list of locations. Apart from a a chunk of unresolved or a chunk of
