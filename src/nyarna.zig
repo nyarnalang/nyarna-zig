@@ -224,9 +224,11 @@ pub const Context = struct {
   }
 
   /// The allocator used for data local to some processing step. Data allocated
-  /// with this is owned by the caller, who must explicitly deallocated it.
+  /// with this is owned by the current ModuleLoader and will be deallocated
+  /// when the module finished loading.
   pub inline fn local(self: *const Context) std.mem.Allocator {
-    return self.data.backing_allocator;
+    const loader = @fieldParentPtr(ModuleLoader, "logger", self.logger);
+    return loader.storage.allocator();
   }
 
   /// Interface to the type lattice. It allows you to create and compare types.
@@ -374,7 +376,7 @@ pub const Context = struct {
         return (try self.values.@"type"(pos, t)).value();
       }
     }
-    @field(self.logger, error_name)(inner_pos, &[_]model.Type{inner});
+    @field(self.logger, error_name)(&.{inner.at(inner_pos)});
     return try self.values.poison(pos);
   }
 };

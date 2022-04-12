@@ -9,9 +9,9 @@
   \end(func)
 \end(declare)
 --- errors:expr
-5:25 - 5:32 VarargsRequiresList
-  types = Optional<Raw>
-6:8 - 6:14 BorrowRequiresRef
-  types = Integer
-7:25 - 7:31 VarmapRequiresMap
-  types = List<Integer>
+5:8 - 5:23 VarargsRequiresList
+  main = Optional<Raw>
+6:18 - 6:30 BorrowRequiresRef
+  main = Integer
+7:8 - 7:23 VarmapRequiresMap
+  main = List<Integer>

@@ -93,8 +93,8 @@ pub const PreviousOccurenceError = enum {
   IsNotANamespaceCharacter, AlreadyANamespaceCharacter, DuplicateFlag,
   DuplicateBlockHeader, IncompatibleFlag, DuplicateAutoSwallow,
   DuplicateParameterArgument, MissingParameterArgument, DuplicateSymbolName,
-  MultipleScalarTypesInIntersection, MissingEndCommand, CannotAssignToConst,
-  DuplicateEnumValue, MultipleModuleKinds,
+  MissingEndCommand, CannotAssignToConst, DuplicateEnumValue,
+  MultipleModuleKinds,
 };
 
 pub const PositionChainError = enum {
@@ -103,13 +103,12 @@ pub const PositionChainError = enum {
   CircularType,
 };
 
-pub const WrongTypeError = enum {
-   /// gives two types: first expected, then actual type.
+pub const TypeError = enum {
+   /// gives two types: first actual, then expected type.
    ExpectedExprOfTypeXGotY,
-   /// gives two scalar types: first expected, then actual type.
+   /// gives two scalar types: first actual, then expected type.
    ScalarTypesMismatch,
-   /// gives at least two types: the first type is the one that makes the set
-   /// incompatible, the others are other types in the set.
+   /// gives two types: first the current, then the previous type.
    IncompatibleTypes,
    /// gives one type.
    InvalidInnerConcatType,
@@ -129,6 +128,10 @@ pub const WrongTypeError = enum {
    VarargsRequiresList,
    /// gives one type.
    BorrowRequiresRef,
+   /// gives two types: first the one currently given, then the previous one.
+   TypesNotDisjoint,
+   /// gives two types: first the one currently given, then the previous one.
+   MultipleScalarTypes,
 };
 
 pub const ConstructionError = enum {

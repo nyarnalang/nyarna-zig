@@ -147,7 +147,7 @@ pub const FuncRef = struct {
 
 pub const Location = struct {
   name   : *Value.TextScalar,
-  tloc   : Type,
+  spec   : model.SpecType,
   default: ?*Expression    = null,
   primary: ?model.Position = null,
   varargs: ?model.Position = null,

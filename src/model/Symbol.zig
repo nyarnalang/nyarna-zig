@@ -7,7 +7,7 @@ const Symbol = @This();
 
 /// A variable defined in Nyarna code.
 pub const Variable = struct {
-  t: Type,
+  spec: model.SpecType,
   /// the container owning this variable
   container: *model.VariableContainer,
   /// the offset of this variable inside the container in StackItems.

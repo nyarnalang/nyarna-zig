@@ -409,13 +409,17 @@ pub const Evaluator = struct {
     self: *Evaluator,
     loc: *model.Expression.Location,
   ) nyarna.Error!*model.Value {
-    const ltype = if (loc.@"type") |t| switch ((try self.evaluate(t)).data) {
-      .@"type" => |tv| tv.t,
-      .poison => self.ctx.types().poison(),
-      else => unreachable
-    } else if (loc.default) |default| default.expected_type else blk: {
+    const spec: model.SpecType = if (loc.@"type") |t| blk: {
+      const eval_t = switch ((try self.evaluate(t)).data) {
+        .@"type" => |tv| tv.t,
+        .poison => self.ctx.types().poison(),
+        else => unreachable
+      };
+      break :blk eval_t.at(t.pos);
+    } else if (loc.default) |default| default.expected_type.at(default.pos)
+    else blk: {
       self.ctx.logger.MissingSymbolType(loc.expr().pos);
-      break :blk self.ctx.types().poison();
+      break :blk self.ctx.types().poison().predef();
     };
     if (loc.additionals) |add| {
       if (add.varmap) |varmap| {
@@ -430,19 +434,17 @@ pub const Evaluator = struct {
         self.ctx.logger.IncompatibleFlag("borrow", borrow, varargs);
         add.borrow = null;
       };
-      if (!ltype.isInst(.poison)) {
-        if (add.varmap) |varmap| if (!ltype.isStruc(.map)) {
-          self.ctx.logger.VarmapRequiresMap(
-            varmap, &[_]model.Type{ltype});
+      if (!spec.t.isInst(.poison)) {
+        if (add.varmap != null) if (!spec.t.isStruc(.map)) {
+          self.ctx.logger.VarmapRequiresMap(&[_]model.SpecType{spec});
           add.varmap = null;
         };
-        if (add.varargs) |varargs| if (!ltype.isStruc(.list)) {
-          self.ctx.logger.VarargsRequiresList(
-            varargs, &[_]model.Type{ltype});
+        if (add.varargs != null) if (!spec.t.isStruc(.list)) {
+          self.ctx.logger.VarargsRequiresList(&[_]model.SpecType{spec});
           add.varargs = null;
         };
-        if (add.borrow) |borrow| if (
-          !switch (ltype) {
+        if (add.borrow != null) if (
+          !switch (spec.t) {
             .structural => |struc| switch (struc.*) {
               .list, .concat, .paragraphs, .callable => true,
               else => false,
@@ -453,8 +455,7 @@ pub const Evaluator = struct {
             },
           }
         ) {
-          self.ctx.logger.BorrowRequiresRef(
-            borrow, &[_]model.Type{ltype});
+          self.ctx.logger.BorrowRequiresRef(&[_]model.SpecType{spec});
           add.borrow = null;
         };
       }
@@ -464,7 +465,7 @@ pub const Evaluator = struct {
       .poison => return try self.ctx.values.poison(loc.expr().pos),
       else => unreachable,
     };
-    const loc_val = try self.ctx.values.location(loc.expr().pos, name, ltype);
+    const loc_val = try self.ctx.values.location(loc.expr().pos, name, spec);
     loc_val.default = loc.default;
     loc_val.primary = if (loc.additionals) |add| add.primary else null;
     loc_val.varargs = if (loc.additionals) |add| add.varargs else null;
@@ -885,23 +886,23 @@ const ConcatBuilder = struct {
 };
 
 const ParagraphsBuilder = struct {
-  content: std.ArrayList(model.Value.Para.Item),
-  t_builder: types.ParagraphTypeBuilder,
-  ctx: nyarna.Context,
-  is_poison: bool,
+  content  : std.ArrayList(model.Value.Para.Item),
+  t_builder: types.ParagraphsBuilder,
+  ctx      : nyarna.Context,
+  is_poison: bool = false,
 
   pub fn init(ctx: nyarna.Context) ParagraphsBuilder {
     return .{
-      .content = std.ArrayList(model.Value.Para.Item).init(ctx.global()),
-      .t_builder = types.ParagraphTypeBuilder.init(ctx.types(), true),
-      .ctx = ctx, .is_poison = false,
+      .content   = std.ArrayList(model.Value.Para.Item).init(ctx.global()),
+      .t_builder = types.ParagraphsBuilder.init(ctx, true),
+      .ctx       = ctx,
     };
   }
 
   fn enqueue(self: *@This(), item: model.Value.Para.Item) !void {
     try self.content.append(item);
     const item_type = try self.ctx.types().valueType(item.content);
-    try self.t_builder.push(item_type);
+    try self.t_builder.push(item_type.at(item.content.origin));
   }
 
   pub fn push(

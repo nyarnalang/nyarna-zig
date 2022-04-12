@@ -1,10 +1,19 @@
 const std = @import("std");
-const model = @import("model.zig");
-const nyarna = @import("nyarna.zig");
-const unicode = @import("unicode.zig");
-const stringOrder = @import("helpers.zig").stringOrder;
 
-const LiteralNumber = @import("parse.zig").LiteralNumber;
+const model       = @import("model.zig");
+const nyarna      = @import("nyarna.zig");
+const unicode     = @import("unicode.zig");
+
+const builders = @import("types/builders.zig");
+const funcs    = @import("types/funcs.zig");
+const sigs     = @import("types/sigs.zig");
+
+const stringOrder = @import("helpers.zig").stringOrder;
+const totalOrderLess = @import("types/helpers.zig").totalOrderLess;
+
+pub usingnamespace builders;
+pub usingnamespace funcs;
+pub usingnamespace sigs;
 
 /// a type or prototype constructor.
 pub const Constructor = struct {
@@ -65,284 +74,6 @@ const InnerIntend = enum {
   }
 };
 
-/// PrototypeFuncs contains function definitions belonging to a prototype.
-/// Those functions are to be instantiated for each instance of that prototype.
-///
-/// The functions are instantiated lazily to avoid lots of superfluous
-/// instantiations for every instance of e.g. Concat (which are often implicitly
-/// created). This type holds the function definitions and implements this
-/// instantiation.
-pub const PrototypeFuncs = struct {
-
-  pub const Item = struct {
-    name: *model.Value.TextScalar,
-    /// each parameter is an expression that will evaluate to a location value.
-    /// the parameters may reference the prototype's variables, defined below.
-    params: []*model.Expression,
-    /// expression that returns a type, may reference prototype variables.
-    returns: *model.Expression,
-    impl_index: usize,
-  };
-  constructor: ?struct {
-    params: []*model.Expression,
-    impl_index: usize,
-  } = null,
-  defs: []Item = &.{},
-  /// used by the variables referencing an instance's arguments. Must be filled
-  /// when instantiating a prototype func. the first variable will be \This, the
-  /// reference to the instantiated type.
-  var_container: *model.VariableContainer = undefined,
-
-  fn lessThan(
-    context: u0,
-    lhs: Item,
-    rhs: Item,
-  ) bool {
-    _ = context;
-    return stringOrder(lhs.name.content, rhs.name.content) == .lt;
-  }
-
-  /// given list will be consumed.
-  pub fn set(self: *PrototypeFuncs, defs: []Item) void {
-    std.sort.sort(Item, defs, @as(u0, 0), lessThan);
-    self.defs = defs;
-  }
-
-  fn find(self: *PrototypeFuncs, name: []const u8) ?usize {
-    var defs = self.defs;
-    var offset: usize = 0;
-    while (defs.len > 0) {
-      const i = @divTrunc(defs.len, 2);
-      const def = defs[i];
-      switch (stringOrder(name, def.name.content)) {
-        .lt => defs = defs[0..i],
-        .eq => return offset + i,
-        .gt => {
-          defs = defs[i+1..];
-          offset += i+1;
-        },
-      }
-    } else return null;
-  }
-};
-
-pub const InstanceFuncs = struct {
-  pt: *PrototypeFuncs,
-  syms: []?*model.Symbol,
-  /// arguments of the instantiation. The first argument is always the resulting
-  /// type, then come the user-supplied arguments to the Prototype call.
-  arguments: []*model.Value.TypeVal,
-  constructor: ?*model.Type.Callable,
-
-  fn init(
-    pt: *PrototypeFuncs,
-    allocator: std.mem.Allocator,
-    arguments: []*model.Value.TypeVal,
-  ) !InstanceFuncs {
-    var ret = InstanceFuncs{
-      .pt = pt,
-      .syms = try allocator.alloc(?*model.Symbol, pt.defs.len),
-      .arguments = arguments,
-      .constructor = null,
-    };
-    std.mem.set(?*model.Symbol, ret.syms, null);
-    return ret;
-  }
-
-  fn replacePrototypeWith(
-    pos: model.Position,
-    t: model.Type,
-    ctx: nyarna.Context,
-    instance: model.Type,
-  ) std.mem.Allocator.Error!?model.Type {
-    switch (t) {
-      .structural => |struc| switch (struc.*) {
-        .callable => unreachable,
-        .concat => |*con| {
-          if (try replacePrototypeWith(pos, con.inner, ctx, instance)) |inner| {
-            if (try ctx.types().concat(inner)) |ret| return ret;
-            if (!inner.isInst(.poison)) {
-              ctx.logger.InvalidInnerConcatType(pos, &[_]model.Type{inner});
-            }
-            return ctx.types().poison();
-          } else return null;
-        },
-        .intersection => unreachable,
-        .list => |*lst| {
-          if (try replacePrototypeWith(pos, lst.inner, ctx, instance)) |inner| {
-            if (try ctx.types().list(inner)) |ret| return ret;
-            if (!inner.isInst(.poison)) {
-              ctx.logger.InvalidInnerListType(pos, &[_]model.Type{inner});
-            }
-            return ctx.types().poison();
-          } else return null;
-        },
-        .map => |*map| {
-          var something_changed = false;
-          var inners: [2]model.Type = undefined;
-          inline for (.{.key, .value}) |f, index| {
-            if (
-              try replacePrototypeWith(
-                pos, @field(map, @tagName(f)), ctx, instance)
-            ) |replacement| {
-              inners[index] = replacement;
-              something_changed = true;
-            }
-          }
-          if (!something_changed) return null;
-          unreachable; // TODO: ctx.map(…,…)
-        },
-        .optional => |*opt| {
-          if (try replacePrototypeWith(pos, opt.inner, ctx, instance)) |inner| {
-            if (try ctx.types().optional(inner)) |ret| return ret;
-            if (!inner.isInst(.poison)) {
-              ctx.logger.InvalidInnerOptionalType(pos, &[_]model.Type{inner});
-            }
-            return ctx.types().poison();
-          } else return null;
-        },
-        .paragraphs => unreachable, // TODO
-      },
-      .instantiated => |inst| switch (inst.data) {
-        .record => unreachable,
-        .prototype => return instance,
-        else => return null,
-      },
-    }
-  }
-
-  fn buildCallableRes(comptime ret_t: type) type {
-    return if (ret_t == *model.Expression) ?SigBuilderResult
-    else SigBuilderResult;
-  }
-
-  fn buildCallable(
-    self: *InstanceFuncs,
-    ctx: nyarna.Context,
-    params: []*model.Expression,
-    ret: anytype,
-  ) !buildCallableRes(@TypeOf(ret)) {
-    // fill variable container with argument values.
-    var eval = ctx.evaluator();
-    self.pt.var_container.cur_frame = try eval.allocateStackFrame(
-      self.pt.var_container.num_values, self.pt.var_container.cur_frame);
-    const frame = self.pt.var_container.cur_frame.? + 1;
-    defer eval.resetStackFrame(
-      &self.pt.var_container.cur_frame, self.pt.var_container.num_values, false
-    );
-    for (self.arguments) |arg, i| frame[i] = .{.value = arg.value()};
-
-    const ret_type = if (@TypeOf(ret) == *model.Expression) switch (
-      (try eval.evaluate(ret)).data
-    ) {
-      .@"type" => |tv| tv.t,
-      .poison => return null,
-      else => unreachable,
-    } else ret;
-
-    // since this is language defined, we can be sure no func has more than 10
-    // args.
-    var locs: [10]?*model.Value.Location = undefined;
-
-    var finder = nyarna.types.CallableReprFinder.init(ctx.types());
-    for (params) |param, i| switch ((try eval.evaluate(param)).data) {
-      .location => |*loc| {
-        try finder.push(loc);
-        locs[i] = loc;
-      },
-      .poison   => locs[i] = null,
-      else      => unreachable,
-    };
-
-    const finder_res = try finder.finish(ret_type, false);
-    var builder = try nyarna.types.SigBuilder.init(
-      ctx, params.len, ret_type, finder_res.needs_different_repr
-    );
-    for (params) |_, i| if (locs[i]) |loc| try builder.push(loc);
-    return builder.finish();
-  }
-
-  pub fn find(
-    self: *InstanceFuncs,
-    ctx: nyarna.Context,
-    name: []const u8,
-  ) !?*model.Symbol {
-    const index = self.pt.find(name) orelse return null;
-    if (self.syms[index]) |sym| return sym;
-    const def = self.pt.defs[index];
-
-    const sym = try ctx.global().create(model.Symbol);
-    sym.* = .{
-      .defined_at = def.name.value().origin,
-      .name = def.name.content,
-      .data = undefined,
-      .parent_type = self.arguments[0].t,
-    };
-
-    const builder_res = (
-      try self.buildCallable(ctx, def.params, def.returns)
-    ) orelse {
-      sym.data = .poison;
-      self.syms[index] = sym;
-      return sym;
-    };
-
-    const container = try ctx.global().create(model.VariableContainer);
-    container.* =
-      .{.num_values = @intCast(u15, builder_res.sig.parameters.len)};
-    const func = try ctx.global().create(model.Function);
-    func.* = .{
-      .callable = try builder_res.createCallable(ctx.global(), .function),
-      .defined_at = def.name.value().origin,
-      .data = .{
-        .ext = .{
-          .ns_dependent = false,
-          .impl_index = def.impl_index,
-        },
-      },
-      .name = sym,
-      .variables = container,
-    };
-    sym.data = .{.func = func};
-    self.syms[index] = sym;
-    return sym;
-  }
-
-  pub fn genConstructor(
-    self: *InstanceFuncs,
-    ctx: nyarna.Context,
-  ) !void {
-    if (self.constructor != null) return;
-    if (self.pt.constructor) |constr| {
-      ctx.types().instantiating_instance_funcs = true;
-      defer ctx.types().instantiating_instance_funcs = false;
-
-      const builder_res = try self.buildCallable(
-        ctx, constr.params, self.arguments[0].t);
-      const callable = try builder_res.createCallable(ctx.global(), .@"type");
-      self.constructor = callable;
-    }
-  }
-};
-
-/// this function implements the artificial total order. The total order's
-/// constraint is satisfied by ordering all intrinsic types (which do not have
-/// allocated information) before all other types, and ordering the other
-/// types according to the pointers to their allocated memory.
-///
-/// The first argument exists so that this fn can be used for std.sort.sort.
-fn total_order_less(_: void, a: model.Type, b: model.Type) bool {
-  const a_int = switch (a) {
-    .structural => |sa| @ptrToInt(sa),
-    .instantiated => |ia| @ptrToInt(ia),
-  };
-  const b_int = switch (b) {
-    .structural => |sb| @ptrToInt(sb),
-    .instantiated => |ib| @ptrToInt(ib),
-  };
-  return a_int < b_int;
-}
-
 /// This is Nyarna's type lattice. It calculates type intersections, checks type
 /// compatibility, and owns all data of structural and unique types.
 ///
@@ -372,7 +103,7 @@ pub const Lattice = struct {
   /// This node is used to efficiently store and search for structural types
   /// that are instantiated with a list of types.
   /// see doc on the prefix_trees field.
-  fn TreeNode(comptime Flag: type) type {
+  pub fn TreeNode(comptime Flag: type) type {
     return struct {
       key: model.Type = undefined,
       value: ?*model.Type.Structural = null,
@@ -383,17 +114,17 @@ pub const Lattice = struct {
       /// This type is used to navigate the intersections field. Given a node,
       /// it will descend into its children and search the node matching the
       /// given type, or create and insert a node for it if none exists.
-      const Iter = struct {
+      pub const Iter = struct {
         cur: *TreeNode(Flag),
         lattice: *Lattice,
 
-        fn descend(self: *Iter, t: model.Type, flag: Flag) !void {
+        pub fn descend(self: *Iter, t: model.Type, flag: Flag) !void {
           var next = &self.cur.children;
           // TODO: can be made faster with linear search but not sure whether that
           // is necessary.
           while (next.*) |next_node| : (next = &next_node.next) {
             if (next_node.flag == flag)
-              if (!total_order_less(undefined, next_node.key, t)) break;
+              if (!totalOrderLess(undefined, next_node.key, t)) break;
           }
           // inlining this causes a compiler bug :)
           const hit =
@@ -524,22 +255,24 @@ pub const Lattice = struct {
   },
   /// prototype functions defined on every type of a prototype.
   prototype_funcs: struct {
-    concat      : PrototypeFuncs = .{},
-    @"enum"     : PrototypeFuncs = .{},
-    float       : PrototypeFuncs = .{},
-    intersection: PrototypeFuncs = .{},
-    list        : PrototypeFuncs = .{},
-    map         : PrototypeFuncs = .{},
-    numeric     : PrototypeFuncs = .{},
-    optional    : PrototypeFuncs = .{},
-    paragraphs  : PrototypeFuncs = .{},
-    record      : PrototypeFuncs = .{},
-    textual     : PrototypeFuncs = .{},
+    concat      : funcs.PrototypeFuncs = .{},
+    @"enum"     : funcs.PrototypeFuncs = .{},
+    float       : funcs.PrototypeFuncs = .{},
+    intersection: funcs.PrototypeFuncs = .{},
+    list        : funcs.PrototypeFuncs = .{},
+    map         : funcs.PrototypeFuncs = .{},
+    numeric     : funcs.PrototypeFuncs = .{},
+    optional    : funcs.PrototypeFuncs = .{},
+    paragraphs  : funcs.PrototypeFuncs = .{},
+    record      : funcs.PrototypeFuncs = .{},
+    textual     : funcs.PrototypeFuncs = .{},
   } = .{},
   /// holds instance functions for every non-unique type. These are instances
   /// of the functions that are defined on the prototype of the subject type.
-  instance_funcs: std.HashMapUnmanaged(model.Type, InstanceFuncs,
-    model.Type.HashContext, std.hash_map.default_max_load_percentage) = .{},
+  instance_funcs: std.HashMapUnmanaged(
+    model.Type, funcs.InstanceFuncs, model.Type.HashContext,
+    std.hash_map.default_max_load_percentage,
+  ) = .{},
   /// set to true if we're currently instantiating instance funcs.
   /// while we're doing this, no other instance funcs will be instantiated.
   /// this leads to types with constructors having the .type type instead of the
@@ -739,7 +472,8 @@ pub const Lattice = struct {
     const inst_types =
       [_]*model.Type.Instantiated{t1.instantiated, t2.instantiated};
     for (inst_types) |t| switch (t.data) {
-      .record => return try IntersectionTypeBuilder.calcFrom(self, .{&t1, &t2}),
+      .record => return try
+        builders.IntersectionBuilder.calcFrom(self, .{&t1, &t2}),
       else => {},
     };
     for (inst_types) |t, i| switch (t.data) {
@@ -776,8 +510,8 @@ pub const Lattice = struct {
     return self.raw();
   }
 
-  fn calcParagraphs(self: *Self, inner: []model.Type) !model.Type {
-    std.sort.sort(model.Type, inner, {}, total_order_less);
+  pub fn calcParagraphs(self: *Self, inner: []model.Type) !model.Type {
+    std.sort.sort(model.Type, inner, {}, totalOrderLess);
     var iter = TreeNode(void).Iter{
       .cur = &self.prefix_trees.paragraphs, .lattice = self,
     };
@@ -830,9 +564,9 @@ pub const Lattice = struct {
               else inter_scalar
             else other_inter.scalar;
 
-            return if (scalar_type) |st| IntersectionTypeBuilder.calcFrom(
+            return if (scalar_type) |st| builders.IntersectionBuilder.calcFrom(
               self, .{&st, inter.types, other_inter.types})
-            else IntersectionTypeBuilder.calcFrom(
+            else builders.IntersectionBuilder.calcFrom(
               self, .{inter.types, other_inter.types});
           },
           else => {},
@@ -899,14 +633,15 @@ pub const Lattice = struct {
         if (other.isScalar()) {
           const scalar_type = if (inter.scalar) |inter_scalar|
             try self.sup(other, inter_scalar) else other;
-          break :blk try IntersectionTypeBuilder.calcFrom(
+          break :blk try builders.IntersectionBuilder.calcFrom(
             self, .{&scalar_type, inter.types});
         } else switch (other) {
           .instantiated => |other_inst| if (other_inst.data == .record) {
             break :blk try if (inter.scalar) |inter_scalar|
-              IntersectionTypeBuilder.calcFrom(
+              builders.IntersectionBuilder.calcFrom(
                 self, .{&inter_scalar, &other, inter.types})
-            else IntersectionTypeBuilder.calcFrom(self, .{&other, inter.types});
+            else builders.IntersectionBuilder.calcFrom(
+              self, .{&other, inter.types});
           },
           else => {},
         }
@@ -1099,6 +834,10 @@ pub const Lattice = struct {
     };
   }
 
+  pub inline fn valueSpecType(self: *Lattice, v: *model.Value) !model.SpecType {
+    return (try self.valueType(v)).at(v.origin);
+  }
+
   fn valForType(self: Lattice, t: model.Type) !*model.Value.TypeVal {
     const ret = try self.allocator.create(model.Value);
     ret.* = .{
@@ -1131,7 +870,7 @@ pub const Lattice = struct {
     };
   }
 
-  pub fn instanceFuncsOf(self: *Lattice, t: model.Type) !?*InstanceFuncs {
+  pub fn instanceFuncsOf(self: *Lattice, t: model.Type) !?*funcs.InstanceFuncs {
     if (self.instantiating_instance_funcs) return null;
     const pt = switch (t) {
       .structural => |struc| switch (struc.*) {
@@ -1156,7 +895,7 @@ pub const Lattice = struct {
     if (!res.found_existing) {
       self.instantiating_instance_funcs = true;
       defer self.instantiating_instance_funcs = false;
-      res.value_ptr.* = try InstanceFuncs.init(
+      res.value_ptr.* = try funcs.InstanceFuncs.init(
         pt, self.allocator, try self.instanceArgs(t));
     }
     return res.value_ptr;
@@ -1202,6 +941,10 @@ pub const Lattice = struct {
       },
     };
   }
+
+  pub inline fn litType(self: *Lattice, lit: *model.Node.Literal) model.Type {
+    return if (lit.kind == .text) self.literal() else self.space();
+  }
 };
 
 /// searches direct scalar types as well as scalar types in concatenation,
@@ -1239,521 +982,5 @@ pub inline fn allowedAsOptionalInner(t: model.Type) bool {
 
 pub fn descend(t: model.Type, index: usize) model.Type {
   // update this if we ever allow descending into other types.
-  return t.instantiated.data.record.constructor.sig.parameters[index].ptype;
+  return t.instantiated.data.record.constructor.sig.parameters[index].spec.t;
 }
-
-pub const SigBuilderResult = struct {
-  /// the built signature
-  sig: *model.Signature,
-  /// if build_repr has been set in init(), the representative signature
-  /// for the type lattice. else null.
-  repr: ?*model.Signature,
-
-  pub fn createCallable(
-    self: *const @This(),
-    allocator: std.mem.Allocator,
-    kind: model.Type.Callable.Kind,
-  ) !*model.Type.Callable {
-    const strct = try allocator.create(model.Type.Structural);
-    errdefer allocator.destroy(strct);
-    strct.* = .{
-      .callable = .{
-        .sig = self.sig,
-        .kind = kind,
-        .repr = undefined,
-      },
-    };
-    strct.callable.repr = if (self.repr) |repr_sig| blk: {
-      const repr = try allocator.create(model.Type.Structural);
-      errdefer allocator.destroy(repr);
-      repr.* = .{
-        .callable = .{
-          .sig = repr_sig,
-          .kind = kind,
-          .repr = undefined,
-        },
-      };
-      repr.callable.repr = &repr.callable;
-      break :blk &repr.callable;
-    } else &strct.callable;
-    return &strct.callable;
-  }
-};
-
-pub const SigBuilder = struct {
-  const Result = SigBuilderResult;
-
-  val: *model.Signature,
-  repr: ?*model.Signature,
-  ctx: nyarna.Context,
-  next_param: u21,
-
-  const Self = @This();
-
-  /// if returns type is yet to be determined, give .every.
-  /// the returns type is given early to know whether this is a keyword.
-  ///
-  /// if build_repr is true, a second signature will be built to be the
-  /// signature of the repr Callable in the type lattice.
-  pub fn init(
-    ctx: nyarna.Context,
-    num_params: usize,
-    returns: model.Type,
-    build_repr: bool,
-  ) !Self {
-    var ret = Self{
-      .val = try ctx.global().create(model.Signature),
-      .repr = if (build_repr)
-          try ctx.global().create(model.Signature)
-        else null,
-      .ctx = ctx,
-      .next_param = 0,
-    };
-    ret.val.* = .{
-      .parameters = try ctx.global().alloc(
-        model.Signature.Parameter, num_params),
-      .primary = null,
-      .varmap = null,
-      .auto_swallow = null,
-      .returns = returns,
-    };
-    if (ret.repr) |sig| {
-      sig.* = .{
-        .parameters = try ctx.global().alloc(
-          model.Signature.Parameter, num_params),
-        .primary = null,
-        .varmap = null,
-        .auto_swallow = null,
-        .returns = returns,
-      };
-    }
-    return ret;
-  }
-
-  pub fn push(self: *Self, loc: *model.Value.Location) !void {
-    const param = &self.val.parameters[self.next_param];
-    param.* = .{
-      .pos = loc.value().origin,
-      .name = loc.name.content,
-      .ptype = loc.tloc,
-      .capture = if (loc.varargs) |_| .varargs else if (loc.borrow) |_|
-        @as(@TypeOf(param.capture), .borrow) else .default,
-      .default = loc.default,
-      .config = if (loc.header) |bh| bh.config else null,
-    };
-    // TODO: use contains(.ast_node) instead (?)
-    const t: model.Type =
-      if (!self.val.isKeyword() and loc.tloc.isInst(.ast)) blk: {
-        self.ctx.logger.AstNodeInNonKeyword(loc.value().origin);
-        break :blk self.ctx.types().poison();
-      } else loc.tloc;
-    if (loc.primary) |p| {
-      if (self.val.primary) |pindex| {
-        self.ctx.logger.DuplicateFlag(
-          "primary", p, self.val.parameters[pindex].pos);
-      } else {
-        self.val.primary = self.next_param;
-      }
-    }
-    if (loc.header) |bh| {
-      if (bh.swallow_depth) |depth| {
-        if (self.val.auto_swallow) |as| {
-          var buf: [4]u8 = undefined;
-          // inlining this into the errorMsg call leads to a compiler bug :)
-          const repr = if (as.depth == 0) blk: {
-            std.mem.copy(u8, &buf, ":>");
-            break :blk @as([]const u8, buf[0..2]);
-          } else std.fmt.bufPrint(&buf, ":{}>", .{as.depth})
-            catch unreachable;
-          self.ctx.logger.DuplicateAutoSwallow(
-            repr, bh.value().origin, self.val.parameters[as.param_index].pos);
-        } else {
-          self.val.auto_swallow = .{
-            .depth = depth,
-            .param_index = self.next_param
-          };
-        }
-      }
-    }
-    if (self.repr) |sig| {
-      sig.parameters[self.next_param] = .{
-        .pos = loc.value().origin,
-        .name = loc.name.content,
-        .ptype = t,
-        .capture = .default,
-        .default = null,
-        .config = null,
-      };
-    }
-    self.next_param += 1;
-  }
-
-  pub fn finish(self: *Self) Result {
-    std.debug.assert(self.next_param == self.val.parameters.len);
-    return Result{
-      .sig = self.val,
-      .repr = self.repr,
-    };
-  }
-};
-
-pub const CallableReprFinder = struct {
-  pub const Result = struct {
-    found: *?*model.Type.Structural,
-    needs_different_repr: bool,
-    num_items: usize,
-  };
-  const Self = @This();
-
-  iter: Lattice.TreeNode(bool).Iter,
-  needs_different_repr: bool,
-  count: usize,
-
-  pub fn init(lattice: *Lattice) CallableReprFinder {
-    return .{
-      .iter = .{
-        .cur = &lattice.prefix_trees.callable,
-        .lattice = lattice,
-      },
-      .needs_different_repr = false,
-      .count = 0,
-    };
-  }
-
-  pub fn push(self: *Self, loc: *model.Value.Location) !void {
-    self.count += 1;
-    try self.iter.descend(loc.tloc, loc.borrow != null);
-    if (loc.default != null or loc.primary != null or loc.varargs != null or
-        loc.varmap != null or loc.header != null)
-      self.needs_different_repr = true;
-  }
-
-  pub fn finish(self: *Self, returns: model.Type, is_type: bool) !Result {
-    try self.iter.descend(returns, is_type);
-    return Result{
-      .found = &self.iter.cur.value,
-      .needs_different_repr = self.needs_different_repr,
-      .num_items = self.count,
-    };
-  }
-};
-
-pub const ParagraphTypeBuilder = struct {
-  pub const Result = struct {
-    scalar_type_sup: model.Type,
-    resulting_type: model.Type,
-  };
-
-  types: *Lattice,
-  list: std.ArrayListUnmanaged(model.Type),
-  cur_scalar: model.Type,
-  non_voids: u21,
-  poison: bool,
-
-  pub fn init(types: *Lattice, force_paragraphs: bool) ParagraphTypeBuilder {
-    return .{
-      .types = types,
-      .list = .{},
-      .cur_scalar = types.every(),
-      .non_voids = if (force_paragraphs) 2 else 0,
-      .poison = false,
-    };
-  }
-
-  pub fn push(self: *ParagraphTypeBuilder, t: model.Type) !void {
-    if (t.isInst(.void) or t.isInst(.space)) return;
-    if (t.isInst(.poison)) {
-      self.poison = true;
-      return;
-    }
-    self.non_voids += 1;
-    for (self.list.items) |existing|
-      if (self.types.lesserEqual(t, existing)) return;
-    if (containedScalar(t)) |scalar_type|
-      self.cur_scalar = try self.types.sup(self.cur_scalar, scalar_type);
-    try self.list.append(self.types.allocator, t);
-  }
-
-  pub fn finish(self: *ParagraphTypeBuilder) !Result {
-    return if (self.poison) Result{
-      .scalar_type_sup = self.cur_scalar,
-      .resulting_type = self.types.poison(),
-    } else switch (self.non_voids) {
-      0 => Result{
-        .scalar_type_sup = self.cur_scalar,
-        .resulting_type = self.types.void(),
-      },
-      1 => Result{
-        .scalar_type_sup = self.cur_scalar,
-        .resulting_type = self.list.items[0],
-      },
-      else => blk: {
-        for (self.list.items) |*inner_type| {
-          if (containedScalar(inner_type.*) != null)
-            inner_type.* = try self.types.sup(self.cur_scalar, inner_type.*);
-        }
-        break :blk Result{
-          .scalar_type_sup = self.cur_scalar,
-          .resulting_type = try self.types.calcParagraphs(self.list.items),
-        };
-      },
-    };
-  }
-};
-
-pub const EnumTypeBuilder = struct {
-  const Self = @This();
-
-  ctx: nyarna.Context,
-  ret: *model.Type.Enum,
-
-  pub fn init(ctx: nyarna.Context, pos: model.Position) !Self {
-    const inst = try ctx.global().create(model.Type.Instantiated);
-    inst.* = .{
-      .at = pos,
-      .name = null,
-      .data = .{.tenum = .{.values = .{}}},
-    };
-    return Self{.ctx = ctx, .ret = &inst.data.tenum};
-  }
-
-  pub inline fn add(self: *Self, value: []const u8, pos: model.Position) !void {
-    try self.ret.values.put(self.ctx.global(), value, pos);
-  }
-
-  pub fn finish(self: *Self) *model.Type.Enum {
-    return self.ret;
-  }
-};
-
-pub const NumericTypeBuilder = struct {
-  const Self = @This();
-
-  ctx: nyarna.Context,
-  ret: *model.Type.Numeric,
-  pos: model.Position,
-
-  pub fn init(ctx: nyarna.Context, pos: model.Position) !Self {
-    const inst = try ctx.global().create(model.Type.Instantiated);
-    inst.* = .{
-      .at = pos,
-      .name = null,
-      .data = .{.numeric = .{
-        .min = std.math.minInt(i64),
-        .max = std.math.maxInt(i64),
-        // can be maximal 32. set to 33 to indicate errors during construction.
-        .decimals = 0,
-      }},
-    };
-    return Self{.ctx = ctx, .ret = &inst.data.numeric, .pos = pos};
-  }
-
-  pub fn min(self: *Self, num: LiteralNumber, pos: model.Position) void {
-    if (num.decimals > self.ret.decimals) {
-      self.ctx.logger.TooManyDecimals(pos, num.repr);
-      self.ret.decimals = 33;
-    } else if (
-      @mulWithOverflow(i64, num.value,
-      std.math.pow(i64, 10, @intCast(i64, self.ret.decimals - num.decimals)),
-        &self.ret.min)
-    ) {
-      self.ctx.logger.NumberTooLarge(pos, num.repr);
-      self.ret.decimals = 33;
-    }
-  }
-
-  pub fn max(self: *Self, num: LiteralNumber, pos: model.Position) void {
-    if (num.decimals > self.ret.decimals) {
-      self.ctx.logger.TooManyDecimals(pos, num.repr);
-      self.ret.decimals = 33;
-    } else if (
-      @mulWithOverflow(i64, num.value,
-        std.math.pow(i64, 10, @intCast(i64, self.ret.decimals - num.decimals)),
-        &self.ret.max)
-    ) {
-      self.ctx.logger.NumberTooLarge(pos, num.repr);
-      self.ret.decimals = 33;
-    }
-  }
-
-  pub fn decimals(self: *Self, num: LiteralNumber, pos: model.Position) void {
-    if (num.value > 32 or num.value < 0 or num.decimals > 0) {
-      self.ctx.logger.InvalidDecimals(pos, num.repr);
-      self.ret.decimals = 33;
-    } else if (self.ret.decimals != 33) {
-      self.ret.decimals = @intCast(u8, num.value);
-    }
-  }
-
-  pub fn finish(self: *Self) ?*model.Type.Numeric {
-    if (self.ret.min > self.ret.max) {
-      self.ctx.logger.IllegalNumericInterval(self.pos);
-      self.ret.decimals = 33;
-    }
-    if (self.ret.decimals > 32) {
-      self.abort();
-      return null;
-    }
-    return self.ret;
-  }
-
-  pub fn abort(self: *Self) void {
-    self.ctx.global().destroy(self.ret.instantiated());
-  }
-};
-
-/// Offers facilities to generate Intersection types. Assumes all given types
-/// are either Record or Scalar types, and at most one Scalar type is given.
-///
-/// Types are to be given as list of `[]const model.Type`, where the types in
-/// each slices are ordered according to the artificial type order. This API is
-/// designed so that Record and Scalar types can be put in as single-value
-/// slice, while referred Intersections will get the scalar part figured out
-/// externally while the non-scalar part is a slice that fulfills our
-/// precondition and can therefore be put in directly.
-pub const IntersectionTypeBuilder = struct {
-  const Self = @This();
-
-  fn Static(comptime size: usize) type {
-    return struct {
-      sources: [size][]const model.Type,
-      indexes: [size]usize,
-
-      pub fn init(sources: anytype) @This() {
-        var ret: @This() = undefined;
-        inline for (std.meta.fields(@TypeOf(sources))) |field, index| {
-          const value = @field(sources, field.name);
-          switch (@typeInfo(@TypeOf(value)).Pointer.size) {
-            .One =>
-              ret.sources[index] = @ptrCast([*]const model.Type, value)[0..1],
-            .Slice => ret.sources[index] = value,
-            else => unreachable,
-          }
-          ret.indexes[index] = 0;
-        }
-        return ret;
-      }
-    };
-  }
-
-  pub inline fn staticSources(sources: anytype) Static(sources.len) {
-    return Static(sources.len).init(sources);
-  }
-
-  sources: [][]const model.Type,
-  indexes: []usize,
-  filled: usize,
-  allocator: ?std.mem.Allocator,
-
-  pub fn init(
-    max_sources: usize,
-    allocator: std.mem.Allocator,
-  ) !IntersectionTypeBuilder {
-    return IntersectionTypeBuilder{
-      .sources = try allocator.alloc([]const model.Type, max_sources),
-      .indexes = try allocator.alloc(usize, max_sources),
-      .filled = 0,
-      .allocator = allocator,
-    };
-  }
-
-  pub fn calcFrom(lattice: *Lattice, input: anytype) !model.Type {
-    var static = Static(input.len).init(input);
-    var self = IntersectionTypeBuilder.initStatic(&static);
-    return self.finish(lattice);
-  }
-
-  fn initStatic(static: anytype) IntersectionTypeBuilder {
-    return IntersectionTypeBuilder{
-      .sources = &static.sources,
-      .indexes = &static.indexes,
-      .filled = static.sources.len,
-      .allocator = null,
-    };
-  }
-
-  pub fn push(self: *Self, item: []const model.Type) void {
-    for (item) |t| std.debug.assert(t.isScalar() or t.isInst(.record));
-    self.sources[self.filled] = item;
-    self.indexes[self.filled] = 0;
-    self.filled += 1;
-  }
-
-  pub fn finish(self: *Self, lattice: *Lattice) !model.Type {
-    var iter = Lattice.TreeNode(void).Iter{
-      .cur = &lattice.prefix_trees.intersection, .lattice = lattice,
-    };
-    var tcount = @as(usize, 0);
-    var scalar: ?model.Type = null;
-    var input = self.sources[0..self.filled];
-    while (true) {
-      var cur_type: ?model.Type = null;
-      for (input) |list, index| {
-        if (list.len > self.indexes[index]) {
-          const next = list[self.indexes[index]];
-          if (cur_type) |previous| {
-            if (total_order_less(undefined, next, previous)) cur_type = next;
-          } else cur_type = next;
-        }
-      }
-      if (cur_type) |next_type| {
-        for (input) |list, index| {
-          const list_index = self.indexes[index];
-          if (list_index < list.len and list[list_index].eql(next_type)) {
-            self.indexes[index] += 1;
-          }
-        }
-        try iter.descend(next_type, {});
-        if (next_type.isScalar()) {
-          std.debug.assert(scalar == null);
-          scalar = next_type;
-        } else tcount += 1;
-      } else break;
-    }
-
-    defer if (self.allocator) |allocator| {
-      allocator.free(self.sources);
-      allocator.free(self.indexes);
-    };
-
-    return model.Type{.structural = iter.cur.value orelse blk: {
-      var new = try lattice.allocator.create(model.Type.Structural);
-      new.* = .{.intersection = undefined};
-      const new_in = &new.intersection;
-      new_in.* = .{
-        .scalar = scalar,
-        .types = try lattice.allocator.alloc(model.Type, tcount),
-      };
-      var target_index = @as(usize, 0);
-      for (input) |_, index| self.indexes[index] = 0;
-      while (true) {
-        var cur_type: ?model.Type = null;
-        for (input) |vals, index| {
-          if (self.indexes[index] < vals.len) {
-            const next_in_list = vals[self.indexes[index]];
-            if (cur_type) |previous| {
-              if (total_order_less(undefined, next_in_list, previous))
-                cur_type = next_in_list;
-            } else cur_type = next_in_list;
-          }
-        }
-        if (cur_type) |next_type| {
-          for (self.sources) |vals, index| {
-            const list_index = self.indexes[index];
-            if (list_index < vals.len and vals[list_index].eql(next_type)) {
-              self.indexes[index] += 1;
-            }
-          }
-          if (next_type.isScalar()) {
-            new_in.scalar = next_type;
-          } else {
-            new_in.types[target_index] = next_type;
-            target_index += 1;
-          }
-        } else break;
-      }
-      iter.cur.value = new;
-      break :blk new;
-    }};
-  }
-};

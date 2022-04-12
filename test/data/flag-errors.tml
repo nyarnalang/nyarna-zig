@@ -25,4 +25,5 @@
   repr = func
   previous = input(11:1)
 9:1 - 11:1 IncompatibleTypes
-  types = [function] (Raw) -> Void, Integer, Space
+  main = [function] (Raw) -> Void
+  other = input(3:1) Raw

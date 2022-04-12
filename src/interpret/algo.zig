@@ -92,7 +92,7 @@ const TypeResolver = struct {
               else => {
                 const tt = self.dres.intpr.ctx.types().@"type"();
                 self.dres.intpr.ctx.logger.ExpectedExprOfTypeXGotY(
-                  name_pos, &[_]model.Type{tt, expr.expected_type});
+                  &.{expr.expected_type.at(expr.pos), tt.predef()});
                 return graph.ResolutionContext.Result.failed;
               }
             },
@@ -440,7 +440,7 @@ pub const DeclareResolution = struct {
         .defined_at = model.Position.intrinsic(),
         .name = var_name,
         .data = .{.variable = .{
-          .t = types.type(),
+          .spec = types.type().predef(),
           .container = container,
           .offset = @intCast(u15, i),
           .assignable = false,
@@ -749,7 +749,7 @@ pub const DeclareResolution = struct {
                   .node => |rnode| {
                     const expr = (
                       try self.intpr.associate(
-                        rnode, self.intpr.ctx.types().@"type"(),
+                        rnode, self.intpr.ctx.types().@"type"().predef(),
                         .{.kind = .final})
                     ) orelse break :blk;
                     bgen.returns = .{.expr = expr};
@@ -950,7 +950,7 @@ pub const DeclareResolution = struct {
           .funcgen => |*fgen| {
             const func = fgen.params.pregen;
             func.data.ny.body = (try self.intpr.tryInterpretFuncBody(
-              fgen, fgen.cur_returns, .{.kind = .final})).?;
+              fgen, fgen.cur_returns.predef(), .{.kind = .final})).?;
             // so that following components can call it
             def.content.data = .{.expression =
               try self.intpr.ctx.createValueExpr(

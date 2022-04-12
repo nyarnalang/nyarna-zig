@@ -89,9 +89,9 @@ pub fn main() !void {
       .{"defined_at", "model.Position"},
     }, "wrongIdErrorFn");
   try handler.writeHandlerFns(
-    ids.WrongTypeError,
-    .{.{"pos", "model.Position"}, .{"types", "[]model.Type"}},
-    "wrongTypeErrorFn");
+    ids.TypeError,
+    .{.{"types", "[]const model.SpecType"}},
+    "typeErrorFn");
   try handler.writeHandlerFns(
     ids.ConstructionError, .{
       .{"pos", "model.Position"},

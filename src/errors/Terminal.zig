@@ -31,7 +31,7 @@ pub fn init(target: std.fs.File) @This() {
       .wrongItemErrorFn = wrongItemError,
       .scalarErrorFn = scalarError,
       .wrongIdErrorFn = wrongIdError,
-      .wrongTypeErrorFn = wrongTypeError,
+      .typeErrorFn = typeError,
       .constructionErrorFn = constructionError,
       .runtimeErrorFn = runtimeError,
       .systemNyErrorFn = systemNyError,
@@ -192,8 +192,6 @@ fn previousOccurence(
     .MissingParameterArgument =>
       " has not been given an argument",
     .DuplicateSymbolName => " hides existing symbol",
-    .MultipleScalarTypesInIntersection =>
-      " conflicts with another scalar type",
     .MissingEndCommand => " is missing and explict end",
     .CannotAssignToConst => " is constant and cannot be assigned to",
     .DuplicateEnumValue => " occurs multiple times",
@@ -207,7 +205,6 @@ fn previousOccurence(
     .DuplicateAutoSwallow => "swallow def",
     .DuplicateParameterArgument, .MissingParameterArgument => "parameter",
     .DuplicateSymbolName => "symbol",
-    .MultipleScalarTypesInIntersection => "type",
     .MissingEndCommand => "command",
     .CannotAssignToConst => "variable",
     .DuplicateEnumValue => "enum value",
@@ -221,7 +218,6 @@ fn previousOccurence(
     .DuplicateParameterArgument => "previous argument",
     .MissingParameterArgument => "parameter definition",
     .DuplicateSymbolName => "symbol definition",
-    .MultipleScalarTypesInIntersection => "previous type",
     .MissingEndCommand => "here",
     .CannotAssignToConst => "variable definition",
     .DuplicateEnumValue => "first seen",
@@ -234,9 +230,9 @@ fn previousOccurence(
 }
 
 fn posChain(
-  reporter: *Reporter,
-  id: errors.PositionChainError,
-  pos: model.Position,
+  reporter  : *Reporter,
+  id        : errors.PositionChainError,
+  pos       : model.Position,
   referenced: []model.Position,
 ) void {
   const self = @fieldParentPtr(@This(), "reporter", reporter);
@@ -247,73 +243,82 @@ fn posChain(
   }
 }
 
-fn wrongTypeError(
+fn typeError(
   reporter: *Reporter,
-  id: errors.WrongTypeError,
-  pos: model.Position,
-  types: []const model.Type,
+  id      : errors.TypeError,
+  types   : []const model.SpecType,
 ) void {
   const self = @fieldParentPtr(@This(), "reporter", reporter);
-  self.style(.{.bold}, "{s}", .{pos});
+  self.style(.{.bold}, "{s}", .{types[0].pos});
+  const main = types[0].t.formatter();
   switch (id) {
     .ExpectedExprOfTypeXGotY => {
-      const t1 = types[0].formatter();
-      const t2 = types[1].formatter();
-      self.renderError(
-        "expression has incompatible type: expected '{}', got '{}'", .{
-        t1, t2});
+      self.renderError("incompatible type: {}", .{main});
+      const spec = types[1].t.formatter();
+      self.writer.print(
+        "  {s} specified type: {}\n", .{types[1].pos, spec}
+      ) catch unreachable;
     },
     .ScalarTypesMismatch => {
-      const t1 = types[0].formatter();
-      const t2 = types[1].formatter();
-      self.renderError("expected scalar type '{}', got '{}'", .{t1, t2});
+      self.renderError("incompatible scalar type: {}", .{main});
+      const spec = types[1].t.formatter();
+      self.writer.print(
+        "  {s} specified scalar type: {}\n", .{types[1].pos, spec}
+      ) catch unreachable;
     },
     .IncompatibleTypes => {
-      const main = types[0].formatter();
-      const others = model.Type.formatterAll(types[1..]);
-      self.renderError(
-        "expression type '{}' is not compatible with previous types {}", .{
-        main, others});
+      self.renderError("type not compatible with previous types: {}", .{main});
+      for (types[1..]) |item| {
+        const prev = item.t.formatter();
+        self.writer.print(
+          "  {s} previous type: {}", .{item.pos, prev}
+        ) catch unreachable;
+      }
     },
     .InvalidInnerConcatType => {
-      const t_fmt = types[0].formatter();
-      self.renderError("invalid inner type for Concat: '{}'", .{t_fmt});
+      self.renderError("invalid inner type for Concat: '{}'", .{main});
     },
     .InvalidInnerOptionalType => {
-      const t_fmt = types[0].formatter();
-      self.renderError("invalid inner type for Optional: '{}'", .{t_fmt});
+      self.renderError("invalid inner type for Optional: '{}'", .{main});
     },
     .InvalidInnerIntersectionType => {
-      const t_fmt = types[0].formatter();
-      self.renderError("invalid inner type for Intersection: '{}'", .{t_fmt});
+      self.renderError("invalid inner type for Intersection: '{}'", .{main});
     },
     .InvalidInnerListType => {
-      const t_fmt = types[0].formatter();
-      self.renderError("invalid inner type for List: '{}'", .{t_fmt});
+      self.renderError("invalid inner type for List: '{}'", .{main});
     },
     .InvalidDefinitionValue => {
-      const t_fmt = types[0].formatter();
       self.renderError(
-        "given value for symbol definition is '{}' " ++
-        "which cannot be made into a symbol", .{t_fmt});
+        "given value for symbol definition is a {} " ++
+        "which cannot be made into a symbol", .{main});
     },
     .CannotBranchOn => {
-      const t_fmt = types[0].formatter();
-      self.renderError("cannot branch on expression of type '{}'", .{t_fmt});
+      self.renderError("cannot branch on expression of type '{}'", .{main});
     },
     .VarmapRequiresMap => {
-      const t_fmt = types[0].formatter();
-      self.renderError("`varmap` requires mapping type, got '{}'", .{t_fmt});
+      self.renderError("`varmap` requires mapping type, got '{}'", .{main});
     },
     .VarargsRequiresList => {
-      const t_fmt = types[0].formatter();
-      self.renderError("`varargs` requires list type, got '{}'", .{t_fmt});
+      self.renderError("`varargs` requires list type, got '{}'", .{main});
     },
     .BorrowRequiresRef => {
-      const t_fmt = types[0].formatter();
       self.renderError(
         "`borrow` requires ref type " ++
-        "(callable, concat, list, map, record), got '{}'", .{t_fmt});
+        "(callable, concat, list, map, record), got '{}'", .{main});
+    },
+    .TypesNotDisjoint => {
+      self.renderError("type is not disjoint: {}", .{main});
+      const prev = types[1].t.formatter();
+      self.writer.print(
+        "  {s} with type: {}\n", .{types[1].pos, prev}
+      ) catch unreachable;
+    },
+    .MultipleScalarTypes => {
+      self.renderError("multiple scalar types: {}", .{main});
+      const prev = types[1].t.formatter();
+      self.writer.print(
+        "  {s} previous scalar type: {}\n", .{types[1].pos, prev}
+      ) catch unreachable;
     },
   }
 }

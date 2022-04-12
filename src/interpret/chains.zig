@@ -113,7 +113,9 @@ pub const Resolver = struct {
         .record => |*rec| {
           for (rec.constructor.sig.parameters) |*field, index| {
             if (std.mem.eql(u8, field.name, name)) {
-              return SearchResult{.field = .{.index = index, .t = field.ptype}};
+              return SearchResult{
+                .field = .{.index = index, .t = field.spec.t},
+              };
             }
           }
         },
@@ -136,12 +138,12 @@ pub const Resolver = struct {
     switch (rs.sym.data) {
       .poison => return Resolution.poison,
       .variable => |*v| {
-        if (v.t.isInst(.every)) {
+        if (v.spec.t.isInst(.every)) {
           std.debug.assert(self.stage.kind == .intermediate);
           return Resolution{.failed = rs.ns};
         } else {
           return Resolution.chain(
-            rs.ns, rs.node(), .{}, v.t, rs.name_pos, false);
+            rs.ns, rs.node(), .{}, v.spec.t, rs.name_pos, false);
         }
       },
       else => {},
@@ -165,8 +167,8 @@ pub const Resolver = struct {
           .ns = ns,
           .name_pos = name_pos,
         }};
-        std.debug.assert(!v.t.isInst(.every));
-        return Resolution.chain(ns, node, .{}, v.t, name_pos, false);
+        std.debug.assert(!v.spec.t.isInst(.every));
+        return Resolution.chain(ns, node, .{}, v.spec.t, name_pos, false);
       },
       .poison => return Resolution.poison,
       .unknown => switch (stage.kind) {
@@ -311,7 +313,7 @@ pub const Resolver = struct {
               return Resolution.chain(sr.ns, ucall.node(), .{},
                 f.callable.sig.returns, sr.name_pos, true),
             .variable => |*v| {
-              switch (v.t) {
+              switch (v.spec.t) {
                 .structural => |strct| switch (strct.*) {
                   .callable => |*callable| return Resolution.chain(sr.ns,
                     ucall.node(), .{}, callable.sig.returns, sr.name_pos, true),

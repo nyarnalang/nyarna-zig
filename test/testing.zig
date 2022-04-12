@@ -236,13 +236,13 @@ const AstEmitter = struct {
           .resolved => |r| {
             var lb = LineBuilder.init(self.depth * 2);
             try lb.append("=TARGET {s}", .{r.target.sym().name});
-            var t = r.target.t;
+            var t = r.target.spec.t;
             for (r.path) |index| {
               const param =
                 &t.instantiated.data.record.constructor.sig.parameters[
                   index];
               try lb.append("::{s}", .{param.name});
-              t = param.ptype;
+              t = param.spec.t;
             }
             try lb.finish(self.handler);
           }
@@ -520,7 +520,7 @@ const AstEmitter = struct {
           if (index > 0) try builder.appendSlice("::");
           const param =
             &t.instantiated.data.record.constructor.sig.parameters[descend];
-          t = param.ptype;
+          t = param.spec.t;
           try builder.appendSlice(param.name);
         }
 
@@ -532,12 +532,12 @@ const AstEmitter = struct {
         const a = try self.push("ASSIGNMENT");
         var lb = LineBuilder.init(self.depth * 2);
         try lb.append("=TARGET {s}", .{ass.target.sym().name});
-        var t = ass.target.t;
+        var t = ass.target.spec.t;
         for (ass.path) |index| {
           const param =
             &t.instantiated.data.record.constructor.sig.parameters[index];
           try lb.append("::{s}", .{param.name});
-          t = param.ptype;
+          t = param.spec.t;
         }
         try lb.finish(self.handler);
         try self.emitLine(">EXPR", .{});
@@ -656,7 +656,7 @@ const AstEmitter = struct {
             .record => |*rec| {
               for (rec.constructor.sig.parameters) |*param| {
                 const p = try self.pushWithKey("PARAM", param.name, null);
-                try self.processType(param.ptype);
+                try self.processType(param.spec.t);
                 if (param.default) |default| try self.processExpr(default);
                 try p.pop();
               }
@@ -707,7 +707,7 @@ const AstEmitter = struct {
       },
       .location => |loc| {
         const wrap = try self.pushWithKey("LOC", loc.name.content, null);
-        try self.processType(loc.tloc);
+        try self.processType(loc.spec.t);
         inline for ([_][]const u8{"primary", "varargs", "varmap", "borrow"})
             |flag| {
           if (@field(loc, flag) != null)
@@ -771,7 +771,7 @@ const ErrorEmitter = struct {
         .wrongIdErrorFn      = wrongIdError,
         .previousOccurenceFn = previousOccurence,
         .posChainFn          = posChain,
-        .wrongTypeErrorFn    = wrongTypeError,
+        .typeErrorFn         = typeError,
         .constructionErrorFn = constructionError,
         .runtimeErrorFn      = runtimeError,
         .systemNyErrorFn     = systemNyError,
@@ -784,7 +784,7 @@ const ErrorEmitter = struct {
   fn forwardError(
     self: *ErrorEmitter,
     id: anytype,
-    pos: model.Position
+    pos: model.Position,
   ) void {
     const line = std.fmt.bufPrint(&self.buffer, "{} - {} {s}",
       .{pos.start.formatter(), pos.end.formatter(), @tagName(id)})
@@ -796,11 +796,32 @@ const ErrorEmitter = struct {
     self: *ErrorEmitter,
     name: []const u8,
     comptime fmt: []const u8,
-    value: anytype
+    value: anytype,
   ) void {
     const line = std.fmt.bufPrint(
       &self.buffer, "  {s} = " ++ fmt, .{name, value}) catch unreachable;
     self.handler.handle(line) catch unreachable;
+  }
+
+  fn forwardArgAt(
+    self: *ErrorEmitter,
+    name: []const u8,
+    pos: model.Position,
+    comptime fmt: []const u8,
+    value: anytype,
+  ) void {
+    var line = (if (std.mem.eql(u8, pos.source.locator.resolver.?, "doc")) (
+      std.fmt.bufPrint(&self.buffer, "  {s} = {s}", .{name, pos})
+    ) else std.fmt.bufPrint(
+      &self.buffer, "  {s} = {s}", .{name, pos.source.locator.repr})
+    ) catch unreachable;
+    if (fmt.len == 0) self.handler.handle(line) catch unreachable
+    else {
+      var a = std.fmt.bufPrint(self.buffer[line.len..], " " ++ fmt, .{value})
+        catch unreachable;
+      line.len += a.len;
+      self.handler.handle(line) catch unreachable;
+    }
   }
 
   fn lexerError(
@@ -856,7 +877,7 @@ const ErrorEmitter = struct {
     self.forwardError(id, pos);
     self.forwardArg("expected", "{s}", expected);
     self.forwardArg("got", "{s}", got);
-    self.forwardArg("defined_at", "{s}", defined_at.formatter());
+    self.forwardArgAt("defined_at", defined_at, "", void);
   }
 
   fn previousOccurence(
@@ -869,7 +890,7 @@ const ErrorEmitter = struct {
     const self = @fieldParentPtr(ErrorEmitter, "api", reporter);
     self.forwardError(id, pos);
     self.forwardArg("repr", "{s}", repr);
-    self.forwardArg("previous", "{s}", previous);
+    self.forwardArgAt("previous", previous, "", void);
   }
 
   fn posChain(
@@ -880,18 +901,20 @@ const ErrorEmitter = struct {
   ) void {
     const self = @fieldParentPtr(ErrorEmitter, "api", reporter);
     self.forwardError(id, pos);
-    for (referenced) |ref| self.forwardArg("referenced", "{s}", ref);
+    for (referenced) |ref| self.forwardArgAt("referenced", ref, "", void);
   }
 
-  fn wrongTypeError(
+  fn typeError(
     reporter: *errors.Reporter,
-    id: errors.WrongTypeError,
-    pos: model.Position,
-    types: []const model.Type
+    id: errors.TypeError,
+    types: []const model.SpecType,
   ) void {
     const self = @fieldParentPtr(ErrorEmitter, "api", reporter);
-    self.forwardError(id, pos);
-    self.forwardArg("types", "{}", model.Type.formatterAll(types));
+    self.forwardError(id, types[0].pos);
+    self.forwardArg("main", "{}", types[0].t.formatter());
+    if (types.len == 2) {
+      self.forwardArgAt("other", types[1].pos, "{}", types[1].t.formatter());
+    }
   }
 
   fn constructionError(

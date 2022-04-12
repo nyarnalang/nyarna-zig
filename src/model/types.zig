@@ -435,7 +435,7 @@ pub const Type = union(enum) {
           try writer.writeByte('(');
           for (clb.sig.parameters) |param, i| {
             if (i > 0) try writer.writeAll(", ");
-            try param.ptype.format(fmt, opt, writer);
+            try param.spec.t.format(fmt, opt, writer);
           }
           try writer.writeAll(") -> ");
           try clb.sig.returns.format(fmt, opt, writer);
@@ -476,5 +476,15 @@ pub const Type = union(enum) {
   pub inline fn formatterAll(types: []const Type)
       std.fmt.Formatter(formatAll) {
     return .{.data = types};
+  }
+
+  /// creates a SpecType at intrinsic position, for target types that are
+  /// specified by the language itself.
+  pub fn predef(self: Type) model.SpecType {
+    return self.at(model.Position.intrinsic());
+  }
+
+  pub fn at(self: Type, pos: model.Position) model.SpecType {
+    return .{.t = self, .pos = pos};
   }
 };

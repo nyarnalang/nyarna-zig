@@ -278,6 +278,13 @@ pub const Node = @import("model/Node.zig");
 
 pub const Type = @import("model/types.zig").Type;
 
+/// a type that has been specified at a certain position as target type.
+/// usually a type of a location such as a parameter or variable.
+pub const SpecType = struct {
+  t: Type,
+  pos: Position,
+};
+
 /// a callable function.
 pub const Function = struct {
   /// externally defined function, pre-defined by the Nyarna processor or
@@ -343,20 +350,20 @@ pub const VariableContainer = struct {
 /// the signature of a callable entity.
 pub const Signature = struct {
   pub const Parameter = struct {
-    pos: Position,
-    name: []const u8,
-    ptype: Type,
+    pos    : Position,
+    name   : []const u8,
+    spec   : SpecType,
     capture: enum {default, varargs, borrow},
     default: ?*Expression,
-    config: ?BlockConfig,
+    config : ?BlockConfig,
   };
 
-  parameters: []Parameter,
-  primary: ?u21,
-  varmap: ?u21,
+  parameters  : []Parameter,
+  primary     : ?u21,
+  varmap      : ?u21,
   auto_swallow: ?struct{
     param_index: usize,
-    depth: usize,
+    depth      : usize,
   },
   returns: Type,
 

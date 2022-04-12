@@ -147,7 +147,7 @@ pub const SignatureMapper = struct {
           if ((!self.varmapAt(index) or input == .direct) and
               std.mem.eql(u8, name, p.name)) {
             if (p.capture == .varargs) self.cur_pos = index;
-            try self.checkFrameRoot(p.ptype);
+            try self.checkFrameRoot(p.spec.t);
             return Mapper.Cursor{.param = .{.index = index},
               .config = flag == .block_with_config, .direct = input == .direct};
           }
@@ -158,7 +158,7 @@ pub const SignatureMapper = struct {
       .primary => {
         self.cur_pos = null;
         if (self.signature.primary) |index| {
-          try self.checkFrameRoot(self.signature.parameters[index].ptype);
+          try self.checkFrameRoot(self.signature.parameters[index].spec.t);
           return Mapper.Cursor{
             .param = .{.index = index},
             .config = flag == .block_with_config, .direct = true};
@@ -173,7 +173,7 @@ pub const SignatureMapper = struct {
             if (self.signature.parameters[index].capture != .varargs) {
               self.cur_pos = index + 1;
             }
-            try self.checkFrameRoot(self.signature.parameters[index].ptype);
+            try self.checkFrameRoot(self.signature.parameters[index].spec.t);
             return Mapper.Cursor{.param = .{.index = index},
               .config = flag == .block_with_config, .direct = false};
           } else {
@@ -200,7 +200,7 @@ pub const SignatureMapper = struct {
   fn paramType(mapper: *Mapper, at: Mapper.Cursor) ?model.Type {
     const self = @fieldParentPtr(SignatureMapper, "mapper", mapper);
     return switch (at.param) {
-      .index => |index| self.signature.parameters[index].ptype,
+      .index => |index| self.signature.parameters[index].spec.t,
       .kind => null
     };
   }
@@ -243,18 +243,24 @@ pub const SignatureMapper = struct {
     }
   };
 
-  fn push(mapper: *Mapper, at: Mapper.Cursor, content: *model.Node)
-      nyarna.Error!void {
+  fn push(
+    mapper: *Mapper,
+    at: Mapper.Cursor,
+    content: *model.Node,
+  ) nyarna.Error!void {
     const self = @fieldParentPtr(SignatureMapper, "mapper", mapper);
     const param = &self.signature.parameters[at.param.index];
-    const target_type =
-      if (at.direct) param.ptype
-      else if (self.varmapAt(at.param.index)) param.ptype.structural.map.value
-      else switch (param.capture) {
-      .varargs => param.ptype.structural.list.inner,
-      else => param.ptype,
+    const target_spec =
+      if (at.direct) param.spec
+      else if (self.varmapAt(at.param.index)) model.SpecType{
+        .t = param.spec.t.structural.map.value, .pos = param.spec.pos,
+      } else switch (param.capture) {
+      .varargs => model.SpecType{
+        .t = param.spec.t.structural.list.inner, .pos = param.spec.pos,
+      },
+      else => param.spec,
     };
-    const behavior = ArgBehavior.calc(target_type);
+    const behavior = ArgBehavior.calc(target_spec.t);
     const arg = if (behavior == .ast_node or behavior == .frame_root) blk: {
       if (at.direct or param.capture != .varargs) {
         const container = if (behavior == .frame_root)
@@ -264,7 +270,7 @@ pub const SignatureMapper = struct {
       } else break :blk content;
     } else blk: {
       if (try self.intpr.associate(
-          content, target_type, .{.kind = .intermediate})) |expr| {
+          content, target_spec, .{.kind = .intermediate})) |expr| {
         content.data = .{.expression = expr};
       }
       break :blk content;
@@ -272,7 +278,7 @@ pub const SignatureMapper = struct {
     if (self.varmapAt(at.param.index)) unreachable // TODO
     else switch (param.capture) {
       .varargs => {
-        try self.addToVarargs(at.param.index, param.ptype, arg, at.direct);
+        try self.addToVarargs(at.param.index, param.spec.t, arg, at.direct);
         return;
       },
       else => {}
@@ -294,12 +300,12 @@ pub const SignatureMapper = struct {
       if (!self.filled[i]) {
         self.args[i] = if (param.default) |dexpr|
           try self.intpr.node_gen.expression(dexpr)
-        else switch (param.ptype) {
+        else switch (param.spec.t) {
           .structural => |strct| switch (strct.*) {
             .optional, .concat, .paragraphs =>
               try self.intpr.node_gen.@"void"(pos),
             .list => if (param.capture == .varargs)
-                (try self.intpr.node_gen.varargs(pos, param.ptype)).node()
+                (try self.intpr.node_gen.varargs(pos, param.spec.t)).node()
               else null,
             else => null,
           },
@@ -326,7 +332,7 @@ pub const SignatureMapper = struct {
           continue;
         };
       }
-      if (param.capture == .varargs) switch (param.ptype) {
+      if (param.capture == .varargs) switch (param.spec.t) {
         .structural => |strct| switch (strct.*) {
           .list => |*list| if (list.inner.isInst(.ast)) {
             const content = self.args[i];

@@ -1,4 +1,4 @@
-const ids = @import("errors/ids.zig");
+const ids   = @import("errors/ids.zig");
 
 pub usingnamespace ids;
 

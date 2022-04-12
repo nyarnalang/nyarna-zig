@@ -145,8 +145,9 @@ pub const ModuleLoader = struct {
           .fragment => |*f| f.root_type,
         };
 
-        const root = self.interpreter.interpretAs(node, root_type)
-          catch |e| return self.handleError(e);
+        const root = self.interpreter.interpretAs(
+          node, root_type.predef()
+        ) catch |e| return self.handleError(e);
         self.state = .{.finished = root};
         return true;
       },

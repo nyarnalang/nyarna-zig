@@ -34,7 +34,7 @@ pub const Types = lib.Provider.Wrapper(struct {
     intpr: *Interpreter,
     pos: model.Position,
     name: *model.Value.TextScalar,
-    t: ?model.Type,
+    t: ?*model.Value.TypeVal,
     primary: *model.Value.Enum,
     varargs: *model.Value.Enum,
     varmap: *model.Value.Enum,
@@ -47,20 +47,21 @@ pub const Types = lib.Provider.Wrapper(struct {
       if (val.expected_type.isInst(.poison)) return intpr.node_gen.poison(pos);
       if (t) |given_type| {
         if (
-          !intpr.ctx.types().lesserEqual(val.expected_type, given_type) and
+          !intpr.ctx.types().lesserEqual(val.expected_type, given_type.t) and
           !val.expected_type.isInst(.poison)
         ) {
-          intpr.ctx.logger.ExpectedExprOfTypeXGotY(
-            val.pos, &[_]model.Type{given_type, val.expected_type});
+          intpr.ctx.logger.ExpectedExprOfTypeXGotY(&.{
+            val.expected_type.at(val.pos),
+            given_type.t.at(given_type.value().origin),
+          });
           return intpr.node_gen.poison(pos);
         }
       }
       break :blk val;
     } else null;
-    var ltype = if (t) |given_type| given_type
-                else if (expr) |given_expr| given_expr.expected_type else {
-      unreachable; // TODO: evaluation error
-    };
+    var ltype = if (t) |given_type| given_type.t.at(given_type.value().origin)
+    else if (expr) |given_expr| given_expr.expected_type.at(given_expr.pos)
+    else unreachable; // TODO: evaluation error
     // TODO: check various things here:
     // - varargs must have List type
     // - varmap must have Map type

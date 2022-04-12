@@ -25,9 +25,9 @@ pub const Assign = struct {
     unresolved: *Node,
     resolved: struct {
       target: *Symbol.Variable,
-      path: []usize,
-      t: Type,
-      pos: model.Position,
+      path  : []usize,
+      spec  : model.SpecType,
+      pos   : model.Position,
     },
   },
   /// rvalue node.

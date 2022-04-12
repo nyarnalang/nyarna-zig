@@ -17,4 +17,5 @@
   expected = {'=', ';', ':', ws_break}
   got = '}'
 3:15 - 3:25 ExpectedExprOfTypeXGotY
-  types = Type, Literal
+  main = Literal
+  other = .std.intrinsic Type

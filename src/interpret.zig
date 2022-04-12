@@ -336,7 +336,7 @@ pub const Interpreter = struct {
                   .resolved = .{
                     .target = v,
                     .path = rc.indexes.items,
-                    .t = v.t,
+                    .spec = v.spec,
                     .pos = node.pos,
                   },
                 };
@@ -362,7 +362,7 @@ pub const Interpreter = struct {
                   .resolved = .{
                     .target = v,
                     .path = &.{},
-                    .t = v.t,
+                    .spec = v.spec,
                     .pos = node.pos,
                   },
                 };
@@ -390,7 +390,7 @@ pub const Interpreter = struct {
         try self.ctx.values.poison(ass.node().pos));
     }
     const target_expr =
-      (try self.associate(ass.replacement, target.t, stage))
+      (try self.associate(ass.replacement, target.spec, stage))
         orelse return null;
     const expr = try self.ctx.global().create(model.Expression);
     const path = try self.ctx.global().dupe(usize, target.path);
@@ -418,7 +418,7 @@ pub const Interpreter = struct {
   ) nyarna.Error!?*model.Expression {
     const scalar_type = (try self.probeForScalarType(input, stage))
       orelse return null;
-    return self.interpretWithTargetScalar(input, scalar_type, stage);
+    return self.interpretWithTargetScalar(input, scalar_type.predef(), stage);
   }
 
   fn tryInterpretSymref(
@@ -431,7 +431,7 @@ pub const Interpreter = struct {
       .func => |func| return self.ctx.createValueExpr(
         (try self.ctx.values.funcRef(ref.node().pos, func)).value()),
       .variable => |*v| {
-        if (v.t.isInst(.every)) return null;
+        if (v.spec.t.isInst(.every)) return null;
         const expr = try self.ctx.global().create(model.Expression);
         expr.* = .{
           .pos = ref.node().pos,
@@ -440,7 +440,7 @@ pub const Interpreter = struct {
               .variable = v
             },
           },
-          .expected_type = v.t,
+          .expected_type = v.spec.t,
         };
         return expr;
       },
@@ -462,7 +462,7 @@ pub const Interpreter = struct {
       _ = try chains.Resolver.init(self, stage).resolve(rc.target);
       for (rc.args) |arg, index| {
         if (try self.tryInterpret(arg, stage)) |expr| {
-          expr.expected_type = rc.sig.parameters[index].ptype;
+          expr.expected_type = rc.sig.parameters[index].spec.t;
           arg.data = .{.expression = expr};
         }
       }
@@ -484,7 +484,7 @@ pub const Interpreter = struct {
     for (rc.args) |*arg, i| {
       if (arg.*.data != .expression) {
         arg.*.data = if (
-          try self.associate(arg.*, rc.sig.parameters[i].ptype, arg_stage)
+          try self.associate(arg.*, rc.sig.parameters[i].spec, arg_stage)
         ) |e| .{.expression = e}
         else {
           args_failed_to_interpret = true;
@@ -552,7 +552,7 @@ pub const Interpreter = struct {
     var incomplete = false;
     var t = if (loc.@"type") |node| blk: {
       var expr = (try self.associate(
-        node, self.ctx.types().@"type"(), stage))
+        node, self.ctx.types().@"type"().predef(), stage))
       orelse {
         incomplete = true;
         break :blk null;
@@ -564,7 +564,8 @@ pub const Interpreter = struct {
     if (loc.default) |node| {
       const res: ?*model.Expression = if (t) |texpr| switch (texpr.data) {
         .value => |val| switch (val.data) {
-          .@"type" => |tv| try self.associate(node, tv.t, stage),
+          .@"type" => |tv|
+            try self.associate(node, tv.t.at(texpr.pos), stage),
           else => try self.tryInterpret(node, stage),
         },
         else => try self.tryInterpret(node, stage),
@@ -575,7 +576,7 @@ pub const Interpreter = struct {
     if (incomplete) return null;
 
     const name = (
-      try self.associate(loc.name, self.ctx.types().literal(), stage)
+      try self.associate(loc.name, self.ctx.types().literal().predef(), stage)
     ) orelse return null;
 
     const ret = try self.ctx.global().create(model.Expression);
@@ -612,7 +613,7 @@ pub const Interpreter = struct {
         else => {
           if (value.data != .poison) {
             self.ctx.logger.InvalidDefinitionValue(
-              expr.pos, &.{try self.ctx.types().valueType(value)});
+              &.{try self.ctx.types().valueSpecType(value)});
           }
           return try self.ctx.createValueExpr(
             try self.ctx.values.poison(def.node().pos));
@@ -726,13 +727,15 @@ pub const Interpreter = struct {
     switch (node.data) {
       .location => |*loc| {
         if (
-          try self.associate(loc.name, self.ctx.types().literal(), stage)
+          try self.associate(
+            loc.name, self.ctx.types().literal().predef(), stage)
         ) |nexpr| {
           loc.name.data = .{.expression = nexpr};
         } else return false;
         if (loc.@"type") |tnode| {
           if (
-            try self.associate(tnode, self.ctx.types().@"type"(), stage)
+            try self.associate(
+              tnode, self.ctx.types().@"type"().predef(), stage)
           ) |texpr| {
             tnode.data = .{.expression = texpr};
             return true;
@@ -748,8 +751,8 @@ pub const Interpreter = struct {
         return true;
       },
       else => if (
-        try self.associate(
-          node, (try self.ctx.types().concat(self.ctx.types().location())).?,
+        try self.associate(node,
+          (try self.ctx.types().concat(self.ctx.types().location())).?.predef(),
           stage)
       ) |expr| {
         node.data = .{.expression = expr};
@@ -822,7 +825,7 @@ pub const Interpreter = struct {
     var next: usize = 0;
     for (locs.items) |*loc, index| {
       var name: *model.Value.TextScalar = undefined;
-      var loc_type: model.Type = undefined;
+      var loc_type: model.SpecType = undefined;
       var borrowed: bool = undefined;
       switch (loc.*) {
         .node => |nl| {
@@ -838,11 +841,14 @@ pub const Interpreter = struct {
           }
           if (nl.@"type") |lt| (
             switch (lt.data.expression.data.value.data) {
-              .@"type" => |vt| loc_type = vt.t,
-              .poison => loc_type = self.ctx.types().poison(),
+              .@"type" => |vt| loc_type = vt.t.at(lt.pos),
+              .poison => loc_type = self.ctx.types().poison().predef(),
               else => unreachable,
             }
-          ) else loc_type = (try self.probeType(nl.default.?, stage, false)).?;
+          ) else {
+            const probed = (try self.probeType(nl.default.?, stage, false)).?;
+            loc_type = probed.at(nl.default.?.pos);
+          }
           borrowed = if (nl.additionals) |a| a.borrow != null else false;
         },
         .expr => |expr| switch (expr.data) {
@@ -858,17 +864,19 @@ pub const Interpreter = struct {
             if (lexpr.@"type") |texpr| switch (
               (try self.ctx.evaluator().evaluate(texpr)).data
             ) {
-              .@"type" => |tv| loc_type = tv.t,
-              .poison  => loc_type = self.ctx.types().poison(),
+              .@"type" => |tv| loc_type = tv.t.at(texpr.pos),
+              .poison  => loc_type = self.ctx.types().poison().predef(),
               else => unreachable,
-            } else loc_type = lexpr.default.?.expected_type;
+            } else {
+              loc_type = lexpr.default.?.expected_type.at(lexpr.default.?.pos);
+            }
             borrowed = if (lexpr.additionals) |a| a.borrow != null else false;
           },
           else => switch ((try self.ctx.evaluator().evaluate(expr)).data) {
             .location => |*lval| {
               loc.* = .{.value = lval};
               name = lval.name;
-              loc_type = lval.tloc;
+              loc_type = lval.spec;
               borrowed = lval.borrow != null;
             },
             .poison => {
@@ -880,7 +888,7 @@ pub const Interpreter = struct {
         },
         .value => |lval| {
           name = lval.name;
-          loc_type = lval.tloc;
+          loc_type = lval.spec;
           borrowed = lval.borrow != null;
         },
         .poison => continue,
@@ -891,7 +899,7 @@ pub const Interpreter = struct {
         .name = name.content,
         .data = .{
           .variable = .{
-            .t = loc_type,
+            .spec = loc_type,
             .container = func.variables,
             .offset = func.variables.num_values + @intCast(u15, index),
             .assignable = false,
@@ -992,7 +1000,7 @@ pub const Interpreter = struct {
   pub fn tryInterpretFuncBody(
     self: *Interpreter,
     func: *model.Node.Funcgen,
-    expected_type: ?model.Type,
+    expected_type: ?model.SpecType,
     stage: Stage,
   ) nyarna.Error!?*model.Expression {
     switch (func.body.data) {
@@ -1000,8 +1008,8 @@ pub const Interpreter = struct {
       else => {},
     }
 
-    const res = (if (expected_type) |t|
-      (try self.associate(func.body, t, stage))
+    const res = (if (expected_type) |spec|
+      (try self.associate(func.body, spec, stage))
     else try self.tryInterpret(func.body, stage))
     orelse return null;
     func.body.data = .{.expression = res};
@@ -1027,12 +1035,12 @@ pub const Interpreter = struct {
     }
     if (func.returns) |rnode| {
       const ret_val = try self.ctx.evaluator().evaluate(
-        (try self.associate(rnode, self.ctx.types().@"type"(),
+        (try self.associate(rnode, self.ctx.types().@"type"().predef(),
           .{.kind = .assumed, .resolve = stage.resolve})).?);
       const returns = if (ret_val.data == .poison)
-        self.ctx.types().poison()
-      else ret_val.data.@"type".t;
-      const ret = (try self.tryPregenFunc(func, returns, stage))
+        self.ctx.types().poison().predef()
+      else ret_val.data.@"type".t.at(ret_val.origin);
+      const ret = (try self.tryPregenFunc(func, returns.t, stage))
         orelse {
           // just for discovering potential dependencies during \declare
           // resolution.
@@ -1094,7 +1102,7 @@ pub const Interpreter = struct {
       .expr => {},
       .node => |rnode| {
         const expr = (
-          try self.associate(rnode, self.ctx.types().@"type"(), stage)
+          try self.associate(rnode, self.ctx.types().@"type"().predef(), stage)
         ) orelse return false;
         bg.returns = .{.expr = expr};
       }
@@ -1216,7 +1224,7 @@ pub const Interpreter = struct {
     stage: Stage,
   ) nyarna.Error!?*model.Expression {
     if (try self.tryInterpret(vs.content, stage)) |expr| {
-      vs.v.t = expr.expected_type;
+      vs.v.spec = expr.expected_type.at(expr.pos);
       return expr;
     } else return null;
   }
@@ -1247,17 +1255,37 @@ pub const Interpreter = struct {
               return TypeResult.failed;
             } else return TypeResult.unavailable,
             .poison => return TypeResult.failed,
-            .variable => |v| return TypeResult{.finished = v.t},
+            .variable => |v| {
+              if (
+                self.ctx.types().lesserEqual(
+                  v.spec.t, self.ctx.types().@"type"())
+              ) {
+                const expr = try self.ctx.global().create(model.Expression);
+                expr.* = .{
+                  .pos = node.pos,
+                  .expected_type = self.ctx.types().@"type"(),
+                  .data = .{.var_retrieval = .{
+                    .variable = v,
+                  }},
+                };
+                return TypeResult{.expression = expr};
+              } else {
+                self.ctx.logger.ExpectedExprOfTypeXGotY(&.{
+                  v.spec, self.ctx.types().@"type"().predef(),
+                });
+                return TypeResult.failed;
+              }
+            },
           }
         } else if (
-          try self.associate(node, self.ctx.types().@"type"(), stage)
+          try self.associate(node, self.ctx.types().@"type"().predef(), stage)
         ) |expr| {
           return TypeResult{.expression = expr};
         } else return TypeResult.unavailable;
       },
       .expression => |expr| return TypeResult{.expression = expr},
       else => if (
-        try self.associate(node, self.ctx.types().@"type"(), stage)
+        try self.associate(node, self.ctx.types().@"type"().predef(), stage)
       ) |expr| {
         return TypeResult{.expression = expr};
       } else return TypeResult.unavailable,
@@ -1309,7 +1337,7 @@ pub const Interpreter = struct {
         break :blk (try self.ctx.values.@"type"(input.node().pos, t)).value();
       } else {
         @field(self.ctx.logger, error_name)(
-          input.inner.pos, &[_]model.Type{inner});
+          &[_]model.SpecType{inner.at(input.inner.pos)});
         break :blk try self.ctx.values.poison(input.node().pos);
       }
     } else try self.ctx.unaryTypeVal(
@@ -1334,7 +1362,7 @@ pub const Interpreter = struct {
     var result =
       try self.tryProcessVarargs(ge.values, self.ctx.types().raw(), stage);
 
-    var builder = try types.EnumTypeBuilder.init(self.ctx, ge.node().pos);
+    var builder = try types.EnumBuilder.init(self.ctx, ge.node().pos);
 
     for (ge.values) |item| {
       if (item.direct) {
@@ -1347,7 +1375,7 @@ pub const Interpreter = struct {
         }
       } else {
         const expr = (
-          try self.associate(item.node, self.ctx.types().raw(), stage)
+          try self.associate(item.node, self.ctx.types().raw().predef(), stage)
         ) orelse {
           if (result.kind != .poison) result.kind = .failed;
           continue;
@@ -1390,13 +1418,10 @@ pub const Interpreter = struct {
     };
 
     intpr: *Interpreter,
-    builder: *types.IntersectionTypeBuilder,
-    scalar: ?struct {
-      pos: model.Position,
-      t: model.Type,
-    } = null,
+    builder: *types.IntersectionBuilder,
+    scalar: ?model.SpecType = null,
 
-    fn push(self: *@This(), t: model.Type, pos: model.Position) void {
+    fn push(self: *@This(), t: model.Type, pos: model.Position) !void {
       const result: Result = switch (t) {
         .structural => |strct| switch (strct.*) {
           .intersection => |*ci| Result{
@@ -1416,15 +1441,19 @@ pub const Interpreter = struct {
       if (result.scalar) |s| {
         if (self.scalar) |prev| {
           if (!s.eql(prev.t)) {
-            self.intpr.ctx.logger.MultipleScalarTypesInIntersection(
-              "TODO", pos, prev.pos);
+            const t_fmt = s.formatter();
+            const repr =
+              try std.fmt.allocPrint(self.intpr.allocator, "{}", .{t_fmt});
+            defer self.intpr.allocator.free(repr);
+            self.intpr.ctx.logger.MultipleScalarTypes(&.{
+              s.at(pos), prev,
+            });
           }
-        } else self.scalar = .{.pos = pos, .t = s};
+        } else self.scalar = s.at(pos);
       }
       if (result.append) |append| self.builder.push(append);
       if (result.failed) {
-        self.intpr.ctx.logger.InvalidInnerIntersectionType(
-          pos, &[_]model.Type{t});
+        self.intpr.ctx.logger.InvalidInnerIntersectionType(&.{t.at(pos)});
       }
     }
   };
@@ -1451,7 +1480,7 @@ pub const Interpreter = struct {
     for (items) |item| {
       if (item.direct) {
         const expr = (
-          try self.associate(item.node, list_type, stage)
+          try self.associate(item.node, list_type.predef(), stage)
         ) orelse {
           failed_some = true;
           continue;
@@ -1487,7 +1516,7 @@ pub const Interpreter = struct {
     var result =
       try self.tryProcessVarargs(gi.types, self.ctx.types().@"type"(), stage);
 
-    var builder = try types.IntersectionTypeBuilder.init(
+    var builder = try types.IntersectionBuilder.init(
       result.max + 1, self.allocator);
     var checker = IntersectionChecker{.builder = &builder, .intpr = self};
 
@@ -1497,7 +1526,7 @@ pub const Interpreter = struct {
         switch (val.data) {
           .list => |*list| {
             for (list.content.items) |list_item| {
-              checker.push(list_item.data.@"type".t, list_item.origin);
+              try checker.push(list_item.data.@"type".t, list_item.origin);
             }
           },
           .poison => result.kind = .poison,
@@ -1526,7 +1555,7 @@ pub const Interpreter = struct {
             continue;
           },
         };
-        checker.push(inner, item.node.pos);
+        try checker.push(inner, item.node.pos);
       }
     }
     switch (result.kind) {
@@ -1568,14 +1597,14 @@ pub const Interpreter = struct {
   ) nyarna.Error!?*model.Expression {
     var seen_poison = false;
     var seen_unfinished = false;
-    var nb = try types.NumericTypeBuilder.init(self.ctx, gn.node().pos);
+    var nb = try types.NumericBuilder.init(self.ctx, gn.node().pos);
 
     for ([_]?*model.Node{gn.decimals, gn.min, gn.max}) |entry, index| {
       if (entry) |item| {
         if (
           // use Raw type because Integer might not exist yet (in system.ny).
           try self.associate(
-            item, self.ctx.types().raw(), stage)
+            item, self.ctx.types().raw().predef(), stage)
         ) |expr| {
           item.data = .{.expression = expr};
           const value = try self.ctx.evaluator().evaluate(expr);
@@ -1833,8 +1862,8 @@ pub const Interpreter = struct {
     for (gt.categories) |item| {
       if (item.direct) {
         const expr = (
-          try self.associate(
-            item.node, (try self.ctx.types().list(unicode_category)).?, stage)
+          try self.associate(item.node,
+            (try self.ctx.types().list(unicode_category)).?.predef(), stage)
         ) orelse {
           failed_some = true;
           continue;
@@ -1850,7 +1879,7 @@ pub const Interpreter = struct {
         }
       } else {
         const expr = (
-          try self.associate(item.node, unicode_category, stage)
+          try self.associate(item.node, unicode_category.predef(), stage)
         ) orelse {
           failed_some = true;
           continue;
@@ -1864,7 +1893,9 @@ pub const Interpreter = struct {
     var chars = [2]std.hash_map.AutoHashMapUnmanaged(u21, void){.{}, .{}};
     for ([_]?*model.Node{gt.include_chars, gt.exclude_chars}) |item, index| {
       if (item) |node| {
-        if (try self.associate(node, self.ctx.types().raw(), stage)) |expr| {
+        if (
+          try self.associate(node, self.ctx.types().raw().predef(), stage)
+        ) |expr| {
           node.data = .{.expression = expr};
           const val = try self.ctx.evaluator().evaluate(expr);
           switch (val.data) {
@@ -2026,7 +2057,7 @@ pub const Interpreter = struct {
   }
 
   pub fn interpret(
-    self: *Interpreter,
+    self : *Interpreter,
     input: *model.Node,
   ) nyarna.Error!*model.Expression {
     return if (try self.tryInterpret(input, .{.kind = .final})) |expr| expr
@@ -2034,11 +2065,11 @@ pub const Interpreter = struct {
   }
 
   pub fn interpretAs(
-    self: *Interpreter,
+    self : *Interpreter,
     input: *model.Node,
-    t: model.Type,
+    item : model.SpecType,
   ) nyarna.Error!*model.Expression {
-    return if (try self.associate(input, t, .{.kind = .final})) |expr| expr
+    return if (try self.associate(input, item, .{.kind = .final})) |expr| expr
     else try self.ctx.createValueExpr(try self.ctx.values.poison(input.pos));
   }
 
@@ -2082,7 +2113,6 @@ pub const Interpreter = struct {
     var sup: model.Type = self.ctx.types().every();
     var already_poison = false;
     var seen_unfinished = false;
-    var first_incompatible: ?usize = null;
     for (nodes) |node, i| {
       const t = (try self.probeType(node, stage, sloppy)) orelse {
         seen_unfinished = true;
@@ -2092,23 +2122,44 @@ pub const Interpreter = struct {
         already_poison = true;
         continue;
       }
-      sup = try self.ctx.types().sup(sup, t);
-      if (first_incompatible == null and sup.isInst(.poison)) {
-        first_incompatible = i;
+      const new = try self.ctx.types().sup(sup, t);
+      if (new.isInst(.poison)) {
+        already_poison = true;
+        var found = false;
+        for (nodes[0..i]) |prev| {
+          const prev_t = (try self.probeType(node, stage, sloppy)) orelse {
+            seen_unfinished = true;
+            continue;
+          };
+          if (prev_t.isInst(.poison)) continue;
+          if ((try self.ctx.types().sup(t, prev_t)).isInst(.poison)) {
+            found = true;
+            self.ctx.logger.IncompatibleTypes(&.{
+              t.at(node.pos), prev_t.at(prev.pos),
+            });
+            break;
+          }
+        }
+        if (!found) {
+          const pos = nodes[0].pos.span(nodes[i - 1].pos);
+          self.ctx.logger.IncompatibleTypes(&.{t.at(node.pos), sup.at(pos)});
+        }
+      } else sup = new;
+    }
+    if (already_poison) {
+      // we could not set nodes to .poison directly before, so that we could
+      // issue correct error messages. but we do it now so that the issues will
+      // not be reported again.
+      sup = self.ctx.types().every();
+      for (nodes) |node| {
+        const t = (try self.probeType(node, stage, sloppy)) orelse continue;
+        const new = try self.ctx.types().sup(sup, t);
+        if (new.isInst(.poison)) node.data = .poison else sup = new;
       }
     }
+
     return if (seen_unfinished) null
-    else if (first_incompatible) |index| blk: {
-      const type_arr =
-        try self.allocator.alloc(model.Type, index + 1);
-      type_arr[0] = (try self.probeType(nodes[index], stage, sloppy)).?;
-      var j = @as(usize, 0);
-      while (j < index) : (j += 1) {
-        type_arr[j + 1] = (try self.probeType(nodes[j], stage, sloppy)).?;
-      }
-      self.ctx.logger.IncompatibleTypes(nodes[index].pos, type_arr);
-      break :blk self.ctx.types().poison();
-    } else if (already_poison) self.ctx.types().poison()
+    else if (already_poison) self.ctx.types().poison()
     else sup;
   }
 
@@ -2130,7 +2181,7 @@ pub const Interpreter = struct {
   fn typeFromSymbol(self: *Interpreter, sym: *model.Symbol) !model.Type {
     const callable = switch (sym.data) {
       .func => |f| f.callable,
-      .variable => |v| return v.t,
+      .variable => |v| return v.spec.t,
       .@"type" => |t| return try self.ctx.types().typeType(t),
       .prototype => |pt| return switch (pt) {
         .record =>
@@ -2185,8 +2236,7 @@ pub const Interpreter = struct {
           (try self.probeNodeList(con.items, stage, sloppy)) orelse return null;
         if (!inner.isInst(.poison)) {
           inner = (try self.ctx.types().concat(inner)) orelse blk: {
-            self.ctx.logger.InvalidInnerConcatType(
-              node.pos, &[_]model.Type{inner});
+            self.ctx.logger.InvalidInnerConcatType(&.{inner.at(node.pos)});
             break :blk self.ctx.types().poison();
           };
         }
@@ -2203,15 +2253,12 @@ pub const Interpreter = struct {
       .location => return self.ctx.types().location(),
       .paras => |*para| {
         var builder =
-          nyarna.types.ParagraphTypeBuilder.init(self.ctx.types(), false);
+          nyarna.types.ParagraphsBuilder.init(self.ctx, false);
         var seen_unfinished = false;
         for (para.items) |*item| {
-          _ = try builder.push((
-            try self.probeType(item.content, stage, sloppy)
-          ) orelse {
-            seen_unfinished = true;
-            continue;
-          });
+          if (try self.probeType(item.content, stage, sloppy)) |t| {
+            _ = try builder.push(t.at(item.content.pos));
+          } else seen_unfinished = true;
         }
         return if (seen_unfinished) null else
           (try builder.finish()).resulting_type;
@@ -2264,26 +2311,27 @@ pub const Interpreter = struct {
   fn createTextLiteral(
     self: *Interpreter,
     l: *model.Node.Literal,
-    t: model.Type,
+    spec: model.SpecType,
   ) nyarna.Error!*model.Value {
-    switch (t) {
+    switch (spec.t) {
       .structural => |struc| return switch (struc.*) {
-        .optional => |*op| try self.createTextLiteral(l, op.inner),
-        .concat => |*con| try self.createTextLiteral(l, con.inner),
+        .optional => |*op|
+          try self.createTextLiteral(l, op.inner.at(spec.pos)),
+        .concat => |*con|
+          try self.createTextLiteral(l, con.inner.at(spec.pos)),
         .paragraphs => unreachable,
-        .list => |*list| try self.createTextLiteral(l, list.inner), // TODO
-        .map, .callable => blk: {
-          const lit = self.ctx.types().literal();
+        .list, .map, .callable => blk: {
+          const lt = self.ctx.types().litType(l);
           self.ctx.logger.ExpectedExprOfTypeXGotY(
-            l.node().pos, &[_]model.Type{t, lit});
+            &.{lt.at(l.node().pos), spec});
           break :blk try self.ctx.values.poison(l.node().pos);
         },
         .intersection => |*inter| if (inter.scalar) |scalar| {
-          return try self.createTextLiteral(l, scalar);
+          return try self.createTextLiteral(l, scalar.at(spec.pos));
         } else {
-          const lit = self.ctx.types().literal();
+          const lt = self.ctx.types().litType(l);
           self.ctx.logger.ExpectedExprOfTypeXGotY(
-            l.node().pos, &[_]model.Type{t, lit});
+            &.{lt.at(l.node().pos), spec});
           return try self.ctx.values.poison(l.node().pos);
         }
       },
@@ -2305,24 +2353,24 @@ pub const Interpreter = struct {
             ev.value() else try self.ctx.values.poison(l.node().pos);
         },
         .record => {
-          self.ctx.logger.ExpectedExprOfTypeXGotY(l.node().pos,
-            &[_]model.Type{
-              t, if (l.kind == .text) self.ctx.types().literal()
-                 else self.ctx.types().space(),
-            });
+          const lt = self.ctx.types().litType(l);
+          self.ctx.logger.ExpectedExprOfTypeXGotY(
+            &.{lt.at(l.node().pos), spec});
           return self.ctx.values.poison(l.node().pos);
         },
         .space => if (l.kind == .space) {
           return (try self.ctx.values.textScalar(
-            l.node().pos, t, try self.ctx.global().dupe(u8, l.content))
+            l.node().pos, spec.t, try self.ctx.global().dupe(u8, l.content))
           ).value();
         } else {
+          const lt = self.ctx.types().literal();
           self.ctx.logger.ExpectedExprOfTypeXGotY(
-            l.node().pos, &[_]model.Type{t, self.ctx.types().literal()});
+            &.{lt.at(l.node().pos), spec});
           return self.ctx.values.poison(l.node().pos);
         },
         .literal, .raw => return (try self.ctx.values.textScalar(
-          l.node().pos, t, try self.ctx.global().dupe(u8, l.content))).value(),
+          l.node().pos, spec.t, try self.ctx.global().dupe(u8, l.content)
+        )).value(),
         else => return (try self.ctx.values.textScalar(
           l.node().pos,
           if (l.kind == .text) self.ctx.types().literal()
@@ -2364,11 +2412,35 @@ pub const Interpreter = struct {
   ) !?*model.Expression {
     if (!actual.isInst(.poison)) {
       if (types.containedScalar(actual)) |contained| {
-        // TODO: conversion
         if (self.ctx.types().lesserEqual(contained, scalar)) return null;
       } else return null;
     }
     return try self.ctx.createValueExpr(try self.ctx.values.poison(pos));
+  }
+
+  /// removes any .space type from concats and paragraphs within t and t itself
+  fn typeWithoutSpace(
+    self: *Interpreter,
+    t: model.Type,
+  ) std.mem.Allocator.Error!model.Type {
+    return switch (t) {
+      .structural => |struc| switch (struc.*) {
+        .concat   => |*con|
+          (try self.ctx.types().concat(try self.typeWithoutSpace(con.inner))).?,
+        .optional => |*opt| (
+          try self.ctx.types().optional(try self.typeWithoutSpace(opt.inner))
+        ).?,
+        .paragraphs => |*para| blk: {
+          var builder = types.ParagraphsBuilder.init(self.ctx, true);
+          for (para.inner) |inner| {
+            try builder.push((try self.typeWithoutSpace(inner)).predef());
+          }
+          break :blk (try builder.finish()).resulting_type;
+        },
+        else => return t,
+      },
+      .instantiated => t,
+    };
   }
 
   /// Same as tryInterpret, but takes a target type that may be used to generate
@@ -2377,11 +2449,11 @@ pub const Interpreter = struct {
   pub fn interpretWithTargetScalar(
     self: *Interpreter,
     input: *model.Node,
-    t: model.Type,
+    spec: model.SpecType,
     stage: Stage,
   ) nyarna.Error!?*model.Expression {
     std.debug.assert(stage.kind != .resolve);
-    std.debug.assert(switch (t) {
+    std.debug.assert(switch (spec.t) {
       .structural => false,
       .instantiated => |inst| switch (inst.data) {
         .textual, .numeric, .float, .tenum, .literal, .space, .raw, .every,
@@ -2398,14 +2470,23 @@ pub const Interpreter = struct {
       .unresolved_symref, .varargs => {
         if (try self.tryInterpret(input, stage)) |expr| {
           if (types.containedScalar(expr.expected_type)) |scalar_type| {
-            if (self.ctx.types().lesserEqual(scalar_type, t)) return expr;
-            if (expr.expected_type.isInst(.space) and t.isInst(.void)) {
-              expr.expected_type = t;
-              return expr;
+            if (self.ctx.types().lesserEqual(scalar_type, spec.t)) return expr;
+            if (expr.expected_type.isInst(.space) and spec.t.isInst(.void)) {
+              const target_type =
+                try self.typeWithoutSpace(expr.expected_type);
+              const conv = try self.ctx.global().create(model.Expression);
+              conv.* = .{
+                .pos = expr.pos,
+                .expected_type = target_type,
+                .data = .{.conversion = .{
+                  .inner = expr,
+                  .target_type = target_type,
+                }},
+              };
+              return conv;
             }
-            // TODO: conversion
             self.ctx.logger.ScalarTypesMismatch(
-              input.pos, &[_]model.Type{t, scalar_type});
+              &.{scalar_type.at(input.pos), spec});
             expr.data = .{.value = try self.ctx.values.poison(input.pos)};
           }
           return expr;
@@ -2416,7 +2497,8 @@ pub const Interpreter = struct {
         const condition = cblk: {
           if (br.cond_type) |ct| {
             if (
-              try self.interpretWithTargetScalar(br.condition, ct, stage)
+              try self.interpretWithTargetScalar(
+                br.condition, ct.predef(), stage)
             ) |expr| break :cblk expr
             else return null;
           } else {
@@ -2427,7 +2509,7 @@ pub const Interpreter = struct {
               break :cblk expr;
             } else if (!expr.expected_type.isInst(.poison)) {
               self.ctx.logger.CannotBranchOn(
-                br.condition.pos, &[_]model.Type{expr.expected_type});
+                &.{expr.expected_type.at(br.condition.pos)});
             }
             return try
               self.ctx.createValueExpr(try self.ctx.values.poison(input.pos));
@@ -2436,20 +2518,22 @@ pub const Interpreter = struct {
         var actual_type = (
           try self.probeNodeList(br.branches, stage, false)
         ) orelse return null;
-        if (actual_type.isInst(.space) and t.isInst(.void)) actual_type = t;
-        if (try self.poisonIfNotCompat(input.pos, actual_type, t)) |expr| {
+        if (actual_type.isInst(.space) and spec.t.isInst(.void)) {
+          actual_type = spec.t;
+        }
+        if (try self.poisonIfNotCompat(input.pos, actual_type, spec.t)) |expr| {
           return expr;
         }
         const exprs =
           try self.ctx.global().alloc(*model.Expression, br.branches.len);
         for (br.branches) |item, i| {
-          exprs[i] = (try self.interpretWithTargetScalar(item, t, stage)).?;
+          exprs[i] = (try self.interpretWithTargetScalar(item, spec, stage)).?;
         }
         const expr = try self.ctx.global().create(model.Expression);
         expr.* = .{
           .pos = input.pos,
           .data = .{.branches = .{.condition = condition, .branches = exprs}},
-          .expected_type = try self.ctx.types().sup(actual_type, t),
+          .expected_type = try self.ctx.types().sup(actual_type, spec.t),
         };
         return expr;
       },
@@ -2459,19 +2543,20 @@ pub const Interpreter = struct {
         ) orelse return null;
         var actual_type = (try self.ctx.types().concat(inner))
           orelse {
-            self.ctx.logger.InvalidInnerConcatType(
-              input.pos, &[_]model.Type{inner});
+            self.ctx.logger.InvalidInnerConcatType(&.{inner.at(input.pos)});
             return try self.ctx.createValueExpr(
               try self.ctx.values.poison(input.pos));
           };
-        if (actual_type.isInst(.space) and t.isInst(.void)) actual_type = t;
-        if (try self.poisonIfNotCompat(input.pos, actual_type, t)) |expr| {
+        if (actual_type.isInst(.space) and spec.t.isInst(.void)) {
+          actual_type = spec.t;
+        }
+        if (try self.poisonIfNotCompat(input.pos, actual_type, spec.t)) |expr| {
           return expr;
         }
         // TODO: properly handle paragraph types
         var failed_some = false;
         for (con.items) |item| {
-          if (try self.interpretWithTargetScalar(item, t, stage)) |expr| {
+          if (try self.interpretWithTargetScalar(item, spec, stage)) |expr| {
             item.data = .{.expression = expr};
           } else failed_some = true;
         }
@@ -2483,27 +2568,27 @@ pub const Interpreter = struct {
         expr.* = .{
           .pos = input.pos,
           .data = .{.concatenation = exprs},
-          .expected_type = try self.ctx.types().sup(actual_type, t),
+          .expected_type = try self.ctx.types().sup(actual_type, spec.t),
         };
         return expr;
       },
       .expression => |expr| return expr,
       // for text literals, do compile-time type conversions if possible
       .literal => |*l| {
-        if (t.isInst(.void)) return try self.ctx.createValueExpr(
+        if (spec.t.isInst(.void)) return try self.ctx.createValueExpr(
           try self.ctx.values.void(input.pos));
         const expr = try self.ctx.global().create(model.Expression);
         expr.pos = input.pos;
-        expr.data = .{.value = try self.createTextLiteral(l, t)};
-        expr.expected_type = t;
+        expr.data = .{.value = try self.createTextLiteral(l, spec)};
+        expr.expected_type = spec.t;
         return expr;
       },
       .paras => |paras| {
         var probed = (
           try self.probeType(input, stage, false)
         ) orelse return null;
-        if (probed.isInst(.space) and t.isInst(.void)) probed = t;
-        if (try self.poisonIfNotCompat(input.pos, probed, t)) |expr| {
+        if (probed.isInst(.space) and spec.t.isInst(.void)) probed = spec.t;
+        if (try self.poisonIfNotCompat(input.pos, probed, spec.t)) |expr| {
           return expr;
         }
         const res = try self.ctx.global().alloc(
@@ -2511,9 +2596,10 @@ pub const Interpreter = struct {
         for (paras.items) |item, i| {
           const para_type = (try self.probeType(item.content, stage, false)).?;
           const target_type =
-            if (para_type.isInst(.space)) self.ctx.types().void() else t;
+            if (para_type.isInst(.space)) self.ctx.types().void() else spec.t;
+          const target_spec = target_type.at(spec.pos);
           const content = (
-            try self.interpretWithTargetScalar(item.content, target_type, stage)
+            try self.interpretWithTargetScalar(item.content, target_spec, stage)
           ).?;
           res[i] = .{.content = content, .lf_after = item.lf_after};
         }
@@ -2521,7 +2607,7 @@ pub const Interpreter = struct {
         expr.* = .{
           .pos = input.pos,
           .data = .{.paragraphs = res},
-          .expected_type = try self.ctx.types().sup(probed, t),
+          .expected_type = try self.ctx.types().sup(probed, spec.t),
         };
         return expr;
       },
@@ -2546,24 +2632,25 @@ pub const Interpreter = struct {
   /// null is returned if the association cannot be made currently because of
   /// unresolved symbols.
   pub fn associate(
-    self: *Interpreter,
-    node: *model.Node,
-    t: model.Type,
+    self : *Interpreter,
+    node : *model.Node,
+    item : model.SpecType,
     stage: Stage,
   ) !?*model.Expression {
-    const scalar_type = types.containedScalar(t) orelse
+    const scalar_type = types.containedScalar(item.t) orelse
       (try self.probeForScalarType(node, stage)) orelse return null;
 
-    return if (try self.interpretWithTargetScalar(node, scalar_type, stage))
-        |expr| blk: {
+    return if (
+      try self.interpretWithTargetScalar(node, scalar_type.predef(), stage)
+    ) |expr| blk: {
       if (expr.expected_type.isInst(.poison)) break :blk expr;
-      if (self.ctx.types().lesserEqual(expr.expected_type, t)) {
-        expr.expected_type = t;
+      if (self.ctx.types().lesserEqual(expr.expected_type, item.t)) {
+        expr.expected_type = item.t;
         break :blk expr;
       }
       switch (expr.expected_type) {
         .instantiated => |inst| switch (inst.data) {
-          .void => switch (t) {
+          .void => switch (item.t) {
             .instantiated => |tinst| switch (tinst.data) {
               .literal, .space, .raw, .textual => {
                 const conv = try self.ctx.global().create(model.Expression);
@@ -2571,9 +2658,9 @@ pub const Interpreter = struct {
                   .pos = expr.pos,
                   .data = .{.conversion = .{
                     .inner = expr,
-                    .target_type = t,
+                    .target_type = item.t,
                   }},
-                  .expected_type = t,
+                  .expected_type = item.t,
                 };
                 break :blk conv;
               },
@@ -2587,16 +2674,16 @@ pub const Interpreter = struct {
         .structural => |struc| switch (struc.*) {
           .optional => |*opt| if (
             opt.inner.isScalar() and
-            self.ctx.types().lesserEqual(opt.inner, t)
+            self.ctx.types().lesserEqual(opt.inner, item.t)
           ) {
             const conv = try self.ctx.global().create(model.Expression);
             conv.* = .{
               .pos = expr.pos,
               .data = .{.conversion = .{
                 .inner = expr,
-                .target_type = t,
+                .target_type = item.t,
               }},
-              .expected_type = t,
+              .expected_type = item.t,
             };
             break :blk conv;
           },
@@ -2605,7 +2692,7 @@ pub const Interpreter = struct {
       }
 
       self.ctx.logger.ExpectedExprOfTypeXGotY(
-        node.pos, &[_]model.Type{t, expr.expected_type});
+        &.{expr.expected_type.at(node.pos), item});
       expr.data = .{.value = try self.ctx.values.poison(expr.pos)};
       expr.expected_type = self.ctx.types().poison();
       break :blk expr;

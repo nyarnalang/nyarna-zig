@@ -1,9 +1,13 @@
 const std = @import("std");
-const lib = @import("../lib.zig");
-const algo = @import("../interpret/algo.zig");
-const nyarna = @import("../nyarna.zig");
+
+
+const algo      = @import("../interpret/algo.zig");
+const errors    = @import("../errors.zig");
 const interpret = @import("../interpret.zig");
-const model = @import("../model.zig");
+const lib       = @import("../lib.zig");
+const nyarna    = @import("../nyarna.zig");
+const model     = @import("../model.zig");
+
 const Interpreter = interpret.Interpreter;
 const stringOrder = @import("../helpers.zig").stringOrder;
 
@@ -19,12 +23,13 @@ pub const DefCollector = struct {
       .concat => |*con| self.count += con.items.len,
       else => {
         const expr = (
-          try intpr.associate(node, (try intpr.ctx.types().concat(self.dt)).?,
-            .{.kind = .keyword}))
-          orelse {
-            node.data = .void;
-            return;
-          };
+          try intpr.associate(node, (
+            try intpr.ctx.types().concat(self.dt)
+          ).?.predef(), .{.kind = .keyword})
+        ) orelse {
+          node.data = .void;
+          return;
+        };
         const value = try intpr.ctx.evaluator().evaluate(expr);
         if (value.data == .poison) {
           node.data = .poison;
@@ -172,9 +177,10 @@ pub const Impl = lib.Provider.Wrapper(struct {
     ns: u15,
     locator: *model.Node,
   ) nyarna.Error!*model.Node {
-    const expr = (try intpr.associate(locator, intpr.ctx.types().raw(),
-      .{.kind = .keyword}))
-    orelse return try intpr.node_gen.poison(pos);
+    const expr = (
+      try intpr.associate(locator, intpr.ctx.types().raw().predef(),
+        .{.kind = .keyword})
+    ) orelse return try intpr.node_gen.poison(pos);
     const value = try intpr.ctx.evaluator().evaluate(expr);
     if (value.data == .poison) return try intpr.node_gen.poison(pos);
     const parsed = model.Locator.parse(value.data.text.content) catch {
@@ -264,8 +270,8 @@ pub const Impl = lib.Provider.Wrapper(struct {
         switch (n.data) {
           .location => |*loc| {
             const name_expr = (
-              try self.ip.associate(
-                loc.name, self.ip.ctx.types().literal(), .{.kind = .keyword})
+              try self.ip.associate(loc.name,
+                self.ip.ctx.types().literal().predef(), .{.kind = .keyword})
             ) orelse return try self.empty();
             loc.name.data = .{.expression = name_expr};
             const name = switch (
@@ -276,23 +282,24 @@ pub const Impl = lib.Provider.Wrapper(struct {
               else => unreachable,
             };
 
-            const t = if (loc.@"type") |tnode| blk: {
+            const spec: model.SpecType = if (loc.@"type") |tnode| blk: {
               const expr = (try self.ip.associate(
-                tnode, self.ip.ctx.types().@"type"(),
+                tnode, self.ip.ctx.types().@"type"().predef(),
                 .{.kind = .keyword}
               )) orelse return self.empty();
               const val = try self.ip.ctx.evaluator().evaluate(expr);
               switch (val.data) {
                 .poison => return try self.empty(),
-                .@"type" => |*tv| break :blk tv.t,
+                .@"type" => |*tv| break :blk tv.t.at(val.origin),
                 else => unreachable,
               }
-            } else (
+            } else if (
               try self.ip.probeType(
                 loc.default.?, .{.kind = .intermediate}, false)
-            ) orelse self.ip.ctx.types().every();
-            return try self.variable(loc.name.pos, t, name,
-              loc.default orelse (try self.defaultValue(t, n.pos)) orelse {
+            ) |t| t.at(loc.default.?.pos)
+            else self.ip.ctx.types().every().predef();
+            return try self.variable(loc.name.pos, spec, name,
+              loc.default orelse (try self.defaultValue(spec.t, n.pos)) orelse {
                 self.ip.ctx.logger.MissingInitialValue(loc.name.pos);
                 return try self.empty();
               }, if (loc.additionals) |a| a.borrow != null else false);
@@ -321,8 +328,9 @@ pub const Impl = lib.Provider.Wrapper(struct {
         if (expr.data == .poison) return try self.empty();
         if (!self.ip.ctx.types().lesserEqual(
             expr.expected_type, self.concat_loc)) {
-          self.ip.ctx.logger.ExpectedExprOfTypeXGotY(
-            expr.pos, &[_]model.Type{self.concat_loc, expr.expected_type});
+          self.ip.ctx.logger.ExpectedExprOfTypeXGotY(&[_]model.SpecType{
+            expr.expected_type.at(expr.pos), self.concat_loc.predef(),
+          });
           return try self.empty();
         }
         expr.expected_type = self.concat_loc;
@@ -341,14 +349,14 @@ pub const Impl = lib.Provider.Wrapper(struct {
               const initial = if (loc.default) |expr|
                 try self.ip.node_gen.expression(expr)
               else (try self.defaultValue(
-                  loc.tloc, item.origin)) orelse {
+                  loc.spec.t, item.origin)) orelse {
                 self.ip.ctx.logger.MissingInitialValue(loc.name.value().origin);
                 items[index] =
                   try self.ip.node_gen.void(loc.name.value().origin);
                 continue;
               };
               items[index] = try self.variable(
-                loc.name.value().origin, loc.tloc, loc.name.content, initial,
+                loc.name.value().origin, loc.spec, loc.name.content, initial,
                 loc.borrow != null);
             }
             return (try self.ip.node_gen.concat(
@@ -359,11 +367,11 @@ pub const Impl = lib.Provider.Wrapper(struct {
       }
 
       fn variable(
-        self: *@This(),
+        self    : *@This(),
         name_pos: model.Position,
-        t: model.Type,
-        name: []const u8,
-        initial: *model.Node,
+        spec    : model.SpecType,
+        name    : []const u8,
+        initial : *model.Node,
         borrowed: bool,
       ) !*model.Node {
         const sym = try self.ip.ctx.global().create(model.Symbol);
@@ -373,7 +381,7 @@ pub const Impl = lib.Provider.Wrapper(struct {
           .defined_at = name_pos,
           .name = name,
           .data = .{.variable = .{
-            .t = t,
+            .spec = spec,
             .container = self.ac.container,
             .offset = offset,
             .assignable = true,
@@ -387,7 +395,7 @@ pub const Impl = lib.Provider.Wrapper(struct {
           if (offset + 1 > self.ac.container.num_values) {
             self.ac.container.num_values = offset + 1;
           }
-          const replacement = if (t.isInst(.every))
+          const replacement = if (spec.t.isInst(.every))
             // t being .every means that it depends on the initial expression,
             // and that expression can't be interpreted right now. This commonly
             // happens if an argument value is assigned (argument variables are
@@ -403,7 +411,7 @@ pub const Impl = lib.Provider.Wrapper(struct {
             .target = .{.resolved = .{
               .target = &sym.data.variable,
               .path = &.{},
-              .t = t,
+              .spec = spec,
               .pos = initial.pos,
             }},
             .replacement = replacement,
