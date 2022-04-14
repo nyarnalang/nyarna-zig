@@ -428,8 +428,15 @@ pub const Interpreter = struct {
   ) nyarna.Error!?*model.Expression {
     if (stage.kind == .resolve) return null;
     switch (ref.sym.data) {
-      .func => |func| return self.ctx.createValueExpr(
-        (try self.ctx.values.funcRef(ref.node().pos, func)).value()),
+      .func => |func| {
+        if (func.sig().isKeyword()) {
+          self.ctx.logger.KeywordMustBeCalled(ref.node().pos);
+          return self.ctx.createValueExpr(
+            try self.ctx.values.poison(ref.node().pos));
+        }
+        return self.ctx.createValueExpr(
+          (try self.ctx.values.funcRef(ref.node().pos, func)).value());
+      },
       .variable => |*v| {
         if (v.spec.t.isInst(.every)) return null;
         const expr = try self.ctx.global().create(model.Expression);
@@ -468,14 +475,18 @@ pub const Interpreter = struct {
       }
       return null;
     }
-    const target = (try self.tryInterpret(rc.target, stage)) orelse
-      return null;
     const is_keyword = rc.sig.returns.isInst(.ast);
-    const cur_allocator = if (is_keyword) self.allocator
-                          else self.ctx.global();
+    const target: ?*model.Expression = if (is_keyword) null else (
+      try self.tryInterpret(rc.target, stage)
+    ) orelse return null;
+
+    const cur_allocator =
+      if (is_keyword) self.allocator else self.ctx.global();
     var args_failed_to_interpret = false;
-    const arg_stage = Stage{.kind = if (is_keyword) .keyword else stage.kind,
-                            .resolve = stage.resolve};
+    const arg_stage = Stage{
+      .kind = if (is_keyword) .keyword else stage.kind,
+      .resolve = stage.resolve,
+    };
     // in-place modification of args requires that the arg nodes have been
     // created by the current document. The only way a node from another
     // document can be referenced in the current document is through
@@ -505,21 +516,25 @@ pub const Interpreter = struct {
       args[i] = arg.data.expression;
       if (args[i].expected_type.isInst(.poison)) seen_poison = true;
     }
-    const expr = try cur_allocator.create(model.Expression);
-    expr.* = .{
-      .pos = rc.node().pos,
-      .data = .{
-        .call = .{
-          .ns = rc.ns,
-          .target = target,
-          .exprs = args,
+
+    if (target) |rt_target| {
+      const expr = try cur_allocator.create(model.Expression);
+      expr.* = .{
+        .pos = rc.node().pos,
+        .data = .{
+          .call = .{
+            .ns = rc.ns,
+            .target = rt_target,
+            .exprs = args,
+          },
         },
-      },
-      .expected_type = rc.sig.returns,
-    };
-    if (is_keyword) {
+        .expected_type = rc.sig.returns,
+      };
+      return expr;
+    } else {
       var eval = self.ctx.evaluator();
-      const res = try eval.evaluateKeywordCall(self, &expr.data.call);
+      const res = try eval.evaluateKeywordCall(
+        self, rc.node().pos, rc.ns, rc.target.data.resolved_symref.sym, args);
       // if this is an import, the parser must handle it.
       const interpreted_res = if (res.data == .import) null else
         try self.tryInterpret(res, stage);
@@ -530,8 +545,6 @@ pub const Interpreter = struct {
         rc.node().* = res.*;
       }
       return interpreted_res;
-    } else {
-      return expr;
     }
   }
 
@@ -2593,30 +2606,42 @@ pub const Interpreter = struct {
         return expr;
       },
       .seq => |*seq| {
-        var probed = (
-          try self.probeType(input, stage, false)
-        ) orelse return null;
-        if (probed.isInst(.space) and spec.t.isInst(.void)) probed = spec.t;
-        if (try self.poisonIfNotCompat(input.pos, probed, spec.t)) |expr| {
-          return expr;
+        var seen_unfinished = false;
+        for (seq.items) |item| {
+          const res = try self.probeType(item.content, stage, false);
+          if (res == null) seen_unfinished = true;
         }
+        if (seen_unfinished) return null;
+        var builder = types.SequenceBuilder.init(self.ctx, false);
         const res = try self.ctx.global().alloc(
           model.Expression.Paragraph, seq.items.len);
-        for (seq.items) |item, i| {
-          const para_type = (try self.probeType(item.content, stage, false)).?;
-          const target_type =
-            if (para_type.isInst(.space)) self.ctx.types().void() else spec.t;
-          const target_spec = target_type.at(spec.pos);
-          const content = (
-            try self.interpretWithTargetScalar(item.content, target_spec, stage)
-          ).?;
-          res[i] = .{.content = content, .lf_after = item.lf_after};
+        var next: usize = 0;
+        for (seq.items) |item| {
+          var para_type = (try self.probeType(item.content, stage, false)).?;
+          var stype = spec;
+          if (types.containedScalar(para_type)) |contained| {
+            if (contained.isInst(.space)) {
+              stype = self.ctx.types().@"void"().at(spec.pos);
+              para_type = try self.typeWithoutSpace(para_type);
+            }
+          }
+          if (try builder.push(para_type.at(item.content.pos))) |prev| {
+            self.ctx.logger.IncompatibleTypes(
+              &.{para_type.at(item.content.pos), prev});
+          } else {
+            res[next] = .{
+              .content = (try self.interpretWithTargetScalar(
+                item.content, stype, stage)).?,
+              .lf_after = item.lf_after,
+            };
+            next += 1;
+          }
         }
         const expr = try self.ctx.global().create(model.Expression);
         expr.* = .{
           .pos = input.pos,
-          .data = .{.sequence = res},
-          .expected_type = try self.ctx.types().sup(probed, spec.t),
+          .data = .{.sequence = res[0..next]},
+          .expected_type = try builder.finish(),
         };
         return expr;
       },
@@ -2695,6 +2720,29 @@ pub const Interpreter = struct {
               .expected_type = item.t,
             };
             break :blk conv;
+          },
+          .sequence => |*seq| {
+            var compat = true;
+            if (seq.direct) |direct| {
+              if (!self.ctx.types().lesserEqual(direct, item.t)) compat = false;
+            }
+            for (seq.inner) |inner| {
+              if (!self.ctx.types().lesserEqual(inner.typedef(), item.t)) {
+                compat = false;
+              }
+            }
+            if (compat) {
+              const conv = try self.ctx.global().create(model.Expression);
+              conv.* = .{
+                .pos = expr.pos,
+                .data = .{.conversion = .{
+                  .inner = expr,
+                  .target_type = item.t,
+                }},
+                .expected_type = item.t,
+              };
+              break :blk conv;
+            }
           },
           else => {},
         },

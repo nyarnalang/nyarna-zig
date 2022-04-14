@@ -126,21 +126,63 @@ pub const Evaluator = struct {
   fn callConstructor(
     self: *Evaluator,
     impl_ctx: anytype,
-    call: *model.Expression.Call,
+    pos: model.Position,
+    args: []*model.Expression,
     constr: nyarna.types.Constructor,
   ) nyarna.Error!RetTypeForCtx(@TypeOf(impl_ctx)) {
     const callable = constr.callable.?;
     const target_impl =
       self.registeredFnForCtx(@TypeOf(impl_ctx), constr.impl_index);
-    std.debug.assert(
-      call.exprs.len == callable.sig.parameters.len);
+    std.debug.assert(args.len == callable.sig.parameters.len);
     var frame: ?[*]model.StackItem = try self.setupParameterStackFrame(
       callable.sig, false, null);
     defer self.resetStackFrame(&frame, callable.sig.parameters.len, false);
-    return if (try self.fillParameterStackFrame(
-        call.exprs, frame.? + 1))
-      target_impl(impl_ctx, call.expr().pos, frame.? + 1)
-    else poison(impl_ctx, call.expr().pos);
+    return if (
+      try self.fillParameterStackFrame(args, frame.? + 1)
+    ) target_impl(impl_ctx, pos, frame.? + 1) else poison(impl_ctx, pos);
+  }
+
+  fn evalExtFuncCall(
+    self: *Evaluator,
+    impl_ctx: anytype,
+    pos: model.Position,
+    func: *model.Function,
+    ns: u15,
+    args: []*model.Expression,
+  ) nyarna.Error!RetTypeForCtx(@TypeOf(impl_ctx)) {
+    const ef = &func.data.ext;
+    const target_impl =
+      self.registeredFnForCtx(@TypeOf(impl_ctx), ef.impl_index);
+    std.debug.assert(args.len == func.sig().parameters.len);
+    func.variables.cur_frame = try self.setupParameterStackFrame(
+      func.sig(), ef.ns_dependent, func.variables.cur_frame);
+    var frame_ptr = func.argStart();
+    var ns_val: model.Value = undefined;
+    if (ef.ns_dependent) {
+      ns_val = .{
+        .data = .{
+          .number = .{
+            .t = undefined, // not accessed, since the wrapper assumes
+                            // that the value adheres to the target
+                            // type's constraints
+            .content = ns,
+          },
+        },
+        .origin = undefined,
+      };
+      frame_ptr.* = .{.value = &ns_val};
+      frame_ptr += 1;
+    }
+    defer self.resetStackFrame(
+      &func.variables.cur_frame, func.sig().parameters.len,
+      ef.ns_dependent);
+    if (func.name) |fname| if (fname.parent_type) |ptype| {
+      self.target_type = ptype;
+    };
+    return if (
+      try self.fillParameterStackFrame(args, frame_ptr)
+    ) target_impl(impl_ctx, pos, func.argStart())
+    else poison(impl_ctx, pos);
   }
 
   fn evalCall(
@@ -152,41 +194,8 @@ pub const Evaluator = struct {
     switch (target.data) {
       .funcref => |fr| {
         switch (fr.func.data) {
-          .ext => |*ef| {
-            const target_impl =
-              self.registeredFnForCtx(@TypeOf(impl_ctx), ef.impl_index);
-            std.debug.assert(
-              call.exprs.len == fr.func.sig().parameters.len);
-            fr.func.variables.cur_frame = try self.setupParameterStackFrame(
-              fr.func.sig(), ef.ns_dependent, fr.func.variables.cur_frame);
-            var frame_ptr = fr.func.argStart();
-            var ns_val: model.Value = undefined;
-            if (ef.ns_dependent) {
-              ns_val = .{
-                .data = .{
-                  .number = .{
-                    .t = undefined, // not accessed, since the wrapper assumes
-                                    // that the value adheres to the target
-                                    // type's constraints
-                    .content = call.ns,
-                  },
-                },
-                .origin = undefined,
-              };
-              frame_ptr.* = .{.value = &ns_val};
-              frame_ptr += 1;
-            }
-            defer self.resetStackFrame(
-              &fr.func.variables.cur_frame, fr.func.sig().parameters.len,
-              ef.ns_dependent);
-            if (fr.func.name) |fname| if (fname.parent_type) |ptype| {
-              self.target_type = ptype;
-            };
-            return if (try self.fillParameterStackFrame(
-                call.exprs, frame_ptr))
-              target_impl(impl_ctx, call.expr().pos, fr.func.argStart())
-            else poison(impl_ctx, call.expr().pos);
-          },
+          .ext => return self.evalExtFuncCall(
+            impl_ctx, call.expr().pos, fr.func, call.ns, call.exprs),
           .ny => |*nf| {
             fr.func.variables.cur_frame = try self.setupParameterStackFrame(
               fr.func.sig(), false, fr.func.variables.cur_frame);
@@ -233,11 +242,8 @@ pub const Evaluator = struct {
         } else unreachable;
         const constr = try self.ctx.types().typeConstructor(tv.t);
         self.target_type = tv.t;
-        return self.callConstructor(impl_ctx, call, constr);
-      },
-      .prototype => |pv| {
-        const constr = self.ctx.types().prototypeConstructor(pv.pt);
-        return self.callConstructor(impl_ctx, call, constr);
+        return self.callConstructor(
+          impl_ctx, call.expr().pos, call.exprs, constr);
       },
       .poison => return switch (@TypeOf(impl_ctx)) {
         *Evaluator => self.ctx.values.poison(call.expr().pos),
@@ -251,9 +257,21 @@ pub const Evaluator = struct {
   pub fn evaluateKeywordCall(
     self: *Evaluator,
     intpr: *Interpreter,
-    call: *model.Expression.Call,
+    pos: model.Position,
+    ns: u15,
+    target: *model.Symbol,
+    args: []*model.Expression,
   ) !*model.Node {
-    return self.evalCall(intpr, call);
+    switch (target.data) {
+      .func => |func| {
+        return self.evalExtFuncCall(intpr, pos, func, ns, args);
+      },
+      .prototype => |pt| {
+        const constr = self.ctx.types().prototypeConstructor(pt);
+        return self.callConstructor(intpr, pos, args, constr);
+      },
+      else => std.debug.panic("{s} is not a keyword!", .{@tagName(target.data)})
+    }
   }
 
   fn evalAccess(
@@ -909,7 +927,8 @@ const SequenceBuilder = struct {
   fn enqueue(self: *@This(), item: model.Value.Seq.Item) !void {
     try self.content.append(item);
     const item_type = try self.ctx.types().valueType(item.content);
-    try self.t_builder.push(item_type.at(item.content.origin));
+    const res = try self.t_builder.push(item_type.at(item.content.origin));
+    std.debug.assert(res == null);
   }
 
   pub fn push(

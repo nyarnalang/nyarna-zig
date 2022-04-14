@@ -12,6 +12,7 @@
 --- errors:expr
 7:5 - 7:9 AssignmentWithoutExpression
 7:17 - 7:18 IllegalBlocksStartInArgs
+7:11 - 7:17 KeywordMustBeCalled
 9:1 - 9:12 InvalidEndCommand
 9:18 - 9:19 IllegalBlocksStartInArgs
 9:19 - 9:20 IncompatibleTypes

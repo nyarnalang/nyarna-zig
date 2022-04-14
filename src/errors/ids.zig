@@ -22,7 +22,7 @@ pub const GenericParserError = enum {
   MissingInitialValue, IllegalNumericInterval, EntityCannotBeNamed,
   SurplusFlags, TypeInMagic, NyFuncInMagic, BuiltinMustBeNamed, NoBlockToEnd,
   ConstructorUnavailable, NoBuiltinProvider, IllegalContentInPrototypeFuncs,
-  BlockNameAtTopLevel,
+  BlockNameAtTopLevel, KeywordMustBeCalled,
 };
 
 pub const WrongItemError = enum {

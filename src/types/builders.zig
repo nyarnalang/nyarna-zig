@@ -275,11 +275,12 @@ pub const SequenceBuilder = struct {
   };
 
   ctx: nyarna.Context,
-  direct: ?model.Type = null,
+  direct: ?model.SpecType = null,
+  single: ?model.SpecType = null,
   list: std.ArrayListUnmanaged(*model.Type.Record) = .{},
   positions: std.ArrayListUnmanaged(model.Position) = .{},
   non_voids: u21 = 0,
-  /// if true, a \Paragraphs type will always be created. Also errors will be
+  /// if true, a \Sequence type will always be created. Also errors will be
   /// logged if pushed types are merged into previously given types.
   force: bool,
   poison: bool = false,
@@ -292,36 +293,84 @@ pub const SequenceBuilder = struct {
     };
   }
 
-  pub fn push(self: *Self, spec: model.SpecType) !void {
-    switch (spec.t) {
+  /// returns the previous type the pushed type is incompatible with, if any.
+  pub fn push(
+    self: *Self,
+    spec: model.SpecType,
+  ) std.mem.Allocator.Error!?model.SpecType {
+    if (self.single) |single| {
+      if (self.ctx.types().lesserEqual(spec.t, single.t)) return null;
+      if (self.ctx.types().greater(spec.t, single.t)) {
+        self.single = spec;
+        return null;
+      } else return single;
+    }
+    const to_add = switch (spec.t) {
       .instantiated => |inst| switch (inst.data) {
-        .void, .space => return,
+        .void, .space => return null,
         .poison => {
           self.poison = true;
-          return;
+          return null;
         },
         .record => |*rec| {
           // OPPORTUNITY: sort this list here?
           for (self.list.items) |item| {
-            if (item.typedef().eql(spec.t)) return;
+            if (item.typedef().eql(spec.t)) return null;
           }
           try self.list.append(self.ctx.global(), rec);
-          if (self.force) try self.positions.append(self.ctx.local(), spec.pos);
+          try self.positions.append(self.ctx.local(), spec.pos);
           self.non_voids += 1;
-          return;
+          return null;
         },
-        else => {},
+        .textual, .location, .definition, .literal, .raw, .every => spec,
+        .tenum   => self.ctx.types().system.identifier.at(spec.pos),
+        .numeric, .float => self.ctx.types().raw().at(spec.pos),
+        else => {
+          if (self.direct) |direct| return direct;
+          if (self.list.items.len > 0) {
+            return self.list.items[0].typedef().at(self.positions.items[0]);
+          }
+          self.single = spec;
+          return null;
+        }
       },
-      .structural => {},
-    }
+      .structural => |struc| switch (struc.*) {
+        .optional => |*opt| opt.inner.at(spec.pos),
+        .callable, .list, .map => {
+          if (self.direct) |direct| return direct;
+          if (self.list.items.len > 0) {
+            return self.list.items[0].typedef().at(self.positions.items[0]);
+          }
+          self.single = spec;
+          return null;
+        },
+        .concat, .intersection => spec,
+        .sequence => |*seq| {
+          self.non_voids += 1;
+          if (seq.direct) |other_direct| {
+            if (try self.push(other_direct.at(spec.pos))) |res| return res;
+          }
+          const inners = self.list.items;
+          outer: for (seq.inner) |other_inner| {
+            for (inners) |inner| {
+              if (inner == other_inner) continue :outer;
+            }
+            try self.list.append(self.ctx.global(), other_inner);
+            try self.positions.append(self.ctx.local(), spec.pos);
+          }
+          return null;
+        },
+      },
+    };
     self.non_voids += 1;
     if (self.direct) |direct| {
-      const sup = try self.ctx.types().sup(direct, spec.t);
+      const sup = try self.ctx.types().sup(direct.t, to_add.t);
       std.debug.assert(!sup.isInst(.poison));
-      self.direct = sup;
+      self.direct = sup.at(direct.pos.span(to_add.pos));
     } else {
-      self.direct = spec.t;
+      self.direct = to_add;
     }
+    return null;
   }
 
   pub fn finish(self: *Self) !model.Type {
@@ -330,10 +379,12 @@ pub const SequenceBuilder = struct {
       self.positions.deinit(self.ctx.local());
     }
     return if (self.poison) self.ctx.types().poison()
+    else if (self.single) |single| single.t
     else switch (self.non_voids) {
       0 => self.ctx.types().void(),
-      1 => if (self.direct) |direct| direct else self.list.items[0].typedef(),
-      else => try self.ctx.types().calcSequence(self.direct, self.list.items),
+      1 => if (self.direct) |direct| direct.t else self.list.items[0].typedef(),
+      else => try self.ctx.types().calcSequence(
+        if (self.direct) |direct| direct.t else null, self.list.items),
     };
   }
 };

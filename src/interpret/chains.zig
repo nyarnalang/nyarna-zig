@@ -354,15 +354,14 @@ pub const Resolver = struct {
       .resolved_symref => |*rs| return self.resolveSymref(rs),
       .unresolved_access => |*uacc| return try self.resolveUAccess(uacc),
       .unresolved_call => |*ucall| return try self.resolveUCall(ucall),
-      .unresolved_symref => |*usym| blk: {
+      .unresolved_symref => |*usym| {
         const namespace = self.intpr.namespace(usym.ns);
         const name_pos = usym.namePos();
         if (namespace.data.get(usym.name)) |sym| {
           chain.data = .{.resolved_symref = .{
             .ns = usym.ns, .sym = sym, .name_pos = name_pos,
           }};
-          ns = usym.ns;
-          break :blk name_pos;
+          return self.resolveSymref(&chain.data.resolved_symref);
         } else if (self.stage.resolve) |r| {
           return self.fromGraphResult(chain, usym.ns, usym.name, name_pos,
             try r.resolveSymbol(self.intpr, usym), self.stage);
