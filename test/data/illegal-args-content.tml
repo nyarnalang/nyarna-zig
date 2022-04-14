@@ -18,7 +18,3 @@
   main = Literal
   other = input(9:14) [type] (Raw) -> Raw
 11:20 - 11:21 IllegalNameSep
-7:11 - 7:17 UnknownSymbol
-  repr = block
-11:1 - 11:7 UnknownSymbol
-  repr = block

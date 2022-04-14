@@ -148,7 +148,7 @@ pub const Location = struct {
     return Node.parent(self);
   }
 };
-pub const Paras = struct {
+pub const Seq = struct {
   pub const Item = struct {
     content : *Node,
     lf_after: usize
@@ -327,7 +327,7 @@ pub const tg = struct {
     generated: ?*Type.Structural = null,
     pub inline fn node(self: *@This()) *Node {return Node.parent(self);}
   };
-  pub const Paragraphs = struct {
+  pub const Sequence = struct {
     inners: []Node.Varargs.Item,
     auto: ?*Node,
     generated: ?*Type.Structural = null,
@@ -376,7 +376,7 @@ pub const Data = union(enum) {
   gen_map          : tg.Map,
   gen_numeric      : tg.Numeric,
   gen_optional     : tg.Optional,
-  gen_paragraphs   : tg.Paragraphs,
+  gen_sequence     : tg.Sequence,
   gen_prototype    : tg.Prototype,
   gen_record       : tg.Record,
   gen_textual      : tg.Textual,
@@ -384,7 +384,7 @@ pub const Data = union(enum) {
   import           : Import,
   literal          : Literal,
   location         : Location,
-  paras            : Paras,
+  seq              : Seq,
   resolved_access  : ResolvedAccess,
   resolved_call    : ResolvedCall,
   resolved_symref  : ResolvedSymref,
@@ -413,7 +413,7 @@ fn parent(it: anytype) *Node {
     Import           => offset(Data, "import"),
     Literal          => offset(Data, "literal"),
     Location         => offset(Data, "location"),
-    Paras            => offset(Data, "paras"),
+    Seq              => offset(Data, "seq"),
     ResolvedAccess   => offset(Data, "resolved_access"),
     ResolvedCall     => offset(Data, "resolved_call"),
     ResolvedSymref   => offset(Data, "resolved_symref"),
@@ -425,7 +425,7 @@ fn parent(it: anytype) *Node {
     tg.Map           => offset(Data, "gen_map"),
     tg.Numeric       => offset(Data, "gen_numeric"),
     tg.Optional      => offset(Data, "gen_optional"),
-    tg.Paragraphs    => offset(Data, "gen_paragraphs"),
+    tg.Sequence      => offset(Data, "gen_sequence"),
     tg.Prototype     => offset(Data, "gen_prototype"),
     tg.Record        => offset(Data, "gen_record"),
     tg.Textual       => offset(Data, "gen_textual"),

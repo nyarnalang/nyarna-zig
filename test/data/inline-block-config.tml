@@ -17,14 +17,13 @@
 \end(block)
 --- rawast
 +PARA
-  +UCALL
-    +TARGET
-      =SYMREF [0]block
-    -TARGET
-    +PROTO name="content"
+  +RCALL
+    =SYMREF .std.system.block
+    >ARG content
+    +AST
       =LIT text "lorem ipsum\n:dolor sit amet"
-    -PROTO
-  -UCALL
+    -AST
+  -RCALL
 -PARA
 +PARA
   +RCALL
@@ -44,25 +43,18 @@
   -RCALL
 -PARA
 +PARA
-  +UCALL
-    +TARGET
-      =SYMREF [0]block
-    -TARGET
-    +PROTO primary
+  +RCALL
+    =SYMREF .std.system.block
+    >ARG content
+    +AST
       =LIT text "\\this is not a command "
-      +RCALL
-        =SYMREF .std.system.if
-        >ARG condition
-        +AST
-          =LIT text "true"
-        -AST
-        >ARG then
-        +AST
-          =LIT text "but this is"
-        -AST
-        >ARG else
+      +BRANCHES
+        =ENUM Bool "true"
+        >BRANCH 0
         =VOID
-      -RCALL
-    -PROTO
-  -UCALL
+        >BRANCH 1
+        =TEXT Literal "but this is"
+      -BRANCHES
+    -AST
+  -RCALL
 -PARA

@@ -302,7 +302,7 @@ pub const SignatureMapper = struct {
           try self.intpr.node_gen.expression(dexpr)
         else switch (param.spec.t) {
           .structural => |strct| switch (strct.*) {
-            .optional, .concat, .paragraphs =>
+            .optional, .concat, .sequence =>
               try self.intpr.node_gen.@"void"(pos),
             .list => if (param.capture == .varargs)
                 (try self.intpr.node_gen.varargs(pos, param.spec.t)).node()

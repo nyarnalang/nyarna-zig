@@ -10,6 +10,7 @@ const sigs     = @import("types/sigs.zig");
 
 const stringOrder = @import("helpers.zig").stringOrder;
 const totalOrderLess = @import("types/helpers.zig").totalOrderLess;
+const recTotalOrderLess = @import("types/helpers.zig").recTotalOrderLess;
 
 pub usingnamespace builders;
 pub usingnamespace funcs;
@@ -44,8 +45,8 @@ const InnerIntend = enum {
     return switch (t) {
       .structural => |s| switch (s.*) {
         .optional => InnerIntend.exalt,
-        .concat => InnerIntend.collapse,
-        .paragraphs => InnerIntend.forbidden,
+        .concat   => InnerIntend.collapse,
+        .sequence => InnerIntend.forbidden,
         else => InnerIntend.allowed,
       },
       .instantiated => |ins| switch (ins.data) {
@@ -61,7 +62,7 @@ const InnerIntend = enum {
   fn optional(t: model.Type) InnerIntend {
     return switch (t) {
       .structural => |s| switch (s.*) {
-        .optional, .concat, .paragraphs => InnerIntend.collapse,
+        .optional, .concat, .sequence => InnerIntend.collapse,
         else => InnerIntend.allowed,
       },
       .instantiated => |inst| switch (inst.data) {
@@ -69,6 +70,24 @@ const InnerIntend = enum {
         .void => InnerIntend.collapse,
         .prototype, .schema, .extension => InnerIntend.forbidden,
         else => InnerIntend.allowed,
+      },
+    };
+  }
+};
+
+const HalfOrder = enum {
+  lt, eq, gt, dj, // less than, equal, greater than, disjoint
+
+  fn push(self: *HalfOrder, value: std.math.Order) void {
+    self.* = switch (value) {
+      .lt => switch (self.*) {
+        .lt, .eq => HalfOrder.lt,
+        .gt, .dj => HalfOrder.dj,
+      },
+      .eq => return,
+      .gt => switch (self.*) {
+        .gt, .eq => HalfOrder.gt,
+        .lt, .dj => HalfOrder.dj,
       },
     };
   }
@@ -202,7 +221,7 @@ pub const Lattice = struct {
   /// assumed that this is fine.
   prefix_trees: struct {
     intersection: TreeNode(void),
-    paragraphs  : TreeNode(void),
+    sequence    : TreeNode(void),
     callable    : TreeNode(bool),
   },
   /// Constructors for all unique types and prototypes that have constructors.
@@ -224,7 +243,7 @@ pub const Lattice = struct {
       map         : Constructor = .{},
       numeric     : Constructor = .{},
       optional    : Constructor = .{},
-      paragraphs  : Constructor = .{},
+      sequence    : Constructor = .{},
       record      : Constructor = .{},
       textual     : Constructor = .{},
     } = .{},
@@ -263,7 +282,7 @@ pub const Lattice = struct {
     map         : funcs.PrototypeFuncs = .{},
     numeric     : funcs.PrototypeFuncs = .{},
     optional    : funcs.PrototypeFuncs = .{},
-    paragraphs  : funcs.PrototypeFuncs = .{},
+    sequence    : funcs.PrototypeFuncs = .{},
     record      : funcs.PrototypeFuncs = .{},
     textual     : funcs.PrototypeFuncs = .{},
   } = .{},
@@ -290,8 +309,8 @@ pub const Lattice = struct {
       .self_ref_list = try ctx.global().create(model.Type.Structural),
       .prefix_trees = .{
         .intersection = .{},
-        .paragraphs = .{},
-        .callable = .{},
+        .sequence     = .{},
+        .callable     = .{},
       },
       .constructors = .{}, // set later by loading the intrinsic lib
       .predefined = undefined,
@@ -422,7 +441,7 @@ pub const Lattice = struct {
       .optional     => self.constructors.prototypes.optional,
       .concat       => self.constructors.prototypes.concat,
       .list         => self.constructors.prototypes.list,
-      .paragraphs   => self.constructors.prototypes.paragraphs,
+      .sequence     => self.constructors.prototypes.sequence,
       .map          => self.constructors.prototypes.map,
       .record       => self.constructors.prototypes.record,
       .intersection => self.constructors.prototypes.intersection,
@@ -510,16 +529,22 @@ pub const Lattice = struct {
     return self.raw();
   }
 
-  pub fn calcParagraphs(self: *Self, inner: []model.Type) !model.Type {
-    std.sort.sort(model.Type, inner, {}, totalOrderLess);
+  pub fn calcSequence(
+    self: *Self,
+    direct: ?model.Type,
+    inner: []*model.Type.Record,
+  ) !model.Type {
+    std.sort.sort(*model.Type.Record, inner, {}, recTotalOrderLess);
     var iter = TreeNode(void).Iter{
-      .cur = &self.prefix_trees.paragraphs, .lattice = self,
+      .cur = &self.prefix_trees.sequence, .lattice = self,
     };
-    for (inner) |t| try iter.descend(t, {});
+    for (inner) |t| try iter.descend(t.typedef(), {});
+    if (direct) |d| try iter.descend(d, {});
     return model.Type{.structural = iter.cur.value orelse blk: {
       var new = try self.allocator.create(model.Type.Structural);
       new.* = .{
-        .paragraphs = .{
+        .sequence = .{
+          .direct = direct,
           .inner = inner,
           .auto = null,
         },
@@ -542,7 +567,7 @@ pub const Lattice = struct {
     self: *Self,
     struc: *model.Type.Structural,
     other: model.Type,
-  ) !model.Type {
+  ) std.mem.Allocator.Error!model.Type {
     switch (other) {
       // we're handling some special cases here, but most are handled by the
       // switch below.
@@ -608,8 +633,83 @@ pub const Lattice = struct {
         (try self.optional(try self.sup(o.inner, other))) orelse self.poison(),
       .concat => |*c|
         (try self.concat(try self.sup(c.inner, other))) orelse self.poison(),
-      .paragraphs => {
-        unreachable; // TODO
+      .sequence => |*s| switch (other) {
+        .structural => |other_struc| switch (other_struc.*) {
+          .sequence => |*other_s| {
+            var order = HalfOrder.eq;
+            order.push(std.math.order(s.inner.len, other_s.inner.len));
+
+            if (s.direct) |direct| {
+              if (other_s.direct) |other_direct| {
+                if (!direct.eql(other_direct)) {
+                  if (self.lesser(direct, other_direct)) order.push(.lt)
+                  else if (self.lesser(other_direct, direct)) order.push(.gt)
+                  else order = .dj;
+                }
+              } else order.push(.gt);
+            } else if (other_s.direct != null) order.push(.lt);
+            switch (order) {
+              .eq, .lt => for (s.inner) |inner| {
+                var found = for (other_s.inner) |other_inner| {
+                  if (inner == other_inner) break true;
+                } else false;
+                if (!found) {
+                  // obvious for .lt. in case of .eq, we are sure that both
+                  // sets have the same size. Therefore, if one record in
+                  // p.inner doesn't have an equal in other_p.inner, there
+                  // must be a record in other_p.inner that doesn't have an
+                  // equal in p.inner. thus there is no relation between the
+                  // sets.
+                  order = .dj;
+                  break;
+                }
+              },
+              .gt => for (other_s.inner) |other_inner| {
+                var found = for (s.inner) |inner| {
+                  if (inner == other_inner) break true;
+                } else false;
+                if (!found) {
+                  order = .dj;
+                  break;
+                }
+              },
+              .dj => {},
+            }
+            switch (order) {
+              .eq, .lt => return other,
+              .gt => return struc.typedef(),
+              .dj => unreachable, // TODO
+            }
+          },
+          .concat => {
+            if (s.direct) |direct| {
+              const res = try self.supWithStructure(other_struc, direct);
+              if (res.eql(direct)) return struc.typedef();
+              unreachable; // TODO
+            } else unreachable; // TODO
+          },
+          else => self.poison(),
+        },
+        .instantiated => |inst| switch (inst.data) {
+          .void => return struc.typedef(),
+          .literal, .space, .raw, .numeric, .textual, .tenum, .float => {
+            if (s.direct) |direct| {
+              const res = try self.sup(other, direct);
+              if (res.eql(direct)) return struc.typedef();
+              return try self.calcSequence(res, s.inner);
+            } else return try self.calcSequence(other, s.inner);
+          },
+          .record => |*rec| {
+            if (s.direct) |direct| {
+              if (self.lesserEqual(other, direct)) return struc.typedef();
+              for (s.inner) |inner| {
+                if (inner == rec) return struc.typedef();
+              }
+              unreachable; // TODO
+            } else unreachable; // TODO
+          },
+          else => return self.poison(),
+        }
       },
       .list => |*l|
         (try self.list(try self.sup(l.inner, other))) orelse self.poison(),
@@ -812,25 +912,26 @@ pub const Lattice = struct {
 
   pub fn valueType(self: *Lattice, v: *model.Value) !model.Type {
     return switch (v.data) {
-      .text => |*txt| txt.t,
-      .number => |*num| num.t.typedef(),
-      .float => |*fl| fl.t.typedef(),
-      .@"enum" => |*en| en.t.typedef(),
-      .record => |*rec| rec.t.typedef(),
-      .concat => |*con| con.t.typedef(),
-      .para => |*para| para.t.typedef(),
-      .list => |*list| list.t.typedef(),
-      .map => |*map| map.t.typedef(),
-      .@"type" => |tv| try self.typeType(tv.t),
-      .prototype => |pv| self.prototypeConstructor(pv.pt).callable.?.typedef(),
-      .funcref => |*fr| fr.func.callable.typedef(),
-      .location => self.location(),
-      .definition => self.definition(),
-      .ast => |ast| if (ast.container == null)
+      .text         => |*txt|  txt.t,
+      .number       => |*num|  num.t.typedef(),
+      .float        => |*fl|   fl.t.typedef(),
+      .@"enum"      => |*en|   en.t.typedef(),
+      .record       => |*rec|  rec.t.typedef(),
+      .concat       => |*con|  con.t.typedef(),
+      .seq          => |*seq|  seq.t.typedef(),
+      .list         => |*list| list.t.typedef(),
+      .map          => |*map|  map.t.typedef(),
+      .@"type"      => |tv|    try self.typeType(tv.t),
+      .prototype    => |pv|
+        self.prototypeConstructor(pv.pt).callable.?.typedef(),
+      .funcref      => |*fr| fr.func.callable.typedef(),
+      .location     => self.location(),
+      .definition   => self.definition(),
+      .ast          => |ast| if (ast.container == null)
         self.ast() else self.frameRoot(),
       .block_header => self.blockHeader(),
-      .void => self.void(),
-      .poison => self.poison(),
+      .void         => self.void(),
+      .poison       => self.poison(),
     };
   }
 
@@ -864,7 +965,7 @@ pub const Lattice = struct {
         .list         => |*lst| self.typeArr(&.{t, lst.inner}),
         .map          => |*map| self.typeArr(&.{t, map.key, map.value}),
         .optional     => |*opt| self.typeArr(&.{t, opt.inner}),
-        .paragraphs   => self.typeArr(&.{t}), // TODO
+        .sequence     => self.typeArr(&.{t}), // TODO
       },
       .instantiated => self.typeArr(&.{t}),
     };
@@ -880,7 +981,7 @@ pub const Lattice = struct {
         .list => &self.prototype_funcs.list,
         .map => &self.prototype_funcs.map,
         .optional => &self.prototype_funcs.optional,
-        .paragraphs => &self.prototype_funcs.paragraphs,
+        .sequence => &self.prototype_funcs.sequence,
       },
       .instantiated => |inst| switch (inst.data) {
         .textual => &self.prototype_funcs.textual,
@@ -928,7 +1029,7 @@ pub const Lattice = struct {
         .optional => |*opt|
           if (actual.isInst(.void) or actual.isInst(.every)) actual
           else self.expectedType(actual, opt.inner),
-        .concat, .paragraphs, .list, .map => target,
+        .concat, .sequence, .list, .map => target,
         .callable => unreachable, // TODO
         .intersection => |*inter| blk: {
           if (inter.scalar) |scalar_type|
@@ -953,12 +1054,10 @@ pub fn containedScalar(t: model.Type) ?model.Type {
   return switch (t) {
     .structural => |strct| switch (strct.*) {
       .optional => |*opt| containedScalar(opt.inner),
-      .concat => |*con| containedScalar(con.inner),
-      .paragraphs => |*para| blk: {
-        for (para.inner) |inner_type| {
-          // the first scalar type found will be the correct one due to the
-          // semantics of paragraphs.
-          if (containedScalar(inner_type)) |ret| break :blk ret;
+      .concat   => |*con| containedScalar(con.inner),
+      .sequence => |*seq| blk: {
+        if (seq.direct) |direct| {
+          if (containedScalar(direct)) |ret| break :blk ret;
         }
         break :blk null;
       },

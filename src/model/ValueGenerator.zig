@@ -160,16 +160,16 @@ pub inline fn number(
     pos, .{.number = .{.t = t, .content = content}})).data.number;
 }
 
-pub inline fn para(
+pub inline fn seq(
   self: *const Self,
-  pos: Position,
-  t: *const Type.Paragraphs
-) !*Value.Para {
+  pos : Position,
+  t   : *const Type.Sequence,
+) !*Value.Seq {
   return &(try self.value(pos, .{
-    .para = .{
-      .t = t, .content = std.ArrayList(Value.Para.Item).init(self.allocator()),
+    .seq = .{
+      .t = t, .content = std.ArrayList(Value.Seq.Item).init(self.allocator()),
     },
-  })).data.para;
+  })).data.seq;
 }
 
 pub inline fn prototype(

@@ -11,19 +11,17 @@
   schwurbl : \Bool {}:<syntax locations>:3>
 \end(block)
 --- rawast
-+UCALL
-  +TARGET
-    =SYMREF [0]block
-  -TARGET
-  +PROTO primary
++RCALL
+  =SYMREF .std.system.block
+  >ARG content
+  +AST
     +LOC
       =LIT text "spam"
-      +TYPE
-        =SYMREF .std.system.Raw
-      -TYPE
+      =SYMREF .std.system.Raw
     -LOC
     +LOC
       =LIT text "egg"
+      =TYPE <none>
       +DEFAULT
         +RCALL
           =SYMREF .std.system.Integer
@@ -34,6 +32,7 @@
     -LOC
     +LOC
       =LIT text "sausage"
+      =TYPE <none>
       +DEFAULT
         +RCALL
           =SYMREF .std.system.Integer
@@ -44,44 +43,29 @@
     -LOC
     +LOC
       =LIT text "baked"
-      +TYPE
-        +RCALL
-          =SYMREF .std.system.List
-          >ARG Inner
-          +AST
-            =SYMREF .std.system.Text
-          -AST
-        -RCALL
+      +TYPE List
+        =TYPE textual .std.system.Text
       -TYPE
       =FLAGS {varargs}
     -LOC
     +LOC
       =LIT text "beans"
+      =TYPE <none>
       =FLAGS {primary}
       +DEFAULT
-        +RCALL
-          =SYMREF .std.system.if
-          >ARG condition
-          +AST
-            =LIT text "true"
-          -AST
-          >ARG then
-          +AST
-            =LIT text "warbl"
-          -AST
-          >ARG else
-          +AST
-            =LIT text "wirbl"
-          -AST
-        -RCALL
+        +BRANCHES
+          =ENUM Bool "true"
+          >BRANCH 0
+          =TEXT Literal "wirbl"
+          >BRANCH 1
+          =TEXT Literal "warbl"
+        -BRANCHES
       -DEFAULT
     -LOC
     +LOC
       =LIT text "schwurbl"
-      +TYPE
-        =SYMREF .std.system.Bool
-      -TYPE
+      =SYMREF .std.system.Bool
       =FLAGS {}:<syntax locations>:3>
     -LOC
-  -PROTO
--UCALL
+  -AST
+-RCALL

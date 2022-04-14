@@ -60,7 +60,7 @@ const Impl = lib.Provider.Wrapper(struct {
     for (decls) |decl| {
       switch (decl.content.data) {
         .gen_concat, .gen_enum, .gen_float, .gen_intersection, .gen_list,
-        .gen_map, .gen_numeric, .gen_optional, .gen_paragraphs, .gen_prototype,
+        .gen_map, .gen_numeric, .gen_optional, .gen_sequence, .gen_prototype,
         .gen_record, .gen_textual, .gen_unique =>
           intpr.ctx.logger.TypeInMagic(decl.node().pos),
         .funcgen => intpr.ctx.logger.NyFuncInMagic(decl.node().pos),

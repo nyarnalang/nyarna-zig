@@ -1655,12 +1655,12 @@ pub const Interpreter = struct {
       "optional", "registerOptional", "InvalidInnerOptionalType", go, stage);
   }
 
-  fn tryGenParagraphs(
+  fn tryGenSequence(
     self: *Interpreter,
-    gp: *model.Node.tg.Paragraphs,
+    gs: *model.Node.tg.Sequence,
     stage: Stage,
   ) nyarna.Error!?*model.Expression {
-    _ = self; _ = gp; _ = stage; unreachable;
+    _ = self; _ = gs; _ = stage; unreachable;
   }
 
   fn tryGenPrototype(
@@ -1983,8 +1983,8 @@ pub const Interpreter = struct {
         for (concat.items) |item| _ = try self.tryInterpret(item, stage);
         return null;
       } else self.tryProbeAndInterpret(input, stage),
-      .paras => |*paras| if (stage.kind == .resolve) {
-        for (paras.items) |p| _ = try self.tryInterpret(p.content, stage);
+      .seq => |*seq| if (stage.kind == .resolve) {
+        for (seq.items) |p| _ = try self.tryInterpret(p.content, stage);
         return null;
       } else self.tryProbeAndInterpret(input, stage),
       .definition => |*def| self.tryInterpretDef(def, stage),
@@ -2026,7 +2026,7 @@ pub const Interpreter = struct {
       .gen_map           => |*gm| self.tryGenMap(gm, stage),
       .gen_numeric       => |*gn| self.tryGenNumeric(gn, stage),
       .gen_optional      => |*go| self.tryGenOptional(go, stage),
-      .gen_paragraphs    => |*gp| self.tryGenParagraphs(gp, stage),
+      .gen_sequence      => |*gp| self.tryGenSequence(gp, stage),
       .gen_prototype     => |*gp| {
         _ = try self.tryGenPrototype(gp, stage);
         return null;
@@ -2217,7 +2217,7 @@ pub const Interpreter = struct {
   ) nyarna.Error!?model.Type {
     switch (node.data) {
       .gen_concat, .gen_enum, .gen_float, .gen_intersection, .gen_list,
-      .gen_map, .gen_numeric, .gen_optional, .gen_paragraphs, .gen_record,
+      .gen_map, .gen_numeric, .gen_optional, .gen_sequence, .gen_record,
       .gen_textual, .gen_unique => if (sloppy) return self.ctx.types().@"type"()
         else if (try self.tryInterpret(node, stage)) |expr| {
           node.data = .{.expression = expr};
@@ -2251,17 +2251,15 @@ pub const Interpreter = struct {
       .literal => |l| if (l.kind == .space) return self.ctx.types().space()
                       else return self.ctx.types().literal(),
       .location => return self.ctx.types().location(),
-      .paras => |*para| {
-        var builder =
-          nyarna.types.ParagraphsBuilder.init(self.ctx, false);
+      .seq => |*seq| {
+        var builder = nyarna.types.SequenceBuilder.init(self.ctx, false);
         var seen_unfinished = false;
-        for (para.items) |*item| {
+        for (seq.items) |*item| {
           if (try self.probeType(item.content, stage, sloppy)) |t| {
             _ = try builder.push(t.at(item.content.pos));
           } else seen_unfinished = true;
         }
-        return if (seen_unfinished) null else
-          (try builder.finish()).resulting_type;
+        return if (seen_unfinished) null else try builder.finish();
       },
       .resolved_access => |*ra| {
         var t = (try self.probeType(ra.base, stage, sloppy)).?;
@@ -2319,7 +2317,17 @@ pub const Interpreter = struct {
           try self.createTextLiteral(l, op.inner.at(spec.pos)),
         .concat => |*con|
           try self.createTextLiteral(l, con.inner.at(spec.pos)),
-        .paragraphs => unreachable,
+        .sequence => |*seq| blk: {
+          if (seq.direct) |direct| {
+            if (types.containedScalar(direct)) |scalar| {
+              break :blk try self.createTextLiteral(l, scalar.at(spec.pos));
+            }
+          }
+          const lt = self.ctx.types().litType(l);
+          self.ctx.logger.ExpectedExprOfTypeXGotY(
+            &.{lt.at(l.node().pos), spec});
+          break :blk self.ctx.values.poison(l.node().pos);
+        },
         .list, .map, .callable => blk: {
           const lt = self.ctx.types().litType(l);
           self.ctx.logger.ExpectedExprOfTypeXGotY(
@@ -2430,12 +2438,13 @@ pub const Interpreter = struct {
         .optional => |*opt| (
           try self.ctx.types().optional(try self.typeWithoutSpace(opt.inner))
         ).?,
-        .paragraphs => |*para| blk: {
-          var builder = types.ParagraphsBuilder.init(self.ctx, true);
-          for (para.inner) |inner| {
-            try builder.push((try self.typeWithoutSpace(inner)).predef());
+        .sequence => |*seq| blk: {
+          if (seq.direct) |direct| {
+            const dws = try self.typeWithoutSpace(direct);
+            if (dws.eql(direct)) break :blk t;
+            return try self.ctx.types().calcSequence(dws, seq.inner);
           }
-          break :blk (try builder.finish()).resulting_type;
+          break :blk t;
         },
         else => return t,
       },
@@ -2465,7 +2474,7 @@ pub const Interpreter = struct {
       .assign, .builtingen, .definition, .funcgen, .import, .location,
       .resolved_access, .resolved_symref, .resolved_call, .gen_concat,
       .gen_enum, .gen_float, .gen_intersection, .gen_list, .gen_map,
-      .gen_numeric, .gen_optional, .gen_paragraphs, .gen_prototype, .gen_record,
+      .gen_numeric, .gen_optional, .gen_sequence, .gen_prototype, .gen_record,
       .gen_textual, .gen_unique, .unresolved_access, .unresolved_call,
       .unresolved_symref, .varargs => {
         if (try self.tryInterpret(input, stage)) |expr| {
@@ -2583,7 +2592,7 @@ pub const Interpreter = struct {
         expr.expected_type = spec.t;
         return expr;
       },
-      .paras => |paras| {
+      .seq => |*seq| {
         var probed = (
           try self.probeType(input, stage, false)
         ) orelse return null;
@@ -2592,8 +2601,8 @@ pub const Interpreter = struct {
           return expr;
         }
         const res = try self.ctx.global().alloc(
-          model.Expression.Paragraph, paras.items.len);
-        for (paras.items) |item, i| {
+          model.Expression.Paragraph, seq.items.len);
+        for (seq.items) |item, i| {
           const para_type = (try self.probeType(item.content, stage, false)).?;
           const target_type =
             if (para_type.isInst(.space)) self.ctx.types().void() else spec.t;
@@ -2606,7 +2615,7 @@ pub const Interpreter = struct {
         const expr = try self.ctx.global().create(model.Expression);
         expr.* = .{
           .pos = input.pos,
-          .data = .{.paragraphs = res},
+          .data = .{.sequence = res},
           .expected_type = try self.ctx.types().sup(probed, spec.t),
         };
         return expr;
@@ -2666,7 +2675,7 @@ pub const Interpreter = struct {
               },
               else => {},
             },
-            // TODO: semantic conversions of concats, paragraphs here
+            // TODO: semantic conversions of concats, sequences here
             .structural => {}
           },
           else => {},

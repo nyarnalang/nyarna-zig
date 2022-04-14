@@ -165,12 +165,12 @@ pub fn locationFromValue(
   return loc_node;
 }
 
-pub inline fn paras(
+pub inline fn seq(
   self: *Self,
   pos: Position,
-  content: Node.Paras,
-) !*Node.Paras {
-  return &(try self.node(pos, .{.paras = content})).data.paras;
+  content: Node.Seq,
+) !*Node.Seq {
+  return &(try self.node(pos, .{.seq = content})).data.seq;
 }
 
 pub inline fn raccess(
@@ -286,15 +286,15 @@ pub inline fn tgOptional(
     pos, .{.gen_optional = .{.inner = inner}})).data.gen_optional;
 }
 
-pub inline fn tgParagraphs(
+pub inline fn tgSequence(
   self: *Self,
   pos: Position,
   inners: []Node.Varargs.Item,
   auto: ?*Node,
-) !*Node.tg.Paragraphs {
+) !*Node.tg.Sequence {
   return &(try self.node(
-    pos, .{.gen_paragraphs = .{.inners = inners, .auto = auto}}
-  )).data.gen_paragraphs;
+    pos, .{.gen_sequence = .{.inners = inners, .auto = auto}}
+  )).data.gen_sequence;
 }
 
 pub inline fn tgPrototype(

@@ -100,8 +100,9 @@
     \end(builtin)
   \end(prototype)
 
-  Paragraphs = \prototype:
+  Sequence = \prototype:
     inners: \List(\Ast) {varargs, primary}
+    auto  : \Optional(\Ast)
   \end(prototype)
 
   Map = \prototype:
@@ -179,6 +180,10 @@
   )
   Text = \Textual()
   Identifier = \Textual(cats = L, Nd, include = _)
+
+  block = \keyword:
+    content: \Ast {primary}
+  \end(keyword)
 :private:
   FrameRoot   = \unique()
   Literal     = \unique()

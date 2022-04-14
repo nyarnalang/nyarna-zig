@@ -28,15 +28,11 @@
           +AST
             +LOC
               =LIT text "a"
-              +TYPE
-                =SYMREF .std.system.Raw
-              -TYPE
+              =SYMREF .std.system.Raw
             -LOC
             +LOC
               =LIT text "b"
-              +TYPE
-                =SYMREF .std.system.Raw
-              -TYPE
+              =SYMREF .std.system.Raw
             -LOC
           -AST
         -RCALL
@@ -50,9 +46,7 @@
           +AST
             +LOC
               =LIT text "data"
-              +TYPE
-                =SYMREF [0]Data
-              -TYPE
+              =SYMREF [0]Data
             -LOC
           -AST
           >ARG body

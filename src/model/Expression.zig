@@ -88,7 +88,7 @@ pub const Location = struct {
   }
 };
 
-/// part of a Paragraphs expression.
+/// part of a Sequence expression.
 pub const Paragraph = struct {
   content: *Expression,
   lf_after: usize,
@@ -98,7 +98,7 @@ pub const Paragraph = struct {
   }
 };
 
-pub const Paragraphs = []Paragraph;
+pub const Sequence = []Paragraph;
 
 /// used to enclose arguments given to a varargs parameter.
 /// expected_type will be a List(T).
@@ -158,7 +158,7 @@ pub const Data = union(enum) {
   concatenation: Concatenation,
   conversion   : Conversion,
   location     : Location,
-  paragraphs   : Paragraphs,
+  sequence     : Sequence,
   tg_concat    : tg.Concat,
   tg_list      : tg.List,
   tg_optional  : tg.Optional,
@@ -183,7 +183,7 @@ fn parent(it: anytype) *Expression {
     Call          => offset(Data, "call"),
     Concatenation => offset(Data, "concatenation"),
     Location      => offset(Data, "location"),
-    Paragraphs    => offset(Data, "paragraphs"),
+    Sequence      => offset(Data, "sequence"),
     tg.Concat     => offset(Data, "tg_concat"),
     tg.List       => offset(Data, "tg_list"),
     tg.Optional   => offset(Data, "tg_optional"),

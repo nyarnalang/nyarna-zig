@@ -221,6 +221,15 @@ pub const Impl = lib.Provider.Wrapper(struct {
       pos, pnode, .{.expr = try intpr.ctx.createValueExpr(ast_val)})).node();
   }
 
+  pub fn block(
+    intpr: *Interpreter,
+    pos: model.Position,
+    content: *model.Node,
+  ) nyarna.Error!*model.Node {
+    _ = intpr; _ = pos;
+    return content;
+  }
+
   pub fn builtin(
     intpr: *Interpreter,
     pos: model.Position,
@@ -426,7 +435,7 @@ pub const Impl = lib.Provider.Wrapper(struct {
       ) !?*model.Node {
         return switch (t) {
           .structural => |strct| switch (strct.*) {
-            .concat, .optional, .paragraphs => try self.ip.node_gen.void(vpos),
+            .concat, .optional, .sequence => try self.ip.node_gen.void(vpos),
             .list => null, // TODO: call list constructor
             .map => null, // TODO: call map constructor
             .callable, .intersection => null,
@@ -682,16 +691,17 @@ pub const Checker = struct {
     .{"Natural", .numeric, .natural},
     .{"Numeric", .prototype},
     .{"Optional", .prototype},
-    .{"Paragraphs", .prototype},
     .{"Positive", .numeric},
     .{"Raw", .raw},
     .{"Raw::len", .builtin},
     .{"Record", .prototype},
+    .{"Sequence", .prototype},
     .{"Text", .textual},
     .{"Textual", .prototype},
     .{"Type", .@"type"},
     .{"UnicodeCategory", .tenum, .unicode_category},
     .{"Void", .void},
+    .{"block", .keyword},
     .{"builtin", .keyword},
     .{"fragment", .keyword},
     .{"if", .keyword},

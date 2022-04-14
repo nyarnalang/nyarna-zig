@@ -231,13 +231,13 @@ pub const Prototypes = lib.Provider.Wrapper(struct {
       try intpr.node_gen.tgList(pos, inner)).node();
   }
 
-  pub fn @"Paragraphs"(
+  pub fn @"Sequence"(
     intpr: *Interpreter,
     pos: model.Position,
     inners: *model.Node,
     auto: ?*model.Node,
   ) nyarna.Error!*model.Node {
-    return (try intpr.node_gen.tgParagraphs(
+    return (try intpr.node_gen.tgSequence(
       pos, try nodeToVarargsItemList(intpr, inners), auto)).node();
   }
 

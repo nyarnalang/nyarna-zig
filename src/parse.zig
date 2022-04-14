@@ -176,7 +176,7 @@ const Command = struct {
 
 /// This is either the root level of the current file,
 /// a block argument or a list argument.
-/// The content level takes care of generating concatenations and paragraphs.
+/// The content level takes care of generating concatenations and sequences.
 const ContentLevel = struct {
   /// used for generating void nodes.
   start: model.Cursor,
@@ -191,8 +191,8 @@ const ContentLevel = struct {
   fullast: bool,
   /// list of nodes in the current paragraph parsed at this content level.
   nodes: std.ArrayListUnmanaged(*model.Node),
-  /// finished paragraphs at this content level.
-  paragraphs: std.ArrayListUnmanaged(model.Node.Paras.Item),
+  /// finished sequence items at this content level.
+  seq: std.ArrayListUnmanaged(model.Node.Seq.Item),
   /// block configuration of this level. only applicable to block arguments.
   block_config: ?*const model.BlockConfig,
   /// syntax that parses this level. only applicable to block arguments.
@@ -273,22 +273,22 @@ const ContentLevel = struct {
     if (self.syntax_proc) |proc| {
       return try proc.finish(
         proc, ip.input.between(self.start, p.cur_start));
-    } else if (self.paragraphs.items.len == 0) {
+    } else if (self.seq.items.len == 0) {
       return (try self.finalizeParagraph(p.intpr())) orelse
         try ip.node_gen.void(p.intpr().input.at(self.start));
     } else {
       if (self.nodes.items.len > 0) {
         if (try self.finalizeParagraph(p.intpr())) |content| {
-          try self.paragraphs.append(alloc, .{
+          try self.seq.append(alloc, .{
             .content = content,
             .lf_after = 0,
           });
         }
       }
-      return (try ip.node_gen.paras(
-        self.paragraphs.items[0].content.pos.span(
-          last(self.paragraphs.items).content.pos),
-        .{.items = self.paragraphs.items})).node();
+      return (try ip.node_gen.seq(
+        self.seq.items[0].content.pos.span(
+          last(self.seq.items).content.pos),
+        .{.items = self.seq.items})).node();
     }
   }
 
@@ -299,7 +299,7 @@ const ContentLevel = struct {
   ) !void {
     if (self.nodes.items.len > 0) {
       if (try self.finalizeParagraph(intpr)) |content| {
-        try self.paragraphs.append(intpr.allocator, .{
+        try self.seq.append(intpr.allocator, .{
           .content = content,
           .lf_after = lf_after
         });
@@ -690,7 +690,7 @@ pub const Parser = struct {
       .changes = null,
       .command = undefined,
       .nodes = .{},
-      .paragraphs = .{},
+      .seq = .{},
       .block_config = null,
       .fullast = fullast,
       .variable_start = self.intpr().variables.items.len,
@@ -1508,7 +1508,7 @@ pub const Parser = struct {
             // command is dumped.
             const end_cursor =
               if (parent.nodes.items.len == 0)
-                last(parent.paragraphs.items).content.pos.end
+                last(parent.seq.items).content.pos.end
               else last(parent.nodes.items).*.pos.end;
 
             var i = self.levels.items.len - 2;

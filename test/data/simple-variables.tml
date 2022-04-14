@@ -11,8 +11,8 @@
 
 \bar\foo
 --- expr
-+PARAGRAPHS
-  >PARA 2
++SEQUENCE
+  >ITEM 2
   +ASSIGNMENT
     =TARGET foo
     >EXPR
@@ -23,7 +23,7 @@
     >EXPR
     =TEXT Raw ""
   -ASSIGNMENT
-  >PARA 2
+  >ITEM 2
   +ASSIGNMENT
     =TARGET foo
     >EXPR
@@ -41,9 +41,9 @@
     >EXPR
     =NUMBER Integer 23
   -ASSIGNMENT
-  >PARA 0
+  >ITEM 0
   =GETVAR bar
   =GETVAR foo
--PARAGRAPHS
+-SEQUENCE
 --- document
 =TEXT Raw "Foobar23"

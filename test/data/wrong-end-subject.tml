@@ -24,7 +24,5 @@
   expected = block
   got = flock
   defined_at = input(3:1)
-3:1 - 3:7 UnknownSymbol
-  repr = block
 7:1 - 7:5 UnknownSymbol
   repr = bar

@@ -87,13 +87,13 @@ pub const Concat = struct {
     return Value.parent(self);
   }
 };
-/// a Paragraphs value
-pub const Para = struct {
+/// a Sequence value
+pub const Seq = struct {
   pub const Item = struct {
     content: *Value,
     lf_after: usize,
   };
-  t: *const Type.Paragraphs,
+  t: *const Type.Sequence,
   content: std.ArrayList(Item),
 
   pub inline fn value(self: *@This()) *Value {
@@ -220,21 +220,21 @@ pub const BlockHeader = struct {
 };
 
 pub const Data = union(enum) {
-  text: TextScalar,
-  number: Number,
-  float: FloatNumber,
-  @"enum": Enum,
-  record: Record,
-  concat: Concat,
-  para: Para,
-  list: List,
-  map: Map,
-  @"type": TypeVal,
-  prototype: PrototypeVal,
-  funcref: FuncRef,
-  location: Location,
-  definition: Definition,
-  ast: Ast,
+  text        : TextScalar,
+  number      : Number,
+  float       : FloatNumber,
+  @"enum"     : Enum,
+  record      : Record,
+  concat      : Concat,
+  seq         : Seq,
+  list        : List,
+  map         : Map,
+  @"type"     : TypeVal,
+  prototype   : PrototypeVal,
+  funcref     : FuncRef,
+  location    : Location,
+  definition  : Definition,
+  ast         : Ast,
   block_header: BlockHeader,
   void, poison
 };
@@ -290,7 +290,7 @@ pub inline fn create(
     Enum         => .{.enumval      = content},
     Record       => .{.record       = content},
     Concat       => .{.concat       = content},
-    Para         => .{.para         = content},
+    Seq          => .{.seq          = content},
     List         => .{.list         = content},
     Map          => .{.map          = content},
     TypeVal      => .{.@"type"      = content},
@@ -313,7 +313,7 @@ fn parent(it: anytype) *Value {
     Enum         => offset(Data, "enum"),
     Record       => offset(Data, "record"),
     Concat       => offset(Data, "concat"),
-    Para         => offset(Data, "para"),
+    Seq          => offset(Data, "seq"),
     List         => offset(Data, "list"),
     Map          => offset(Data, "map"),
     TypeVal      => offset(Data, "type"),

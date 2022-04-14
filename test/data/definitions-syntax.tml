@@ -5,11 +5,10 @@
   PostalNumber = \textual(include=0123456789); TrafficLight {root} = \enum(red, yellow, green)
 \end(block)
 --- rawast
-+UCALL
-  +TARGET
-    =SYMREF [0]block
-  -TARGET
-  +PROTO primary
++RCALL
+  =SYMREF .std.system.block
+  >ARG content
+  +AST
     +DEF Money
       +UCALL
         +TARGET
@@ -46,5 +45,5 @@
         -PROTO
       -UCALL
     -DEF
-  -PROTO
--UCALL
+  -AST
+-RCALL

@@ -170,11 +170,13 @@ pub const Optional = struct {
   }
 };
 
-/// Paragraphs type, with a set of inner types, and possibly a callable
-/// auto-type which will be used to implicitly wrap paragraphs that are not
-/// assignable to any inner type.
-pub const Paragraphs = struct {
-  inner: []Type,
+/// Sequence type for paragraphs.
+pub const Sequence = struct {
+  /// the direct type is the single scalar or concat type in this Sequence.
+  /// there may be at most one such type.
+  direct: ?Type,
+  /// all other types are records.
+  inner: []*Record,
   /// index into inner, if set.
   auto: ?u21,
 
@@ -289,17 +291,17 @@ pub const Structural = union(enum) {
   list: List,
   map: Map,
   optional: Optional,
-  paragraphs: Paragraphs,
+  sequence: Sequence,
 
   fn parent(it: anytype) *Structural {
     const t = @typeInfo(@TypeOf(it)).Pointer.child;
     const addr = @ptrToInt(it) - switch (t) {
-      Optional => offset(Structural, "optional"),
-      Concat => offset(Structural, "concat"),
-      Paragraphs => offset(Structural, "paragraphs"),
-      List => offset(Structural, "list"),
-      Map => offset(Structural, "map"),
-      Callable => offset(Structural, "callable"),
+      Optional     => offset(Structural, "optional"),
+      Concat       => offset(Structural, "concat"),
+      Sequence     => offset(Structural, "sequence"),
+      List         => offset(Structural, "list"),
+      Map          => offset(Structural, "map"),
+      Callable     => offset(Structural, "callable"),
       Intersection => offset(Structural, "intersection"),
       else => unreachable
     };
@@ -328,7 +330,7 @@ pub const Type = union(enum) {
   pub const Intersection = local.Intersection;
   pub const Map = local.Map;
   pub const Optional = local.Optional;
-  pub const Paragraphs = local.Paragraphs;
+  pub const Sequence = local.Sequence;
   pub const List = local.List;
   pub const Structural = local.Structural;
 
@@ -390,21 +392,48 @@ pub const Type = union(enum) {
     };
   }
 
+  fn listTypes(
+    comptime fmt: []const u8,
+    opt: std.fmt.FormatOptions,
+    data: anytype,
+    index: *usize,
+    writer: anytype
+  ) @TypeOf(writer).Error!void {
+    switch (comptime @typeInfo(@TypeOf(data))) {
+      .Optional => if (data) |value| {
+        try listTypes(fmt, opt, value, index, writer);
+      },
+      .Struct   => |strct| {
+        inline for (strct.fields) |field| {
+          try listTypes(fmt, opt, @field(data, field.name), index, writer);
+        }
+      },
+      .Union => { // Type
+        if (index.* > 0) try writer.writeAll(", ");
+        try data.format(fmt, opt, writer);
+        index.* += 1;
+      },
+      .Pointer => |ptr| if (ptr.size == .One) {
+        try listTypes(fmt, opt, data.typedef(), index, writer);
+      } else {
+        for (data) |item| try listTypes(fmt, opt, item, index, writer);
+      },
+      else => std.debug.panic("Invalid input for listing types: {s}",
+        .{@tagName(@typeInfo(@TypeOf(data)))}),
+    }
+  }
+
   fn formatParameterized(
     comptime fmt: []const u8,
     opt: std.fmt.FormatOptions,
     name: []const u8,
-    inners: []const Type,
+    inners: anytype,
     writer: anytype,
   ) @TypeOf(writer).Error!void {
     try writer.writeAll(name);
     try writer.writeByte('<');
-    for (inners) |inner, index| {
-      if (index > 0) {
-        try writer.writeAll(", ");
-      }
-      try inner.format(fmt, opt, writer);
-    }
+    var index: usize = 0;
+    try listTypes(fmt, opt, inners, &index, writer);
     try writer.writeByte('>');
   }
 
@@ -417,15 +446,15 @@ pub const Type = union(enum) {
     switch (self) {
       .structural => |struc| try switch (struc.*) {
         .optional => |op| formatParameterized(
-          fmt, opt, "Optional", &[_]Type{op.inner}, writer),
+          fmt, opt, "Optional", op.inner, writer),
         .concat => |con| formatParameterized(
-          fmt, opt, "Concat", &[_]Type{con.inner}, writer),
-        .paragraphs => |para| formatParameterized(
-          fmt, opt, "Paragraphs", para.inner, writer),
+          fmt, opt, "Concat", con.inner, writer),
+        .sequence => |seq| formatParameterized(
+          fmt, opt, "Sequence", .{seq.direct, seq.inner}, writer),
         .list => |list| formatParameterized(
-          fmt, opt, "List", &[_]Type{list.inner}, writer),
+          fmt, opt, "List", list.inner, writer),
         .map => |map| formatParameterized(
-          fmt, opt, "Optional", &[_]Type{map.key, map.value}, writer),
+          fmt, opt, "Optional", .{map.key, map.value}, writer),
         .callable => |clb| {
           try writer.writeAll(switch (clb.kind) {
             .function => @as([]const u8, "[function] "),
@@ -442,11 +471,8 @@ pub const Type = union(enum) {
         },
         .intersection => |inter| {
           try writer.writeByte('{');
-          if (inter.scalar) |scalar| try scalar.format(fmt, opt, writer);
-          for (inter.types) |inner, i| {
-            if (i > 0 or inter.scalar != null) try writer.writeAll(", ");
-            try inner.format(fmt, opt, writer);
-          }
+          var index: usize = 0;
+          try listTypes(fmt, opt, .{inter.scalar, inter.types}, &index, writer);
           try writer.writeByte('}');
           return;
         },

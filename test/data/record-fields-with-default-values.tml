@@ -15,8 +15,8 @@
 \val::first
 \val::second
 --- expr
-+PARAGRAPHS
-  >PARA 2
++SEQUENCE
+  >ITEM 2
   +ASSIGNMENT
     =TARGET val
     >EXPR
@@ -36,7 +36,7 @@
       -CALL
     -CALL
   -ASSIGNMENT
-  >PARA 0
+  >ITEM 0
   +ACCESS first
     =GETVAR val
   -ACCESS
@@ -44,4 +44,4 @@
   +ACCESS second
     =GETVAR val
   -ACCESS
--PARAGRAPHS
+-SEQUENCE

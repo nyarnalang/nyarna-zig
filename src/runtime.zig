@@ -321,10 +321,10 @@ pub const Evaluator = struct {
       .text, .number, .float, .@"enum", .record, .void => {
         try into.push(try self.doConvert(value, into.scalar_type));
       },
-      .para => |*para| {
-        for (para.content.items) |p, index| {
+      .seq => |*seq| {
+        for (seq.content.items) |p, index| {
           try self.convertIntoConcat(p.content, into);
-          if (index != para.content.items.len - 1) {
+          if (index != seq.content.items.len - 1) {
             try into.pushSpace(p.lf_after);
           }
         }
@@ -389,8 +389,8 @@ pub const Evaluator = struct {
           return ret.value();
         },
         .optional => |*opt| return self.doConvert(value, opt.inner),
-        .paragraphs => |*paragraphs| {
-          _ = paragraphs;
+        .sequence => |*seq| {
+          _ = seq;
           unreachable; // TODO
         }
       }
@@ -446,7 +446,7 @@ pub const Evaluator = struct {
         if (add.borrow != null) if (
           !switch (spec.t) {
             .structural => |struc| switch (struc.*) {
-              .list, .concat, .paragraphs, .callable => true,
+              .list, .concat, .sequence, .callable => true,
               else => false,
             },
             .instantiated => |inst| switch (inst.data) {
@@ -475,20 +475,20 @@ pub const Evaluator = struct {
     return loc_val.value();
   }
 
-  fn evalParagraphs(
+  fn evalSequence(
     self: *Evaluator,
     expr: *model.Expression,
-    paras: model.Expression.Paragraphs,
+    paras: model.Expression.Sequence,
   ) nyarna.Error!*model.Value {
     const gen_para = switch (expr.expected_type) {
       .structural => |strct| switch (strct.*) {
-        .paragraphs => true,
+        .sequence => true,
         else => false
       },
       else => false
     };
     if (gen_para) {
-      var builder = ParagraphsBuilder.init(self.ctx);
+      var builder = SequenceBuilder.init(self.ctx);
       for (paras) |para| {
         try builder.push(try self.evaluate(para.content), para.lf_after);
       }
@@ -563,7 +563,7 @@ pub const Evaluator = struct {
       .conversion    => |*convert|    self.evalConversion(convert),
       .location      => |*loc|        self.evalLocation(loc),
       .value         => |value|       return value,
-      .paragraphs    => |paras|       self.evalParagraphs(expr, paras),
+      .sequence      => |seq|         self.evalSequence(expr, seq),
       .tg_concat     => |*tgc|
         self.evalGenUnary("concat", tgc, "InvalidInnerConcatType"),
       .tg_list       => |*tgl|
@@ -602,14 +602,21 @@ pub const Evaluator = struct {
           }
           return cv.value();
         },
-        .paragraphs => |*para| {
-          var lv = try self.ctx.values.para(value.origin, para);
+        .sequence => |*seq| {
+          var lv = try self.ctx.values.seq(value.origin, seq);
           if (!value_type.isInst(.void)) {
-            const para_value = for (para.inner) |cur| {
-              if (self.ctx.types().lesserEqual(value_type, cur))
-                break try self.coerce(value, cur);
-            } else unreachable;
-            try lv.content.append(.{.content = para_value, .lf_after = 0});
+            const seq_value = blk: {
+              if (seq.direct) |direct| {
+                if (self.ctx.types().lesserEqual(value_type, direct)) {
+                  break :blk try self.coerce(value, direct);
+                }
+              }
+              std.debug.assert(for (seq.inner) |cur| {
+                if (cur.typedef().eql(value_type)) break true;
+              } else false);
+              break :blk value;
+            };
+            try lv.content.append(.{.content = seq_value, .lf_after = 0});
           }
           return lv.value();
         },
@@ -762,7 +769,7 @@ const ConcatBuilder = struct {
   }
 
   fn enqueue(self: *ConcatBuilder, item: *model.Value) !void {
-    std.debug.assert(item.data != .para); // TODO
+    std.debug.assert(item.data != .seq); // TODO
     if (self.cur) |first_val| {
       try self.initList(first_val);
       self.cur = null;
@@ -885,21 +892,21 @@ const ConcatBuilder = struct {
   }
 };
 
-const ParagraphsBuilder = struct {
-  content  : std.ArrayList(model.Value.Para.Item),
-  t_builder: types.ParagraphsBuilder,
+const SequenceBuilder = struct {
+  content  : std.ArrayList(model.Value.Seq.Item),
+  t_builder: types.SequenceBuilder,
   ctx      : nyarna.Context,
   is_poison: bool = false,
 
-  pub fn init(ctx: nyarna.Context) ParagraphsBuilder {
+  pub fn init(ctx: nyarna.Context) SequenceBuilder {
     return .{
-      .content   = std.ArrayList(model.Value.Para.Item).init(ctx.global()),
-      .t_builder = types.ParagraphsBuilder.init(ctx, true),
+      .content   = std.ArrayList(model.Value.Seq.Item).init(ctx.global()),
+      .t_builder = types.SequenceBuilder.init(ctx, true),
       .ctx       = ctx,
     };
   }
 
-  fn enqueue(self: *@This(), item: model.Value.Para.Item) !void {
+  fn enqueue(self: *@This(), item: model.Value.Seq.Item) !void {
     try self.content.append(item);
     const item_type = try self.ctx.types().valueType(item.content);
     try self.t_builder.push(item_type.at(item.content.origin));
@@ -911,7 +918,7 @@ const ParagraphsBuilder = struct {
     lf_after: usize,
   ) nyarna.Error!void {
     switch (value.data) {
-      .para => |*children| {
+      .seq => |*children| {
         for (children.content.items) |*item| {
           try self.push(item.content, item.lf_after);
         }
@@ -923,14 +930,14 @@ const ParagraphsBuilder = struct {
   }
 
   pub fn finish(self: *@This(), pos: model.Position) !*model.Value {
-    const ret_t = (try self.t_builder.finish()).resulting_type;
+    const ret_t = try self.t_builder.finish();
     const ret = try self.ctx.global().create(model.Value);
     ret.* = .{
       .origin = pos,
       .data = if (ret_t.isInst(.poison)) .poison else .{
-        .para = .{
+        .seq = .{
           .content = self.content,
-          .t = &ret_t.structural.paragraphs,
+          .t = &ret_t.structural.sequence,
         },
       },
     };

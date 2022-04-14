@@ -17,3 +17,11 @@ pub fn totalOrderLess(_: void, a: model.Type, b: model.Type) bool {
   };
   return a_int < b_int;
 }
+
+pub fn recTotalOrderLess(
+  _: void,
+  a: *model.Type.Record,
+  b: *model.Type.Record,
+) bool {
+  return @ptrToInt(a.instantiated()) < @ptrToInt(b.instantiated());
+}

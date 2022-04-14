@@ -64,13 +64,13 @@ const TypeResolver = struct {
       if (std.mem.eql(u8, def.name.content, name)) {
         try self.process(def);
         switch (def.content.data) {
-          .gen_concat => |*gc| return uStruct(gc),
+          .gen_concat       => |*gc| return uStruct(gc),
           .gen_intersection => |*gi| return uStruct(gi),
-          .gen_list => |*gl| return uStruct(gl),
-          .gen_map => |*gm| return uStruct(gm),
-          .gen_optional => |*go| return uStruct(go),
-          .gen_paragraphs => |*gp| return uStruct(gp),
-          .gen_record => |*gr| return graph.ResolutionContext.Result{
+          .gen_list         => |*gl| return uStruct(gl),
+          .gen_map          => |*gm| return uStruct(gm),
+          .gen_optional     => |*go| return uStruct(go),
+          .gen_sequence     => |*gp| return uStruct(gp),
+          .gen_record       => |*gr| return graph.ResolutionContext.Result{
             .unfinished_type = .{.instantiated = gr.generated.?},
           },
           .gen_unique => |*gu| return graph.ResolutionContext.Result{
@@ -110,7 +110,7 @@ const TypeResolver = struct {
     switch (def.content.data) {
       .expression, .poison, .gen_record, .gen_unique, .funcgen => return,
       .gen_concat, .gen_intersection, .gen_list, .gen_map, .gen_optional,
-      .gen_paragraphs, .gen_prototype => {},
+      .gen_sequence, .gen_prototype => {},
       else => unreachable,
     }
     for (self.worklist.items) |wli, index| if (wli == def.content) {
@@ -407,7 +407,7 @@ pub const DeclareResolution = struct {
       std.hash.Adler32.hash("Map") => .map,
       std.hash.Adler32.hash("Numeric") => .numeric,
       std.hash.Adler32.hash("Optional") => .optional,
-      std.hash.Adler32.hash("Paragraphs") => .paragraphs,
+      std.hash.Adler32.hash("Sequence") => .sequence,
       std.hash.Adler32.hash("Record") => .record,
       std.hash.Adler32.hash("Textual") => .textual,
       else => unreachable,
@@ -423,13 +423,13 @@ pub const DeclareResolution = struct {
     const container =
       try self.intpr.ctx.global().create(model.VariableContainer);
     container.* = .{.num_values = switch (prototype) {
-      .@"enum", .float, .intersection, .numeric, .paragraphs, .record,
+      .@"enum", .float, .intersection, .numeric, .sequence, .record,
       .textual => 1,
       .concat, .list, .optional => 2,
       .map => 3,
     }};
     const var_names: []const []const u8 = switch (prototype) {
-      .@"enum", .float, .intersection, .numeric, .paragraphs, .record,
+      .@"enum", .float, .intersection, .numeric, .sequence, .record,
       .textual => &.{"This"},
       .concat, .list, .optional => &.{"This", "Inner"},
       .map => &.{"This", "Key", "Value"},
@@ -484,9 +484,9 @@ pub const DeclareResolution = struct {
         types.constructors.prototypes.optional     = constructor;
         break :blk &types.prototype_funcs.optional;
       },
-      .paragraphs => blk: {
-        types.constructors.prototypes.paragraphs   = constructor;
-        break :blk &types.prototype_funcs.paragraphs;
+      .sequence => blk: {
+        types.constructors.prototypes.sequence   = constructor;
+        break :blk &types.prototype_funcs.sequence;
       },
       .record   => blk: {
         types.constructors.prototypes.record       = constructor;
@@ -656,8 +656,8 @@ pub const DeclareResolution = struct {
           .gen_optional => |*go| {
             try self.createStructural(go); continue :alloc_types;
           },
-          .gen_paragraphs => |*gp| {
-            try self.createStructural(gp); continue :alloc_types;
+          .gen_sequence => |*gs| {
+            try self.createStructural(gs); continue :alloc_types;
           },
           .gen_prototype => |*gp| {
             if (try self.definePrototype(def, gp, ns_data))
@@ -762,7 +762,7 @@ pub const DeclareResolution = struct {
               def.content.data = .poison;
             },
             .gen_concat, .gen_intersection, .gen_list, .gen_map, .gen_optional,
-            .gen_paragraphs => try tr.process(def),
+            .gen_sequence => try tr.process(def),
             .gen_record => |*rgen| {
               if (
                 !(try self.intpr.tryInterpretLocationsList(

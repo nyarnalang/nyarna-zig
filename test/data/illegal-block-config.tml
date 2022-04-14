@@ -28,11 +28,3 @@
 13:2 - 13:7 MissingEndCommand
   repr = block
   previous = input(13:12)
-3:1 - 3:7 UnknownSymbol
-  repr = block
-7:1 - 7:7 UnknownSymbol
-  repr = block
-11:1 - 11:7 UnknownSymbol
-  repr = block
-13:1 - 13:7 UnknownSymbol
-  repr = block

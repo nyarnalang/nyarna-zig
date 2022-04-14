@@ -304,11 +304,8 @@ const AstEmitter = struct {
       .location => |loc| {
         const l = try self.push("LOC");
         try self.process(loc.name);
-        if (loc.@"type") |t| {
-          const tnode = try self.push("TYPE");
-          try self.process(t);
-          try tnode.pop();
-        }
+        if (loc.@"type") |t| try self.process(t)
+        else try self.emitLine("=TYPE <none>", .{});
         if (loc.additionals) |a| {
           if (
             a.primary != null or a.varargs != null or a.varmap != null or
@@ -327,8 +324,8 @@ const AstEmitter = struct {
         }
         try l.pop();
       },
-      .paras => |p| {
-        for (p.items) |i| {
+      .seq => |s| {
+        for (s.items) |i| {
           const para = try self.push("PARA");
           try self.process(i.content);
           try para.pop();
@@ -406,10 +403,10 @@ const AstEmitter = struct {
         try self.process(go.inner);
         try gen.pop();
       },
-      .gen_paragraphs => |gp| {
-        const gen = try self.pushWithKey("TGEN", "Paragraphs", null);
-        for (gp.inners) |inner| try self.process(inner.node);
-        if (gp.auto) |auto| {
+      .gen_sequence => |gs| {
+        const gen = try self.pushWithKey("TGEN", "Sequence", null);
+        for (gs.inners) |inner| try self.process(inner.node);
+        if (gs.auto) |auto| {
           try self.emitLine(">AUTO", .{});
           try self.process(auto);
         }
@@ -610,11 +607,11 @@ const AstEmitter = struct {
         try o.pop();
       },
       .value => |value| try self.processValue(value),
-      .paragraphs => |paras| {
-        const p = try self.push("PARAGRAPHS");
-        for (paras) |para| {
-          try self.emitLine(">PARA {}", .{para.lf_after});
-          try self.processExpr(para.content);
+      .sequence => |seq| {
+        const p = try self.push("SEQUENCE");
+        for (seq) |item| {
+          try self.emitLine(">ITEM {}", .{item.lf_after});
+          try self.processExpr(item.content);
         }
         try p.pop();
       },
@@ -638,7 +635,45 @@ const AstEmitter = struct {
 
   fn processType(self: *Self, t: model.Type) anyerror!void {
     switch (t) {
-      .structural => unreachable,
+      .structural => |struc| switch (struc.*) {
+        .callable => {
+          const t_fmt = t.formatter();
+          try self.emitLine("=TYPE {s}", .{t_fmt});
+        },
+        .concat => |*con| {
+          const c = try self.pushWithKey("TYPE", "Concat", null);
+          try self.processType(con.inner);
+          try c.pop();
+        },
+        .intersection => |*inter| {
+          const i = try self.pushWithKey("TYPE", "Intersection", null);
+          if (inter.scalar) |scalar| try self.processType(scalar);
+          for (inter.types) |inner| try self.processType(inner);
+          try i.pop();
+        },
+        .list => |*lst| {
+          const l = try self.pushWithKey("TYPE", "List", null);
+          try self.processType(lst.inner);
+          try l.pop();
+        },
+        .map => |*map| {
+          const m = try self.pushWithKey("TYPE", "Map", null);
+          try self.processType(map.key);
+          try self.processType(map.value);
+          try m.pop();
+        },
+        .optional => |*opt| {
+          const o = try self.pushWithKey("TYPE", "Optional", null);
+          try self.processType(opt.inner);
+          try o.pop();
+        },
+        .sequence => |*seq| {
+          const s = try self.pushWithKey("TYPE", "Sequence", null);
+          if (seq.direct) |direct| try self.processType(direct);
+          for (seq.inner) |inner| try self.processType(inner.typedef());
+          try s.pop();
+        }
+      },
       .instantiated => |i| {
         if (i.name) |sym| try self.emitLine("=TYPE {s} {s}.{s}",
           .{@tagName(i.data), sym.defined_at.source.locator.repr, sym.name})
@@ -694,7 +729,7 @@ const AstEmitter = struct {
       .concat => |_| {
         unreachable;
       },
-      .para => |_| {
+      .seq => |_| {
         unreachable;
       },
       .list => |lst| {

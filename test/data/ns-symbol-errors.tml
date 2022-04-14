@@ -21,5 +21,3 @@
 13:28 - 13:28 AlreadyANamespaceCharacter
   repr = %
   previous = input(13:11)
-11:1 - 11:7 UnknownSymbol
-  repr = block

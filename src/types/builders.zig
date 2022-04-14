@@ -266,13 +266,8 @@ pub const NumericBuilder = struct {
   }
 };
 
-pub const ParagraphsBuilder = struct {
+pub const SequenceBuilder = struct {
   const Self = @This();
-
-  pub const Result = struct {
-    scalar_type_sup: model.Type,
-    resulting_type: model.Type,
-  };
 
   pub const TypeAt = struct {
     t: model.Type,
@@ -280,21 +275,19 @@ pub const ParagraphsBuilder = struct {
   };
 
   ctx: nyarna.Context,
-  list: std.ArrayListUnmanaged(model.Type) = .{},
+  direct: ?model.Type = null,
+  list: std.ArrayListUnmanaged(*model.Type.Record) = .{},
   positions: std.ArrayListUnmanaged(model.Position) = .{},
-  cur_scalar: model.Type,
-  scalar_at: ?model.Position = null,
   non_voids: u21 = 0,
   /// if true, a \Paragraphs type will always be created. Also errors will be
   /// logged if pushed types are merged into previously given types.
   force: bool,
   poison: bool = false,
 
-  pub fn init(ctx: nyarna.Context, force_paragraphs: bool) Self {
+  pub fn init(ctx: nyarna.Context, force: bool) Self {
     return .{
       .ctx = ctx,
-      .cur_scalar = ctx.types().every(),
-      .force = force_paragraphs,
+      .force = force,
       .poison = false,
     };
   }
@@ -307,70 +300,40 @@ pub const ParagraphsBuilder = struct {
           self.poison = true;
           return;
         },
+        .record => |*rec| {
+          // OPPORTUNITY: sort this list here?
+          for (self.list.items) |item| {
+            if (item.typedef().eql(spec.t)) return;
+          }
+          try self.list.append(self.ctx.global(), rec);
+          if (self.force) try self.positions.append(self.ctx.local(), spec.pos);
+          self.non_voids += 1;
+          return;
+        },
         else => {},
       },
       .structural => {},
     }
     self.non_voids += 1;
-    for (self.list.items) |existing, i| {
-      if (self.ctx.types().lesserEqual(spec.t, existing)) {
-        if (self.force) {
-          self.ctx.logger.TypesNotDisjoint(&[_]model.SpecType{
-            spec, existing.at(self.positions.items[i]),
-          });
-        }
-        return;
-      }
+    if (self.direct) |direct| {
+      const sup = try self.ctx.types().sup(direct, spec.t);
+      std.debug.assert(!sup.isInst(.poison));
+      self.direct = sup;
+    } else {
+      self.direct = spec.t;
     }
-    if (types.containedScalar(spec.t)) |scalar_type| {
-      if (self.force) {
-        if (self.scalar_at) |prev_pos| {
-          self.ctx.logger.MultipleScalarTypes(&[_]model.SpecType{
-            scalar_type.at(spec.pos), self.cur_scalar.at(prev_pos),
-          });
-        } else {
-          self.cur_scalar = scalar_type;
-          self.scalar_at = spec.pos;
-        }
-      } else {
-        self.cur_scalar =
-          try self.ctx.types().sup(self.cur_scalar, scalar_type);
-      }
-    }
-    try self.list.append(self.ctx.global(), spec.t);
-    if (self.force) try self.positions.append(self.ctx.local(), spec.pos);
   }
 
-  pub fn finish(self: *Self) !Result {
+  pub fn finish(self: *Self) !model.Type {
     if (self.force) {
       self.non_voids += 2;
       self.positions.deinit(self.ctx.local());
     }
-    return if (self.poison) Result{
-      .scalar_type_sup = self.cur_scalar,
-      .resulting_type = self.ctx.types().poison(),
-    } else switch (self.non_voids) {
-      0 => Result{
-        .scalar_type_sup = self.cur_scalar,
-        .resulting_type = self.ctx.types().void(),
-      },
-      1 => Result{
-        .scalar_type_sup = self.cur_scalar,
-        .resulting_type = self.list.items[0],
-      },
-      else => blk: {
-        for (self.list.items) |*inner_type| {
-          if (types.containedScalar(inner_type.*) != null) {
-            inner_type.* =
-              try self.ctx.types().sup(self.cur_scalar, inner_type.*);
-          }
-        }
-        break :blk Result{
-          .scalar_type_sup = self.cur_scalar,
-          .resulting_type =
-            try self.ctx.types().calcParagraphs(self.list.items),
-        };
-      },
+    return if (self.poison) self.ctx.types().poison()
+    else switch (self.non_voids) {
+      0 => self.ctx.types().void(),
+      1 => if (self.direct) |direct| direct else self.list.items[0].typedef(),
+      else => try self.ctx.types().calcSequence(self.direct, self.list.items),
     };
   }
 };
