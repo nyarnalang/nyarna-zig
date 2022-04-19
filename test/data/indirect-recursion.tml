@@ -16,24 +16,6 @@
 
 \foo(true)
 \bar(true)
---- ast
-+ROOT "standalone"
-  >CONTENT
-  +CALL
-    +TARGET
-      +FUNC
-        =NAME "concatOf"
-      -FUNC
-    -TARGET
-    +PROTO "items"
-      +VARARGS
-        =RAW Raw "foobar"
-        =RAW Space "\n"
-        =RAW Raw "barfoo"
-      -VARARGS
-    -PROTO
-  -CALL
--ROOT
 --- expr
 +CALL
   =FUNCREF .doc.input.foo

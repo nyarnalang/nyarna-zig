@@ -1104,16 +1104,24 @@ pub const Parser = struct {
       .access => {
         const start = self.lexer.recent_end;
         self.advance();
-        if (self.cur != .identifier) unreachable; // TODO: recover
-        lvl.command.info.unknown = (try self.intpr().node_gen.uAccess(
-          self.lexer.walker.posFrom(lvl.command.info.unknown.pos.start),
-          .{
-            .subject = lvl.command.info.unknown,
-            .id = self.lexer.recent_id,
-            .id_pos = self.lexer.walker.posFrom(start),
-            .ns = self.lexer.ns,
-          })).node();
-        self.advance();
+        lvl.command.info.unknown = if (self.cur == .identifier) blk: {
+          const access_node = try self.intpr().node_gen.uAccess(
+            self.lexer.walker.posFrom(lvl.command.info.unknown.pos.start),
+            .{
+              .subject = lvl.command.info.unknown,
+              .id = self.lexer.recent_id,
+              .id_pos = self.lexer.walker.posFrom(start),
+              .ns = self.lexer.ns,
+            }
+          );
+          self.advance();
+          break :blk access_node.node();
+        } else blk: {
+          self.intpr().ctx.logger.MissingSymbolName(
+            self.intpr().input.at(self.cur_start));
+          break :blk try self.intpr().node_gen.poison(
+            self.lexer.walker.posFrom(lvl.command.info.unknown.pos.start));
+        };
       },
       .assign => {
         const start = self.lexer.recent_end;
