@@ -1346,12 +1346,26 @@ pub const Parser = struct {
       .special =>
         proc.push(proc, self.lexer.walker.posFrom(self.cur_start),
           .{.special_char = self.lexer.code_point}),
-      .ws_break => // TODO: discard if at end of block
-        proc.push(proc, self.lexer.walker.posFrom(self.cur_start),
-          .{.newlines = 1}),
-      .parsep =>
-        proc.push(proc, self.lexer.walker.posFrom(self.cur_start),
-          .{.newlines = self.lexer.newline_count}),
+      .ws_break, .parsep => {
+        const num_breaks: u16 =
+          if (self.cur == .ws_break) 1 else self.lexer.newline_count;
+        const pos = self.lexer.walker.posFrom(self.cur_start);
+        while (true) {
+          self.advance();
+          if (self.cur != .indent) break;
+        }
+        switch (self.cur) {
+          .end_source, .block_name_sep, .block_end_open => {
+            self.state = .default;
+            return;
+          },
+          else => {
+            const res = try proc.push(proc, pos, .{.newlines = num_breaks});
+            std.debug.assert(res == .none);
+            return;
+          },
+        }
+      },
       .end_source, .symref, .block_name_sep, .block_end_open => {
         self.state = .default;
         return;

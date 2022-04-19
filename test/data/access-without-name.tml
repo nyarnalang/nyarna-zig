@@ -1,0 +1,5 @@
+=== Access Without Name
+--- input
+\a::
+--- errors:rawast
+3:5 - 3:5 MissingSymbolName
