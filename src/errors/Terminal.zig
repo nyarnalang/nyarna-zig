@@ -287,6 +287,20 @@ fn typeError(
     .InvalidInnerListType => {
       self.renderError("invalid inner type for List: '{}'", .{main});
     },
+    .InvalidInnerSequenceType => {
+      self.renderError(
+        "invalid inner type for Sequence (must be record): '{}'", .{main});
+    },
+    .InvalidDirectSequenceType => {
+      self.renderError("invalid direct type for Sequence: '{}'", .{main});
+    },
+    .NonEmptyAfterNonSequentiable => {
+      self.renderError("expression would force a sequence", .{});
+      const prev = types[1].t.formatter();
+      self.writer.print(
+        "  {s} previous expression of type '{}' cannot be part of a sequence",
+        .{types[1].pos, prev}) catch unreachable;
+    },
     .InvalidDefinitionValue => {
       self.renderError(
         "given value for symbol definition is a {} " ++

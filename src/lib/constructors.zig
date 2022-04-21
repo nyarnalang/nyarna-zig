@@ -232,13 +232,14 @@ pub const Prototypes = lib.Provider.Wrapper(struct {
   }
 
   pub fn @"Sequence"(
-    intpr: *Interpreter,
-    pos: model.Position,
-    inners: *model.Node,
-    auto: ?*model.Node,
+    intpr : *Interpreter,
+    pos   : model.Position,
+    inner : *model.Node,
+    direct: ?*model.Node,
+    auto  : ?*model.Node,
   ) nyarna.Error!*model.Node {
     return (try intpr.node_gen.tgSequence(
-      pos, try nodeToVarargsItemList(intpr, inners), auto)).node();
+      pos, direct, try nodeToVarargsItemList(intpr, inner), auto)).node();
   }
 
   pub fn @"Map"(

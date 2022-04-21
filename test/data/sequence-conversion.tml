@@ -1,0 +1,33 @@
+=== Sequence Conversion
+--- input
+\declare:
+  content = \func:
+  :body:
+    droggel
+
+    jug
+  \end(func)
+
+  Root = \Record:
+    a: \Sequence(\Raw)
+    b: \Sequence(\Text)
+  \end(Record)
+\end(declare)
+
+\fragment(\Root)
+
+\Root(\content(), \content())
+--- expr
++CALL
+  =TYPE record .doc.input.Root
+  >ARG a
+  +CALL
+    =FUNCREF .doc.input.content
+  -CALL
+  >ARG b
+  +CONVERT Sequence<Text>
+    +CALL
+      =FUNCREF .doc.input.content
+    -CALL
+  -CONVERT
+-CALL

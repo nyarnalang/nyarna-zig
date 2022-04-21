@@ -3,7 +3,8 @@ const std = @import("std");
 const errors = @import("../errors.zig");
 const nyarna = @import("../nyarna.zig");
 const model  = @import("../model.zig");
-const types  = @import("../types.zig");
+
+const Lattice  = @import("../types.zig").Lattice;
 
 const LiteralNumber = @import("../parse.zig").LiteralNumber;
 
@@ -89,7 +90,7 @@ pub const IntersectionBuilder = struct {
     };
   }
 
-  pub fn calcFrom(lattice: *types.Lattice, input: anytype) !model.Type {
+  pub fn calcFrom(lattice: *Lattice, input: anytype) !model.Type {
     var static = Static(input.len).init(input);
     var self = Self.initStatic(&static);
     return self.finish(lattice);
@@ -111,8 +112,8 @@ pub const IntersectionBuilder = struct {
     self.filled += 1;
   }
 
-  pub fn finish(self: *Self, lattice: *types.Lattice) !model.Type {
-    var iter = types.Lattice.TreeNode(void).Iter{
+  pub fn finish(self: *Self, lattice: *Lattice) !model.Type {
+    var iter = Lattice.TreeNode(void).Iter{
       .cur = &lattice.prefix_trees.intersection, .lattice = lattice,
     };
     var tcount = @as(usize, 0);
@@ -274,7 +275,51 @@ pub const SequenceBuilder = struct {
     pos: model.Position,
   };
 
-  ctx: nyarna.Context,
+  pub const PushResult = union(enum) {
+    not_disjoint: model.SpecType,
+    not_compatible: model.SpecType,
+    invalid_non_void: model.SpecType,
+    invalid_direct, invalid_inner, success,
+
+    pub fn report(
+      self: PushResult,
+      cur: model.SpecType,
+      logger: *errors.Handler,
+    ) void {
+      switch (self) {
+        .not_disjoint => |t| logger.TypesNotDisjoint(&.{cur, t}),
+        .not_compatible => |t| logger.IncompatibleTypes(&.{cur, t}),
+        .invalid_non_void => |t|
+          logger.NonEmptyAfterNonSequentiable(&.{cur, t}),
+        .invalid_direct => logger.InvalidDirectSequenceType(&.{cur}),
+        .invalid_inner => logger.InvalidInnerSequenceType(&.{cur}),
+        .success => {},
+      }
+    }
+  };
+
+  pub const BuildResult = struct {
+    t: model.Type,
+    auto: union(enum) {
+      not_disjoint: model.SpecType,
+      success,invalid_inner,
+    },
+
+    pub fn report(
+      self: BuildResult,
+      auto_type: ?model.SpecType,
+      logger: *errors.Handler,
+    ) void {
+      switch (self.auto) {
+        .not_disjoint => |t| logger.TypesNotDisjoint(&.{auto_type.?, t}),
+        .invalid_inner => logger.InvalidInnerSequenceType(&.{auto_type.?}),
+        .success => {},
+      }
+    }
+  };
+
+  types: *Lattice,
+  temp_alloc: std.mem.Allocator,
   direct: ?model.SpecType = null,
   single: ?model.SpecType = null,
   list: std.ArrayListUnmanaged(*model.Type.Record) = .{},
@@ -285,106 +330,276 @@ pub const SequenceBuilder = struct {
   force: bool,
   poison: bool = false,
 
-  pub fn init(ctx: nyarna.Context, force: bool) Self {
+  pub fn init(
+    types: *Lattice,
+    temp_alloc: std.mem.Allocator,
+    force: bool,
+  ) Self {
     return .{
-      .ctx = ctx,
+      .types = types,
+      .temp_alloc = temp_alloc,
       .force = force,
       .poison = false,
     };
+  }
+
+  fn errorIfForced(self: *Self, force_direct: bool) PushResult {
+    if (self.force) {
+      return if (force_direct)
+        PushResult.invalid_direct else PushResult.invalid_inner;
+    } else return PushResult.success;
+  }
+
+  fn mergeType(
+    self: *Self,
+    spec: model.SpecType,
+    force_direct: bool,
+  ) std.mem.Allocator.Error!PushResult {
+    const to_add = switch (spec.t) {
+      .instantiated => |inst| switch (inst.data) {
+        .void, .space => return self.errorIfForced(force_direct),
+        .poison => {
+          self.poison = true;
+          return PushResult.success;
+        },
+        .record => |*rec| {
+          // OPPORTUNITY: sort this list here?
+          for (self.list.items) |item, i| {
+            if (item.typedef().eql(spec.t)) {
+              return if (self.force) PushResult{
+                .not_disjoint = item.typedef().at(self.positions.items[i])
+              } else PushResult.success;
+            }
+          }
+          try self.list.append(self.types.allocator, rec);
+          try self.positions.append(self.temp_alloc, spec.pos);
+          self.non_voids += 1;
+          return PushResult.success;
+        },
+        .textual, .location, .definition, .literal, .raw, .every => spec,
+        .tenum   => blk: {
+          const res = self.errorIfForced(force_direct);
+          if (res != .success) return res;
+          break :blk self.types.system.identifier.at(spec.pos);
+        },
+        .numeric, .float => blk: {
+          const res = self.errorIfForced(force_direct);
+          if (res != .success) return res;
+          break :blk self.types.raw().at(spec.pos);
+        },
+        else => {
+          const res = self.errorIfForced(force_direct);
+          if (res == .success) {
+            self.non_voids += 1;
+            if (self.direct) |direct| return PushResult{.not_disjoint = direct};
+            if (self.list.items.len > 0) {
+              return PushResult{.not_disjoint =
+                self.list.items[0].typedef().at(self.positions.items[0])};
+            }
+            self.single = spec;
+          }
+          return res;
+        },
+      },
+      .structural => |struc| switch (struc.*) {
+        .optional => |*opt| {
+          const res = self.errorIfForced(force_direct);
+          if (res != .success) return res;
+          return try self.mergeType(opt.inner.at(spec.pos), force_direct);
+        },
+        .callable, .list, .map => {
+          const res = self.errorIfForced(force_direct);
+          if (res == .success) {
+            self.non_voids += 1;
+            if (self.direct) |direct| return PushResult{.not_disjoint = direct};
+            if (self.list.items.len > 0) {
+              return PushResult{.not_disjoint =
+                self.list.items[0].typedef().at(self.positions.items[0])};
+            }
+            self.single = spec;
+          }
+          return res;
+        },
+        .concat, .intersection => spec,
+        .sequence => |*seq| {
+          self.non_voids += 1;
+          if (seq.direct) |other_direct| {
+            const res = try self.push(other_direct.at(spec.pos), true);
+            if (res != .success) return res;
+          }
+          for (seq.inner) |inner| {
+            const res = try self.push(inner.typedef().at(spec.pos), false);
+            if (res != .success) return res;
+          }
+          return PushResult.success;
+        },
+      },
+    };
+    self.non_voids += 1;
+    if (self.direct) |direct| {
+      const sup = try self.types.sup(direct.t, to_add.t);
+      std.debug.assert(!sup.isInst(.poison));
+      self.direct = sup.at(direct.pos.span(to_add.pos));
+    } else {
+      self.direct = to_add;
+    }
+    return PushResult.success;
   }
 
   /// returns the previous type the pushed type is incompatible with, if any.
   pub fn push(
     self: *Self,
     spec: model.SpecType,
-  ) std.mem.Allocator.Error!?model.SpecType {
+    force_direct: bool,
+  ) std.mem.Allocator.Error!PushResult {
     if (self.single) |single| {
-      if (self.ctx.types().lesserEqual(spec.t, single.t)) return null;
-      if (self.ctx.types().greater(spec.t, single.t)) {
-        self.single = spec;
-        return null;
-      } else return single;
+      switch (spec.t) {
+        .instantiated => |inst| switch (inst.data) {
+          .void, .space => return PushResult.success,
+          .poison => {
+            self.poison = true;
+            return PushResult.success;
+          },
+          else => {},
+        },
+        else => {},
+      }
+      return PushResult{.invalid_non_void = single};
     }
-    const to_add = switch (spec.t) {
-      .instantiated => |inst| switch (inst.data) {
-        .void, .space => return null,
-        .poison => {
-          self.poison = true;
-          return null;
-        },
-        .record => |*rec| {
-          // OPPORTUNITY: sort this list here?
-          for (self.list.items) |item| {
-            if (item.typedef().eql(spec.t)) return null;
+    if (self.direct) |*direct| {
+      if (force_direct) {
+        if (
+          switch (spec.t) {
+            .instantiated => |inst| switch (inst.data) {
+              .textual, .location, .definition, .literal, .raw, .every,
+              .record => false,
+              .poison => {
+                self.poison = true;
+                return PushResult.success;
+              },
+              else => true,
+            },
+            .structural => |struc| switch (struc.*) {
+              .concat, .intersection => false,
+              else => true,
+            },
           }
-          try self.list.append(self.ctx.global(), rec);
-          try self.positions.append(self.ctx.local(), spec.pos);
-          self.non_voids += 1;
-          return null;
-        },
-        .textual, .location, .definition, .literal, .raw, .every => spec,
-        .tenum   => self.ctx.types().system.identifier.at(spec.pos),
-        .numeric, .float => self.ctx.types().raw().at(spec.pos),
-        else => {
-          if (self.direct) |direct| return direct;
-          if (self.list.items.len > 0) {
-            return self.list.items[0].typedef().at(self.positions.items[0]);
-          }
-          self.single = spec;
-          return null;
+        ) {
+          return self.errorIfForced(force_direct);
         }
-      },
-      .structural => |struc| switch (struc.*) {
-        .optional => |*opt| opt.inner.at(spec.pos),
-        .callable, .list, .map => {
-          if (self.direct) |direct| return direct;
-          if (self.list.items.len > 0) {
-            return self.list.items[0].typedef().at(self.positions.items[0]);
-          }
-          self.single = spec;
-          return null;
-        },
-        .concat, .intersection => spec,
-        .sequence => |*seq| {
-          self.non_voids += 1;
-          if (seq.direct) |other_direct| {
-            if (try self.push(other_direct.at(spec.pos))) |res| return res;
-          }
-          const inners = self.list.items;
-          outer: for (seq.inner) |other_inner| {
-            for (inners) |inner| {
-              if (inner == other_inner) continue :outer;
-            }
-            try self.list.append(self.ctx.global(), other_inner);
-            try self.positions.append(self.ctx.local(), spec.pos);
-          }
-          return null;
-        },
-      },
-    };
-    self.non_voids += 1;
-    if (self.direct) |direct| {
-      const sup = try self.ctx.types().sup(direct.t, to_add.t);
-      std.debug.assert(!sup.isInst(.poison));
-      self.direct = sup.at(direct.pos.span(to_add.pos));
-    } else {
-      self.direct = to_add;
+        const new = try self.types.sup(direct.t, spec.t);
+        if (new.isInst(.poison)) return PushResult{.not_compatible = direct.*};
+        direct.t = new;
+        self.non_voids += 1;
+        return PushResult.success;
+      } else if (self.types.lesserEqual(spec.t, direct.t)) {
+        self.non_voids += 1;
+        return PushResult.success;
+      } else if (
+        !spec.t.isStruc(.sequence) and !spec.t.isInst(.poison) and
+        self.types.greater(spec.t, direct.t)
+      ) {
+        self.direct = spec;
+        self.non_voids += 1;
+        return PushResult.success;
+      }
     }
-    return null;
+    return try self.mergeType(spec, force_direct);
   }
 
-  pub fn finish(self: *Self) !model.Type {
-    if (self.force) {
-      self.non_voids += 2;
-      self.positions.deinit(self.ctx.local());
+  pub fn finish(
+    self: *Self,
+    auto: ?model.SpecType,
+    generated: ?*model.Type.Sequence,
+  ) !BuildResult {
+    var res = BuildResult{.t = undefined, .auto = .success};
+    const processed_auto = if (auto) |at| switch (at.t) {
+      .structural => blk: {
+        res.auto = .invalid_inner;
+        break :blk null;
+      },
+      .instantiated => |inst| switch (inst.data) {
+        .record => |*rec| blk: {
+          if (self.direct) |direct| {
+            if (
+              self.types.lesserEqual(at.t, direct.t) or
+              self.types.greater(at.t, direct.t)
+            ) {
+              res.auto = .{.not_disjoint = direct};
+              break :blk null;
+            }
+          }
+          for (self.list.items) |item, i| {
+            if (item == rec) {
+              res.auto = .{
+                .not_disjoint = item.typedef().at(self.positions.items[i]),
+              };
+              break :blk null;
+            }
+          }
+          try self.list.append(self.types.allocator, rec);
+          break :blk rec;
+        },
+        else => blk: {
+          res.auto = .invalid_inner;
+          break :blk null;
+        }
+      },
+    } else null;
+
+    if (self.force) self.non_voids += 2;
+    self.positions.deinit(self.temp_alloc);
+    if (self.poison) {
+      res.t = self.types.poison();
+      return res;
+    } else if (self.single) |single| {
+      res.t = single.t;
+      return res;
+    } else switch (self.non_voids) {
+      0 => {
+        res.t = self.types.void();
+        return res;
+      },
+      1 => {
+        res.t = if (self.direct) |direct|
+          direct.t else self.list.items[0].typedef();
+        return res;
+      },
+      else => {},
     }
-    return if (self.poison) self.ctx.types().poison()
-    else if (self.single) |single| single.t
-    else switch (self.non_voids) {
-      0 => self.ctx.types().void(),
-      1 => if (self.direct) |direct| direct.t else self.list.items[0].typedef(),
-      else => try self.ctx.types().calcSequence(
-        if (self.direct) |direct| direct.t else null, self.list.items),
-    };
+
+    if (processed_auto) |at| {
+      const repr = try self.types.calcSequence(
+        if (self.direct) |direct| direct.t else null, self.list.items);
+      const ret = if (generated) |gt| gt else blk: {
+        const struc = try self.types.allocator.create(model.Type.Structural);
+        struc.* = .{.sequence = undefined};
+        break :blk &struc.sequence;
+      };
+      var index = for (repr.structural.sequence.inner) |item, i| {
+        if (item == at) break i;
+      } else unreachable;
+      ret.* = .{
+        .direct = if (self.direct) |direct| direct.t else null,
+        .inner = repr.structural.sequence.inner,
+        .auto = .{
+          .index = @intCast(u21, index),
+          .repr = &repr.structural.sequence,
+        },
+      };
+      res.t = ret.typedef();
+      return res;
+    } else {
+      if (generated) |gt| {
+        try self.types.registerSequence(
+          if (self.direct) |direct| direct.t else null, self.list.items, gt);
+        res.t = gt.typedef();
+        return res;
+      } else {
+        res.t = try self.types.calcSequence(
+          if (self.direct) |direct| direct.t else null, self.list.items);
+        return res;
+      }
+    }
   }
 };

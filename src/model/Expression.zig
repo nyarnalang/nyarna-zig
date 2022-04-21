@@ -148,6 +148,16 @@ pub const tg = struct {
       return Expression.parent(self);
     }
   };
+
+  pub const Sequence = struct {
+    direct: ?*Expression,
+    inner : []Varargs.Item,
+    auto  : ?*Expression,
+
+    pub inline fn expr(self: *@This()) *Expression {
+      return Expression.parent(self);
+    }
+  };
 };
 
 pub const Data = union(enum) {
@@ -162,6 +172,7 @@ pub const Data = union(enum) {
   tg_concat    : tg.Concat,
   tg_list      : tg.List,
   tg_optional  : tg.Optional,
+  tg_sequence  : tg.Sequence,
   var_retrieval: VarRetrieval,
   value        : *Value,
   varargs      : Varargs,
@@ -187,6 +198,7 @@ fn parent(it: anytype) *Expression {
     tg.Concat     => offset(Data, "tg_concat"),
     tg.List       => offset(Data, "tg_list"),
     tg.Optional   => offset(Data, "tg_optional"),
+    tg.Sequence   => offset(Data, "sequence"),
     VarRetrieval  => offset(Data, "var_retrieval"),
     Varargs       => offset(Data, "varargs"),
     else => unreachable

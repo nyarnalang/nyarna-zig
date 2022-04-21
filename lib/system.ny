@@ -101,8 +101,8 @@
   \end(prototype)
 
   Sequence = \prototype:
-    inners: \List(\Ast) {varargs, primary}
-    auto  : \Optional(\Ast)
+    inner: \List(\Ast) {varargs}
+    direct, auto: \Optional(\Ast)
   \end(prototype)
 
   Map = \prototype:

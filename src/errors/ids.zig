@@ -119,6 +119,12 @@ pub const TypeError = enum {
    /// gives one type.
    InvalidInnerListType,
    /// gives one type.
+   InvalidInnerSequenceType,
+   /// gives one type.
+   InvalidDirectSequenceType,
+   /// gives two types: first the one currently given, then the previous one.
+   NonEmptyAfterNonSequentiable,
+   /// gives one type.
    InvalidDefinitionValue,
    /// gives one type.
    CannotBranchOn,

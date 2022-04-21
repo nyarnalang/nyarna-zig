@@ -351,6 +351,35 @@ pub const Evaluator = struct {
     }
   }
 
+  fn convertIntoSequence(
+    self: *Evaluator,
+    value: *model.Value,
+    lf_after: usize,
+    into: *SequenceBuilder,
+    direct: model.Type,
+    others: []*model.Type.Record,
+  ) nyarna.Error!void {
+    switch (value.data) {
+      .seq => |*seq| for (seq.content.items) |item| {
+        try self.convertIntoSequence(
+          item.content, item.lf_after, into, direct, others);
+        return;
+      },
+      .record => |*rec| for (others) |other_rec| if (rec.t == other_rec) {
+        try into.push(value, lf_after);
+        return;
+      },
+      .poison, .void => return,
+      else => {},
+    }
+    const t = try self.ctx.types().valueType(value);
+    if (self.ctx.types().lesserEqual(t, direct)) {
+      try into.push(value, lf_after);
+      return;
+    }
+    try into.push(try self.doConvert(value, direct), lf_after);
+  }
+
   fn doConvert(
     self: *Evaluator,
     value: *model.Value,
@@ -408,8 +437,10 @@ pub const Evaluator = struct {
         },
         .optional => |*opt| return self.doConvert(value, opt.inner),
         .sequence => |*seq| {
-          _ = seq;
-          unreachable; // TODO
+          var builder = SequenceBuilder.init(self.ctx);
+          try self.convertIntoSequence(
+            value, 0, &builder, seq.direct.?, seq.inner);
+          return try builder.finish(value.origin);
         }
       }
     }
@@ -567,6 +598,56 @@ pub const Evaluator = struct {
     }
   }
 
+  fn evalGenSequence(
+    self: *Evaluator,
+    input: *model.Expression.tg.Sequence,
+  ) nyarna.Error!*model.Value {
+    var builder = types.SequenceBuilder.init(
+      self.ctx.types(), self.ctx.global(), true);
+    if (input.direct) |direct| {
+      switch ((try self.evaluate(direct)).data) {
+        .@"type" => |tv| {
+          const st = tv.t.at(direct.pos);
+          const res = try builder.push(st, true);
+          res.report(st, self.ctx.logger);
+        },
+        .poison => {},
+        else => unreachable,
+      }
+    }
+    for (input.inner) |item| {
+      const value = try self.evaluate(item.expr);
+      switch (value.data) {
+        .poison => {},
+        .@"type" => |tv| {
+          std.debug.assert(!item.direct);
+          const st = tv.t.at(item.expr.pos);
+          const res = try builder.push(st, false);
+          res.report(st, self.ctx.logger);
+        },
+        .list => |*lst| {
+          std.debug.assert(item.direct);
+          for (lst.content.items) |li| {
+            const st = li.data.@"type".t.at(li.origin);
+            const res = try builder.push(st, false);
+            res.report(st, self.ctx.logger);
+          }
+        },
+        else => unreachable,
+      }
+    }
+    const auto_type = if (input.auto) |auto| switch (
+      (try self.evaluate(auto)).data
+    ) {
+      .@"type" => |tv| tv.t.at(auto.pos),
+      .poison => null,
+      else => unreachable,
+    } else null;
+    const res = try builder.finish(auto_type, null);
+    res.report(auto_type, self.ctx.logger);
+    return (try self.ctx.values.@"type"(input.expr().pos, res.t)).value();
+  }
+
   /// actual evaluation of expressions.
   fn doEvaluate(
     self: *Evaluator,
@@ -588,6 +669,7 @@ pub const Evaluator = struct {
         self.evalGenUnary("list", tgl, "InvalidInnerListType"),
       .tg_optional   => |*tgo|
         self.evalGenUnary("optional", tgo, "InvalidInnerOptionalType"),
+      .tg_sequence   => |*tsq|        self.evalGenSequence(tsq),
       .varargs       => |*varargs|    self.evalVarargs(varargs),
       .var_retrieval => |*var_retr|   var_retr.variable.curPtr().*,
       .poison        =>               return self.ctx.values.poison(expr.pos),
@@ -919,7 +1001,7 @@ const SequenceBuilder = struct {
   pub fn init(ctx: nyarna.Context) SequenceBuilder {
     return .{
       .content   = std.ArrayList(model.Value.Seq.Item).init(ctx.global()),
-      .t_builder = types.SequenceBuilder.init(ctx, true),
+      .t_builder = types.SequenceBuilder.init(ctx.types(), ctx.global(), true),
       .ctx       = ctx,
     };
   }
@@ -927,8 +1009,9 @@ const SequenceBuilder = struct {
   fn enqueue(self: *@This(), item: model.Value.Seq.Item) !void {
     try self.content.append(item);
     const item_type = try self.ctx.types().valueType(item.content);
-    const res = try self.t_builder.push(item_type.at(item.content.origin));
-    std.debug.assert(res == null);
+    const res =
+      try self.t_builder.push(item_type.at(item.content.origin), false);
+    std.debug.assert(res == .success);
   }
 
   pub fn push(
@@ -949,14 +1032,14 @@ const SequenceBuilder = struct {
   }
 
   pub fn finish(self: *@This(), pos: model.Position) !*model.Value {
-    const ret_t = try self.t_builder.finish();
+    const res = try self.t_builder.finish(null, null);
     const ret = try self.ctx.global().create(model.Value);
     ret.* = .{
       .origin = pos,
-      .data = if (ret_t.isInst(.poison)) .poison else .{
+      .data = if (res.t.isInst(.poison)) .poison else .{
         .seq = .{
           .content = self.content,
-          .t = &ret_t.structural.sequence,
+          .t = &res.t.structural.sequence,
         },
       },
     };

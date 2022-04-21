@@ -1668,12 +1668,166 @@ pub const Interpreter = struct {
       "optional", "registerOptional", "InvalidInnerOptionalType", go, stage);
   }
 
+  fn ensureIsType(
+    self: *Interpreter,
+    expr: *model.Expression,
+  ) bool {
+    if (
+      switch (expr.expected_type) {
+        .instantiated => |inst| switch (inst.data) {
+          .poison => return false,
+          .@"type" => true,
+          else => false,
+        },
+        .structural => |struc| switch (struc.*) {
+          .callable => |*call| call.kind == .type,
+          else => false,
+        },
+      }
+    ) return true else {
+      self.ctx.logger.ExpectedExprOfTypeXGotY(&.{
+        expr.expected_type.at(expr.pos), self.ctx.types().@"type"().predef()
+      });
+      expr.data = .poison;
+      expr.expected_type = self.ctx.types().poison();
+      return false;
+    }
+  }
+
   fn tryGenSequence(
     self: *Interpreter,
     gs: *model.Node.tg.Sequence,
     stage: Stage,
   ) nyarna.Error!?*model.Expression {
-    _ = self; _ = gs; _ = stage; unreachable;
+    var failed_some = false;
+    var seen_poison = false;
+    for ([_]?*model.Node{gs.direct, gs.auto}) |cur| {
+      if (cur) |node| {
+        const expr = switch (try self.tryGetType(node, stage)) {
+          .finished, .unfinished => |t| try self.ctx.createValueExpr(
+            (try self.ctx.values.@"type"(node.pos, t)).value()),
+          .expression => |expr| expr,
+          .unavailable => {
+            failed_some = true;
+            continue;
+          },
+          .failed => {
+            seen_poison = true;
+            node.data = .poison;
+            continue;
+          }
+        };
+        if (!self.ensureIsType(expr)) seen_poison = true;
+        node.data = .{.expression = expr};
+      }
+    }
+    const list_type = (try self.ctx.types().list(self.ctx.types().@"type"())).?;
+    for (gs.inner) |item| {
+      const expr = if (item.direct) blk: {
+        if (
+          try self.associate(item.node, list_type.predef(), stage)
+        ) |expr| break :blk expr;
+        failed_some = true;
+        continue;
+      } else blk: {
+        const inner = switch (try self.tryGetType(item.node, stage)) {
+          .finished, .unfinished => |t| try self.ctx.createValueExpr(
+            (try self.ctx.values.@"type"(item.node.pos, t)).value()),
+          .expression => |expr| expr,
+          .unavailable => {
+            failed_some = true;
+            continue;
+          },
+          .failed => {
+            seen_poison = true;
+            continue;
+          }
+        };
+        if (!self.ensureIsType(inner)) seen_poison = true;
+        break :blk inner;
+      };
+      item.node.data = .{.expression = expr};
+    }
+
+    if (failed_some) return null;
+    if (seen_poison) {
+      const expr = try self.ctx.global().create(model.Expression);
+      expr.* = .{
+        .pos = gs.node().pos,
+        .data = .poison,
+        .expected_type = self.ctx.types().poison(),
+      };
+      return expr;
+    }
+    if (gs.generated) |gen| {
+      var builder = types.SequenceBuilder.init(
+        self.ctx.types(), self.allocator, true);
+      if (gs.direct) |input| {
+        const value = try self.ctx.evaluator().evaluate(input.data.expression);
+        switch (value.data) {
+          .poison => {},
+          .@"type" => |tv| {
+            const st = tv.t.at(value.origin);
+            const res = try builder.push(st, true);
+            res.report(st, self.ctx.logger);
+          },
+          else => unreachable,
+        }
+      }
+      for (gs.inner) |item| {
+        const value =
+          try self.ctx.evaluator().evaluate(item.node.data.expression);
+        switch (value.data) {
+          .poison => {},
+          .list => |*lst| {
+            std.debug.assert(item.direct);
+            for (lst.content.items) |inner| {
+              const t = inner.data.@"type".t.at(inner.origin);
+              const res = try builder.push(t, false);
+              res.report(t, self.ctx.logger);
+            }
+          },
+          .@"type" => |tv| {
+            std.debug.assert(!item.direct);
+            const st = tv.t.at(value.origin);
+            const res = try builder.push(st, false);
+            res.report(st, self.ctx.logger);
+          },
+          else => unreachable,
+        }
+      }
+      const auto_t: ?model.SpecType = if (gs.auto) |auto| blk: {
+        const value = try self.ctx.evaluator().evaluate(auto.data.expression);
+        switch (value.data) {
+          .poison => break :blk null,
+          .@"type" => |tv| break :blk tv.t.at(auto.pos),
+          else => unreachable,
+        }
+      } else null;
+      gen.* =  .{.sequence = undefined};
+      const res = try builder.finish(auto_t, &gen.sequence);
+      res.report(auto_t, self.ctx.logger);
+      return try self.ctx.createValueExpr(
+        (try self.ctx.values.@"type"(gs.node().pos, res.t)).value());
+    } else {
+      var inner = std.ArrayList(model.Expression.Varargs.Item).init(
+        self.ctx.global());
+      for (gs.inner) |item| {
+        try inner.append(
+          .{.direct = item.direct, .expr = item.node.data.expression});
+      }
+      const expr = try self.ctx.global().create(model.Expression);
+      expr.* = .{
+        .pos = gs.node().pos,
+        .expected_type = self.ctx.types().@"type"(),
+        .data = .{.tg_sequence = .{
+          .direct = if (gs.direct) |direct| direct.data.expression else null,
+          .inner = inner.items,
+          .auto = if (gs.auto) |auto| auto.data.expression else null,
+        }},
+      };
+      return expr;
+    }
   }
 
   fn tryGenPrototype(
@@ -2265,14 +2419,21 @@ pub const Interpreter = struct {
                       else return self.ctx.types().literal(),
       .location => return self.ctx.types().location(),
       .seq => |*seq| {
-        var builder = nyarna.types.SequenceBuilder.init(self.ctx, false);
+        var builder = nyarna.types.SequenceBuilder.init(
+          self.ctx.types(), self.allocator, false);
         var seen_unfinished = false;
         for (seq.items) |*item| {
           if (try self.probeType(item.content, stage, sloppy)) |t| {
-            _ = try builder.push(t.at(item.content.pos));
+            const st = t.at(item.content.pos);
+            const res = try builder.push(st, false);
+            if (res != .success) {
+              item.content.data = .poison;
+              res.report(st, self.ctx.logger);
+            }
           } else seen_unfinished = true;
         }
-        return if (seen_unfinished) null else try builder.finish();
+        return
+          if (seen_unfinished) null else (try builder.finish(null, null)).t;
       },
       .resolved_access => |*ra| {
         var t = (try self.probeType(ra.base, stage, sloppy)).?;
@@ -2612,7 +2773,8 @@ pub const Interpreter = struct {
           if (res == null) seen_unfinished = true;
         }
         if (seen_unfinished) return null;
-        var builder = types.SequenceBuilder.init(self.ctx, false);
+        var builder = types.SequenceBuilder.init(
+          self.ctx.types(), self.allocator, false);
         const res = try self.ctx.global().alloc(
           model.Expression.Paragraph, seq.items.len);
         var next: usize = 0;
@@ -2625,23 +2787,24 @@ pub const Interpreter = struct {
               para_type = try self.typeWithoutSpace(para_type);
             }
           }
-          if (try builder.push(para_type.at(item.content.pos))) |prev| {
-            self.ctx.logger.IncompatibleTypes(
-              &.{para_type.at(item.content.pos), prev});
-          } else {
+          const pst = para_type.at(item.content.pos);
+          const bres = try builder.push(pst, false);
+          if (bres == .success) {
             res[next] = .{
               .content = (try self.interpretWithTargetScalar(
                 item.content, stype, stage)).?,
               .lf_after = item.lf_after,
             };
             next += 1;
+          } else {
+            bres.report(pst, self.ctx.logger);
           }
         }
         const expr = try self.ctx.global().create(model.Expression);
         expr.* = .{
           .pos = input.pos,
           .data = .{.sequence = res[0..next]},
-          .expected_type = try builder.finish(),
+          .expected_type = (try builder.finish(null, null)).t,
         };
         return expr;
       },
@@ -2682,77 +2845,24 @@ pub const Interpreter = struct {
         expr.expected_type = item.t;
         break :blk expr;
       }
-      switch (expr.expected_type) {
-        .instantiated => |inst| switch (inst.data) {
-          .void => switch (item.t) {
-            .instantiated => |tinst| switch (tinst.data) {
-              .literal, .space, .raw, .textual => {
-                const conv = try self.ctx.global().create(model.Expression);
-                conv.* = .{
-                  .pos = expr.pos,
-                  .data = .{.conversion = .{
-                    .inner = expr,
-                    .target_type = item.t,
-                  }},
-                  .expected_type = item.t,
-                };
-                break :blk conv;
-              },
-              else => {},
-            },
-            // TODO: semantic conversions of concats, sequences here
-            .structural => {}
-          },
-          else => {},
-        },
-        .structural => |struc| switch (struc.*) {
-          .optional => |*opt| if (
-            opt.inner.isScalar() and
-            self.ctx.types().lesserEqual(opt.inner, item.t)
-          ) {
-            const conv = try self.ctx.global().create(model.Expression);
-            conv.* = .{
-              .pos = expr.pos,
-              .data = .{.conversion = .{
-                .inner = expr,
-                .target_type = item.t,
-              }},
-              .expected_type = item.t,
-            };
-            break :blk conv;
-          },
-          .sequence => |*seq| {
-            var compat = true;
-            if (seq.direct) |direct| {
-              if (!self.ctx.types().lesserEqual(direct, item.t)) compat = false;
-            }
-            for (seq.inner) |inner| {
-              if (!self.ctx.types().lesserEqual(inner.typedef(), item.t)) {
-                compat = false;
-              }
-            }
-            if (compat) {
-              const conv = try self.ctx.global().create(model.Expression);
-              conv.* = .{
-                .pos = expr.pos,
-                .data = .{.conversion = .{
-                  .inner = expr,
-                  .target_type = item.t,
-                }},
-                .expected_type = item.t,
-              };
-              break :blk conv;
-            }
-          },
-          else => {},
-        },
+      if (self.ctx.types().convertible(expr.expected_type, item.t)) {
+        const conv = try self.ctx.global().create(model.Expression);
+        conv.* = .{
+          .pos = expr.pos,
+          .data = .{.conversion = .{
+            .inner = expr,
+            .target_type = item.t,
+          }},
+          .expected_type = item.t,
+        };
+        break :blk conv;
+      } else {
+        self.ctx.logger.ExpectedExprOfTypeXGotY(
+          &.{expr.expected_type.at(node.pos), item});
+        expr.data = .{.value = try self.ctx.values.poison(expr.pos)};
+        expr.expected_type = self.ctx.types().poison();
+        break :blk expr;
       }
-
-      self.ctx.logger.ExpectedExprOfTypeXGotY(
-        &.{expr.expected_type.at(node.pos), item});
-      expr.data = .{.value = try self.ctx.values.poison(expr.pos)};
-      expr.expected_type = self.ctx.types().poison();
-      break :blk expr;
     } else null;
   }
 };

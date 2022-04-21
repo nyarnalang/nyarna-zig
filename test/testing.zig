@@ -405,7 +405,7 @@ const AstEmitter = struct {
       },
       .gen_sequence => |gs| {
         const gen = try self.pushWithKey("TGEN", "Sequence", null);
-        for (gs.inners) |inner| try self.process(inner.node);
+        for (gs.inner) |inner| try self.process(inner.node);
         if (gs.auto) |auto| {
           try self.emitLine(">AUTO", .{});
           try self.process(auto);
@@ -605,6 +605,19 @@ const AstEmitter = struct {
         const o = try self.push("TG_OPTIONAL");
         try self.processExpr(tgo.inner);
         try o.pop();
+      },
+      .tg_sequence => |tgs| {
+        const s = try self.push("TG_SEQUENCE");
+        for (tgs.inner) |inner| try self.processExpr(inner.expr);
+        if (tgs.direct) |direct| {
+          try self.emitLine(">DIRECT", .{});
+          try self.processExpr(direct);
+        }
+        if (tgs.auto) |auto| {
+          try self.emitLine(">AUTO", .{});
+          try self.processExpr(auto);
+        }
+        try s.pop();
       },
       .value => |value| try self.processValue(value),
       .sequence => |seq| {

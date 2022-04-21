@@ -288,7 +288,7 @@ pub const VarTypeSetter = struct {
 /// \declare resolution.
 pub const tg = struct {
   pub const Concat = struct {
-    inner: *Node,
+    inner    : *Node,
     generated: ?*Type.Structural = null,
     pub inline fn node(self: *@This()) *Node {return Node.parent(self);}
   };
@@ -301,51 +301,52 @@ pub const tg = struct {
     pub inline fn node(self: *@This()) *Node {return Node.parent(self);}
   };
   pub const Intersection = struct {
-    types: []Varargs.Item,
+    types    : []Varargs.Item,
     generated: ?*Type.Structural = null,
     pub inline fn node(self: *@This()) *Node {return Node.parent(self);}
   };
   pub const List = struct {
-    inner: *Node,
+    inner    : *Node,
     generated: ?*Type.Structural = null,
     pub inline fn node(self: *@This()) *Node {return Node.parent(self);}
   };
   pub const Map = struct {
-    key: *Node,
-    value: *Node,
+    key      : *Node,
+    value    : *Node,
     generated: ?*Type.Structural = null,
     pub inline fn node(self: *@This()) *Node {return Node.parent(self);}
   };
   pub const Numeric = struct {
-    min: ?*Node,
-    max: ?*Node,
+    min     : ?*Node,
+    max     : ?*Node,
     decimals: ?*Node,
     pub inline fn node(self: *@This()) *Node {return Node.parent(self);}
   };
   pub const Optional = struct {
-    inner: *Node,
+    inner    : *Node,
     generated: ?*Type.Structural = null,
     pub inline fn node(self: *@This()) *Node {return Node.parent(self);}
   };
   pub const Sequence = struct {
-    inners: []Node.Varargs.Item,
-    auto: ?*Node,
+    direct   : ?*Node,
+    inner    : []Node.Varargs.Item,
+    auto     : ?*Node,
     generated: ?*Type.Structural = null,
     pub inline fn node(self: *@This()) *Node {return Node.parent(self);}
   };
   pub const Prototype = struct {
-    params: locations.List(void),
+    params     : locations.List(void),
     constructor: ?*Node,
-    funcs: ?*Node,
+    funcs      : ?*Node,
     pub inline fn node(self: *@This()) *Node {return Node.parent(self);}
   };
   pub const Record = struct {
-    fields: locations.List(void),
+    fields   : locations.List(void),
     generated: ?*Type.Instantiated = null,
     pub inline fn node(self: *@This()) *Node {return Node.parent(self);}
   };
   pub const Textual = struct {
-    categories: []Varargs.Item,
+    categories   : []Varargs.Item,
     include_chars: ?*Node,
     exclude_chars: ?*Node,
     pub inline fn node(self: *@This()) *Node {return Node.parent(self);}

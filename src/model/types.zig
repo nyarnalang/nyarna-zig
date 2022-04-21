@@ -177,8 +177,14 @@ pub const Sequence = struct {
   direct: ?Type,
   /// all other types are records.
   inner: []*Record,
-  /// index into inner, if set.
-  auto: ?u21,
+  /// non-null if this sequence has an auto type
+  auto: ?struct {
+    /// index into inner that identifiers the auto type
+    index: u21,
+    /// representant type that has the same direct and inner, but no auto.
+    /// this will be used for type calculations.
+    repr: *Sequence,
+  },
 
   pub inline fn pos(self: *@This()) Position {
     return Structural.pos(self);
@@ -186,6 +192,10 @@ pub const Sequence = struct {
 
   pub inline fn typedef(self: *const @This()) Type {
     return Structural.typedef(self);
+  }
+
+  pub inline fn repr(self: *const @This()) Type {
+    return if (self.auto) |auto| auto.repr.typedef() else self.typedef();
   }
 };
 

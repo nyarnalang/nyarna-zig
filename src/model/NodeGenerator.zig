@@ -289,11 +289,14 @@ pub inline fn tgOptional(
 pub inline fn tgSequence(
   self: *Self,
   pos: Position,
-  inners: []Node.Varargs.Item,
+  direct: ?*Node,
+  inner: []Node.Varargs.Item,
   auto: ?*Node,
 ) !*Node.tg.Sequence {
   return &(try self.node(
-    pos, .{.gen_sequence = .{.inners = inners, .auto = auto}}
+    pos, .{.gen_sequence = .{
+      .direct = direct,.inner = inner, .auto = auto,
+    }},
   )).data.gen_sequence;
 }
 

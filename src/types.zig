@@ -195,7 +195,7 @@ pub const Lattice = struct {
   /// Each TreeNode holds the successors for a prefix continuation in `children`
   /// and the value of that prefix continuation, if any, in `value`.
   ///
-  /// For intersections and paragraphs, the prefixes are the list of contained
+  /// For intersections and sequences, the prefixes are the list of contained
   /// types, ordered by the artifical total type order. For callable types, the
   /// prefixes are the list of parameter types in parameter order, succeeded by
   /// the return type.
@@ -208,6 +208,10 @@ pub const Lattice = struct {
   /// TreeNodes for Callable types have an additional boolean flag which is true
   /// iff the parameter is borrowed. On the return type, this flag is true iff
   /// the Callable is a type.
+  ///
+  /// For sequences, the first item is the direct type, or .every if they have
+  /// no direct type. Sequences with auto types are not contained herein, they
+  /// have a representant type that is used for type calculations.
   ///
   /// The worst-case time of discovering an intersection or paragraphs type for
   /// a given list of n types is expected to be O(n log(m)) where m is the
@@ -529,6 +533,27 @@ pub const Lattice = struct {
     return self.raw();
   }
 
+  pub fn registerSequence(
+    self: *Self,
+    direct: ?model.Type,
+    inner: []*model.Type.Record,
+    t: *model.Type.Sequence,
+  ) !void {
+    std.sort.sort(*model.Type.Record, inner, {}, recTotalOrderLess);
+    var iter = TreeNode(void).Iter{
+      .cur = &self.prefix_trees.sequence, .lattice = self,
+    };
+    try iter.descend(if (direct) |d| d else self.every(), {});
+    for (inner) |it| try iter.descend(it.typedef(), {});
+    std.debug.assert(iter.cur.value == null);
+    iter.cur.value = t.typedef().structural;
+    t.* = .{
+      .direct = direct,
+      .inner = inner,
+      .auto = null,
+    };
+  }
+
   pub fn calcSequence(
     self: *Self,
     direct: ?model.Type,
@@ -538,8 +563,8 @@ pub const Lattice = struct {
     var iter = TreeNode(void).Iter{
       .cur = &self.prefix_trees.sequence, .lattice = self,
     };
+    try iter.descend(if (direct) |d| d else self.every(), {});
     for (inner) |t| try iter.descend(t.typedef(), {});
-    if (direct) |d| try iter.descend(d, {});
     return model.Type{.structural = iter.cur.value orelse blk: {
       var new = try self.allocator.create(model.Type.Structural);
       new.* = .{
@@ -678,7 +703,30 @@ pub const Lattice = struct {
             switch (order) {
               .eq, .lt => return other,
               .gt => return struc.typedef(),
-              .dj => unreachable, // TODO
+              .dj => {
+                var builder =
+                  builders.SequenceBuilder.init(self, self.allocator, true);
+                for ([_]?model.Type{s.direct, other_s.direct}) |item| {
+                  if (item) |t| switch (try builder.push(t.predef(), true)) {
+                    .success => {},
+                    else => unreachable,
+                  };
+                }
+                for ([_][]*model.Type.Record{s.inner, other_s.inner}) |l| {
+                  for (l) |rec| {
+                    switch (try builder.push(rec.typedef().predef(), false)) {
+                      .success => {},
+                      .not_disjoint => {
+                        const res =
+                          try builder.push(rec.typedef().predef(), true);
+                        std.debug.assert(res == .success);
+                      },
+                      else => unreachable,
+                    }
+                  }
+                }
+                return (try builder.finish(null, null)).t;
+              }
             }
           },
           .concat => {
@@ -1046,10 +1094,63 @@ pub const Lattice = struct {
   pub inline fn litType(self: *Lattice, lit: *model.Node.Literal) model.Type {
     return if (lit.kind == .text) self.literal() else self.space();
   }
+
+  /// returns whether there exists a semantic conversion from `from` to `to`.
+  pub fn convertible(self: *Lattice, from: model.Type, to: model.Type) bool {
+    if (self.lesserEqual(from, to)) return true;
+    const to_scalar = containedScalar(to);
+    return switch (from) {
+      .instantiated => |from_inst| switch (from_inst.data) {
+        .void => if (to_scalar) |scalar| switch (scalar.instantiated.data) {
+          .literal, .space, .raw, .textual => true,
+          else => false,
+        } else false,
+        .space => to.isStruc(.concat) or to.isStruc(.sequence),
+        .literal => to_scalar != null,
+        else => false,
+      },
+      .structural => |from_struc| switch (from_struc.*) {
+        .concat => |*con| switch (to) {
+          .structural => |to_struc| switch (to_struc.*) {
+            .concat   => |*to_con| self.convertible(con.inner, to_con.inner),
+            .sequence => |*to_seq|
+              if (to_seq.direct) |dir| self.convertible(from, dir) else false,
+            else => false,
+          },
+          .instantiated => false,
+        },
+        .intersection => |*int|
+          (if (int.scalar) |s| self.convertible(s, to) else true) and
+          (for (int.types) |t| {
+            if (!self.lesserEqual(t, to)) break false;
+           } else true),
+        .optional => |*opt|
+          self.convertible(self.void(), to) and self.convertible(opt.inner, to),
+        .sequence => |*seq| {
+          switch (to) {
+            .instantiated => |to_inst| switch (to_inst.data) {
+              .space, .literal, .numeric, .textual, .tenum, .float, .raw => {},
+              else => return false,
+            },
+            .structural => |to_struc| switch (to_struc.*) {
+              .concat, .sequence => {},
+              else => return false,
+            }
+          }
+          if (seq.direct) |d| if (!self.convertible(d, to)) return false;
+          for (seq.inner) |item| {
+            if (!self.lesserEqual(item.typedef(), to)) return false;
+          }
+          return true;
+        },
+        else => false,
+      },
+    };
+  }
 };
 
 /// searches direct scalar types as well as scalar types in concatenation,
-/// optional and paragraphs types.
+/// optional and sequence types.
 pub fn containedScalar(t: model.Type) ?model.Type {
   return switch (t) {
     .structural => |strct| switch (strct.*) {
