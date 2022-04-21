@@ -11,8 +11,7 @@
 \end(declare)
 
 \foo:
-  true
-  \var:
+  true\var:
     x = \if(true):
       42
 \end(foo)
@@ -21,7 +20,10 @@
   expected = if
   got = declare
   defined_at = input(7:5)
-18:6 - 18:9 SkippingCallId
+17:6 - 17:9 SkippingCallId
   expected = if
   got = foo
-  defined_at = input(16:9)
+  defined_at = input(15:9)
+14:3 - 17:6 ExpectedExprOfTypeXGotY
+  main = Raw
+  other = input(5:11) Bool

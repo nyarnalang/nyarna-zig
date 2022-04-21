@@ -26,4 +26,4 @@
   previous = input(11:1)
 9:1 - 11:1 IncompatibleTypes
   main = [function] (Raw) -> Void
-  other = input(3:1) Raw
+  other = input(3:1) Integer

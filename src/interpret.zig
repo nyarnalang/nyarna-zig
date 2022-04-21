@@ -2586,20 +2586,6 @@ pub const Interpreter = struct {
     else null;
   }
 
-  fn poisonIfNotCompat(
-    self: *Interpreter,
-    pos: model.Position,
-    actual: model.Type,
-    scalar: model.Type,
-  ) !?*model.Expression {
-    if (!actual.isNamed(.poison)) {
-      if (types.containedScalar(actual)) |contained| {
-        if (self.ctx.types().lesserEqual(contained, scalar)) return null;
-      } else return null;
-    }
-    return try self.ctx.createValueExpr(try self.ctx.values.poison(pos));
-  }
-
   /// removes any .space type from concats and paragraphs within t and t itself
   fn typeWithoutSpace(
     self: *Interpreter,
@@ -2624,6 +2610,33 @@ pub const Interpreter = struct {
       },
       .named => t,
     };
+  }
+
+  fn mixIfCompatible(
+    self: *Interpreter,
+    target: *model.Type,
+    add: model.Type,
+    exprs: []*model.Expression,
+    index: usize,
+  ) !bool {
+    if (add.isNamed(.poison)) return false;
+    const new = try self.ctx.types().sup(target.*, add);
+    if (new.isNamed(.poison)) {
+      for (exprs[0..index]) |prev| {
+        const mixed =
+          try self.ctx.types().sup(prev.expected_type, add);
+        if (mixed.isNamed(.poison)) {
+          const expr = exprs[index];
+          self.ctx.logger.IncompatibleTypes(&.{
+            expr.expected_type.at(expr.pos), prev.expected_type.at(prev.pos),
+          });
+          return false;
+        }
+      }
+      unreachable;
+    }
+    target.* = new;
+    return true;
   }
 
   /// Same as tryInterpret, but takes a target type that may be used to generate
@@ -2698,62 +2711,145 @@ pub const Interpreter = struct {
               self.ctx.createValueExpr(try self.ctx.values.poison(input.pos));
           }
         };
-        var actual_type = (
-          try self.probeNodeList(br.branches, stage, false)
-        ) orelse return null;
-        if (actual_type.isNamed(.space) and spec.t.isNamed(.void)) {
-          actual_type = spec.t;
+        var seen_unfinished = false;
+        for (br.branches) |item| {
+          if (try self.interpretWithTargetScalar(item, spec, stage)) |expr| {
+            item.data = .{.expression = expr};
+          } else seen_unfinished = true;
         }
-        if (try self.poisonIfNotCompat(input.pos, actual_type, spec.t)) |expr| {
-          return expr;
-        }
+        if (seen_unfinished) return null;
         const exprs =
           try self.ctx.global().alloc(*model.Expression, br.branches.len);
+        var actual_type = self.ctx.types().every();
+        var seen_poison = false;
         for (br.branches) |item, i| {
-          exprs[i] = (try self.interpretWithTargetScalar(item, spec, stage)).?;
+          exprs[i] = item.data.expression;
+          if (
+            !(try self.mixIfCompatible(
+              &actual_type, exprs[i].expected_type, exprs, i))
+          ) seen_poison = true;
         }
         const expr = try self.ctx.global().create(model.Expression);
         expr.* = .{
           .pos = input.pos,
-          .data = .{.branches = .{.condition = condition, .branches = exprs}},
-          .expected_type = try self.ctx.types().sup(actual_type, spec.t),
+          .data = if (seen_poison) .poison else .{
+            .branches = .{.condition = condition, .branches = exprs}
+          },
+          .expected_type =
+            if (seen_poison) self.ctx.types().poison() else actual_type,
         };
         return expr;
       },
       .concat => |con| {
-        const inner = (
-          try self.probeNodeList(con.items, stage, false)
-        ) orelse return null;
-        var actual_type = (try self.ctx.types().concat(inner))
-          orelse {
-            self.ctx.logger.InvalidInnerConcatType(&.{inner.at(input.pos)});
-            return try self.ctx.createValueExpr(
-              try self.ctx.values.poison(input.pos));
-          };
-        if (actual_type.isNamed(.space) and spec.t.isNamed(.void)) {
-          actual_type = spec.t;
-        }
-        if (try self.poisonIfNotCompat(input.pos, actual_type, spec.t)) |expr| {
-          return expr;
-        }
-        // TODO: properly handle paragraph types
+        // force non-concatenable scalars to coerce to Raw
+        const inner_scalar = switch (spec.t) {
+          .named => |named| switch (named.data) {
+            .tenum, .numeric, .float => self.ctx.types().raw().at(spec.pos),
+            else => spec,
+          },
+          .structural => unreachable,
+        };
+
         var failed_some = false;
         for (con.items) |item| {
-          if (try self.interpretWithTargetScalar(item, spec, stage)) |expr| {
+          if (
+            try self.interpretWithTargetScalar(item, inner_scalar, stage)
+          ) |expr| {
             item.data = .{.expression = expr};
           } else failed_some = true;
         }
         if (failed_some) return null;
         const exprs = try self.ctx.global().alloc(
           *model.Expression, con.items.len);
-        for (con.items) |item, i| exprs[i] = item.data.expression;
+        var inner_type = self.ctx.types().every();
+        var seen_sequence = false;
+        var seen_poison = false;
+        for (con.items) |item, i| {
+          const expr = item.data.expression;
+          exprs[i] = expr;
+          if (
+            switch (expr.expected_type) {
+              .structural => |struc| switch (struc.*) {
+                .sequence => |*sec| blk: {
+                  seen_sequence = true;
+                  var already_poison = false;
+                  if (sec.direct) |direct| {
+                    if (
+                      !(try self.mixIfCompatible(&inner_type, direct, exprs, i))
+                    ) {
+                      seen_poison = true;
+                      already_poison = true;
+                    }
+                  }
+                  if (!already_poison) for (sec.inner) |inner| {
+                    if (
+                      !(try self.mixIfCompatible(
+                        &inner_type, inner.typedef(), exprs, i))
+                    ) {
+                      seen_poison = true;
+                      already_poison = true;
+                      break;
+                    }
+                  };
+                  if (!already_poison) {
+                    if (
+                      !(try self.mixIfCompatible(
+                        &inner_type, self.ctx.types().space(), exprs, i))
+                    ) {
+                      seen_poison = true;
+                    }
+                  }
+                  break :blk false;
+                },
+                else => true,
+              },
+              else => true,
+            }
+          ) {
+            if (
+              !(try self.mixIfCompatible(
+                &inner_type, expr.expected_type, exprs, i))
+            ) seen_poison = true;
+          }
+        }
         const expr = try self.ctx.global().create(model.Expression);
-        expr.* = .{
-          .pos = input.pos,
-          .data = .{.concatenation = exprs},
-          .expected_type = try self.ctx.types().sup(actual_type, spec.t),
-        };
-        return expr;
+        const expr_type =
+          if (seen_poison) null else try self.ctx.types().concat(inner_type);
+        if (expr_type) |target_type| {
+          if (seen_sequence) {
+            for (exprs) |*item| {
+              if (item.*.expected_type.isStruc(.sequence)) {
+                const conv = try self.ctx.global().create(model.Expression);
+                conv.* = .{
+                  .pos = item.*.pos,
+                  .data = .{.conversion = .{
+                    .inner = item.*,
+                    .target_type = target_type,
+                  }},
+                  .expected_type = target_type,
+                };
+                item.* = conv;
+              }
+            }
+          }
+          expr.* = .{
+            .pos = input.pos,
+            .data = .{.concatenation = exprs},
+            .expected_type = target_type,
+          };
+          return expr;
+        } else {
+          if (!seen_poison) {
+            self.ctx.logger.InvalidInnerConcatType(
+              &.{inner_type.at(input.pos)});
+          }
+          expr.* = .{
+            .pos = input.pos,
+            .data = .poison,
+            .expected_type = self.ctx.types().poison(),
+          };
+          return expr;
+        }
       },
       .expression => |expr| return expr,
       // for text literals, do compile-time type conversions if possible
