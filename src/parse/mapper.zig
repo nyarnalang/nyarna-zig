@@ -120,7 +120,7 @@ pub const SignatureMapper = struct {
   }
 
   fn checkFrameRoot(self: *SignatureMapper, t: model.Type) !void {
-    if (t.isInst(.frame_root)) {
+    if (t.isNamed(.frame_root)) {
       const container =
         try self.intpr.ctx.global().create(model.VariableContainer);
       container.* = .{.num_values = 0};
@@ -234,7 +234,7 @@ pub const SignatureMapper = struct {
           .optional => |*opt| calc(opt.inner),
           else => .normal,
         },
-        .instantiated => |inst| switch (inst.data) {
+        .named => |named| switch (named.data) {
           .ast => ArgBehavior.ast_node,
           .frame_root => .frame_root,
           else => .normal,
@@ -309,7 +309,7 @@ pub const SignatureMapper = struct {
               else null,
             else => null,
           },
-          .instantiated => |inst| switch (inst.data) {
+          .named => |named| switch (named.data) {
             .void => try self.intpr.node_gen.@"void"(pos),
             .poison => {
               missing_param = true;
@@ -334,7 +334,7 @@ pub const SignatureMapper = struct {
       }
       if (param.capture == .varargs) switch (param.spec.t) {
         .structural => |strct| switch (strct.*) {
-          .list => |*list| if (list.inner.isInst(.ast)) {
+          .list => |*list| if (list.inner.isNamed(.ast)) {
             const content = self.args[i];
             self.args[i] = try self.intpr.genValueNode(
               (try self.intpr.ctx.values.ast(content, null)).value());

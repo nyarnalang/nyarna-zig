@@ -368,7 +368,7 @@ pub const Signature = struct {
   returns: Type,
 
   pub fn isKeyword(sig: *const Signature) bool {
-    return sig.returns.isInst(.ast);
+    return sig.returns.isNamed(.ast);
   }
 
   pub inline fn typedef(self: *const @This()) Type {

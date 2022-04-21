@@ -44,11 +44,11 @@ pub const Types = lib.Provider.Wrapper(struct {
   ) nyarna.Error!*model.Node {
     var expr = if (default) |node| blk: {
       var val = try intpr.interpret(node.root);
-      if (val.expected_type.isInst(.poison)) return intpr.node_gen.poison(pos);
+      if (val.expected_type.isNamed(.poison)) return intpr.node_gen.poison(pos);
       if (t) |given_type| {
         if (
           !intpr.ctx.types().lesserEqual(val.expected_type, given_type.t) and
-          !val.expected_type.isInst(.poison)
+          !val.expected_type.isNamed(.poison)
         ) {
           intpr.ctx.logger.ExpectedExprOfTypeXGotY(&.{
             val.expected_type.at(val.pos),
@@ -131,7 +131,7 @@ pub const Types = lib.Provider.Wrapper(struct {
     input: *model.Value.TextScalar,
   ) nyarna.Error!*model.Value {
     return if (try eval.ctx.textFromString(input.value().origin, input.content,
-      &eval.target_type.instantiated.data.textual)) |nv| nv.value()
+      &eval.target_type.named.data.textual)) |nv| nv.value()
     else try eval.ctx.values.poison(pos);
   }
 
@@ -141,7 +141,7 @@ pub const Types = lib.Provider.Wrapper(struct {
     input: *model.Value.TextScalar,
   ) nyarna.Error!*model.Value {
     return if (try eval.ctx.numberFromText(input.value().origin, input.content,
-      &eval.target_type.instantiated.data.numeric)) |nv| nv.value()
+      &eval.target_type.named.data.numeric)) |nv| nv.value()
     else try eval.ctx.values.poison(pos);
   }
 
@@ -160,7 +160,7 @@ pub const Types = lib.Provider.Wrapper(struct {
     input: *model.Value.TextScalar,
   ) nyarna.Error!*model.Value {
     return if (try eval.ctx.enumFrom(input.value().origin, input.content,
-      &eval.target_type.instantiated.data.tenum)) |ev| ev.value()
+      &eval.target_type.named.data.tenum)) |ev| ev.value()
     else try eval.ctx.values.poison(pos);
   }
 

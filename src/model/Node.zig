@@ -342,7 +342,7 @@ pub const tg = struct {
   };
   pub const Record = struct {
     fields   : locations.List(void),
-    generated: ?*Type.Instantiated = null,
+    generated: ?*Type.Named = null,
     pub inline fn node(self: *@This()) *Node {return Node.parent(self);}
   };
   pub const Textual = struct {

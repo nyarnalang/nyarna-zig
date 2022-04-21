@@ -109,7 +109,7 @@ pub const Resolver = struct {
     name: []const u8
   ) !?SearchResult {
     switch (t) {
-      .instantiated => |inst| switch (inst.data) {
+      .named => |named| switch (named.data) {
         .record => |*rec| {
           for (rec.constructor.sig.parameters) |*field, index| {
             if (std.mem.eql(u8, field.name, name)) {
@@ -138,7 +138,7 @@ pub const Resolver = struct {
     switch (rs.sym.data) {
       .poison => return Resolution.poison,
       .variable => |*v| {
-        if (v.spec.t.isInst(.every)) {
+        if (v.spec.t.isNamed(.every)) {
           std.debug.assert(self.stage.kind == .intermediate);
           return Resolution{.failed = rs.ns};
         } else {
@@ -167,7 +167,7 @@ pub const Resolver = struct {
           .ns = ns,
           .name_pos = name_pos,
         }};
-        std.debug.assert(!v.spec.t.isInst(.every));
+        std.debug.assert(!v.spec.t.isNamed(.every));
         return Resolution.chain(ns, node, .{}, v.spec.t, name_pos, false);
       },
       .poison => return Resolution.poison,
@@ -416,7 +416,7 @@ pub const CallContext = union(enum) {
         .callable => |*callable| callable,
         else => null,
       },
-      .instantiated => |inst| switch (inst.data) {
+      .named => |named| switch (named.data) {
         .poison => return CallContext.poison,
         else => null,
       },
@@ -474,7 +474,7 @@ pub const CallContext = union(enum) {
                 },
                 else => {},
               },
-              .instantiated => |inst| switch (inst.data) {
+              .named => |named| switch (named.data) {
                 .poison => return .poison,
                 else => {},
               }

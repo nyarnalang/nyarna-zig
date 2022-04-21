@@ -404,7 +404,7 @@ pub const Impl = lib.Provider.Wrapper(struct {
           if (offset + 1 > self.ac.container.num_values) {
             self.ac.container.num_values = offset + 1;
           }
-          const replacement = if (spec.t.isInst(.every))
+          const replacement = if (spec.t.isNamed(.every))
             // t being .every means that it depends on the initial expression,
             // and that expression can't be interpreted right now. This commonly
             // happens if an argument value is assigned (argument variables are
@@ -440,7 +440,7 @@ pub const Impl = lib.Provider.Wrapper(struct {
             .map => null, // TODO: call map constructor
             .callable, .intersection => null,
           },
-          .instantiated => |inst| switch (inst.data) {
+          .named => |named| switch (named.data) {
             .textual => (try self.ip.node_gen.literal(vpos, .{
               .kind = .space,
               .content = "",
@@ -555,7 +555,7 @@ pub const Impl = lib.Provider.Wrapper(struct {
     self: *model.Value.TextScalar,
   ) nyarna.Error!*model.Value {
     return (try eval.ctx.values.number(
-      pos, &eval.ctx.types().system.natural.instantiated.data.numeric,
+      pos, &eval.ctx.types().system.natural.named.data.numeric,
       @intCast(i64, self.content.len))).value();
   }
 
@@ -572,7 +572,7 @@ pub const Impl = lib.Provider.Wrapper(struct {
       }
     }
     return try eval.ctx.numberFromInt(
-      pos, ret, &eval.target_type.instantiated.data.numeric);
+      pos, ret, &eval.target_type.named.data.numeric);
   }
 
   pub fn @"Numeric::sub"(
@@ -587,7 +587,7 @@ pub const Impl = lib.Provider.Wrapper(struct {
       return try eval.ctx.values.poison(pos);
     }
     return try eval.ctx.numberFromInt(
-      pos, ret, &eval.target_type.instantiated.data.numeric);
+      pos, ret, &eval.target_type.named.data.numeric);
   }
 
   pub fn @"List::len"(
@@ -596,7 +596,7 @@ pub const Impl = lib.Provider.Wrapper(struct {
     list: *model.Value.List,
   ) nyarna.Error!*model.Value {
     return (try eval.ctx.values.number(
-      pos, &eval.ctx.types().system.natural.instantiated.data.numeric,
+      pos, &eval.ctx.types().system.natural.named.data.numeric,
       @intCast(i64, list.content.items.len))).value();
   }
 
@@ -623,7 +623,7 @@ pub const Impl = lib.Provider.Wrapper(struct {
 pub const instance = Impl.init();
 
 pub const Checker = struct {
-  const TagType = @typeInfo(model.Type.Instantiated.Data).Union.tag_type.?;
+  const TagType = @typeInfo(model.Type.Named.Data).Union.tag_type.?;
   const ExpectedSymbol = struct {
     name: []const u8,
     kind: union(enum) {
@@ -727,7 +727,7 @@ pub const Checker = struct {
   fn implName(self: *Checker, sym: *model.Symbol) []const u8 {
     return if (sym.parent_type) |t| blk: {
       const t_name = switch (t) {
-        .instantiated => |inst| inst.name.?.name,
+        .named => |named| named.name.?.name,
         .structural => |struc| @tagName(struc.*),
       };
       std.mem.copy(u8, &self.buffer, t_name);
@@ -755,7 +755,7 @@ pub const Checker = struct {
             },
             .@"type" => |t| switch (sym.data) {
               .@"type" => |st| if (
-                st == .instantiated and st.instantiated.data == t
+                st == .named and st.named.data == t
               ) {
                 if (cur.hook) |target| target.* = st;
               } else {

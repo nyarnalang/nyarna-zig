@@ -17,13 +17,13 @@ pub const EnumBuilder = struct {
   ret: *model.Type.Enum,
 
   pub fn init(ctx: nyarna.Context, pos: model.Position) !Self {
-    const inst = try ctx.global().create(model.Type.Instantiated);
-    inst.* = .{
+    const named = try ctx.global().create(model.Type.Named);
+    named.* = .{
       .at = pos,
       .name = null,
       .data = .{.tenum = .{.values = .{}}},
     };
-    return Self{.ctx = ctx, .ret = &inst.data.tenum};
+    return Self{.ctx = ctx, .ret = &named.data.tenum};
   }
 
   pub inline fn add(self: *Self, value: []const u8, pos: model.Position) !void {
@@ -106,7 +106,7 @@ pub const IntersectionBuilder = struct {
   }
 
   pub fn push(self: *Self, item: []const model.Type) void {
-    for (item) |t| std.debug.assert(t.isScalar() or t.isInst(.record));
+    for (item) |t| std.debug.assert(t.isScalar() or t.isNamed(.record));
     self.sources[self.filled] = item;
     self.indexes[self.filled] = 0;
     self.filled += 1;
@@ -199,8 +199,8 @@ pub const NumericBuilder = struct {
   pos: model.Position,
 
   pub fn init(ctx: nyarna.Context, pos: model.Position) !Self {
-    const inst = try ctx.global().create(model.Type.Instantiated);
-    inst.* = .{
+    const named = try ctx.global().create(model.Type.Named);
+    named.* = .{
       .at = pos,
       .name = null,
       .data = .{.numeric = .{
@@ -210,7 +210,7 @@ pub const NumericBuilder = struct {
         .decimals = 0,
       }},
     };
-    return Self{.ctx = ctx, .ret = &inst.data.numeric, .pos = pos};
+    return Self{.ctx = ctx, .ret = &named.data.numeric, .pos = pos};
   }
 
   pub fn min(self: *Self, num: LiteralNumber, pos: model.Position) void {
@@ -263,7 +263,7 @@ pub const NumericBuilder = struct {
   }
 
   pub fn abort(self: *Self) void {
-    self.ctx.global().destroy(self.ret.instantiated());
+    self.ctx.global().destroy(self.ret.named());
   }
 };
 
@@ -356,7 +356,7 @@ pub const SequenceBuilder = struct {
     force_direct: bool,
   ) std.mem.Allocator.Error!PushResult {
     const to_add = switch (spec.t) {
-      .instantiated => |inst| switch (inst.data) {
+      .named => |named| switch (named.data) {
         .void, .space => return self.errorIfForced(force_direct),
         .poison => {
           self.poison = true;
@@ -438,7 +438,7 @@ pub const SequenceBuilder = struct {
     self.non_voids += 1;
     if (self.direct) |direct| {
       const sup = try self.types.sup(direct.t, to_add.t);
-      std.debug.assert(!sup.isInst(.poison));
+      std.debug.assert(!sup.isNamed(.poison));
       self.direct = sup.at(direct.pos.span(to_add.pos));
     } else {
       self.direct = to_add;
@@ -454,7 +454,7 @@ pub const SequenceBuilder = struct {
   ) std.mem.Allocator.Error!PushResult {
     if (self.single) |single| {
       switch (spec.t) {
-        .instantiated => |inst| switch (inst.data) {
+        .named => |named| switch (named.data) {
           .void, .space => return PushResult.success,
           .poison => {
             self.poison = true;
@@ -470,7 +470,7 @@ pub const SequenceBuilder = struct {
       if (force_direct) {
         if (
           switch (spec.t) {
-            .instantiated => |inst| switch (inst.data) {
+            .named => |named| switch (named.data) {
               .textual, .location, .definition, .literal, .raw, .every,
               .record => false,
               .poison => {
@@ -488,7 +488,7 @@ pub const SequenceBuilder = struct {
           return self.errorIfForced(force_direct);
         }
         const new = try self.types.sup(direct.t, spec.t);
-        if (new.isInst(.poison)) return PushResult{.not_compatible = direct.*};
+        if (new.isNamed(.poison)) return PushResult{.not_compatible = direct.*};
         direct.t = new;
         self.non_voids += 1;
         return PushResult.success;
@@ -496,7 +496,7 @@ pub const SequenceBuilder = struct {
         self.non_voids += 1;
         return PushResult.success;
       } else if (
-        !spec.t.isStruc(.sequence) and !spec.t.isInst(.poison) and
+        !spec.t.isStruc(.sequence) and !spec.t.isNamed(.poison) and
         self.types.greater(spec.t, direct.t)
       ) {
         self.direct = spec;
@@ -518,7 +518,7 @@ pub const SequenceBuilder = struct {
         res.auto = .invalid_inner;
         break :blk null;
       },
-      .instantiated => |inst| switch (inst.data) {
+      .named => |named| switch (named.data) {
         .record => |*rec| blk: {
           if (self.direct) |direct| {
             if (

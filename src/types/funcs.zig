@@ -9,9 +9,9 @@ const SigBuilderResult = @import("sigs.zig").SigBuilderResult;
 const stringOrder = @import("../helpers.zig").stringOrder;
 
 /// PrototypeFuncs contains function definitions belonging to a prototype.
-/// Those functions are to be instantiated for each instance of that prototype.
+/// Those functions are to be named for each instance of that prototype.
 ///
-/// The functions are instantiated lazily to avoid lots of superfluous
+/// The functions are named lazily to avoid lots of superfluous
 /// instantiations for every instance of e.g. Concat (which are often implicitly
 /// created). This type holds the function definitions and implements this
 /// instantiation.
@@ -32,7 +32,7 @@ pub const PrototypeFuncs = struct {
   defs: []Item = &.{},
   /// used by the variables referencing an instance's arguments. Must be filled
   /// when instantiating a prototype func. the first variable will be \This, the
-  /// reference to the instantiated type.
+  /// reference to the named type.
   var_container: *model.VariableContainer = undefined,
 
   fn lessThan(
@@ -103,7 +103,7 @@ pub const InstanceFuncs = struct {
         .concat => |*con| {
           if (try replacePrototypeWith(pos, con.inner, ctx, instance)) |inner| {
             if (try ctx.types().concat(inner)) |ret| return ret;
-            if (!inner.isInst(.poison)) {
+            if (!inner.isNamed(.poison)) {
               ctx.logger.InvalidInnerConcatType(pos, &[_]model.Type{inner});
             }
             return ctx.types().poison();
@@ -113,7 +113,7 @@ pub const InstanceFuncs = struct {
         .list => |*lst| {
           if (try replacePrototypeWith(pos, lst.inner, ctx, instance)) |inner| {
             if (try ctx.types().list(inner)) |ret| return ret;
-            if (!inner.isInst(.poison)) {
+            if (!inner.isNamed(.poison)) {
               ctx.logger.InvalidInnerListType(pos, &[_]model.Type{inner});
             }
             return ctx.types().poison();
@@ -137,7 +137,7 @@ pub const InstanceFuncs = struct {
         .optional => |*opt| {
           if (try replacePrototypeWith(pos, opt.inner, ctx, instance)) |inner| {
             if (try ctx.types().optional(inner)) |ret| return ret;
-            if (!inner.isInst(.poison)) {
+            if (!inner.isNamed(.poison)) {
               ctx.logger.InvalidInnerOptionalType(pos, &[_]model.Type{inner});
             }
             return ctx.types().poison();
@@ -145,7 +145,7 @@ pub const InstanceFuncs = struct {
         },
         .paragraphs => unreachable, // TODO
       },
-      .instantiated => |inst| switch (inst.data) {
+      .named => |named| switch (named.data) {
         .record => unreachable,
         .prototype => return instance,
         else => return null,

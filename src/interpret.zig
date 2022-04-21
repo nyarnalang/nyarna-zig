@@ -438,7 +438,7 @@ pub const Interpreter = struct {
           (try self.ctx.values.funcRef(ref.node().pos, func)).value());
       },
       .variable => |*v| {
-        if (v.spec.t.isInst(.every)) return null;
+        if (v.spec.t.isNamed(.every)) return null;
         const expr = try self.ctx.global().create(model.Expression);
         expr.* = .{
           .pos = ref.node().pos,
@@ -475,7 +475,7 @@ pub const Interpreter = struct {
       }
       return null;
     }
-    const is_keyword = rc.sig.returns.isInst(.ast);
+    const is_keyword = rc.sig.returns.isNamed(.ast);
     const target: ?*model.Expression = if (is_keyword) null else (
       try self.tryInterpret(rc.target, stage)
     ) orelse return null;
@@ -514,7 +514,7 @@ pub const Interpreter = struct {
     var seen_poison = false;
     for (rc.args) |arg, i| {
       args[i] = arg.data.expression;
-      if (args[i].expected_type.isInst(.poison)) seen_poison = true;
+      if (args[i].expected_type.isNamed(.poison)) seen_poison = true;
     }
 
     if (target) |rt_target| {
@@ -1200,7 +1200,7 @@ pub const Interpreter = struct {
     var seen_unfinished = false;
     for (va.content.items) |item| {
       if (try self.tryInterpret(item.node, stage)) |expr| {
-        if (expr.expected_type.isInst(.poison)) seen_poison = true;
+        if (expr.expected_type.isNamed(.poison)) seen_poison = true;
         item.node.data = .{.expression = expr};
       } else seen_unfinished = true;
     }
@@ -1442,7 +1442,7 @@ pub const Interpreter = struct {
           },
           else => Result{.failed = true},
         },
-        .instantiated => |inst| switch (inst.data) {
+        .named => |named| switch (named.data) {
           .textual => Result{.scalar = t},
           .numeric, .float, .tenum =>
             Result{.scalar = self.intpr.ctx.types().raw()},
@@ -1674,7 +1674,7 @@ pub const Interpreter = struct {
   ) bool {
     if (
       switch (expr.expected_type) {
-        .instantiated => |inst| switch (inst.data) {
+        .named => |named| switch (named.data) {
           .poison => return false,
           .@"type" => true,
           else => false,
@@ -1886,16 +1886,16 @@ pub const Interpreter = struct {
         var finder = (try self.processLocations(&res.locations, stage))
           orelse return null;
         const target = &(gr.generated orelse blk: {
-          const inst = try self.ctx.global().create(model.Type.Instantiated);
-          inst.* = .{
+          const named = try self.ctx.global().create(model.Type.Named);
+          named.* = .{
             .at = gr.node().pos,
             .name = null,
             .data = .{.record = .{.constructor = undefined}},
           };
-          gr.generated = inst;
-          break :blk inst;
+          gr.generated = named;
+          break :blk named;
         }).data.record;
-        const target_type = model.Type{.instantiated = target.instantiated()};
+        const target_type = model.Type{.named = target.named()};
         const finder_res = try finder.finish(target_type, true);
         std.debug.assert(finder_res.found.* == null);
         var b = try types.SigBuilder.init(self.ctx, res.locations.len,
@@ -1923,7 +1923,7 @@ pub const Interpreter = struct {
       .pregen => {
         return try self.ctx.createValueExpr(
           (try self.ctx.values.@"type"(gr.node().pos, .{
-            .instantiated = gr.generated.?,
+            .named = gr.generated.?,
           })).value());
       }
     };
@@ -2008,7 +2008,7 @@ pub const Interpreter = struct {
       ) |sym| {
         switch (sym.data) {
           .@"type" => |t| switch (t) {
-            .instantiated => |inst| switch (inst.data) {
+            .named => |named| switch (named.data) {
               .tenum => |e| {
                 if (e.values.count() == 36) break :blk t;
                 self.ctx.logger.WrongNumberOfEnumValues(sym.defined_at, "36");
@@ -2089,8 +2089,8 @@ pub const Interpreter = struct {
         try self.ctx.values.poison(gt.node().pos));
     }
 
-    const inst = try self.ctx.global().create(model.Type.Instantiated);
-    inst.* = .{
+    const named = try self.ctx.global().create(model.Type.Named);
+    named.* = .{
       .at = gt.node().pos,
       .name = null,
       .data = .{.textual = .{
@@ -2103,7 +2103,7 @@ pub const Interpreter = struct {
     };
 
     return try self.ctx.createValueExpr((try self.ctx.values.@"type"(
-      inst.at, model.Type{.instantiated = inst})).value());
+      named.at, model.Type{.named = named})).value());
   }
 
   fn tryGenUnique(
@@ -2285,12 +2285,12 @@ pub const Interpreter = struct {
         seen_unfinished = true;
         continue;
       };
-      if (t.isInst(.poison)) {
+      if (t.isNamed(.poison)) {
         already_poison = true;
         continue;
       }
       const new = try self.ctx.types().sup(sup, t);
-      if (new.isInst(.poison)) {
+      if (new.isNamed(.poison)) {
         already_poison = true;
         var found = false;
         for (nodes[0..i]) |prev| {
@@ -2298,8 +2298,8 @@ pub const Interpreter = struct {
             seen_unfinished = true;
             continue;
           };
-          if (prev_t.isInst(.poison)) continue;
-          if ((try self.ctx.types().sup(t, prev_t)).isInst(.poison)) {
+          if (prev_t.isNamed(.poison)) continue;
+          if ((try self.ctx.types().sup(t, prev_t)).isNamed(.poison)) {
             found = true;
             self.ctx.logger.IncompatibleTypes(&.{
               t.at(node.pos), prev_t.at(prev.pos),
@@ -2321,7 +2321,7 @@ pub const Interpreter = struct {
       for (nodes) |node| {
         const t = (try self.probeType(node, stage, sloppy)) orelse continue;
         const new = try self.ctx.types().sup(sup, t);
-        if (new.isInst(.poison)) node.data = .poison else sup = new;
+        if (new.isNamed(.poison)) node.data = .poison else sup = new;
       }
     }
 
@@ -2401,13 +2401,13 @@ pub const Interpreter = struct {
       .concat => |con| {
         var inner =
           (try self.probeNodeList(con.items, stage, sloppy)) orelse return null;
-        if (!inner.isInst(.poison)) {
+        if (!inner.isNamed(.poison)) {
           inner = (try self.ctx.types().concat(inner)) orelse blk: {
             self.ctx.logger.InvalidInnerConcatType(&.{inner.at(node.pos)});
             break :blk self.ctx.types().poison();
           };
         }
-        if (inner.isInst(.poison)) {
+        if (inner.isNamed(.poison)) {
           node.data = .poison;
         }
         return inner;
@@ -2441,7 +2441,7 @@ pub const Interpreter = struct {
         return t;
       },
       .resolved_call => |*rc| {
-        if (rc.sig.returns.isInst(.ast)) {
+        if (rc.sig.returns.isNamed(.ast)) {
           // this is a keyword call. tryInterpretCall will attempt to
           // execute it.
           if (try self.tryInterpretCall(rc, stage)) |expr| {
@@ -2517,7 +2517,7 @@ pub const Interpreter = struct {
           return try self.ctx.values.poison(l.node().pos);
         }
       },
-      .instantiated => |ti| switch (ti.data) {
+      .named => |ti| switch (ti.data) {
         .textual => |*txt| return if (
           try self.ctx.textFromString(l.node().pos, l.content, txt)
         ) |scalar| scalar.value() else try self.ctx.values.poison(l.node().pos),
@@ -2592,7 +2592,7 @@ pub const Interpreter = struct {
     actual: model.Type,
     scalar: model.Type,
   ) !?*model.Expression {
-    if (!actual.isInst(.poison)) {
+    if (!actual.isNamed(.poison)) {
       if (types.containedScalar(actual)) |contained| {
         if (self.ctx.types().lesserEqual(contained, scalar)) return null;
       } else return null;
@@ -2622,7 +2622,7 @@ pub const Interpreter = struct {
         },
         else => return t,
       },
-      .instantiated => t,
+      .named => t,
     };
   }
 
@@ -2638,7 +2638,7 @@ pub const Interpreter = struct {
     std.debug.assert(stage.kind != .resolve);
     std.debug.assert(switch (spec.t) {
       .structural => false,
-      .instantiated => |inst| switch (inst.data) {
+      .named => |named| switch (named.data) {
         .textual, .numeric, .float, .tenum, .literal, .space, .raw, .every,
         .void => true,
         else => false,
@@ -2654,7 +2654,7 @@ pub const Interpreter = struct {
         if (try self.tryInterpret(input, stage)) |expr| {
           if (types.containedScalar(expr.expected_type)) |scalar_type| {
             if (self.ctx.types().lesserEqual(scalar_type, spec.t)) return expr;
-            if (expr.expected_type.isInst(.space) and spec.t.isInst(.void)) {
+            if (expr.expected_type.isNamed(.space) and spec.t.isNamed(.void)) {
               const target_type =
                 try self.typeWithoutSpace(expr.expected_type);
               const conv = try self.ctx.global().create(model.Expression);
@@ -2688,9 +2688,9 @@ pub const Interpreter = struct {
             const expr = (
               try self.tryInterpret(br.condition, stage)
             ) orelse return null;
-            if (expr.expected_type.isInst(.tenum)) {
+            if (expr.expected_type.isNamed(.tenum)) {
               break :cblk expr;
-            } else if (!expr.expected_type.isInst(.poison)) {
+            } else if (!expr.expected_type.isNamed(.poison)) {
               self.ctx.logger.CannotBranchOn(
                 &.{expr.expected_type.at(br.condition.pos)});
             }
@@ -2701,7 +2701,7 @@ pub const Interpreter = struct {
         var actual_type = (
           try self.probeNodeList(br.branches, stage, false)
         ) orelse return null;
-        if (actual_type.isInst(.space) and spec.t.isInst(.void)) {
+        if (actual_type.isNamed(.space) and spec.t.isNamed(.void)) {
           actual_type = spec.t;
         }
         if (try self.poisonIfNotCompat(input.pos, actual_type, spec.t)) |expr| {
@@ -2730,7 +2730,7 @@ pub const Interpreter = struct {
             return try self.ctx.createValueExpr(
               try self.ctx.values.poison(input.pos));
           };
-        if (actual_type.isInst(.space) and spec.t.isInst(.void)) {
+        if (actual_type.isNamed(.space) and spec.t.isNamed(.void)) {
           actual_type = spec.t;
         }
         if (try self.poisonIfNotCompat(input.pos, actual_type, spec.t)) |expr| {
@@ -2758,7 +2758,7 @@ pub const Interpreter = struct {
       .expression => |expr| return expr,
       // for text literals, do compile-time type conversions if possible
       .literal => |*l| {
-        if (spec.t.isInst(.void)) return try self.ctx.createValueExpr(
+        if (spec.t.isNamed(.void)) return try self.ctx.createValueExpr(
           try self.ctx.values.void(input.pos));
         const expr = try self.ctx.global().create(model.Expression);
         expr.pos = input.pos;
@@ -2782,7 +2782,7 @@ pub const Interpreter = struct {
           var para_type = (try self.probeType(item.content, stage, false)).?;
           var stype = spec;
           if (types.containedScalar(para_type)) |contained| {
-            if (contained.isInst(.space)) {
+            if (contained.isNamed(.space)) {
               stype = self.ctx.types().@"void"().at(spec.pos);
               para_type = try self.typeWithoutSpace(para_type);
             }
@@ -2840,7 +2840,7 @@ pub const Interpreter = struct {
     return if (
       try self.interpretWithTargetScalar(node, scalar_type.predef(), stage)
     ) |expr| blk: {
-      if (expr.expected_type.isInst(.poison)) break :blk expr;
+      if (expr.expected_type.isNamed(.poison)) break :blk expr;
       if (self.ctx.types().lesserEqual(expr.expected_type, item.t)) {
         expr.expected_type = item.t;
         break :blk expr;

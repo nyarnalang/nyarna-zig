@@ -147,7 +147,7 @@ pub const SigBuilder = struct {
     };
     // TODO: use contains(.ast_node) instead (?)
     const t: model.Type =
-      if (!self.val.isKeyword() and loc.spec.t.isInst(.ast)) blk: {
+      if (!self.val.isKeyword() and loc.spec.t.isNamed(.ast)) blk: {
         self.ctx.logger.AstNodeInNonKeyword(loc.value().origin);
         break :blk self.ctx.types().poison();
       } else loc.spec.t;

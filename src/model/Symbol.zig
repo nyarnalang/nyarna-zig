@@ -25,7 +25,7 @@ pub const Variable = struct {
   }
 
   /// returns a pointer into the stack referencing the current position of
-  /// this variable. precondition: variable is currently instantiated on the
+  /// this variable. precondition: variable is currently named on the
   /// stack.
   pub fn curPtr(self: *Variable) **Value {
     return &self.container.cur_frame.?[1 + self.offset].value;

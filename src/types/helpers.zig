@@ -9,11 +9,11 @@ const model = @import("../model.zig");
 pub fn totalOrderLess(_: void, a: model.Type, b: model.Type) bool {
   const a_int = switch (a) {
     .structural => |sa| @ptrToInt(sa),
-    .instantiated => |ia| @ptrToInt(ia),
+    .named => |ia| @ptrToInt(ia),
   };
   const b_int = switch (b) {
     .structural => |sb| @ptrToInt(sb),
-    .instantiated => |ib| @ptrToInt(ib),
+    .named => |ib| @ptrToInt(ib),
   };
   return a_int < b_int;
 }
@@ -23,5 +23,5 @@ pub fn recTotalOrderLess(
   a: *model.Type.Record,
   b: *model.Type.Record,
 ) bool {
-  return @ptrToInt(a.instantiated()) < @ptrToInt(b.instantiated());
+  return @ptrToInt(a.named()) < @ptrToInt(b.named());
 }

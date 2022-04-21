@@ -71,7 +71,7 @@ const TypeResolver = struct {
           .gen_optional     => |*go| return uStruct(go),
           .gen_sequence     => |*gp| return uStruct(gp),
           .gen_record       => |*gr| return graph.ResolutionContext.Result{
-            .unfinished_type = .{.instantiated = gr.generated.?},
+            .unfinished_type = .{.named = gr.generated.?},
           },
           .gen_unique => |*gu| return graph.ResolutionContext.Result{
             .unfinished_type = gu.generated,
@@ -179,7 +179,7 @@ const FixpointContext = struct {
       if (std.mem.eql(u8, def.name.content, name)) {
         switch (def.content.data) {
           .gen_record => |*gr| return graph.ResolutionContext.Result{
-            .unfinished_function = .{.instantiated = gr.generated.?},
+            .unfinished_function = .{.named = gr.generated.?},
           },
           .funcgen => |*fgen| {
             return graph.ResolutionContext.Result{
@@ -295,7 +295,7 @@ pub const DeclareResolution = struct {
       .@"type" => |tref| {
         const sym = try self.genSym(name, .{.@"type" = tref.t}, publish);
         switch (tref.t) {
-          .instantiated => |inst| if (inst.name == null) {inst.name = sym;},
+          .named => |named| if (named.name == null) {named.name = sym;},
           else => {},
         }
         return sym;
@@ -563,7 +563,7 @@ pub const DeclareResolution = struct {
             _ = try self.intpr.tryInterpretBuiltin(bg, .{.kind = .final});
           },
           .expression => |expr| {
-            if (!expr.expected_type.isInst(.poison)) {
+            if (!expr.expected_type.isNamed(.poison)) {
               self.intpr.ctx.logger.IllegalContentInPrototypeFuncs(
                 fdef.node().pos);
             }
@@ -665,14 +665,14 @@ pub const DeclareResolution = struct {
             else break;
           },
           .gen_record => |*gr| {
-            const inst =
-              try self.intpr.ctx.global().create(model.Type.Instantiated);
-            inst.* = .{
+            const named =
+              try self.intpr.ctx.global().create(model.Type.Named);
+            named.* = .{
               .at = def.content.pos,
               .name = null,
               .data = .{.record = .{.constructor = undefined}},
             };
-            gr.generated = inst;
+            gr.generated = named;
             continue :alloc_types;
           },
           .gen_textual => unreachable,
@@ -698,8 +698,8 @@ pub const DeclareResolution = struct {
             const sym = try self.genSym(
               def.name, .{.@"type" = gu.generated}, def.public);
             if (try ns_data.tryRegister(self.intpr, sym)) {
-              std.debug.assert(gu.generated.instantiated.name == null);
-              gu.generated.instantiated.name = sym;
+              std.debug.assert(gu.generated.named.name == null);
+              gu.generated.named.name = sym;
             }
             continue :alloc_types;
           },
@@ -774,7 +774,7 @@ pub const DeclareResolution = struct {
               }
             },
             .gen_unique => |*gu| if (gu.constr_params) |params| {
-              const ret_type = switch (gu.generated.instantiated.data) {
+              const ret_type = switch (gu.generated.named.data) {
                 // location and definition types have a keyword constructor
                 // that returns an ast.
                 .location, .definition => self.intpr.ctx.types().ast(),
@@ -787,7 +787,7 @@ pub const DeclareResolution = struct {
                   &tr.ctx)
               ) orelse continue;
               const types = self.intpr.ctx.types();
-              switch (gu.generated.instantiated.data) {
+              switch (gu.generated.named.data) {
                 .raw        => types.constructors.raw = constructor,
                 .location   => types.constructors.location = constructor,
                 .definition => types.constructors.definition = constructor,
@@ -886,7 +886,7 @@ pub const DeclareResolution = struct {
                   .ns => def.name.content,
                   .t => |t| tblk: {
                     const t_name = switch (t) {
-                      .instantiated => |inst| inst.name.?.name,
+                      .named => |named| named.name.?.name,
                       .structural => |struc| @tagName(struc.*),
                     };
                     const buffer = try self.intpr.allocator.alloc(

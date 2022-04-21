@@ -216,7 +216,7 @@ pub const Evaluator = struct {
       },
       .@"type" => |tv| {
         if (@TypeOf(impl_ctx) == *Evaluator) switch (tv.t) {
-          .instantiated => |inst| switch (inst.data) {
+          .named => |named| switch (named.data) {
             .record => |*rec| {
               std.debug.assert(
                 call.exprs.len == rec.constructor.sig.parameters.len);
@@ -302,7 +302,7 @@ pub const Evaluator = struct {
       };
     }
     cur_ptr.* = try self.evaluate(ass.rexpr);
-    return try model.Value.create(self.ctx.global(), ass.expr().pos, .void);
+    return self.ctx.values.@"void"(ass.expr().pos);
   }
 
   fn evalBranches(
@@ -310,8 +310,8 @@ pub const Evaluator = struct {
     br: *model.Expression.Branches,
   ) nyarna.Error!*model.Value {
     var condition = try self.evaluate(br.condition);
-    if ((try self.ctx.types().valueType(condition)).isInst(.poison)) {
-      return model.Value.create(self.ctx.global(), br.expr().pos, .poison);
+    if ((try self.ctx.types().valueType(condition)).isNamed(.poison)) {
+      return self.ctx.values.poison(br.expr().pos);
     }
     return self.evaluate(br.branches[condition.data.@"enum".index]);
   }
@@ -386,14 +386,14 @@ pub const Evaluator = struct {
     to: model.Type,
   ) nyarna.Error!*model.Value {
     const from = try self.ctx.types().valueType(value);
-    if (from.isInst(.poison)) return value;
+    if (from.isNamed(.poison)) return value;
     if (self.ctx.types().lesserEqual(from, to)) {
       return try self.coerce(value, to);
     }
     switch (to) {
-      .instantiated => |inst| switch (inst.data) {
+      .named => |named| switch (named.data) {
         .literal, .space, .raw => {
-          std.debug.assert(from.isInst(.void));
+          std.debug.assert(from.isNamed(.void));
           return (try self.ctx.values.textScalar(value.origin, to, "")).value();
         },
         .textual => |*txt| {
@@ -483,7 +483,7 @@ pub const Evaluator = struct {
         self.ctx.logger.IncompatibleFlag("borrow", borrow, varargs);
         add.borrow = null;
       };
-      if (!spec.t.isInst(.poison)) {
+      if (!spec.t.isNamed(.poison)) {
         if (add.varmap != null) if (!spec.t.isStruc(.map)) {
           self.ctx.logger.VarmapRequiresMap(&[_]model.SpecType{spec});
           add.varmap = null;
@@ -498,7 +498,7 @@ pub const Evaluator = struct {
               .list, .concat, .sequence, .callable => true,
               else => false,
             },
-            .instantiated => |inst| switch (inst.data) {
+            .named => |named| switch (named.data) {
               .record, .prototype => true,
               else => false,
             },
@@ -546,11 +546,11 @@ pub const Evaluator = struct {
       var builder = ConcatBuilder.init(self.ctx, expr.pos, expr.expected_type);
       for (paras) |para, index| {
         const value = try self.evaluate(para.content);
-        if (!(try self.ctx.types().valueType(value)).isInst(.void)) {
+        if (!(try self.ctx.types().valueType(value)).isNamed(.void)) {
           try builder.push(value);
           if (
             index != paras.len - 1 and
-            !paras[index + 1].content.expected_type.isInst(.void)
+            !paras[index + 1].content.expected_type.isNamed(.void)
           ) try builder.pushSpace(para.lf_after);
         }
       }
@@ -687,7 +687,7 @@ pub const Evaluator = struct {
     expected_type: model.Type,
   ) std.mem.Allocator.Error!*model.Value {
     const value_type = try self.ctx.types().valueType(value);
-    if (value_type.eql(expected_type) or value_type.isInst(.poison)) {
+    if (value_type.eql(expected_type) or value_type.isNamed(.poison)) {
       return value;
     }
     switch (expected_type) {
@@ -696,7 +696,7 @@ pub const Evaluator = struct {
         .optional, .intersection => unreachable,
         .concat => |*concat| {
           var cv = try self.ctx.values.concat(value.origin, concat);
-          if (!value_type.isInst(.void)) {
+          if (!value_type.isNamed(.void)) {
             const inner_value = try self.coerce(value, concat.inner);
             try cv.content.append(inner_value);
           }
@@ -704,7 +704,7 @@ pub const Evaluator = struct {
         },
         .sequence => |*seq| {
           var lv = try self.ctx.values.seq(value.origin, seq);
-          if (!value_type.isInst(.void)) {
+          if (!value_type.isNamed(.void)) {
             const seq_value = blk: {
               if (seq.direct) |direct| {
                 if (self.ctx.types().lesserEqual(value_type, direct)) {
@@ -739,8 +739,14 @@ pub const Evaluator = struct {
         },
         .callable => unreachable, // TODO: implement callable wrapper.
       },
-      .instantiated => |inst| switch (inst.data) {
-        .tenum => unreachable, // TODO: implement enums being coerced to Identifier.
+      .named => |named| switch (named.data) {
+        .textual => {
+          // can happen only for enum types, which coerce into Identifier.
+          const ev = &value.data.@"enum";
+          const content = ev.t.values.entries.items(.key)[ev.index];
+          return (try self.ctx.values.textScalar(
+            value.origin, expected_type, content)).value();
+        },
         .poison => return value,
         // for .literal, this can only be a coercion from .space.
         // for .raw, this could be a coercion from any scalar type.
@@ -759,9 +765,8 @@ pub const Evaluator = struct {
             // type checking ensures this never happens
             else => unreachable,
           };
-          return model.Value.create(
-            self.ctx.global(), value.origin,
-            model.Value.TextScalar{.t = expected_type, .content = content});
+          return (try self.ctx.values.textScalar(
+            value.origin, expected_type, content)).value();
         },
         // other coercions can never happen.
         else => {
@@ -963,7 +968,7 @@ const ConcatBuilder = struct {
       try self.initList(single);
     };
     if (self.cur_items) |cval| {
-      if (self.inner_type.isInst(.poison)) {
+      if (self.inner_type.isNamed(.poison)) {
         return try self.ctx.values.poison(self.pos);
       }
       const concat = try self.ctx.global().create(model.Value);
@@ -977,12 +982,12 @@ const ConcatBuilder = struct {
     } else if (self.cur) |single| {
       return single;
     } else {
-      return if (self.expected_type.isStruc(.concat))
-        (try self.ctx.values.concat(
-          self.pos, &self.expected_type.structural.concat)).value()
-      else if (self.expected_type.isInst(.void)) try
-        model.Value.create(self.ctx.global(), self.pos, .void)
-      else blk: {
+      return if (self.expected_type.isStruc(.concat)) (
+        try self.ctx.values.concat(
+          self.pos, &self.expected_type.structural.concat)
+      ).value() else if (self.expected_type.isNamed(.void)) (
+        try self.ctx.values.void(self.pos)
+      ) else blk: {
         std.debug.assert(
           nyarna.types.containedScalar(self.expected_type) != null);
         break :blk (try self.ctx.values.textScalar(
@@ -1036,7 +1041,7 @@ const SequenceBuilder = struct {
     const ret = try self.ctx.global().create(model.Value);
     ret.* = .{
       .origin = pos,
-      .data = if (res.t.isInst(.poison)) .poison else .{
+      .data = if (res.t.isNamed(.poison)) .poison else .{
         .seq = .{
           .content = self.content,
           .t = &res.t.structural.sequence,

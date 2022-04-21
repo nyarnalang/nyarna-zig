@@ -49,7 +49,7 @@ const InnerIntend = enum {
         .sequence => InnerIntend.forbidden,
         else => InnerIntend.allowed,
       },
-      .instantiated => |ins| switch (ins.data) {
+      .named => |ins| switch (ins.data) {
         .textual, .space, .literal, .raw, .void, .poison =>
           InnerIntend.collapse,
         .record, .@"type", .location, .definition, .backend, .every =>
@@ -65,7 +65,7 @@ const InnerIntend = enum {
         .optional, .concat, .sequence => InnerIntend.collapse,
         else => InnerIntend.allowed,
       },
-      .instantiated => |inst| switch (inst.data) {
+      .named => |named| switch (named.data) {
         .every => InnerIntend.exalt,
         .void => InnerIntend.collapse,
         .prototype, .schema, .extension => InnerIntend.forbidden,
@@ -109,7 +109,7 @@ const HalfOrder = enum {
 /// less complex to implement.
 ///
 /// The lattice owns all allocated type information. Allocated type information
-/// exists for structural and instantiated types. The lattice ensures that for
+/// exists for structural and named types. The lattice ensures that for
 /// every distinct type, only a single data object exists. This makes type
 /// calculations fast, as the identity can be calculated as pointer equality.
 ///
@@ -120,7 +120,7 @@ const HalfOrder = enum {
 pub const Lattice = struct {
   const Self = @This();
   /// This node is used to efficiently store and search for structural types
-  /// that are instantiated with a list of types.
+  /// that are named with a list of types.
   /// see doc on the prefix_trees field.
   pub fn TreeNode(comptime Flag: type) type {
     return struct {
@@ -253,19 +253,19 @@ pub const Lattice = struct {
     } = .{},
   },
   predefined: struct {
-    ast         : model.Type.Instantiated,
-    block_header: model.Type.Instantiated,
-    definition  : model.Type.Instantiated,
-    every       : model.Type.Instantiated,
-    frame_root  : model.Type.Instantiated,
-    literal     : model.Type.Instantiated,
-    location    : model.Type.Instantiated,
-    poison      : model.Type.Instantiated,
-    prototype   : model.Type.Instantiated,
-    raw         : model.Type.Instantiated,
-    space       : model.Type.Instantiated,
-    @"type"     : model.Type.Instantiated,
-    void        : model.Type.Instantiated,
+    ast         : model.Type.Named,
+    block_header: model.Type.Named,
+    definition  : model.Type.Named,
+    every       : model.Type.Named,
+    frame_root  : model.Type.Named,
+    literal     : model.Type.Named,
+    location    : model.Type.Named,
+    poison      : model.Type.Named,
+    prototype   : model.Type.Named,
+    raw         : model.Type.Named,
+    space       : model.Type.Named,
+    @"type"     : model.Type.Named,
+    void        : model.Type.Named,
   },
   /// types defined in system.ny. these are available as soon as system.ny has
   /// been loaded and must not be accessed earlier.
@@ -297,7 +297,7 @@ pub const Lattice = struct {
     std.hash_map.default_max_load_percentage,
   ) = .{},
   /// set to true if we're currently instantiating instance funcs.
-  /// while we're doing this, no other instance funcs will be instantiated.
+  /// while we're doing this, no other instance funcs will be named.
   /// this leads to types with constructors having the .type type instead of the
   /// .callable type corresponding to their constructor.
   ///
@@ -342,7 +342,7 @@ pub const Lattice = struct {
 
   pub fn deinit(_: *Self) void {
     // nothing to do – the supplied ArenaAllocator will take care of freeing
-    // the instantiated types.
+    // the named types.
   }
 
   pub inline fn literal(self: *Self) model.Type {
@@ -405,7 +405,7 @@ pub const Lattice = struct {
   /// may only be called on types that do have constructors
   pub fn typeConstructor(self: *Self, t: model.Type) !Constructor {
     return switch (t) {
-      .instantiated => |inst| switch (inst.data) {
+      .named => |named| switch (named.data) {
         .textual    => Constructor{
           .callable = (try self.constructorOf(t)).?,
           .impl_index = self.prototype_funcs.textual.constructor.?.impl_index,
@@ -486,14 +486,14 @@ pub const Lattice = struct {
       else => {},
     };
     for (types) |t, i| switch (t) {
-      .instantiated => |inst| switch (inst.data) {
+      .named => |named| switch (named.data) {
         .textual, .numeric, .float, .tenum, .record => {},
-        else => return try self.supWithIntrinsic(inst, types[(i + 1) % 2]),
+        else => return try self.supWithIntrinsic(named, types[(i + 1) % 2]),
       },
       .structural => {},
     };
     const inst_types =
-      [_]*model.Type.Instantiated{t1.instantiated, t2.instantiated};
+      [_]*model.Type.Named{t1.named, t2.named};
     for (inst_types) |t| switch (t.data) {
       .record => return try
         builders.IntersectionBuilder.calcFrom(self, .{&t1, &t2}),
@@ -528,7 +528,7 @@ pub const Lattice = struct {
     if (inst_types[0].data == .textual and inst_types[1].data == .textual)
       unreachable; // TODO: form type that allows all characters accepted by any
                    // of the two types
-    // at this point, we have two different instantiated types that are not
+    // at this point, we have two different named types that are not
     // records, nor in any direct relationship with each other. therefore…
     return self.raw();
   }
@@ -638,7 +638,7 @@ pub const Lattice = struct {
         },
         else => {},
       },
-      .instantiated => |inst| switch (inst.data) {
+      .named => |named| switch (named.data) {
         .every => return struc.typedef(),
         .void => return switch (struc.*) {
           .concat => model.Type{.structural = struc},
@@ -738,7 +738,7 @@ pub const Lattice = struct {
           },
           else => self.poison(),
         },
-        .instantiated => |inst| switch (inst.data) {
+        .named => |named| switch (named.data) {
           .void => return struc.typedef(),
           .literal, .space, .raw, .numeric, .textual, .tenum, .float => {
             if (s.direct) |direct| {
@@ -784,7 +784,7 @@ pub const Lattice = struct {
           break :blk try builders.IntersectionBuilder.calcFrom(
             self, .{&scalar_type, inter.types});
         } else switch (other) {
-          .instantiated => |other_inst| if (other_inst.data == .record) {
+          .named => |other_inst| if (other_inst.data == .record) {
             break :blk try if (inter.scalar) |inter_scalar|
               builders.IntersectionBuilder.calcFrom(
                 self, .{&inter_scalar, &other, inter.types})
@@ -800,7 +800,7 @@ pub const Lattice = struct {
 
   fn supWithIntrinsic(
     self: *Self,
-    intr: *model.Type.Instantiated,
+    intr: *model.Type.Named,
     other: model.Type,
   ) !model.Type {
     return switch (intr.data) {
@@ -810,7 +810,7 @@ pub const Lattice = struct {
       .prototype, .schema, .extension, .ast, .frame_root => self.poison(),
       .space, .literal, .raw => switch (other) {
         .structural => unreachable, // case is handled in supWithStructural.
-        .instantiated => |inst| switch (inst.data) {
+        .named => |named| switch (named.data) {
           .textual, .numeric, .float, .tenum => self.raw(),
           .record => self.poison(),
           .every => intr.typedef(),
@@ -896,7 +896,7 @@ pub const Lattice = struct {
 
   pub fn registerList(self: *Self, t: *model.Type.List) !bool {
     switch (t.inner) {
-      .instantiated => |inst| switch (inst.data) {
+      .named => |named| switch (named.data) {
         .void, .prototype, .schema, .extension => return false,
         else => {},
       },
@@ -910,7 +910,7 @@ pub const Lattice = struct {
 
   pub fn list(self: *Self, t: model.Type) std.mem.Allocator.Error!?model.Type {
     switch (t) {
-      .instantiated => |inst| switch (inst.data) {
+      .named => |named| switch (named.data) {
         .void, .schema, .extension => return null,
         else => {},
       },
@@ -940,7 +940,7 @@ pub const Lattice = struct {
         },
         else => self.@"type"(), // TODO
       },
-      .instantiated => |inst| switch (inst.data) {
+      .named => |named| switch (named.data) {
         .numeric, .tenum, .textual => {
           const constructor = (
             try self.constructorOf(t)
@@ -1015,7 +1015,7 @@ pub const Lattice = struct {
         .optional     => |*opt| self.typeArr(&.{t, opt.inner}),
         .sequence     => self.typeArr(&.{t}), // TODO
       },
-      .instantiated => self.typeArr(&.{t}),
+      .named => self.typeArr(&.{t}),
     };
   }
 
@@ -1031,7 +1031,7 @@ pub const Lattice = struct {
         .optional => &self.prototype_funcs.optional,
         .sequence => &self.prototype_funcs.sequence,
       },
-      .instantiated => |inst| switch (inst.data) {
+      .named => |named| switch (named.data) {
         .textual => &self.prototype_funcs.textual,
         .numeric => &self.prototype_funcs.numeric,
         .float => &self.prototype_funcs.float,
@@ -1060,8 +1060,8 @@ pub const Lattice = struct {
   ) model.Type {
     if (actual.eql(target)) return target;
     return switch (target) {
-      // no instantiated types are virtual.
-      .instantiated => |inst| switch (inst.data) {
+      // no named types are virtual.
+      .named => |named| switch (named.data) {
         // only subtypes are Callables with .kind == .@"type", and type checking
         // guarantees we get one of these.
         .@"type" => actual,
@@ -1070,12 +1070,12 @@ pub const Lattice = struct {
         // if a poison value is expected, it will never be used for anything,
         // and therefore we don't need to modify the value.
         .poison => actual,
-        // all other instantiated types are non-virtual.
+        // all other named types are non-virtual.
         else => target,
       },
       .structural => |strct| switch (strct.*) {
         .optional => |*opt|
-          if (actual.isInst(.void) or actual.isInst(.every)) actual
+          if (actual.isNamed(.void) or actual.isNamed(.every)) actual
           else self.expectedType(actual, opt.inner),
         .concat, .sequence, .list, .map => target,
         .callable => unreachable, // TODO
@@ -1100,8 +1100,8 @@ pub const Lattice = struct {
     if (self.lesserEqual(from, to)) return true;
     const to_scalar = containedScalar(to);
     return switch (from) {
-      .instantiated => |from_inst| switch (from_inst.data) {
-        .void => if (to_scalar) |scalar| switch (scalar.instantiated.data) {
+      .named => |from_inst| switch (from_inst.data) {
+        .void => if (to_scalar) |scalar| switch (scalar.named.data) {
           .literal, .space, .raw, .textual => true,
           else => false,
         } else false,
@@ -1117,7 +1117,7 @@ pub const Lattice = struct {
               if (to_seq.direct) |dir| self.convertible(from, dir) else false,
             else => false,
           },
-          .instantiated => false,
+          .named => false,
         },
         .intersection => |*int|
           (if (int.scalar) |s| self.convertible(s, to) else true) and
@@ -1128,7 +1128,7 @@ pub const Lattice = struct {
           self.convertible(self.void(), to) and self.convertible(opt.inner, to),
         .sequence => |*seq| {
           switch (to) {
-            .instantiated => |to_inst| switch (to_inst.data) {
+            .named => |to_inst| switch (to_inst.data) {
               .space, .literal, .numeric, .textual, .tenum, .float, .raw => {},
               else => return false,
             },
@@ -1165,7 +1165,7 @@ pub fn containedScalar(t: model.Type) ?model.Type {
       .intersection => |*inter| inter.scalar,
       else => null,
     },
-    .instantiated => |inst| switch (inst.data) {
+    .named => |named| switch (named.data) {
       .textual, .numeric, .float, .tenum, .space, .literal, .raw => t,
       else => null
     },
@@ -1182,5 +1182,5 @@ pub inline fn allowedAsOptionalInner(t: model.Type) bool {
 
 pub fn descend(t: model.Type, index: usize) model.Type {
   // update this if we ever allow descending into other types.
-  return t.instantiated.data.record.constructor.sig.parameters[index].spec.t;
+  return t.named.data.record.constructor.sig.parameters[index].spec.t;
 }

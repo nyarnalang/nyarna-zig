@@ -276,34 +276,6 @@ const HashContext = struct {
 origin: model.Position,
 data: Data,
 
-pub inline fn create(
-  allocator: std.mem.Allocator,
-  pos: model.Position,
-  content: anytype,
-) !*Value {
-  var ret = try allocator.create(Value);
-  ret.origin = pos;
-  ret.data = switch (@TypeOf(content)) {
-    TextScalar   => .{.text         = content},
-    Number       => .{.number       = content},
-    FloatNumber  => .{.float        = content},
-    Enum         => .{.enumval      = content},
-    Record       => .{.record       = content},
-    Concat       => .{.concat       = content},
-    Seq          => .{.seq          = content},
-    List         => .{.list         = content},
-    Map          => .{.map          = content},
-    TypeVal      => .{.@"type"      = content},
-    PrototypeVal => .{.prototype    = content},
-    FuncRef      => .{.funcref      = content},
-    Definition   => .{.definition   = content},
-    Ast          => .{.ast          = content},
-    BlockHeader  => .{.block_header = content},
-    else         => content
-  };
-  return ret;
-}
-
 fn parent(it: anytype) *Value {
   const t = @typeInfo(@TypeOf(it)).Pointer.child;
   const addr = @ptrToInt(it) - switch (t) {

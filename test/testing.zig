@@ -239,7 +239,7 @@ const AstEmitter = struct {
             var t = r.target.spec.t;
             for (r.path) |index| {
               const param =
-                &t.instantiated.data.record.constructor.sig.parameters[
+                &t.named.data.record.constructor.sig.parameters[
                   index];
               try lb.append("::{s}", .{param.name});
               t = param.spec.t;
@@ -427,7 +427,7 @@ const AstEmitter = struct {
             .value => |lval| try self.processValue(lval.value()),
             .poison => try self.emitLine("=POISON", .{}),
           },
-          .pregen => try self.processType(.{.instantiated = gr.generated.?}),
+          .pregen => try self.processType(.{.named = gr.generated.?}),
         }
         try gen.pop();
       },
@@ -516,7 +516,7 @@ const AstEmitter = struct {
         for (acc.path) |descend, index| {
           if (index > 0) try builder.appendSlice("::");
           const param =
-            &t.instantiated.data.record.constructor.sig.parameters[descend];
+            &t.named.data.record.constructor.sig.parameters[descend];
           t = param.spec.t;
           try builder.appendSlice(param.name);
         }
@@ -532,7 +532,7 @@ const AstEmitter = struct {
         var t = ass.target.spec.t;
         for (ass.path) |index| {
           const param =
-            &t.instantiated.data.record.constructor.sig.parameters[index];
+            &t.named.data.record.constructor.sig.parameters[index];
           try lb.append("::{s}", .{param.name});
           t = param.spec.t;
         }
@@ -687,7 +687,7 @@ const AstEmitter = struct {
           try s.pop();
         }
       },
-      .instantiated => |i| {
+      .named => |i| {
         if (i.name) |sym| try self.emitLine("=TYPE {s} {s}.{s}",
           .{@tagName(i.data), sym.defined_at.source.locator.repr, sym.name})
         else {

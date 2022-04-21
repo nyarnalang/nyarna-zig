@@ -59,15 +59,15 @@ pub const Enum = struct {
   values: std.StringArrayHashMapUnmanaged(model.Position),
 
   pub inline fn pos(self: *const @This()) Position {
-    return Instantiated.pos(self);
+    return Named.pos(self);
   }
 
   pub inline fn typedef(self: *const @This()) Type {
-    return Instantiated.typedef(self);
+    return Named.typedef(self);
   }
 
-  pub inline fn instantiated(self: *const @This()) *Instantiated {
-    return Instantiated.parent(self);
+  pub inline fn named(self: *const @This()) *Named {
+    return Named.parent(self);
   }
 };
 
@@ -82,15 +82,15 @@ pub const Float = struct {
   precision: Precision,
 
   pub inline fn pos(self: *@This()) Position {
-    return Instantiated.pos(self);
+    return Named.pos(self);
   }
 
   pub inline fn typedef(self: *const @This()) Type {
-    return Instantiated.typedef(self);
+    return Named.typedef(self);
   }
 
-  pub inline fn instantiated(self: *const @This()) *Instantiated {
-    return Instantiated.parent(self);
+  pub inline fn named(self: *const @This()) *Named {
+    return Named.parent(self);
   }
 };
 
@@ -145,15 +145,15 @@ pub const Numeric = struct {
   decimals: u8,
 
   pub inline fn pos(self: *@This()) Position {
-    return Instantiated.pos(self);
+    return Named.pos(self);
   }
 
   pub inline fn typedef(self: *const @This()) Type {
-    return Instantiated.typedef(self);
+    return Named.typedef(self);
   }
 
-  pub inline fn instantiated(self: *const @This()) *Instantiated {
-    return Instantiated.parent(self);
+  pub inline fn named(self: *const @This()) *Named {
+    return Named.parent(self);
   }
 };
 
@@ -206,15 +206,15 @@ pub const Record = struct {
   constructor: *Callable,
 
   pub fn pos(self: *@This()) Position {
-    return Instantiated.pos(self);
+    return Named.pos(self);
   }
 
   pub inline fn typedef(self: *const @This()) Type {
-    return Instantiated.typedef(self);
+    return Named.typedef(self);
   }
 
-  pub inline fn instantiated(self: *const @This()) *Instantiated {
-    return Instantiated.parent(self);
+  pub inline fn named(self: *const @This()) *Named {
+    return Named.parent(self);
   }
 };
 
@@ -234,11 +234,11 @@ pub const Textual = struct {
   exclude: std.hash_map.AutoHashMapUnmanaged(u21, void),
 
   pub inline fn pos(self: *@This()) Position {
-    return Instantiated.pos(self);
+    return Named.pos(self);
   }
 
   pub inline fn typedef(self: *const @This()) Type {
-    return Instantiated.typedef(self);
+    return Named.typedef(self);
   }
 };
 
@@ -247,7 +247,7 @@ pub const Textual = struct {
 //----------------------------------------------------------------------------//
 
 /// A type with name equivalence. This includes unique types.
-pub const Instantiated = struct {
+pub const Named = struct {
   pub const Data = union(enum) {
     textual: Textual,
     numeric: Numeric,
@@ -265,7 +265,7 @@ pub const Instantiated = struct {
   /// kind and parameters of the type
   data: Data,
 
-  fn parent(it: anytype) *Instantiated {
+  fn parent(it: anytype) *Named {
     const t = @typeInfo(@TypeOf(it)).Pointer.child;
     const addr = @ptrToInt(it) - switch (t) {
       Textual =>  offset(Data, "textual"),
@@ -275,7 +275,7 @@ pub const Instantiated = struct {
       Record => offset(Data, "record"),
       else => unreachable
     };
-    return @fieldParentPtr(Instantiated, "data", @intToPtr(*Data, addr));
+    return @fieldParentPtr(Named, "data", @intToPtr(*Data, addr));
   }
 
   /// calculates the position from a pointer to Textual, Numeric, Float,
@@ -284,10 +284,10 @@ pub const Instantiated = struct {
     return parent(it).at;
   }
 
-  /// returns a type, given a pointer to Instantiated or any of its data types.
+  /// returns a type, given a pointer to Named or any of its data types.
   pub fn typedef(it: anytype) Type {
     return .{
-      .instantiated = if (@TypeOf(it) == *Instantiated) it else parent(it),
+      .named = if (@TypeOf(it) == *Named) it else parent(it),
     };
   }
 };
@@ -349,18 +349,18 @@ pub const Type = union(enum) {
   pub const Numeric = local.Numeric;
   pub const Record = local.Record;
   pub const Textual = local.Textual;
-  pub const Instantiated = local.Instantiated;
+  pub const Named = local.Named;
 
   /// types with structural equivalence.
   structural: *local.Structural,
-  /// types with name equivalence that are instantiated by user code.
-  instantiated: *local.Instantiated,
+  /// types with name equivalence that are named by user code.
+  named: *local.Named,
 
   pub const HashContext = struct {
     pub fn hash(_: HashContext, t: Type) u64 {
       return switch (t) {
         .structural => |s| @intCast(u64, @ptrToInt(s)),
-        .instantiated => |in| @intCast(u64, @ptrToInt(in)),
+        .named => |in| @intCast(u64, @ptrToInt(in)),
       };
     }
 
@@ -372,7 +372,7 @@ pub const Type = union(enum) {
   pub fn isScalar(t: @This()) bool {
     return switch (t) {
       .structural => false,
-      .instantiated => |it| switch (it.data) {
+      .named => |it| switch (it.data) {
         .textual, .numeric, .float, .tenum, .space, .literal, .raw => true,
         else => false,
       },
@@ -386,17 +386,17 @@ pub const Type = union(enum) {
     };
   }
 
-  pub inline fn isInst(t: Type, comptime expected: anytype) bool {
+  pub inline fn isNamed(t: Type, comptime expected: anytype) bool {
     return switch (t) {
-      .instantiated => |inst| inst.data == expected,
+      .named => |named| named.data == expected,
       else => false,
     };
   }
 
   pub inline fn eql(a: Type, b: Type) bool {
     return switch (a) {
-      .instantiated => |ia|
-        switch (b) {.instantiated => |ib| ia == ib, else => false},
+      .named => |ia|
+        switch (b) {.named => |ib| ia == ib, else => false},
       .structural => |sa|
         switch (b) {.structural => |sb| sa == sb, else => false},
     };
@@ -487,7 +487,7 @@ pub const Type = union(enum) {
           return;
         },
       },
-      .instantiated => |it| {
+      .named => |it| {
         try writer.writeAll(if (it.name) |sym| sym.name else @tagName(it.data));
       },
     }

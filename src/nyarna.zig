@@ -61,7 +61,7 @@ pub const Globals = struct {
   reporter: *errors.Reporter,
   /// The backing allocator for heap allocations used by this loader.
   backing_allocator: std.mem.Allocator,
-  /// The type lattice contains all types ever instantiated by operations of
+  /// The type lattice contains all types ever named by operations of
   /// this context. during the loading
   /// process and provides the type lattice operations (e.g. type intersection
   /// and type relation checks).
