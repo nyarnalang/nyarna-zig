@@ -91,68 +91,6 @@ pub const InstanceFuncs = struct {
     return ret;
   }
 
-  fn replacePrototypeWith(
-    pos: model.Position,
-    t: model.Type,
-    ctx: nyarna.Context,
-    instance: model.Type,
-  ) std.mem.Allocator.Error!?model.Type {
-    switch (t) {
-      .structural => |struc| switch (struc.*) {
-        .callable => unreachable,
-        .concat => |*con| {
-          if (try replacePrototypeWith(pos, con.inner, ctx, instance)) |inner| {
-            if (try ctx.types().concat(inner)) |ret| return ret;
-            if (!inner.isNamed(.poison)) {
-              ctx.logger.InvalidInnerConcatType(pos, &[_]model.Type{inner});
-            }
-            return ctx.types().poison();
-          } else return null;
-        },
-        .intersection => unreachable,
-        .list => |*lst| {
-          if (try replacePrototypeWith(pos, lst.inner, ctx, instance)) |inner| {
-            if (try ctx.types().list(inner)) |ret| return ret;
-            if (!inner.isNamed(.poison)) {
-              ctx.logger.InvalidInnerListType(pos, &[_]model.Type{inner});
-            }
-            return ctx.types().poison();
-          } else return null;
-        },
-        .map => |*map| {
-          var something_changed = false;
-          var inners: [2]model.Type = undefined;
-          inline for (.{.key, .value}) |f, index| {
-            if (
-              try replacePrototypeWith(
-                pos, @field(map, @tagName(f)), ctx, instance)
-            ) |replacement| {
-              inners[index] = replacement;
-              something_changed = true;
-            }
-          }
-          if (!something_changed) return null;
-          unreachable; // TODO: ctx.map(…,…)
-        },
-        .optional => |*opt| {
-          if (try replacePrototypeWith(pos, opt.inner, ctx, instance)) |inner| {
-            if (try ctx.types().optional(inner)) |ret| return ret;
-            if (!inner.isNamed(.poison)) {
-              ctx.logger.InvalidInnerOptionalType(pos, &[_]model.Type{inner});
-            }
-            return ctx.types().poison();
-          } else return null;
-        },
-        .paragraphs => unreachable, // TODO
-      },
-      .named => |named| switch (named.data) {
-        .record => unreachable,
-        .prototype => return instance,
-        else => return null,
-      },
-    }
-  }
-
   fn buildCallableRes(comptime ret_t: type) type {
     return if (ret_t == *model.Expression) ?SigBuilderResult
     else SigBuilderResult;

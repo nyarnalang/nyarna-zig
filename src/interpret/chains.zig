@@ -252,7 +252,6 @@ pub const Resolver = struct {
               },
             }
           },
-          // TODO: could we get a prototype here?
           .variable, .poison, .prototype => unreachable,
         }
       },

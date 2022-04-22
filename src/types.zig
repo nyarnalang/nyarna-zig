@@ -139,8 +139,8 @@ pub const Lattice = struct {
 
         pub fn descend(self: *Iter, t: model.Type, flag: Flag) !void {
           var next = &self.cur.children;
-          // TODO: can be made faster with linear search but not sure whether that
-          // is necessary.
+          // OPPORTUNITY: can be made faster with linear search but not sure
+          // whether that is necessary.
           while (next.*) |next_node| : (next = &next_node.next) {
             if (next_node.flag == flag)
               if (!totalOrderLess(undefined, next_node.key, t)) break;
@@ -1183,4 +1183,17 @@ pub inline fn allowedAsOptionalInner(t: model.Type) bool {
 pub fn descend(t: model.Type, index: usize) model.Type {
   // update this if we ever allow descending into other types.
   return t.named.data.record.constructor.sig.parameters[index].spec.t;
+}
+
+/// returns true if the given type is .ast, .frame_root or an Optional or List
+/// containing such an inner type.
+pub fn containsAst(t: model.Type) bool {
+  return switch (t) {
+    .named => |named| named.data == .ast or named.data == .frame_root,
+    .structural => |struc| switch (struc.*) {
+      .list => |*lst| return containsAst(lst.inner),
+      .optional => |*opt| return containsAst(opt.inner),
+      else => false,
+    },
+  };
 }

@@ -42,55 +42,47 @@ pub const Types = lib.Provider.Wrapper(struct {
     header: ?*model.Value.BlockHeader,
     default: ?*model.Value.Ast,
   ) nyarna.Error!*model.Node {
-    var expr = if (default) |node| blk: {
-      var val = try intpr.interpret(node.root);
-      if (val.expected_type.isNamed(.poison)) return intpr.node_gen.poison(pos);
-      if (t) |given_type| {
-        if (
-          !intpr.ctx.types().lesserEqual(val.expected_type, given_type.t) and
-          !val.expected_type.isNamed(.poison)
-        ) {
-          intpr.ctx.logger.ExpectedExprOfTypeXGotY(&.{
-            val.expected_type.at(val.pos),
-            given_type.t.at(given_type.value().origin),
-          });
-          return intpr.node_gen.poison(pos);
-        }
-      }
-      break :blk val;
-    } else null;
-    var ltype = if (t) |given_type| given_type.t.at(given_type.value().origin)
-    else if (expr) |given_expr| given_expr.expected_type.at(given_expr.pos)
-    else unreachable; // TODO: evaluation error
-    // TODO: check various things here:
-    // - varargs must have List type
-    // - varmap must have Map type
-    // - borrow must have non-virtual type
-    // - special syntax in block config must yield expected type (?)
-    if (varmap.index == 1) {
-      if (varargs.index == 1) {
-        intpr.ctx.logger.IncompatibleFlag("varmap",
-          varmap.value().origin, varargs.value().origin);
-        return intpr.node_gen.poison(pos);
-      } else if (borrow.index == 1) {
-        intpr.ctx.logger.IncompatibleFlag("varmap",
-          varmap.value().origin, borrow.value().origin);
-        return intpr.node_gen.poison(pos);
-      }
-    } else if (varargs.index == 1) if (borrow.index == 1) {
-      intpr.ctx.logger.IncompatibleFlag("borrow",
-        borrow.value().origin, varargs.value().origin);
-      return intpr.node_gen.poison(pos);
-    };
+    const default_expr = if (default) |node| (
+      if (t) |given_type| (
+        (
+          try intpr.associate(
+            node.root, given_type.t.at(given_type.value().origin),
+            .{.kind = .final})
+        ) orelse return intpr.node_gen.poison(pos)
+      ) else try intpr.interpret(node.root)
+    ) else null;
 
-    const loc_val = try intpr.ctx.values.location(pos, name, ltype);
-    loc_val.default = expr;
-    loc_val.primary = if (primary.index == 1) primary.value().origin else null;
-    loc_val.varargs = if (varargs.index == 1) varargs.value().origin else null;
-    loc_val.varmap  = if (varmap.index  == 1)  varmap.value().origin else null;
-    loc_val.borrow  = if (borrow.index  == 1)  borrow.value().origin else null;
-    loc_val.header = header;
-    return intpr.genValueNode(loc_val.value());
+    const additionals = if (
+      header != null or varargs.index == 1 or varmap.index == 1 or
+      borrow.index == 1 or primary.index == 1
+    ) blk: {
+      const container =
+        try intpr.ctx.global().create(model.Node.Location.Additionals);
+      container.* = .{
+        .primary = if (primary.index == 1) primary.value().origin else null,
+        .varargs = if (varargs.index == 1) varargs.value().origin else null,
+        .varmap  = if (varmap.index == 1)  varmap.value().origin  else null,
+        .borrow  = if (borrow.index == 1)  borrow.value().origin  else null,
+        .header  = header,
+      };
+      break :blk container;
+    } else null;
+
+    // just generate a location expression here, evaluating that will do all
+    // necessary checks
+    const expr = try intpr.ctx.global().create(model.Expression);
+    expr.* = .{
+      .pos = pos,
+      .expected_type = intpr.ctx.types().location(),
+      .data = .{.location = .{
+        .name = try intpr.ctx.createValueExpr(name.value()),
+        .@"type" =
+          if (t) |tv| try intpr.ctx.createValueExpr(tv.value()) else null,
+        .default = default_expr,
+        .additionals = additionals,
+      }},
+    };
+    return try intpr.node_gen.expression(expr);
   }
 
   pub fn @"Definition"(
