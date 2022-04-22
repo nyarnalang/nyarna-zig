@@ -1,6 +1,6 @@
 === Flow func
 --- input
-\func(body=spam,return=\Raw)()
+\func(body=spam,return=\Text)()
 --- expr
 +CALL
   =FUNCREF .doc.input.<anonymous>

@@ -740,17 +740,10 @@ pub const Evaluator = struct {
         .callable => unreachable, // TODO: implement callable wrapper.
       },
       .named => |named| switch (named.data) {
-        .textual => {
-          // can happen only for enum types, which coerce into Identifier.
-          const ev = &value.data.@"enum";
-          const content = ev.t.values.entries.items(.key)[ev.index];
-          return (try self.ctx.values.textScalar(
-            value.origin, expected_type, content)).value();
-        },
         .poison => return value,
         // for .literal, this can only be a coercion from .space.
-        // for .raw, this could be a coercion from any scalar type.
-        .literal, .raw => {
+        // for .textual, this could be a coercion from any scalar type.
+        .literal, .raw, .textual => {
           const content = switch (value.data) {
             .text => |*text_val| text_val.content,
             .number => |*num_val| try self.toString(num_val.content),
@@ -765,8 +758,16 @@ pub const Evaluator = struct {
             // type checking ensures this never happens
             else => unreachable,
           };
-          return (try self.ctx.values.textScalar(
-            value.origin, expected_type, content)).value();
+          return (
+            switch (named.data) {
+              .textual => |*txt| (
+                try self.ctx.textFromString(value.origin, content, txt)
+              ) orelse return self.ctx.values.poison(value.origin),
+              else =>
+                try self.ctx.values.textScalar(
+                  value.origin, expected_type, content)
+            }
+          ).value();
         },
         // other coercions can never happen.
         else => {

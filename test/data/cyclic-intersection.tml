@@ -1,7 +1,7 @@
 === Cyclic Intersection
 --- input
 \declare:
-  foo = \Intersection(\Raw, \foo)
+  foo = \Intersection(\Text, \foo)
 \end(declare)
 --- errors:expr
-4:9 - 4:34 CircularType
+4:9 - 4:35 CircularType

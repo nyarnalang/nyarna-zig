@@ -2,13 +2,13 @@
 --- input
 \declare:
   warbl = \func:
-    content : \Raw {primary}:<off #>
+    content : \Text {primary}:<off #>
   :body:
     \content
   \end(func)
 
   wirbl = \func:
-    inner : \Raw
+    inner : \Text
   :body:
     \warbl:
       \inner#

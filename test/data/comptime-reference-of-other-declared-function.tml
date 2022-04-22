@@ -4,18 +4,18 @@
   Empty = \Record()
   foo = \func(body=\Empty)
   idem = \func:
-    in : \Intersection(\Raw, \foo())
+    in : \Intersection(\Text, \foo())
   :body:
     \in
   \end(func)
 \end(declare)
 
-\fragment(\Intersection(\Raw, \Empty))
+\fragment(\Intersection(\Text, \Empty))
 
 \idem(spam)
 --- expr
 +CALL
   =FUNCREF .doc.input.idem
   >ARG in
-  =TEXT Raw "spam"
+  =TEXT Text "spam"
 -CALL

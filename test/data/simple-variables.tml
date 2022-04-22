@@ -2,7 +2,7 @@
 --- input
 \var:
   foo: \Integer
-  bar: \Raw
+  bar: \Text
 \end(var)
 
 \foo:=(42)
@@ -21,7 +21,7 @@
   +ASSIGNMENT
     =TARGET bar
     >EXPR
-    =TEXT Raw ""
+    =TEXT Text ""
   -ASSIGNMENT
   >ITEM 2
   +ASSIGNMENT
@@ -33,7 +33,7 @@
   +ASSIGNMENT
     =TARGET bar
     >EXPR
-    =TEXT Raw "Foobar"
+    =TEXT Text "Foobar"
   -ASSIGNMENT
   =VOID
   +ASSIGNMENT
@@ -46,4 +46,4 @@
   =GETVAR foo
 -SEQUENCE
 --- document
-=TEXT Raw "Foobar23"
+=TEXT Text "Foobar23"

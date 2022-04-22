@@ -1,7 +1,7 @@
 === Invalid swallows
 --- input
 \func:
-  input: \Raw
+  input: \Text
 :body:
   \input\input
 \end(func):>

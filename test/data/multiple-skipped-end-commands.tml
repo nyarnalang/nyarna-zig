@@ -25,5 +25,5 @@
   got = foo
   defined_at = input(15:9)
 14:3 - 17:6 ExpectedExprOfTypeXGotY
-  main = Raw
+  main = Text
   other = input(5:11) Bool

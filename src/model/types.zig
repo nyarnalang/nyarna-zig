@@ -240,6 +240,13 @@ pub const Textual = struct {
   pub inline fn typedef(self: *const @This()) Type {
     return Named.typedef(self);
   }
+
+  pub fn includes(self: Textual, cp: u21) bool {
+    const included =
+      self.include.categories.contains(unicode.category(cp))
+      and self.exclude.get(cp) == null;
+    return included or self.include.chars.get(cp) != null;
+  }
 };
 
 //----------------------------------------------------------------------------//

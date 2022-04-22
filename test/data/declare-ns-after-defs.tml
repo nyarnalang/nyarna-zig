@@ -2,20 +2,20 @@
 --- input
 \declare:
   breakfast = \func:
-    cereal, milk : \Raw
+    cereal, milk : \Text
   :body:
     \cereal\milk
   \end(func)
 :namespace:
-  \Raw
+  \Text
 \end(declare)
 
-\Raw::breakfast(wheat, soy)
+\Text::breakfast(wheat, soy)
 --- expr
 +CALL
   =FUNCREF .doc.input.breakfast
   >ARG cereal
-  =TEXT Raw "wheat"
+  =TEXT Text "wheat"
   >ARG milk
-  =TEXT Raw "soy"
+  =TEXT Text "soy"
 -CALL

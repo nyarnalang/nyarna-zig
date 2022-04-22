@@ -2,13 +2,13 @@
 --- input
 \func:
   foo : \Integer {}:1
-  bar : \Raw {}:
+  bar : \Text {}:
 :body:<off :>:5
   \foo
 \end(func)(spam, egg)
 --- errors:expr
 4:21 - 4:22 SwallowDepthWithoutDiamondClose
-5:16 - 5:17 IllegalColon
+5:17 - 5:18 IllegalColon
 6:15 - 6:16 SwallowDepthWithoutDiamondClose
 8:12 - 8:16 InvalidNumber
   repr = spam

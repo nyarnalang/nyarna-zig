@@ -1,7 +1,7 @@
 === Func Body Before Params
 --- input
 \func(body=foo):
-  bar : \Raw
+  bar : \Text
 \end(func)()
 --- errors:expr
 3:1 - 5:13 MissingParameterArgument

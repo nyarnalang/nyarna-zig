@@ -2,7 +2,7 @@
 --- input
 \declare:
   hello = \func:
-    who : \Raw
+    who : \Text
   :body:
     Hello, \who!
   \end(func)
@@ -13,7 +13,7 @@
 +CALL
   =FUNCREF .doc.input.hello
   >ARG who
-  =TEXT Raw "World"
+  =TEXT Text "World"
 -CALL
 --- document
-=TEXT Raw "Hello, World!"
+=TEXT Text "Hello, World!"

@@ -22,7 +22,7 @@
   >ARG recurse
   =ENUM Bool "true"
 -CALL
-=TEXT Raw "\n"
+=TEXT Text "\n"
 +CALL
   =FUNCREF .doc.input.bar
   >ARG recurse

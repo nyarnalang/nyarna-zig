@@ -1049,7 +1049,7 @@ pub const Interpreter = struct {
     if (func.returns) |rnode| {
       const ret_val = try self.ctx.evaluator().evaluate(
         (try self.associate(rnode, self.ctx.types().@"type"().predef(),
-          .{.kind = .assumed, .resolve = stage.resolve})).?);
+          .{.kind = .final, .resolve = stage.resolve})).?);
       const returns = if (ret_val.data == .poison)
         self.ctx.types().poison().predef()
       else ret_val.data.@"type".t.at(ret_val.origin);
@@ -1372,8 +1372,8 @@ pub const Interpreter = struct {
     ge: *model.Node.tg.Enum,
     stage: Stage,
   ) nyarna.Error!?*model.Expression {
-    var result =
-      try self.tryProcessVarargs(ge.values, self.ctx.types().raw(), stage);
+    var result = try self.tryProcessVarargs(
+      ge.values, self.ctx.types().system.identifier, stage);
 
     var builder = try types.EnumBuilder.init(self.ctx, ge.node().pos);
 
@@ -1388,7 +1388,8 @@ pub const Interpreter = struct {
         }
       } else {
         const expr = (
-          try self.associate(item.node, self.ctx.types().raw().predef(), stage)
+          try self.associate(
+            item.node, self.ctx.types().literal().predef(), stage)
         ) orelse {
           if (result.kind != .poison) result.kind = .failed;
           continue;
@@ -1443,11 +1444,10 @@ pub const Interpreter = struct {
           else => Result{.failed = true},
         },
         .named => |named| switch (named.data) {
-          .textual => Result{.scalar = t},
+          .textual, .space, .literal => Result{.scalar = t},
           .numeric, .float, .tenum =>
-            Result{.scalar = self.intpr.ctx.types().raw()},
+            Result{.scalar = self.intpr.ctx.types().text()},
           .record => Result{.append = @ptrCast([*]const model.Type, &t)[0..1]},
-          .space, .literal, .raw => Result{.scalar = t},
           else => Result{.failed = true},
         },
       };
@@ -1615,9 +1615,9 @@ pub const Interpreter = struct {
     for ([_]?*model.Node{gn.decimals, gn.min, gn.max}) |entry, index| {
       if (entry) |item| {
         if (
-          // use Raw type because Integer might not exist yet (in system.ny).
+          // use Text type because Integer might not exist yet (in system.ny).
           try self.associate(
-            item, self.ctx.types().raw().predef(), stage)
+            item, self.ctx.types().literal().predef(), stage)
         ) |expr| {
           item.data = .{.expression = expr};
           const value = try self.ctx.evaluator().evaluate(expr);
@@ -2061,7 +2061,7 @@ pub const Interpreter = struct {
     for ([_]?*model.Node{gt.include_chars, gt.exclude_chars}) |item, index| {
       if (item) |node| {
         if (
-          try self.associate(node, self.ctx.types().raw().predef(), stage)
+          try self.associate(node, self.ctx.types().literal().predef(), stage)
         ) |expr| {
           node.data = .{.expression = expr};
           const val = try self.ctx.evaluator().evaluate(expr);
@@ -2087,6 +2087,10 @@ pub const Interpreter = struct {
       for (chars) |*map| map.clearAndFree(self.ctx.global());
       return try self.ctx.createValueExpr(
         try self.ctx.values.poison(gt.node().pos));
+    }
+
+    if (categories.content == 0 and chars[0].count() == 0) {
+      categories = unicode.CategorySet.all();
     }
 
     const named = try self.ctx.global().create(model.Type.Named);
@@ -2519,7 +2523,8 @@ pub const Interpreter = struct {
       },
       .named => |ti| switch (ti.data) {
         .textual => |*txt| return if (
-          try self.ctx.textFromString(l.node().pos, l.content, txt)
+          try self.ctx.textFromString(
+            l.node().pos, try self.ctx.global().dupe(u8, l.content), txt)
         ) |scalar| scalar.value() else try self.ctx.values.poison(l.node().pos),
         .numeric => |*n| {
           return if (
@@ -2550,7 +2555,7 @@ pub const Interpreter = struct {
             &.{lt.at(l.node().pos), spec});
           return self.ctx.values.poison(l.node().pos);
         },
-        .literal, .raw => return (try self.ctx.values.textScalar(
+        .literal => return (try self.ctx.values.textScalar(
           l.node().pos, spec.t, try self.ctx.global().dupe(u8, l.content)
         )).value(),
         else => return (try self.ctx.values.textScalar(
@@ -2652,7 +2657,7 @@ pub const Interpreter = struct {
     std.debug.assert(switch (spec.t) {
       .structural => false,
       .named => |named| switch (named.data) {
-        .textual, .numeric, .float, .tenum, .literal, .space, .raw, .every,
+        .textual, .numeric, .float, .tenum, .literal, .space, .every,
         .void => true,
         else => false,
       },
@@ -2744,7 +2749,7 @@ pub const Interpreter = struct {
         // force non-concatenable scalars to coerce to Raw
         const inner_scalar = switch (spec.t) {
           .named => |named| switch (named.data) {
-            .tenum, .numeric, .float => self.ctx.types().raw().at(spec.pos),
+            .tenum, .numeric, .float => self.ctx.types().text().at(spec.pos),
             else => spec,
           },
           .structural => unreachable,

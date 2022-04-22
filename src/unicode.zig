@@ -319,6 +319,10 @@ pub const CategorySet = struct {
     return .{.content = 0};
   }
 
+  pub fn all() CategorySet {
+    return .{.content = std.math.maxInt(u30)};
+  }
+
   pub fn include(s: *CategorySet, c: Category) void {
     s.content |= @as(u30, 1) << @enumToInt(c);
   }

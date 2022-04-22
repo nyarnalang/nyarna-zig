@@ -2,17 +2,17 @@
 --- input
 \declare:
   verbatim = \func:
-    content : \Raw {primary}:<off>
+    content : \Text {primary}:<off>
   :body:
     \content
   \end(func)
   nocommands = \func:
-    content: \Raw {primary}:<off \>
+    content: \Text {primary}:<off \>
   :body:
     \content
   \end(func)
   nocomments = \func:
-    content: \Raw {primary}:<off #>
+    content: \Text {primary}:<off #>
   :body:
     \content
   \end(func)
@@ -31,17 +31,17 @@
 +CALL
   =FUNCREF .doc.input.nocomments
   >ARG content
-  =TEXT Raw "This is # not a comment"
+  =TEXT Text "This is # not a comment"
 -CALL
-=TEXT Raw "\n"
+=TEXT Text "\n"
 +CALL
   =FUNCREF .doc.input.nocommands
   >ARG content
-  =TEXT Raw "This is \\not a command"
+  =TEXT Text "This is \\not a command"
 -CALL
-=TEXT Raw "\n"
+=TEXT Text "\n"
 +CALL
   =FUNCREF .doc.input.verbatim
   >ARG content
-  =TEXT Raw "This is \\neither a command # nor a comment"
+  =TEXT Text "This is \\neither a command # nor a comment"
 -CALL

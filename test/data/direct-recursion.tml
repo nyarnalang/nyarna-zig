@@ -3,7 +3,7 @@
 \declare:
   foo = \func:
     recurse       : \Bool
-    before, after : \Raw
+    before, after : \Text
   :body:
     \before\if(\recurse, \foo(false, two, three))\after
   \end(func)
@@ -17,19 +17,19 @@
   >ARG recurse
   =ENUM Bool "true"
   >ARG before
-  =TEXT Raw "one"
+  =TEXT Text "one"
   >ARG after
-  =TEXT Raw "four"
+  =TEXT Text "four"
 -CALL
-=TEXT Raw "\n"
+=TEXT Text "\n"
 +CALL
   =FUNCREF .doc.input.foo
   >ARG recurse
   =ENUM Bool "false"
   >ARG before
-  =TEXT Raw "one"
+  =TEXT Text "one"
   >ARG after
-  =TEXT Raw "two"
+  =TEXT Text "two"
 -CALL
 --- document
-=TEXT Raw "onetwothreefour\nonetwo"
+=TEXT Text "onetwothreefour\nonetwo"

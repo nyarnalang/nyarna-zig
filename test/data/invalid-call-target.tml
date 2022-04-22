@@ -3,10 +3,10 @@
 \declare:
   foo = \Record:
     a : \Integer
-    b : \Raw
+    b : \Text
   \end(Record)
 
-  bar = \Intersection(\Raw, \foo)
+  bar = \Intersection(\Text, \foo)
 \end(declare)
 
 \bar(true)

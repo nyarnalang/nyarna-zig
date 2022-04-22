@@ -178,7 +178,7 @@ pub const Impl = lib.Provider.Wrapper(struct {
     locator: *model.Node,
   ) nyarna.Error!*model.Node {
     const expr = (
-      try intpr.associate(locator, intpr.ctx.types().raw().predef(),
+      try intpr.associate(locator, intpr.ctx.types().text().predef(),
         .{.kind = .keyword})
     ) orelse return try intpr.node_gen.poison(pos);
     const value = try intpr.ctx.evaluator().evaluate(expr);
@@ -441,10 +441,12 @@ pub const Impl = lib.Provider.Wrapper(struct {
             .callable, .intersection => null,
           },
           .named => |named| switch (named.data) {
-            .textual => (try self.ip.node_gen.literal(vpos, .{
-              .kind = .space,
-              .content = "",
-            })).node(),
+            .textual, .space, .literal => (
+              try self.ip.node_gen.literal(vpos, .{
+                .kind = .space,
+                .content = "",
+              })
+            ).node(),
             .numeric => |*num| {
               const val: i64 = if (num.min <= 0)
                 if (num.max >= 0) 0 else num.max
@@ -469,11 +471,6 @@ pub const Impl = lib.Provider.Wrapper(struct {
             .record => null,
             .ast, .frame_root, .void, .every =>
               try self.ip.node_gen.void(vpos),
-            .space, .literal, .raw =>
-              (try self.ip.node_gen.literal(vpos, .{
-                .kind = .space,
-                .content = "",
-              })).node(),
             else => return null,
           },
         };
@@ -518,7 +515,7 @@ pub const Impl = lib.Provider.Wrapper(struct {
       .unspecified => {
         intpr.specified_content = .{.standalone = .{
           .pos = pos,
-          .root_type = intpr.ctx.types().raw(), // TODO
+          .root_type = intpr.ctx.types().text(), // TODO
         }};
       }
     }
@@ -549,7 +546,7 @@ pub const Impl = lib.Provider.Wrapper(struct {
     return intpr.node_gen.@"void"(pos);
   }
 
-  pub fn @"Raw::len"(
+  pub fn @"Textual::len"(
     eval: *nyarna.Evaluator,
     pos: model.Position,
     self: *model.Value.TextScalar,
@@ -692,11 +689,9 @@ pub const Checker = struct {
     .{"Numeric", .prototype},
     .{"Optional", .prototype},
     .{"Positive", .numeric},
-    .{"Raw", .raw},
-    .{"Raw::len", .builtin},
     .{"Record", .prototype},
     .{"Sequence", .prototype},
-    .{"Text", .textual},
+    .{"Text", .textual, .text},
     .{"Textual", .prototype},
     .{"Type", .@"type"},
     .{"UnicodeCategory", .tenum, .unicode_category},

@@ -2,15 +2,15 @@
 --- input
 \declare:
   a = \func:
-    b: \Optional(\Raw) {varargs}
+    b: \Optional(\Text) {varargs}
     c {borrow} = \Integer(42)
     d: \List(\Integer) {varmap}
   :body:
   \end(func)
 \end(declare)
 --- errors:expr
-5:8 - 5:23 VarargsRequiresList
-  main = Optional<Raw>
+5:8 - 5:24 VarargsRequiresList
+  main = Optional<Text>
 6:18 - 6:30 BorrowRequiresRef
   main = Integer
 7:8 - 7:23 VarmapRequiresMap

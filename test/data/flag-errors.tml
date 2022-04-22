@@ -7,7 +7,7 @@
   \foo::add(\bar)
 \end(func)(1, 2)
 \func:
-  baz : \Raw {
+  baz : \Text {
 --- errors:expr
 4:27 - 4:31 IllegalItem
   expected = {',', '}'}
@@ -18,12 +18,12 @@
 5:19 - 5:23 UnknownFlag
   repr = derp
 5:28 - 5:37 SurplusFlags
-10:15 - 10:15 PrematureToken
+10:16 - 10:16 PrematureToken
   expected = {identifier, '}'}
   got = ws_break
 9:2 - 9:6 MissingEndCommand
   repr = func
   previous = input(11:1)
 9:1 - 11:1 IncompatibleTypes
-  main = [function] (Raw) -> Void
+  main = [function] (Text) -> Void
   other = input(3:1) Integer

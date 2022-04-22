@@ -7,5 +7,5 @@
 +CALL
   =TYPE numeric .std.system.Integer
   >ARG input
-  =TEXT Raw "42"
+  =TEXT Literal "42"
 -CALL

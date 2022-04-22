@@ -552,7 +552,7 @@ pub const DeclareResolution = struct {
 
             def_items[next] = .{
               .name = try self.intpr.ctx.values.textScalar(
-                fdef.node().pos, types.raw(),
+                fdef.node().pos, types.literal(),
                 try self.intpr.ctx.global().dupe(u8, fdef.name.content)),
               .params = try self.genParams(bg.params.resolved.locations),
               .returns = bg.returns.expr,
@@ -685,7 +685,6 @@ pub const DeclareResolution = struct {
               std.hash.Adler32.hash("FrameRoot") => types.frameRoot(),
               std.hash.Adler32.hash("Literal") => types.literal(),
               std.hash.Adler32.hash("Location") => types.location(),
-              std.hash.Adler32.hash("Raw") => types.raw(),
               std.hash.Adler32.hash("Space") => types.space(),
               std.hash.Adler32.hash("Type") => types.@"type"(),
               std.hash.Adler32.hash("Void") => types.@"void"(),
@@ -788,7 +787,6 @@ pub const DeclareResolution = struct {
               ) orelse continue;
               const types = self.intpr.ctx.types();
               switch (gu.generated.named.data) {
-                .raw        => types.constructors.raw = constructor,
                 .location   => types.constructors.location = constructor,
                 .definition => types.constructors.definition = constructor,
                 else => unreachable,

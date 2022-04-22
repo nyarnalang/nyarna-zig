@@ -1,12 +1,12 @@
 === Param Flag Errors
 --- input
 \func:
-  foo : \Raw {primary}
-  bar : \Raw {primary}
+  foo : \Text {primary}
+  bar : \Text {primary}
 :body:
   \foo\bar
 \end(func)(one, two)
 --- errors:expr
-5:15 - 5:22 DuplicateFlag
+5:16 - 5:23 DuplicateFlag
   repr = primary
   previous = input(4:3)

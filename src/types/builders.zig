@@ -376,7 +376,7 @@ pub const SequenceBuilder = struct {
           self.non_voids += 1;
           return PushResult.success;
         },
-        .textual, .location, .definition, .literal, .raw, .every => spec,
+        .textual, .location, .definition, .literal, .every => spec,
         .tenum   => blk: {
           const res = self.errorIfForced(force_direct);
           if (res != .success) return res;
@@ -385,7 +385,7 @@ pub const SequenceBuilder = struct {
         .numeric, .float => blk: {
           const res = self.errorIfForced(force_direct);
           if (res != .success) return res;
-          break :blk self.types.raw().at(spec.pos);
+          break :blk self.types.text().at(spec.pos);
         },
         else => {
           const res = self.errorIfForced(force_direct);
@@ -471,8 +471,8 @@ pub const SequenceBuilder = struct {
         if (
           switch (spec.t) {
             .named => |named| switch (named.data) {
-              .textual, .location, .definition, .literal, .raw, .every,
-              .record => false,
+              .textual, .location, .definition, .literal, .every, .record =>
+                false,
               .poison => {
                 self.poison = true;
                 return PushResult.success;

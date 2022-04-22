@@ -46,7 +46,7 @@
   >BRANCH 1
   =TEXT Literal "foo"
 -BRANCHES
-=TEXT Raw "\n"
+=TEXT Text "\n"
 +BRANCHES
   =ENUM Bool "false"
   >BRANCH 0
@@ -55,4 +55,4 @@
   =TEXT Literal "bar"
 -BRANCHES
 --- document
-=TEXT Raw "foo\nbaz"
+=TEXT Text "foo\nbaz"

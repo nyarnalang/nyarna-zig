@@ -959,9 +959,11 @@ const ErrorEmitter = struct {
   ) void {
     const self = @fieldParentPtr(ErrorEmitter, "api", reporter);
     self.forwardError(id, types[0].pos);
-    self.forwardArg("main", "{}", types[0].t.formatter());
+    const t1_format = types[0].t.formatter();
+    self.forwardArg("main", "{}", t1_format);
     if (types.len == 2) {
-      self.forwardArgAt("other", types[1].pos, "{}", types[1].t.formatter());
+      const t2_format = types[1].t.formatter();
+      self.forwardArgAt("other", types[1].pos, "{}", t2_format);
     }
   }
 

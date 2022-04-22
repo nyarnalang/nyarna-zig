@@ -318,18 +318,17 @@ pub const Context = struct {
     input: []const u8,
     t: *const model.Type.Textual,
   ) !?*model.Value.TextScalar {
-    var iter = std.unicode.Utf8Iterator{.bytes = input, .i = 0};
     var seen_error = false;
-    while (iter.nextCodepoint()) |cp| {
-      if (
-        t.include.chars.get(cp) == null and
-        (t.exclude.get(cp) != null or
-         !t.include.categories.contains(unicode.category(cp)))
-      ) {
+    const include_all =
+      t.include.categories.content == unicode.CategorySet.all().content and
+      t.exclude.count() == 0;
+    if (!include_all) {
+      var iter = std.unicode.Utf8Iterator{.bytes = input, .i = 0};
+      while (iter.nextCodepoint()) |cp| if (!t.includes(cp)) {
         const e = unicode.EncodedCharacter.init(cp);
         self.logger.CharacterNotAllowed(pos, t.typedef(), e.repr());
         seen_error = true;
-      }
+      };
     }
     return if (seen_error) null
     else try self.values.textScalar(pos, t.typedef(), input);

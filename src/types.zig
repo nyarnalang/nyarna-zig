@@ -50,7 +50,7 @@ const InnerIntend = enum {
         else => InnerIntend.allowed,
       },
       .named => |ins| switch (ins.data) {
-        .textual, .space, .literal, .raw, .void, .poison =>
+        .textual, .space, .literal, .void, .poison =>
           InnerIntend.collapse,
         .record, .@"type", .location, .definition, .backend, .every =>
           InnerIntend.allowed,
@@ -233,7 +233,6 @@ pub const Lattice = struct {
   ///
   /// constructors of non-unique types are stored in PrototypeFuncs.
   constructors: struct {
-    raw       : Constructor = .{},
     location  : Constructor = .{},
     definition: Constructor = .{},
 
@@ -262,7 +261,6 @@ pub const Lattice = struct {
     location    : model.Type.Named,
     poison      : model.Type.Named,
     prototype   : model.Type.Named,
-    raw         : model.Type.Named,
     space       : model.Type.Named,
     @"type"     : model.Type.Named,
     void        : model.Type.Named,
@@ -274,6 +272,7 @@ pub const Lattice = struct {
     identifier      : model.Type,
     integer         : model.Type,
     natural         : model.Type,
+    text            : model.Type,
     unicode_category: model.Type,
   },
   /// prototype functions defined on every type of a prototype.
@@ -345,28 +344,12 @@ pub const Lattice = struct {
     // the named types.
   }
 
-  pub inline fn literal(self: *Self) model.Type {
-    return self.predefined.literal.typedef();
+  pub inline fn ast(self: *Self) model.Type {
+    return self.predefined.ast.typedef();
   }
 
-  pub inline fn raw(self: *Self) model.Type {
-    return self.predefined.raw.typedef();
-  }
-
-  pub inline fn @"void"(self: *Self) model.Type {
-    return self.predefined.void.typedef();
-  }
-
-  pub inline fn @"type"(self: *Self) model.Type {
-    return self.predefined.@"type".typedef();
-  }
-
-  pub inline fn poison(self: *Self) model.Type {
-    return self.predefined.poison.typedef();
-  }
-
-  pub inline fn location(self: *Self) model.Type {
-    return self.predefined.location.typedef();
+  pub inline fn blockHeader(self: *Self) model.Type {
+    return self.predefined.block_header.typedef();
   }
 
   pub inline fn definition(self: *Self) model.Type {
@@ -377,24 +360,40 @@ pub const Lattice = struct {
     return self.predefined.every.typedef();
   }
 
-  pub inline fn space(self: *Self) model.Type {
-    return self.predefined.space.typedef();
+  pub inline fn frameRoot(self: *Self) model.Type {
+    return self.predefined.frame_root.typedef();
+  }
+
+  pub inline fn literal(self: *Self) model.Type {
+    return self.predefined.literal.typedef();
+  }
+
+  pub inline fn location(self: *Self) model.Type {
+    return self.predefined.location.typedef();
+  }
+
+  pub inline fn poison(self: *Self) model.Type {
+    return self.predefined.poison.typedef();
   }
 
   pub inline fn prototype(self: *Self) model.Type {
     return self.predefined.prototype.typedef();
   }
 
-  pub inline fn ast(self: *Self) model.Type {
-    return self.predefined.ast.typedef();
+  pub inline fn space(self: *Self) model.Type {
+    return self.predefined.space.typedef();
   }
 
-  pub inline fn frameRoot(self: *Self) model.Type {
-    return self.predefined.frame_root.typedef();
+  pub inline fn text(self: *Self) model.Type {
+    return self.system.text;
   }
 
-  pub inline fn blockHeader(self: *Self) model.Type {
-    return self.predefined.block_header.typedef();
+  pub inline fn @"type"(self: *Self) model.Type {
+    return self.predefined.@"type".typedef();
+  }
+
+  pub inline fn @"void"(self: *Self) model.Type {
+    return self.predefined.void.typedef();
   }
 
   fn constructorOf(self: *Self, t: model.Type) !?*model.Type.Callable {
@@ -424,7 +423,6 @@ pub const Lattice = struct {
         },
         .location   => self.constructors.location,
         .definition => self.constructors.definition,
-        .raw,       => self.constructors.raw,
         else => unreachable,
       },
       .structural => |strct| switch (strct.*) {
@@ -492,45 +490,110 @@ pub const Lattice = struct {
       },
       .structural => {},
     };
-    const inst_types =
-      [_]*model.Type.Named{t1.named, t2.named};
-    for (inst_types) |t| switch (t.data) {
+    var named_types = [_]*model.Type.Named{t1.named, t2.named};
+    for (named_types) |t| switch (t.data) {
       .record => return try
         builders.IntersectionBuilder.calcFrom(self, .{&t1, &t2}),
       else => {},
     };
-    for (inst_types) |t, i| switch (t.data) {
+    for (named_types) |t, i| switch (t.data) {
       .numeric => |_| {
-        const other = inst_types[(i + 1) % 2];
+        const other = named_types[(i + 1) % 2];
         return switch (other.data) {
           .float => if (i == 0) t2 else t1,
           .numeric => |_| unreachable, // TODO
-          else => self.raw(),
+          else => self.text(),
         };
       },
       else => {},
     };
-    for (inst_types) |t, i| switch (t.data) {
+    for (named_types) |*t, i| switch (t.*.data) {
       .tenum => |_| {
-        const other = inst_types[(i + 1) % 2];
-        return switch (other.data) {
-          .tenum => unreachable, // TODO: return predefined Identifier type
-          .textual => |_|
-            unreachable, // TODO: return sup of Identifier with text
-          else => self.raw(),
-        };
+        const other = named_types[(i + 1) % 2];
+        switch (other.data) {
+          .tenum => return self.system.identifier,
+          .textual => t.* = self.system.identifier.named,
+          else => return self.text(),
+        }
       },
       else => {},
     };
-    if (inst_types[0].data == .float and inst_types[1].data == .float)
-      return if (@enumToInt(inst_types[0].data.float.precision) <
-                 @enumToInt(inst_types[1].data.float.precision)) t2 else t1;
-    if (inst_types[0].data == .textual and inst_types[1].data == .textual)
-      unreachable; // TODO: form type that allows all characters accepted by any
-                   // of the two types
+    if (named_types[0].data == .float and named_types[1].data == .float)
+      return if (@enumToInt(named_types[0].data.float.precision) <
+                 @enumToInt(named_types[1].data.float.precision)) t2 else t1;
+    if (named_types[0].data == .textual and named_types[1].data == .textual) {
+      // to speed up, check for the Text type which allows anything.
+      // this is a common case since Text is our base output type.
+      for (named_types) |t| if (t == self.text().named) return t.typedef();
+
+      var order = HalfOrder.eq;
+      var categories = unicode.CategorySet.empty();
+      var ci: u5 = 0; while (ci <= 29) : (ci += 1) {
+        const cat = @intToEnum(unicode.Category, ci);
+        if (named_types[0].data.textual.include.categories.contains(cat)) {
+          if (!named_types[1].data.textual.include.categories.contains(cat)) {
+            order.push(.gt);
+          }
+          categories.include(cat);
+        } else if (
+          named_types[1].data.textual.include.categories.contains(cat)
+        ) {
+          order.push(.lt);
+          categories.include(cat);
+        }
+      }
+      if (order != .dj) for (named_types) |t, i| {
+        const cur = &t.data.textual;
+        const other = &named_types[(i + 1) % 2].data.textual;
+        var iter = cur.include.chars.keyIterator();
+        while (iter.next()) |cp| {
+          if (!other.includes(cp.*)) order.push(if (i == 0) .gt else .lt);
+        }
+        iter = cur.exclude.keyIterator();
+        while (iter.next()) |cp| {
+          if (other.includes(cp.*)) order.push(if (i == 0) .lt else .gt);
+        }
+      };
+      switch (order) {
+        .eq, .lt => return t2,
+        .gt => return t1,
+        .dj => {
+          var include = std.hash_map.AutoHashMapUnmanaged(u21, void){};
+          for (named_types) |t| {
+            var iter = t.data.textual.include.chars.keyIterator();
+            while (iter.next()) |cp| {
+              if (!categories.contains(unicode.category(cp.*))) {
+                try include.put(self.allocator, cp.*, {});
+              }
+            }
+          }
+          var exclude = std.hash_map.AutoHashMapUnmanaged(u21, void){};
+          var iter = named_types[0].data.textual.exclude.keyIterator();
+          while (iter.next()) |cp| {
+            if (named_types[1].data.textual.exclude.get(cp.*) != null) {
+              try exclude.put(self.allocator, cp.*, {});
+            }
+          }
+          const ret = try self.allocator.create(model.Type.Named);
+          ret.* = .{
+            .at = model.Position.intrinsic(),
+            .name = null,
+            .data = .{.textual = .{
+              .include = .{
+                .chars = include,
+                .categories = categories,
+              },
+              .exclude = exclude,
+            }},
+          };
+          return ret.typedef();
+        }
+      }
+    }
+
     // at this point, we have two different named types that are not
     // records, nor in any direct relationship with each other. therefore…
-    return self.raw();
+    return self.text();
   }
 
   pub fn registerSequence(
@@ -644,7 +707,7 @@ pub const Lattice = struct {
           .concat => model.Type{.structural = struc},
           else => (try self.optional(struc.typedef())) orelse self.poison(),
         },
-        .space, .literal, .raw => {},
+        .space, .literal, .textual => {},
         .@"type" => return switch (struc.*) {
           .callable => |*clb|
             if (clb.kind == .@"type") other else self.poison(),
@@ -740,7 +803,7 @@ pub const Lattice = struct {
         },
         .named => |named| switch (named.data) {
           .void => return struc.typedef(),
-          .literal, .space, .raw, .numeric, .textual, .tenum, .float => {
+          .literal, .space, .numeric, .textual, .tenum, .float => {
             if (s.direct) |direct| {
               const res = try self.sup(other, direct);
               if (res.eql(direct)) return struc.typedef();
@@ -808,16 +871,15 @@ pub const Lattice = struct {
       .void =>
         (try self.optional(other)) orelse self.poison(),
       .prototype, .schema, .extension, .ast, .frame_root => self.poison(),
-      .space, .literal, .raw => switch (other) {
+      .space, .literal => switch (other) {
         .structural => unreachable, // case is handled in supWithStructural.
         .named => |named| switch (named.data) {
-          .textual, .numeric, .float, .tenum => self.raw(),
+          .textual, .numeric, .float, .tenum => self.text(),
           .record => self.poison(),
           .every => intr.typedef(),
           .void => (try self.optional(intr.typedef())).?,
           .space => intr.typedef(),
-          .literal => if (intr.data == .raw) intr.typedef() else other,
-          .raw => other,
+          .literal => other,
           else => self.poison(),
         },
       },
@@ -948,7 +1010,7 @@ pub const Lattice = struct {
           return constructor.typedef();
         },
         .record  => |*rec| rec.constructor.typedef(),
-        .location, .definition, .literal, .space, .raw =>
+        .location, .definition =>
           // callable may be null if currently processing system.ny. In that
           // case, the type is not callable.
           if ((try self.typeConstructor(t)).callable) |c| c.typedef()
@@ -1102,7 +1164,7 @@ pub const Lattice = struct {
     return switch (from) {
       .named => |from_inst| switch (from_inst.data) {
         .void => if (to_scalar) |scalar| switch (scalar.named.data) {
-          .literal, .space, .raw, .textual => true,
+          .literal, .space, .textual => true,
           else => false,
         } else false,
         .space => to.isStruc(.concat) or to.isStruc(.sequence),
@@ -1129,7 +1191,7 @@ pub const Lattice = struct {
         .sequence => |*seq| {
           switch (to) {
             .named => |to_inst| switch (to_inst.data) {
-              .space, .literal, .numeric, .textual, .tenum, .float, .raw => {},
+              .space, .literal, .numeric, .textual, .tenum, .float => {},
               else => return false,
             },
             .structural => |to_struc| switch (to_struc.*) {
@@ -1166,7 +1228,7 @@ pub fn containedScalar(t: model.Type) ?model.Type {
       else => null,
     },
     .named => |named| switch (named.data) {
-      .textual, .numeric, .float, .tenum, .space, .literal, .raw => t,
+      .textual, .numeric, .float, .tenum, .space, .literal => t,
       else => null
     },
   };

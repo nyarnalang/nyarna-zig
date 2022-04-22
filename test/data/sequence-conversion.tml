@@ -1,6 +1,8 @@
 === Sequence Conversion
 --- input
 \declare:
+  NoUnderscore = \Textual(exclude=_)
+
   content = \func:
   :body:
     droggel
@@ -9,7 +11,7 @@
   \end(func)
 
   Root = \Record:
-    a: \Sequence(\Raw)
+    a: \Sequence(\NoUnderscore)
     b: \Sequence(\Text)
   \end(Record)
 \end(declare)
@@ -21,13 +23,13 @@
 +CALL
   =TYPE record .doc.input.Root
   >ARG a
-  +CALL
-    =FUNCREF .doc.input.content
-  -CALL
-  >ARG b
-  +CONVERT Sequence<Text>
+  +CONVERT Sequence<NoUnderscore>
     +CALL
       =FUNCREF .doc.input.content
     -CALL
   -CONVERT
+  >ARG b
+  +CALL
+    =FUNCREF .doc.input.content
+  -CALL
 -CALL

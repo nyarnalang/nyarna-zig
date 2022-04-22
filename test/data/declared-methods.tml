@@ -2,7 +2,7 @@
 --- input
 \declare:
   foo = \Record:
-    a : \Bool; b, c : \Raw
+    a : \Bool; b, c : \Text
   \end(Record)
 \end(declare)
 
@@ -16,4 +16,4 @@
 
 \foo(true, foo, bar)::get()\foo(false, foo, bar)::get()
 --- document
-=TEXT Raw "foobar"
+=TEXT Text "foobar"

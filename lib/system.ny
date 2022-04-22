@@ -62,10 +62,6 @@
   Type = \unique()
   Void = \unique()
 
-  Raw = \unique:
-    input: \Raw
-  \end(unique)
-
   Location = \unique:
     name    : \Literal
     type    : \Type
@@ -121,13 +117,17 @@
     cats: \List(\Ast) {varargs}
     include, exclude: \Optional(\Ast)
   :constructor:
-    input: \Raw {primary}
+    input: \Literal {primary}
+  :funcs:
+    len = \builtin(return=\Natural):
+      self: \This
+    \end(builtin)
   \end(prototype)
 
   Numeric = \prototype:
     min, max, decimals: \Optional(\Ast)
   :constructor:
-    input: \Raw {primary}
+    input: \Literal {primary}
   :funcs:
     add = \builtin(return=\This):
       values: \List(\This) {varargs}
@@ -140,13 +140,13 @@
   Float = \prototype:
     precision: \Ast
   :constructor:
-    input: \Raw {primary}
+    input: \Literal {primary}
   \end(prototype)
 
   Enum = \prototype:
     values: \List(\Ast) {varargs}
   :constructor:
-    input: \Raw {primary}
+    input: \Literal {primary}
   \end(prototype)
 
   library    = \keyword:
@@ -189,12 +189,6 @@
   Literal     = \unique()
   BlockHeader = \unique()
   Space       = \unique()
-\end(declare)
-
-\declare(\Raw):
-  len = \builtin(return=\Natural):
-    self: \Raw
-  \end(builtin)
 \end(declare)
 
 \library()

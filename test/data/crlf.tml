@@ -2,7 +2,7 @@
 --- input {crlf}
 \func(
   ):
-  t : \Raw
+  t : \Text
 :body:
   \t#
   \t
@@ -12,7 +12,7 @@
 +CALL
   =FUNCREF .doc.input.<anonymous>
   >ARG t
-  =TEXT Raw "x"
+  =TEXT Text "x"
 -CALL
 --- output
 xx

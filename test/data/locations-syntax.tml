@@ -1,7 +1,7 @@
 === Locations syntax
 --- input
 \block:<syntax locations>
-  spam : \Raw
+  spam : \Text
   egg, sausage = \Integer(42); baked : \List(\Text) {varargs};
   beans {primary}= \if(true):
     warbl
@@ -17,7 +17,7 @@
   +AST
     +LOC
       =LIT text "spam"
-      =SYMREF .std.system.Raw
+      =SYMREF .std.system.Text
     -LOC
     +LOC
       =LIT text "egg"
@@ -26,7 +26,7 @@
         +RCALL
           =SYMREF .std.system.Integer
           >ARG input
-          =TEXT Raw "42"
+          =TEXT Literal "42"
         -RCALL
       -DEFAULT
     -LOC
@@ -37,7 +37,7 @@
         +RCALL
           =SYMREF .std.system.Integer
           >ARG input
-          =TEXT Raw "42"
+          =TEXT Literal "42"
         -RCALL
       -DEFAULT
     -LOC

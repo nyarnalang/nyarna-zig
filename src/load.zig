@@ -139,7 +139,7 @@ pub const ModuleLoader = struct {
       .interpreting => |node| {
         if (self.fullast) return true;
         const root_type = switch (self.interpreter.specified_content) {
-          .unspecified => self.data.types.raw(),
+          .unspecified => self.data.types.text(),
           .standalone => |*s| s.root_type,
           .library => self.data.types.@"void"(),
           .fragment => |*f| f.root_type,

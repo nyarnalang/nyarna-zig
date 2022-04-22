@@ -1,12 +1,12 @@
 === Illegal args content
 --- input
 \var:
-  a : \Raw
+  a : \Text
 \end(var)
 
 \if(\a:=, \block:
   foo
-\end(block), \Raw:>)
+\end(block), \Text:>)
 
 \block(content = a =)
 --- errors:expr
@@ -14,8 +14,8 @@
 7:17 - 7:18 IllegalBlocksStartInArgs
 7:11 - 7:17 KeywordMustBeCalled
 9:1 - 9:12 InvalidEndCommand
-9:18 - 9:19 IllegalBlocksStartInArgs
-9:19 - 9:20 IncompatibleTypes
+9:19 - 9:20 IllegalBlocksStartInArgs
+9:20 - 9:21 IncompatibleTypes
   main = Literal
-  other = input(9:14) [type] (Raw) -> Raw
+  other = input(9:14) [type] (Literal) -> Text
 11:20 - 11:21 IllegalNameSep

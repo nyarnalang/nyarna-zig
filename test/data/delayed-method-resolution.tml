@@ -2,7 +2,7 @@
 --- input
 \declare:
   Foo = \Record:
-    a, b: \Raw
+    a, b: \Text
   \end(Record)
 \end(declare)
 
@@ -27,10 +27,10 @@
   +CALL
     =TYPE record .doc.input.Foo
     >ARG a
-    =TEXT Raw "foo"
+    =TEXT Text "foo"
     >ARG b
-    =TEXT Raw "bar"
+    =TEXT Text "bar"
   -CALL
 -CALL
 --- document
-=TEXT Raw "foobarfoobar"
+=TEXT Text "foobarfoobar"

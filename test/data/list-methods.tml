@@ -2,13 +2,13 @@
 --- input
 \declare:
   test = \func:
-    l : \List(\Raw)
+    l : \List(\Text)
   :body:
     \l::len()
     \l::item(2)
   \end(func)
 \end(declare)
 
-\test(\List(\Raw)(foo, bar))
+\test(\List(\Text)(foo, bar))
 --- document
-=TEXT Raw "2\nbar"
+=TEXT Text "2\nbar"

@@ -26,13 +26,13 @@
       +CALL
         =TYPE numeric .doc.input.OneToTen
         >ARG input
-        =TEXT Raw "1"
+        =TEXT Literal "1"
       -CALL
       >ARG second
       +CALL
         =TYPE numeric .doc.input.OneToTen
         >ARG input
-        =TEXT Raw "10"
+        =TEXT Literal "10"
       -CALL
     -CALL
   -ASSIGNMENT
@@ -40,7 +40,7 @@
   +ACCESS first
     =GETVAR val
   -ACCESS
-  =TEXT Raw "\n"
+  =TEXT Text "\n"
   +ACCESS second
     =GETVAR val
   -ACCESS

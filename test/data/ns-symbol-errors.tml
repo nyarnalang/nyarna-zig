@@ -2,7 +2,7 @@
 --- input:foo
 \declare:
   bar = \func:
-    input : \Raw
+    input : \Text
   :body:
     \input::len()
   \end(func)

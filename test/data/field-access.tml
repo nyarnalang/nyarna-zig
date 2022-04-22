@@ -2,7 +2,7 @@
 --- input
 \declare:
   Data = \Record:
-    a, b : \Raw;
+    a, b : \Text;
   \end(Record)
 
   foo = \func:
@@ -28,11 +28,11 @@
           +AST
             +LOC
               =LIT text "a"
-              =SYMREF .std.system.Raw
+              =SYMREF .std.system.Text
             -LOC
             +LOC
               =LIT text "b"
-              =SYMREF .std.system.Raw
+              =SYMREF .std.system.Text
             -LOC
           -AST
         -RCALL
@@ -101,10 +101,10 @@
   +CALL
     =TYPE record .doc.input.Data
     >ARG a
-    =TEXT Raw "x"
+    =TEXT Text "x"
     >ARG b
-    =TEXT Raw "y"
+    =TEXT Text "y"
   -CALL
 -CALL
 --- document
-=TEXT Raw "(x, y)"
+=TEXT Text "(x, y)"

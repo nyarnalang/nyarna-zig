@@ -1,11 +1,11 @@
 === Command in Flags
 --- input
 \func:
-  foo : \Raw {\if(true, primary)}
+  foo : \Text {\if(true, primary)}
 :body:
   \foo:,bar
 \end(func)(Um)
 --- errors:expr
-4:15 - 4:33 IllegalItem
+4:16 - 4:34 IllegalItem
   expected = {identifier, '}'}
   got = <node>
