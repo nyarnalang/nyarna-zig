@@ -167,6 +167,13 @@ pub const Types = lib.Provider.Wrapper(struct {
     ret.origin = pos;
     return ret;
   }
+
+  pub fn @"Void"(
+    eval: *Evaluator,
+    pos: model.Position,
+  ) nyarna.Error!*model.Value {
+    return try eval.ctx.values.@"void"(pos);
+  }
 });
 
 pub const types = Types.init();

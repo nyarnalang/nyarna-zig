@@ -789,6 +789,7 @@ pub const DeclareResolution = struct {
               switch (gu.generated.named.data) {
                 .location   => types.constructors.location = constructor,
                 .definition => types.constructors.definition = constructor,
+                .void       => types.constructors.void = constructor,
                 else => unreachable,
               }
             },

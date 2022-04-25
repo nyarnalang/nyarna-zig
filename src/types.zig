@@ -235,6 +235,7 @@ pub const Lattice = struct {
   constructors: struct {
     location  : Constructor = .{},
     definition: Constructor = .{},
+    void      : Constructor = .{},
 
     /// Prototype implementations that generate types.
     prototypes: struct {
@@ -423,6 +424,7 @@ pub const Lattice = struct {
         },
         .location   => self.constructors.location,
         .definition => self.constructors.definition,
+        .void       => self.constructors.void,
         else => unreachable,
       },
       .structural => |strct| switch (strct.*) {
@@ -794,14 +796,25 @@ pub const Lattice = struct {
           },
           .concat => {
             if (s.direct) |direct| {
-              const res = try self.supWithStructure(other_struc, direct);
-              if (res.eql(direct)) return struc.typedef();
-              unreachable; // TODO
-            } else unreachable; // TODO
+              if (self.lesserEqual(other, direct)) return struc.typedef();
+            }
+            var builder =
+              builders.SequenceBuilder.init(self, self.allocator, true);
+            if (s.direct) |direct| {
+              const res = try builder.push(direct.predef(), true);
+              std.debug.assert(res == .success);
+            }
+            for (s.inner) |inner| {
+              const res = try builder.push(inner.typedef().predef(), false);
+              std.debug.assert(res == .success);
+            }
+            if ((try builder.push(other.predef(), true)) == .success) {
+              return (try builder.finish(null, null)).t;
+            } else return self.poison();
           },
           else => self.poison(),
         },
-        .named => |named| switch (named.data) {
+        .named => |other_named| switch (other_named.data) {
           .void => return struc.typedef(),
           .literal, .space, .numeric, .textual, .tenum, .float => {
             if (s.direct) |direct| {
@@ -813,11 +826,23 @@ pub const Lattice = struct {
           .record => |*rec| {
             if (s.direct) |direct| {
               if (self.lesserEqual(other, direct)) return struc.typedef();
-              for (s.inner) |inner| {
-                if (inner == rec) return struc.typedef();
-              }
-              unreachable; // TODO
-            } else unreachable; // TODO
+            }
+            for (s.inner) |inner| {
+              if (inner == rec) return struc.typedef();
+            }
+            var builder =
+              builders.SequenceBuilder.init(self, self.allocator, true);
+            if (s.direct) |direct| {
+              const res = try builder.push(direct.predef(), true);
+              std.debug.assert(res == .success);
+            }
+            for (s.inner) |inner| {
+              const res = try builder.push(inner.typedef().predef(), false);
+              std.debug.assert(res == .success);
+            }
+            const res = try builder.push(other.predef(), false);
+            std.debug.assert(res == .success);
+            return (try builder.finish(null, null)).t;
           },
           else => return self.poison(),
         }
@@ -1000,22 +1025,22 @@ pub const Lattice = struct {
           ) orelse break :blk self.@"type"(); // workaround for system.ny
           break :blk constructor.typedef();
         },
-        else => self.@"type"(), // TODO
+        else => self.@"type"(), // TODO: mapping
       },
       .named => |named| switch (named.data) {
-        .numeric, .tenum, .textual => {
+        .numeric, .tenum, .textual, .float => {
           const constructor = (
             try self.constructorOf(t)
           ) orelse return self.@"type"();
           return constructor.typedef();
         },
         .record  => |*rec| rec.constructor.typedef(),
-        .location, .definition =>
+        .location, .definition, .void =>
           // callable may be null if currently processing system.ny. In that
           // case, the type is not callable.
           if ((try self.typeConstructor(t)).callable) |c| c.typedef()
           else self.@"type"(),
-        else     => self.@"type"(), // TODO
+        else     => self.@"type"(),
       },
     };
   }

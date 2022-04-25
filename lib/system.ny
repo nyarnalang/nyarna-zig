@@ -60,7 +60,9 @@
 
 \declare:
   Type = \unique()
-  Void = \unique()
+  Void = \unique:
+    # has a constructor that takes no parameters
+  \end(unique)
 
   Location = \unique:
     name    : \Literal
