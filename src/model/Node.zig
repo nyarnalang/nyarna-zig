@@ -317,9 +317,9 @@ pub const tg = struct {
     pub inline fn node(self: *@This()) *Node {return Node.parent(self);}
   };
   pub const Numeric = struct {
+    backend : *Node,
     min     : ?*Node,
     max     : ?*Node,
-    decimals: ?*Node,
     pub inline fn node(self: *@This()) *Node {return Node.parent(self);}
   };
   pub const Optional = struct {

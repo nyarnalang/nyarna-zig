@@ -447,24 +447,21 @@ pub const Impl = lib.Provider.Wrapper(struct {
                 .content = "",
               })
             ).node(),
-            .numeric => |*num| {
-              const val: i64 = if (num.min <= 0)
-                if (num.max >= 0) 0 else num.max
-              else num.min;
-              const nval = try self.ip.ctx.values.number(vpos, num, val);
-              return try self.ip.genValueNode(nval.value());
+            .int => |*int| {
+              const val: i64 = if (int.min <= 0)
+                if (int.max >= 0) 0 else int.max
+              else int.min;
+              const ival = try self.ip.ctx.values.int(vpos, int, val);
+              return try self.ip.genValueNode(ival.value());
             },
             .float => |*fl| {
-              const fval = try self.ip.ctx.values.float(vpos, fl,
-                switch (fl.precision) {
-                  .half => .{.half = 0},
-                  .single => .{.single = 0},
-                  .double => .{.double = 0},
-                  .quadruple, .octuple => .{.quadruple = 0},
-                });
+              const val: f64 = if (fl.min <= 0)
+                if (fl.max >= 0) 0 else fl.max
+              else fl.min;
+              const fval = try self.ip.ctx.values.float(vpos, fl, val);
               return try self.ip.genValueNode(fval.value());
             },
-            .tenum => |*en| {
+            .@"enum" => |*en| {
               const eval = try self.ip.ctx.values.@"enum"(vpos, en, 0);
               return try self.ip.genValueNode(eval.value());
             },
@@ -551,8 +548,8 @@ pub const Impl = lib.Provider.Wrapper(struct {
     pos: model.Position,
     self: *model.Value.TextScalar,
   ) nyarna.Error!*model.Value {
-    return (try eval.ctx.values.number(
-      pos, &eval.ctx.types().system.natural.named.data.numeric,
+    return (try eval.ctx.values.int(
+      pos, &eval.ctx.types().system.natural.named.data.int,
       @intCast(i64, self.content.len))).value();
   }
 
@@ -561,30 +558,50 @@ pub const Impl = lib.Provider.Wrapper(struct {
     pos: model.Position,
     list: *model.Value.List,
   ) nyarna.Error!*model.Value {
-    var ret: i64 = 0;
-    for (list.content.items) |item| {
-      if (@addWithOverflow(i64, ret, item.data.number.content, &ret)) {
-        eval.ctx.logger.OutOfRange(pos, eval.target_type, "<overflow>");
-        return try eval.ctx.values.poison(pos);
-      }
+    switch (eval.target_type.named.data) {
+      .int => |*int| {
+        var ret: i64 = 0;
+        for (list.content.items) |item| {
+          if (@addWithOverflow(i64, ret, item.data.int.content, &ret)) {
+            eval.ctx.logger.OutOfRange(pos, eval.target_type, "<overflow>");
+            return try eval.ctx.values.poison(pos);
+          }
+        }
+        return try eval.ctx.intAsValue(pos, ret, int);
+      },
+      .float => |*fl| {
+        var ret: f64 = 0;
+        for (list.content.items) |item| ret += item.data.float.content;
+        return try eval.ctx.floatAsValue(pos, ret, fl);
+      },
+      else => unreachable,
     }
-    return try eval.ctx.numberFromInt(
-      pos, ret, &eval.target_type.named.data.numeric);
   }
 
   pub fn @"Numeric::sub"(
     eval: *nyarna.Evaluator,
     pos: model.Position,
-    minuend: *model.Value.Number,
-    subtrahend: *model.Value.Number,
+    minuend: *model.Value,
+    subtrahend: *model.Value,
   ) nyarna.Error!*model.Value {
-    var ret: i64 = undefined;
-    if (@subWithOverflow(i64, minuend.content, subtrahend.content, &ret)) {
-      eval.ctx.logger.OutOfRange(pos, eval.target_type, "<overflow>");
-      return try eval.ctx.values.poison(pos);
+    switch (eval.target_type.named.data) {
+      .int => |*int| {
+        var ret: i64 = undefined;
+        if (
+          @subWithOverflow(
+            i64, minuend.data.int.content, subtrahend.data.int.content, &ret)
+        ) {
+          eval.ctx.logger.OutOfRange(pos, eval.target_type, "<overflow>");
+          return try eval.ctx.values.poison(pos);
+        }
+        return try eval.ctx.intAsValue(pos, ret, int);
+      },
+      .float => |*fl| {
+        return try eval.ctx.floatAsValue(
+          pos, minuend.data.float.content - subtrahend.data.float.content, fl);
+      },
+      else => unreachable,
     }
-    return try eval.ctx.numberFromInt(
-      pos, ret, &eval.target_type.named.data.numeric);
   }
 
   pub fn @"List::len"(
@@ -592,8 +609,8 @@ pub const Impl = lib.Provider.Wrapper(struct {
     pos: model.Position,
     list: *model.Value.List,
   ) nyarna.Error!*model.Value {
-    return (try eval.ctx.values.number(
-      pos, &eval.ctx.types().system.natural.named.data.numeric,
+    return (try eval.ctx.values.int(
+      pos, &eval.ctx.types().system.natural.named.data.int,
       @intCast(i64, list.content.items.len))).value();
   }
 
@@ -601,7 +618,7 @@ pub const Impl = lib.Provider.Wrapper(struct {
     eval: *nyarna.Evaluator,
     pos: model.Position,
     list: *model.Value.List,
-    index: *model.Value.Number,
+    index: *model.Value.IntNum,
   ) nyarna.Error!*model.Value {
     if (index.content > list.content.items.len) {
       const msg = try std.fmt.allocPrint(
@@ -674,27 +691,27 @@ pub const Checker = struct {
 
   const ExpectedDataInst = ExpectedData(.{
     .{"Ast", .ast},
-    .{"Bool", .tenum, .boolean},
+    .{"Bool", .@"enum", .boolean},
     .{"Concat", .prototype},
     .{"Definition", .definition},
     .{"Enum", .prototype},
-    .{"Float", .prototype},
     .{"Identifier", .textual, .identifier},
-    .{"Integer", .numeric, .integer},
+    .{"Integer", .int, .integer},
     .{"Intersection", .prototype},
     .{"List", .prototype},
     .{"Location", .location},
     .{"Map", .prototype},
-    .{"Natural", .numeric, .natural},
+    .{"Natural", .int, .natural},
     .{"Numeric", .prototype},
+    .{"NumericImpl", .@"enum", .numeric_impl},
     .{"Optional", .prototype},
-    .{"Positive", .numeric},
+    .{"Positive", .int},
     .{"Record", .prototype},
     .{"Sequence", .prototype},
     .{"Text", .textual, .text},
     .{"Textual", .prototype},
     .{"Type", .@"type"},
-    .{"UnicodeCategory", .tenum, .unicode_category},
+    .{"UnicodeCategory", .@"enum", .unicode_category},
     .{"Void", .void},
     .{"block", .keyword},
     .{"builtin", .keyword},
@@ -791,7 +808,7 @@ pub const Checker = struct {
         .builtin => self.logger.MissingBuiltin(pos, cur.name),
       };
     }
-    inline for (.{.@"enum", .numeric, .textual, .float}) |f| {
+    inline for (.{.@"enum", .numeric, .textual}) |f| {
       if (@field(types.prototype_funcs, @tagName(f)).constructor == null) {
         self.logger.MissingConstructor(pos, @tagName(f));
       }

@@ -132,9 +132,15 @@ pub const Types = lib.Provider.Wrapper(struct {
     pos: model.Position,
     input: *model.Value.TextScalar,
   ) nyarna.Error!*model.Value {
-    return if (try eval.ctx.numberFromText(input.value().origin, input.content,
-      &eval.target_type.named.data.numeric)) |nv| nv.value()
-    else try eval.ctx.values.poison(pos);
+    return switch (eval.target_type.named.data) {
+      .int => |*int| if (
+        try eval.ctx.intFromText(input.value().origin, input.content, int)
+      ) |nv| nv.value() else try eval.ctx.values.poison(pos),
+      .float => |*fl| if (
+        try eval.ctx.floatFromText(input.value().origin, input.content, fl)
+      ) |nv| nv.value() else try eval.ctx.values.poison(pos),
+      else => unreachable,
+    };
   }
 
   pub fn @"Float"(
@@ -152,7 +158,7 @@ pub const Types = lib.Provider.Wrapper(struct {
     input: *model.Value.TextScalar,
   ) nyarna.Error!*model.Value {
     return if (try eval.ctx.enumFrom(input.value().origin, input.content,
-      &eval.target_type.named.data.tenum)) |ev| ev.value()
+      &eval.target_type.named.data.@"enum")) |ev| ev.value()
     else try eval.ctx.values.poison(pos);
   }
 
@@ -179,26 +185,9 @@ pub const Types = lib.Provider.Wrapper(struct {
 pub const types = Types.init();
 
 pub const Prototypes = lib.Provider.Wrapper(struct {
-  pub fn @"Optional"(
-    intpr: *Interpreter,
-    pos: model.Position,
-    inner: *model.Node,
-  ) nyarna.Error!*model.Node {
-    return if (switch (inner.data) {
-      .void => blk: {
-        intpr.ctx.logger.MissingParameterArgument(
-          "inner", pos, model.Position.intrinsic());
-        break :blk true;
-      },
-      .poison => true,
-      else => false
-    }) intpr.node_gen.poison(pos) else
-      (try intpr.node_gen.tgOptional(pos, inner)).node();
-  }
-
   pub fn @"Concat"(
     intpr: *Interpreter,
-    pos: model.Position,
+    pos  : model.Position,
     inner: *model.Node,
   ) nyarna.Error!*model.Node {
     return if (switch (inner.data) {
@@ -209,13 +198,32 @@ pub const Prototypes = lib.Provider.Wrapper(struct {
       },
       .poison => true,
       else => false,
-    }) intpr.node_gen.poison(pos) else
-      (try intpr.node_gen.tgConcat(pos, inner)).node();
+    }) intpr.node_gen.poison(pos) else (
+      try intpr.node_gen.tgConcat(pos, inner)
+    ).node();
+  }
+
+  pub fn @"Enum"(
+    intpr : *Interpreter,
+    pos   : model.Position,
+    values: *model.Node,
+  ) nyarna.Error!*model.Node {
+    return (try intpr.node_gen.tgEnum(
+      pos, try nodeToVarargsItemList(intpr, values))).node();
+  }
+
+  pub fn @"Intersection"(
+    intpr      : *Interpreter,
+    pos        : model.Position,
+    input_types: *model.Node,
+  ) nyarna.Error!*model.Node {
+    return (try intpr.node_gen.tgIntersection(
+      pos, try nodeToVarargsItemList(intpr, input_types))).node();
   }
 
   pub fn @"List"(
     intpr: *Interpreter,
-    pos: model.Position,
+    pos  : model.Position,
     inner: *model.Node,
   ) nyarna.Error!*model.Node {
     return if (switch (inner.data) {
@@ -230,21 +238,10 @@ pub const Prototypes = lib.Provider.Wrapper(struct {
       try intpr.node_gen.tgList(pos, inner)).node();
   }
 
-  pub fn @"Sequence"(
-    intpr : *Interpreter,
-    pos   : model.Position,
-    inner : *model.Node,
-    direct: ?*model.Node,
-    auto  : ?*model.Node,
-  ) nyarna.Error!*model.Node {
-    return (try intpr.node_gen.tgSequence(
-      pos, direct, try nodeToVarargsItemList(intpr, inner), auto)).node();
-  }
-
   pub fn @"Map"(
     intpr: *Interpreter,
-    pos: model.Position,
-    key: *model.Node,
+    pos  : model.Position,
+    key  : *model.Node,
     value: *model.Node,
   ) nyarna.Error!*model.Node {
     var invalid = switch (key.data) {
@@ -269,6 +266,33 @@ pub const Prototypes = lib.Provider.Wrapper(struct {
     else (try intpr.node_gen.tgMap(pos, key,value)).node();
   }
 
+  pub fn @"Numeric"(
+    intpr  : *Interpreter,
+    pos    : model.Position,
+    backend: *model.Node,
+    min    : ?*model.Node,
+    max    : ?*model.Node,
+  ) nyarna.Error!*model.Node {
+    return (try intpr.node_gen.tgNumeric(pos, backend, min, max)).node();
+  }
+
+  pub fn @"Optional"(
+    intpr: *Interpreter,
+    pos: model.Position,
+    inner: *model.Node,
+  ) nyarna.Error!*model.Node {
+    return if (switch (inner.data) {
+      .void => blk: {
+        intpr.ctx.logger.MissingParameterArgument(
+          "inner", pos, model.Position.intrinsic());
+        break :blk true;
+      },
+      .poison => true,
+      else => false
+    }) intpr.node_gen.poison(pos) else
+      (try intpr.node_gen.tgOptional(pos, inner)).node();
+  }
+
   pub fn @"Record"(
     intpr: *Interpreter,
     pos: model.Position,
@@ -278,13 +302,15 @@ pub const Prototypes = lib.Provider.Wrapper(struct {
     return (try intpr.node_gen.tgRecord(pos, fnode)).node();
   }
 
-  pub fn @"Intersection"(
-    intpr: *Interpreter,
-    pos: model.Position,
-    input_types: *model.Node,
+  pub fn @"Sequence"(
+    intpr : *Interpreter,
+    pos   : model.Position,
+    inner : *model.Node,
+    direct: ?*model.Node,
+    auto  : ?*model.Node,
   ) nyarna.Error!*model.Node {
-    return (try intpr.node_gen.tgIntersection(
-      pos, try nodeToVarargsItemList(intpr, input_types))).node();
+    return (try intpr.node_gen.tgSequence(
+      pos, direct, try nodeToVarargsItemList(intpr, inner), auto)).node();
   }
 
   pub fn @"Textual"(
@@ -296,33 +322,6 @@ pub const Prototypes = lib.Provider.Wrapper(struct {
   ) nyarna.Error!*model.Node {
     return (try intpr.node_gen.tgTextual(
       pos, try nodeToVarargsItemList(intpr, cats), include, exclude)).node();
-  }
-
-  pub fn @"Numeric"(
-    intpr: *Interpreter,
-    pos: model.Position,
-    min: ?*model.Node,
-    max: ?*model.Node,
-    decimals: ?*model.Node,
-  ) nyarna.Error!*model.Node {
-    return (try intpr.node_gen.tgNumeric(pos, min, max, decimals)).node();
-  }
-
-  pub fn @"Float"(
-    intpr: *Interpreter,
-    pos: model.Position,
-    precision: *model.Node,
-  ) nyarna.Error!*model.Node {
-    return (try intpr.node_gen.tgFloat(pos, precision)).node();
-  }
-
-  pub fn @"Enum"(
-    intpr: *Interpreter,
-    pos: model.Position,
-    values: *model.Node,
-  ) nyarna.Error!*model.Node {
-    return (try intpr.node_gen.tgEnum(
-      pos, try nodeToVarargsItemList(intpr, values))).node();
   }
 });
 

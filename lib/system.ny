@@ -127,7 +127,8 @@
   \end(prototype)
 
   Numeric = \prototype:
-    min, max, decimals: \Optional(\Ast)
+    backend : \Ast
+    min, max: \Optional(\Ast)
   :constructor:
     input: \Literal {primary}
   :funcs:
@@ -137,12 +138,6 @@
     sub = \builtin(return=\This):
       minuend, subtrahend: \This
     \end(builtin)
-  \end(prototype)
-
-  Float = \prototype:
-    precision: \Ast
-  :constructor:
-    input: \Literal {primary}
   \end(prototype)
 
   Enum = \prototype:
@@ -172,9 +167,10 @@
   \end(keyword)
 
   Bool = \Enum(false, true)
-  Integer = \Numeric()
-  Natural = \Numeric(min=0)
-  Positive = \Numeric(min=1)
+  NumericImpl = \Enum(int, float)
+  Integer = \Numeric(int)
+  Natural = \Numeric(int, min=0)
+  Positive = \Numeric(int, min=1)
   UnicodeCategory = \Enum(
     Lu, Ll, Lt, Lm, Lo, Lut, LC, L, Mn, Mc, Me, Nd, Nl, No, M,
     Pc, Pd, Ps, Pe, Pi, Pf, Po, P, Sm, Sc, Sk, So, S, MPS,

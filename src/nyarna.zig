@@ -268,55 +268,69 @@ pub const Context = struct {
     return try self.values.@"enum"(pos, t, index);
   }
 
-  pub fn numberFromText(
+  pub fn intFromText(
     self: *const Context,
-    pos: model.Position,
+    pos : model.Position,
     text: []const u8,
-    t: *const model.Type.Numeric,
-  ) !?*model.Value.Number {
+    t   : *const model.Type.IntNum,
+  ) !?*model.Value.IntNum {
     switch (parse.LiteralNumber.from(text)) {
       .invalid => self.logger.InvalidNumber(pos, text),
       .too_large => self.logger.NumberTooLarge(pos, text),
       .success => |parsed| {
-        if (parsed.decimals > t.decimals) {
-          self.logger.TooManyDecimalsForType(pos, t.typedef(), text);
-          return null;
-        }
-        const dec_factor = std.math.pow(
-          i64, 10, @intCast(i64, t.decimals - parsed.decimals));
-        var val: i64 = undefined;
-        if (@mulWithOverflow(i64, parsed.value, dec_factor, &val)) {
-          self.logger.NumberTooLarge(pos, text);
-          return null;
-        }
+        //if (parsed.decimals > t.decimals) {
+        //  self.logger.TooManyDecimalsForType(pos, t.typedef(), text);
+        //  return null;
+        //}
+        //const dec_factor = std.math.pow(
+        //  i64, 10, @intCast(i64, t.decimals - parsed.decimals));
+        //var val: i64 = undefined;
+        //if (@mulWithOverflow(i64, parsed.value, dec_factor, &val)) {
+        //  self.logger.NumberTooLarge(pos, text);
+        //  return null;
+        //}
+        var val: i64 = parsed.value; // TODO
         if (val < t.min or val > t.max) {
           self.logger.OutOfRange(pos, t.typedef(), text);
           return null;
         }
-        return try self.values.number(pos, t, val);
+        return try self.values.int(pos, t, val);
       }
     }
     return null;
   }
 
-  pub fn numberFromInt(
-    self: Context,
-    pos: model.Position,
+  pub fn intAsValue(
+    self : Context,
+    pos  : model.Position,
     value: i64,
-    t: *const model.Type.Numeric,
+    t    : *const model.Type.IntNum,
   ) !*model.Value {
     if (value < t.min or value > t.max) {
       const str = try std.fmt.allocPrint(self.global(), "{}", .{value});
       self.logger.OutOfRange(pos, t.typedef(), str);
       return try self.values.poison(pos);
-    } else return (try self.values.number(pos, t, value)).value();
+    } else return (try self.values.int(pos, t, value)).value();
+  }
+
+  pub fn floatAsValue(
+    self : Context,
+    pos  : model.Position,
+    value: f64,
+    t    : *const model.Type.FloatNum,
+  ) !*model.Value {
+    if (value < t.min or value > t.max) {
+      const str = try std.fmt.allocPrint(self.global(), "{}", .{value});
+      self.logger.OutOfRange(pos, t.typedef(), str);
+      return try self.values.poison(pos);
+    } else return (try self.values.float(pos, t, value)).value();
   }
 
   pub fn textFromString(
-    self: Context,
-    pos: model.Position,
+    self : Context,
+    pos  : model.Position,
     input: []const u8,
-    t: *const model.Type.Textual,
+    t    : *const model.Type.Textual,
   ) !?*model.Value.TextScalar {
     var seen_error = false;
     const include_all =
@@ -334,32 +348,21 @@ pub const Context = struct {
     else try self.values.textScalar(pos, t.typedef(), input);
   }
 
-  pub fn floatFromString(
-    self: Context,
-    pos: model.Position,
+  pub fn floatFromText(
+    self : Context,
+    pos  : model.Position,
     input: []const u8,
-    t: *const model.Type.Float,
-  ) !?*model.Value.FloatNumber {
-    switch (t.precision) {
-      .half => blk: {
-        const val = std.fmt.parseFloat(f16, input) catch break :blk;
-        return try self.values.float(pos, t, .{.half = val});
-      },
-      .single => blk: {
-        const val = std.fmt.parseFloat(f32, input) catch break :blk;
-        return try self.values.float(pos, t, .{.single = val});
-      },
-      .double => blk: {
-        const val = std.fmt.parseFloat(f64, input) catch break :blk;
-        return try self.values.float(pos, t, .{.double = val});
-      },
-      .quadruple, .octuple => blk: {
-        const val = std.fmt.parseFloat(f128, input) catch break :blk;
-        return try self.values.float(pos, t,.{.quadruple = val});
-      }
+    t    : *const model.Type.FloatNum,
+  ) !?*model.Value.FloatNum {
+    const val = std.fmt.parseFloat(f64, input) catch {
+      self.logger.InvalidFloat(pos, t.typedef(), input);
+      return null;
+    };
+    if (val < t.min or val > t.max) {
+      self.logger.OutOfRange(pos, t.typedef(), input);
+      return null;
     }
-    self.logger.InvalidFloat(pos, t.typedef(), input);
-    return null;
+    return try self.values.float(pos, t, val);
   }
 
   pub fn unaryTypeVal(

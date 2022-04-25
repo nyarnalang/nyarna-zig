@@ -16,7 +16,7 @@
   +ASSIGNMENT
     =TARGET foo
     >EXPR
-    =NUMBER Integer 0
+    =INT Integer 0
   -ASSIGNMENT
   +ASSIGNMENT
     =TARGET bar
@@ -27,7 +27,7 @@
   +ASSIGNMENT
     =TARGET foo
     >EXPR
-    =NUMBER Integer 42
+    =INT Integer 42
   -ASSIGNMENT
   =VOID
   +ASSIGNMENT
@@ -39,7 +39,7 @@
   +ASSIGNMENT
     =TARGET foo
     >EXPR
-    =NUMBER Integer 23
+    =INT Integer 23
   -ASSIGNMENT
   >ITEM 0
   =GETVAR bar

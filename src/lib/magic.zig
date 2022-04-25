@@ -217,7 +217,7 @@ pub fn magicModule(ctx: Context) !*model.Module {
   // Optional gets called in \magic so we also need to pre-register its
   // constructor.
   b = try types.SigBuilder.init(ctx, 1, t.ast(), false);
-  try b.push((try ctx.values.intLocation("inner", t.ast())).withPrimary(
+  try b.push((try ctx.values.intrinsicLoc("inner", t.ast())).withPrimary(
     model.Position.intrinsic()));
   ctx.types().constructors.prototypes.optional = try
     prototypeConstructor(ctx, "Optional", b.finish());
@@ -226,7 +226,7 @@ pub fn magicModule(ctx: Context) !*model.Module {
   index += 1;
 
   b = try types.SigBuilder.init(ctx, 1, t.ast(), false);
-  try b.push((try ctx.values.intLocation("inner", t.ast())).withPrimary(
+  try b.push((try ctx.values.intrinsicLoc("inner", t.ast())).withPrimary(
     model.Position.intrinsic()));
   ctx.types().constructors.prototypes.list = try
     prototypeConstructor(ctx, "List", b.finish());
@@ -237,14 +237,14 @@ pub fn magicModule(ctx: Context) !*model.Module {
 
   b = try types.SigBuilder.init(ctx, 1, t.ast(), false);
   try b.push(
-    (try ctx.values.intLocation("decls", ctx.types().ast())).withPrimary(
+    (try ctx.values.intrinsicLoc("decls", ctx.types().ast())).withPrimary(
       model.Position.intrinsic()).withHeader(definition_block));
   module.symbols[index] =
     (try extFuncSymbol(ctx, "magic", true, b.finish(), &impl.provider)).?;
   index += 1;
 
   b = try types.SigBuilder.init(ctx, 1, t.ast(), false);
-  try b.push((try ctx.values.intLocation("params", t.ast())).withPrimary(
+  try b.push((try ctx.values.intrinsicLoc("params", t.ast())).withPrimary(
     model.Position.intrinsic()).withHeader(location_block));
   module.symbols[index] = (
     try extFuncSymbol(
@@ -253,7 +253,7 @@ pub fn magicModule(ctx: Context) !*model.Module {
   index += 1;
 
   b = try types.SigBuilder.init(ctx, 1, t.ast(), false);
-  try b.push((try ctx.values.intLocation(
+  try b.push((try ctx.values.intrinsicLoc(
     "constrParams", (try ctx.types().optional(t.ast())).?
   )).withPrimary(model.Position.intrinsic()).withHeader(location_block));
   module.symbols[index] = (
@@ -262,12 +262,12 @@ pub fn magicModule(ctx: Context) !*model.Module {
   index += 1;
 
   b = try types.SigBuilder.init(ctx, 3, t.ast(), false);
-  try b.push((try ctx.values.intLocation("params", t.ast())).withPrimary(
+  try b.push((try ctx.values.intrinsicLoc("params", t.ast())).withPrimary(
     model.Position.intrinsic()).withHeader(location_block));
-  try b.push((try ctx.values.intLocation(
+  try b.push((try ctx.values.intrinsicLoc(
     "constructor", (try t.optional(t.ast())).?)).withHeader(location_block));
   try b.push((
-    try ctx.values.intLocation("funcs", (try t.optional(t.ast())).?)
+    try ctx.values.intrinsicLoc("funcs", (try t.optional(t.ast())).?)
   ).withHeader(definition_block));
   module.symbols[index] = (
     try extFuncSymbol(ctx, "prototype", true, b.finish(), &impl.provider)

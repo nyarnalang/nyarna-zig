@@ -76,12 +76,14 @@ pub const InstanceFuncs = struct {
   arguments: []*model.Value.TypeVal,
   constructor: ?*model.Type.Callable,
 
-  pub fn init(
+  pub fn create(
     pt: *PrototypeFuncs,
     allocator: std.mem.Allocator,
     arguments: []*model.Value.TypeVal,
-  ) !InstanceFuncs {
-    var ret = InstanceFuncs{
+  ) !*InstanceFuncs {
+    var ret = try allocator.create(InstanceFuncs);
+    errdefer allocator.destroy(ret);
+    ret.* = .{
       .pt = pt,
       .syms = try allocator.alloc(?*model.Symbol, pt.defs.len),
       .arguments = arguments,

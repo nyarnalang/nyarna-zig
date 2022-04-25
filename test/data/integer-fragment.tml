@@ -5,7 +5,7 @@
 \Integer(42)
 --- expr
 +CALL
-  =TYPE numeric .std.system.Integer
+  =TYPE int .std.system.Integer
   >ARG input
   =TEXT Literal "42"
 -CALL

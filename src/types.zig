@@ -241,7 +241,6 @@ pub const Lattice = struct {
     prototypes: struct {
       concat      : Constructor = .{},
       @"enum"     : Constructor = .{},
-      float       : Constructor = .{},
       intersection: Constructor = .{},
       list        : Constructor = .{},
       map         : Constructor = .{},
@@ -275,12 +274,12 @@ pub const Lattice = struct {
     natural         : model.Type,
     text            : model.Type,
     unicode_category: model.Type,
+    numeric_impl    : model.Type,
   },
   /// prototype functions defined on every type of a prototype.
   prototype_funcs: struct {
     concat      : funcs.PrototypeFuncs = .{},
     @"enum"     : funcs.PrototypeFuncs = .{},
-    float       : funcs.PrototypeFuncs = .{},
     intersection: funcs.PrototypeFuncs = .{},
     list        : funcs.PrototypeFuncs = .{},
     map         : funcs.PrototypeFuncs = .{},
@@ -293,7 +292,7 @@ pub const Lattice = struct {
   /// holds instance functions for every non-unique type. These are instances
   /// of the functions that are defined on the prototype of the subject type.
   instance_funcs: std.HashMapUnmanaged(
-    model.Type, funcs.InstanceFuncs, model.Type.HashContext,
+    model.Type, *funcs.InstanceFuncs, model.Type.HashContext,
     std.hash_map.default_max_load_percentage,
   ) = .{},
   /// set to true if we're currently instantiating instance funcs.
@@ -406,25 +405,21 @@ pub const Lattice = struct {
   pub fn typeConstructor(self: *Self, t: model.Type) !Constructor {
     return switch (t) {
       .named => |named| switch (named.data) {
-        .textual    => Constructor{
-          .callable = (try self.constructorOf(t)).?,
-          .impl_index = self.prototype_funcs.textual.constructor.?.impl_index,
-        },
-        .numeric    => Constructor{
-          .callable = (try self.constructorOf(t)).?,
-          .impl_index = self.prototype_funcs.numeric.constructor.?.impl_index,
-        },
-        .float      => Constructor{
-          .callable = (try self.constructorOf(t)).?,
-          .impl_index = self.prototype_funcs.float.constructor.?.impl_index,
-        },
-        .tenum      => Constructor{
+        .definition  => self.constructors.definition,
+        .@"enum"     => Constructor{
           .callable = (try self.constructorOf(t)).?,
           .impl_index = self.prototype_funcs.@"enum".constructor.?.impl_index,
         },
-        .location   => self.constructors.location,
-        .definition => self.constructors.definition,
-        .void       => self.constructors.void,
+        .float, .int => Constructor{
+          .callable = (try self.constructorOf(t)).?,
+          .impl_index = self.prototype_funcs.numeric.constructor.?.impl_index,
+        },
+        .location    => self.constructors.location,
+        .textual     => Constructor{
+          .callable = (try self.constructorOf(t)).?,
+          .impl_index = self.prototype_funcs.textual.constructor.?.impl_index,
+        },
+        .void        => self.constructors.void,
         else => unreachable,
       },
       .structural => |strct| switch (strct.*) {
@@ -451,7 +446,6 @@ pub const Lattice = struct {
       .intersection => self.constructors.prototypes.intersection,
       .textual      => self.constructors.prototypes.textual,
       .numeric      => self.constructors.prototypes.numeric,
-      .float        => self.constructors.prototypes.float,
       .@"enum"      => self.constructors.prototypes.@"enum",
     };
   }
@@ -487,7 +481,7 @@ pub const Lattice = struct {
     };
     for (types) |t, i| switch (t) {
       .named => |named| switch (named.data) {
-        .textual, .numeric, .float, .tenum, .record => {},
+        .textual, .int, .float, .@"enum", .record => {},
         else => return try self.supWithIntrinsic(named, types[(i + 1) % 2]),
       },
       .structural => {},
@@ -499,30 +493,28 @@ pub const Lattice = struct {
       else => {},
     };
     for (named_types) |t, i| switch (t.data) {
-      .numeric => |_| {
+      .int => |_| {
         const other = named_types[(i + 1) % 2];
         return switch (other.data) {
-          .float => if (i == 0) t2 else t1,
-          .numeric => |_| unreachable, // TODO
+          .float => |_| unreachable, // TODO
+          .int => |_| unreachable, // TODO
           else => self.text(),
         };
       },
+      .float => |_| unreachable, // TODO
       else => {},
     };
     for (named_types) |*t, i| switch (t.*.data) {
-      .tenum => |_| {
+      .@"enum" => {
         const other = named_types[(i + 1) % 2];
         switch (other.data) {
-          .tenum => return self.system.identifier,
+          .@"enum" => return self.system.identifier,
           .textual => t.* = self.system.identifier.named,
           else => return self.text(),
         }
       },
       else => {},
     };
-    if (named_types[0].data == .float and named_types[1].data == .float)
-      return if (@enumToInt(named_types[0].data.float.precision) <
-                 @enumToInt(named_types[1].data.float.precision)) t2 else t1;
     if (named_types[0].data == .textual and named_types[1].data == .textual) {
       // to speed up, check for the Text type which allows anything.
       // this is a common case since Text is our base output type.
@@ -816,7 +808,7 @@ pub const Lattice = struct {
         },
         .named => |other_named| switch (other_named.data) {
           .void => return struc.typedef(),
-          .literal, .space, .numeric, .textual, .tenum, .float => {
+          .literal, .space, .int, .textual, .@"enum", .float => {
             if (s.direct) |direct| {
               const res = try self.sup(other, direct);
               if (res.eql(direct)) return struc.typedef();
@@ -887,25 +879,24 @@ pub const Lattice = struct {
   }
 
   fn supWithIntrinsic(
-    self: *Self,
-    intr: *model.Type.Named,
+    self : *Self,
+    intr : *model.Type.Named,
     other: model.Type,
   ) !model.Type {
     return switch (intr.data) {
-      .tenum, .float, .numeric, .record, .textual => unreachable,
-      .void =>
+      .@"enum", .float, .int, .record, .textual => unreachable, .void =>
         (try self.optional(other)) orelse self.poison(),
       .prototype, .schema, .extension, .ast, .frame_root => self.poison(),
       .space, .literal => switch (other) {
         .structural => unreachable, // case is handled in supWithStructural.
         .named => |named| switch (named.data) {
-          .textual, .numeric, .float, .tenum => self.text(),
-          .record => self.poison(),
-          .every => intr.typedef(),
-          .void => (try self.optional(intr.typedef())).?,
-          .space => intr.typedef(),
+          .textual, .int, .float, .@"enum" => self.text(),
+          .record  => self.poison(),
+          .every   => intr.typedef(),
+          .void    => (try self.optional(intr.typedef())).?,
+          .space   => intr.typedef(),
           .literal => other,
-          else => self.poison(),
+          else     => self.poison(),
         },
       },
       .every => other,
@@ -930,9 +921,9 @@ pub const Lattice = struct {
   pub fn optional(self: *Self, t: model.Type) !?model.Type {
     switch (InnerIntend.optional(t)) {
       .forbidden => return null,
-      .exalt => return self.void(),
-      .collapse => return t,
-      .allowed => {},
+      .exalt     => return self.void(),
+      .collapse  => return t,
+      .allowed   => {},
     }
 
     const res = try self.optionals.getOrPut(self.allocator, t);
@@ -961,9 +952,9 @@ pub const Lattice = struct {
   ) std.mem.Allocator.Error!?model.Type {
     switch (InnerIntend.concat(t)) {
       .forbidden => return null,
-      .exalt => return try self.concat(t.structural.optional.inner),
-      .collapse => return t,
-      .allowed => {},
+      .exalt     => return try self.concat(t.structural.optional.inner),
+      .collapse  => return t,
+      .allowed   => {},
     }
     const res = try self.concats.getOrPut(self.allocator, t);
     if (!res.found_existing) {
@@ -1028,7 +1019,7 @@ pub const Lattice = struct {
         else => self.@"type"(), // TODO: mapping
       },
       .named => |named| switch (named.data) {
-        .numeric, .tenum, .textual, .float => {
+        .int, .@"enum", .textual, .float => {
           const constructor = (
             try self.constructorOf(t)
           ) orelse return self.@"type"();
@@ -1047,24 +1038,24 @@ pub const Lattice = struct {
 
   pub fn valueType(self: *Lattice, v: *model.Value) !model.Type {
     return switch (v.data) {
-      .text         => |*txt|  txt.t,
-      .number       => |*num|  num.t.typedef(),
-      .float        => |*fl|   fl.t.typedef(),
-      .@"enum"      => |*en|   en.t.typedef(),
-      .record       => |*rec|  rec.t.typedef(),
+      .ast          => |ast| if (ast.container == null)
+                               self.ast() else self.frameRoot(),
+      .block_header =>         self.blockHeader(),
       .concat       => |*con|  con.t.typedef(),
-      .seq          => |*seq|  seq.t.typedef(),
+      .definition   =>         self.definition(),
+      .@"enum"      => |*en|   en.t.typedef(),
+      .float        => |*fl|   fl.t.typedef(),
+      .funcref      => |*fr|   fr.func.callable.typedef(),
+      .int          => |*int|  int.t.typedef(),
       .list         => |*list| list.t.typedef(),
+      .location     =>         self.location(),
       .map          => |*map|  map.t.typedef(),
-      .@"type"      => |tv|    try self.typeType(tv.t),
       .prototype    => |pv|
         self.prototypeConstructor(pv.pt).callable.?.typedef(),
-      .funcref      => |*fr| fr.func.callable.typedef(),
-      .location     => self.location(),
-      .definition   => self.definition(),
-      .ast          => |ast| if (ast.container == null)
-        self.ast() else self.frameRoot(),
-      .block_header => self.blockHeader(),
+      .record       => |*rec|  rec.t.typedef(),
+      .seq          => |*seq|  seq.t.typedef(),
+      .text         => |*txt|  txt.t,
+      .@"type"      => |tv|    try self.typeType(tv.t),
       .void         => self.void(),
       .poison       => self.poison(),
     };
@@ -1119,11 +1110,10 @@ pub const Lattice = struct {
         .sequence => &self.prototype_funcs.sequence,
       },
       .named => |named| switch (named.data) {
-        .textual => &self.prototype_funcs.textual,
-        .numeric => &self.prototype_funcs.numeric,
-        .float => &self.prototype_funcs.float,
-        .tenum => &self.prototype_funcs.@"enum",
-        .record => &self.prototype_funcs.record,
+        .@"enum"     => &self.prototype_funcs.@"enum",
+        .float, .int => &self.prototype_funcs.numeric,
+        .record      => &self.prototype_funcs.record,
+        .textual     => &self.prototype_funcs.textual,
         else => return null,
       },
     };
@@ -1131,10 +1121,10 @@ pub const Lattice = struct {
     if (!res.found_existing) {
       self.instantiating_instance_funcs = true;
       defer self.instantiating_instance_funcs = false;
-      res.value_ptr.* = try funcs.InstanceFuncs.init(
+      res.value_ptr.* = try funcs.InstanceFuncs.create(
         pt, self.allocator, try self.instanceArgs(t));
     }
-    return res.value_ptr;
+    return res.value_ptr.*;
   }
 
   /// given the actual type of a value and the target type of an expression,
@@ -1216,7 +1206,7 @@ pub const Lattice = struct {
         .sequence => |*seq| {
           switch (to) {
             .named => |to_inst| switch (to_inst.data) {
-              .space, .literal, .numeric, .textual, .tenum, .float => {},
+              .space, .literal, .int, .textual, .@"enum", .float => {},
               else => return false,
             },
             .structural => |to_struc| switch (to_struc.*) {
@@ -1253,7 +1243,7 @@ pub fn containedScalar(t: model.Type) ?model.Type {
       else => null,
     },
     .named => |named| switch (named.data) {
-      .textual, .numeric, .float, .tenum, .space, .literal => t,
+      .textual, .int, .float, .@"enum", .space, .literal => t,
       else => null
     },
   };

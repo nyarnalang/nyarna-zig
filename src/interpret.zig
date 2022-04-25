@@ -351,7 +351,7 @@ pub const Interpreter = struct {
             .unresolved_call, .unresolved_symref => return null,
             else => {
               self.ctx.logger.InvalidLvalue(node.pos);
-              return self.ctx.createValueExpr(
+              return try self.ctx.createValueExpr(
                 try self.ctx.values.poison(ass.node().pos));
             },
           },
@@ -1445,7 +1445,7 @@ pub const Interpreter = struct {
         },
         .named => |named| switch (named.data) {
           .textual, .space, .literal => Result{.scalar = t},
-          .numeric, .float, .tenum =>
+          .int, .float, .@"enum" =>
             Result{.scalar = self.intpr.ctx.types().text()},
           .record => Result{.append = @ptrCast([*]const model.Type, &t)[0..1]},
           else => Result{.failed = true},
@@ -1603,60 +1603,111 @@ pub const Interpreter = struct {
     _ = self; _ = gm; _ = stage; unreachable;
   }
 
-  fn tryGenNumeric(
+  fn doGenNumeric(
     self: *Interpreter,
+    builder: anytype,
     gn: *model.Node.tg.Numeric,
     stage: Stage,
   ) nyarna.Error!?*model.Expression {
     var seen_poison = false;
     var seen_unfinished = false;
-    var nb = try types.NumericBuilder.init(self.ctx, gn.node().pos);
-
-    for ([_]?*model.Node{gn.decimals, gn.min, gn.max}) |entry, index| {
-      if (entry) |item| {
-        if (
-          // use Text type because Integer might not exist yet (in system.ny).
-          try self.associate(
-            item, self.ctx.types().literal().predef(), stage)
-        ) |expr| {
-          item.data = .{.expression = expr};
-          const value = try self.ctx.evaluator().evaluate(expr);
-          switch (value.data) {
-            .poison => seen_poison = true,
-            .text => |*txt| switch (parse.LiteralNumber.from(txt.content)) {
-              .invalid => {
-                self.ctx.logger.InvalidNumber(expr.pos, txt.content);
-                seen_poison = true;
-              },
-              .too_large => {
-                self.ctx.logger.NumberTooLarge(expr.pos, txt.content);
-                seen_poison = true;
-              },
-              .success => |parsed| switch (index) {
-                0 => nb.decimals(parsed, expr.pos),
-                1 => nb.min(parsed, expr.pos),
-                2 => nb.max(parsed, expr.pos),
-                else => unreachable,
-              },
+    for ([_]?*model.Node{gn.min, gn.max}) |e, index| if (e) |item| {
+      if (
+        try self.associate(
+          item, self.ctx.types().literal().predef(), stage)
+      ) |expr| {
+        item.data = .{.expression = expr};
+        const value = try self.ctx.evaluator().evaluate(expr);
+        switch (value.data) {
+          .poison => seen_poison = true,
+          .text => |*txt| switch (parse.LiteralNumber.from(txt.content)) {
+            .invalid => {
+              self.ctx.logger.InvalidNumber(expr.pos, txt.content);
+              seen_poison = true;
             },
-            else => unreachable,
-          }
-        } else seen_unfinished = true;
-      }
-    }
+            .too_large => {
+              self.ctx.logger.NumberTooLarge(expr.pos, txt.content);
+              seen_poison = true;
+            },
+            .success => |parsed| switch (index) {
+              0 => builder.min(parsed, expr.pos),
+              1 => builder.max(parsed, expr.pos),
+              else => unreachable,
+            },
+          },
+          else => unreachable,
+        }
+      } else seen_unfinished = true;
+    };
     if (seen_unfinished) {
-      nb.abort();
+      builder.abort();
       return null;
     }
-    const ret: ?*model.Type.Numeric = if (seen_poison) blk: {
-      nb.abort();
+    const ret: ?@TypeOf(builder.ret) = if (seen_poison) blk: {
+      builder.abort();
       break :blk null;
-    } else nb.finish();
+    } else builder.finish();
     if (ret) |numeric| {
       return try self.ctx.createValueExpr((try self.ctx.values.@"type"(
         gn.node().pos, numeric.typedef())).value());
     } else return try self.ctx.createValueExpr(
       try self.ctx.values.poison(gn.node().pos));
+  }
+
+  fn tryGenNumeric(
+    self: *Interpreter,
+    gn: *model.Node.tg.Numeric,
+    stage: Stage,
+  ) nyarna.Error!?*model.Expression {
+    // bootstrapping for system.ny
+    const needs_local_impl_enum =
+      std.mem.eql(u8, ".std.system", gn.node().pos.source.locator.repr);
+    if (needs_local_impl_enum and stage.kind == .resolve) {
+      if (stage.resolve) |resolver| {
+        _ = try resolver.establishLink(self, "NumericImpl");
+        _ = try self.tryInterpret(gn.backend, stage);
+        if (gn.min) |min| _ = try self.tryInterpret(min, stage);
+        if (gn.max) |max| _ = try self.tryInterpret(max, stage);
+      }
+      return null;
+    }
+
+    var is_int = if (needs_local_impl_enum) blk: {
+      const val = try self.ctx.evaluator().evaluate(
+        try self.interpret(gn.backend));
+      switch (val.data) {
+        .text => |*txt| {
+          if (std.mem.eql(u8, txt.content, "int")) break :blk true;
+          if (std.mem.eql(u8, txt.content, "float")) break :blk false;
+          self.ctx.logger.UnknownSymbol(val.origin, txt.content);
+          return try self.ctx.createValueExpr(
+            try self.ctx.values.poison(gn.node().pos));
+        },
+        .poison => return try self.ctx.createValueExpr(
+          try self.ctx.values.poison(gn.node().pos)),
+        else => unreachable,
+      }
+    } else if (
+      try self.associate(
+        gn.backend, self.ctx.types().system.numeric_impl.predef(), stage)
+    ) |backend| switch ((try self.ctx.evaluator().evaluate(backend)).data) {
+      .@"enum" => |*backend_val| switch (backend_val.index) {
+        0 => true,
+        1 => false,
+        else => unreachable,
+      },
+      .poison => return try self.ctx.createValueExpr(
+        try self.ctx.values.poison(gn.node().pos)),
+      else => unreachable,
+    } else return null;
+
+    if (is_int) {
+      var ib = try types.IntNumBuilder.init(self.ctx, gn.node().pos);
+      return try self.doGenNumeric(&ib, gn, stage);
+    } else {
+      var fb = try types.FloatNumBuilder.init(self.ctx, gn.node().pos);
+      return try self.doGenNumeric(&fb, gn, stage);
+    }
   }
 
   fn tryGenOptional(
@@ -2009,7 +2060,7 @@ pub const Interpreter = struct {
         switch (sym.data) {
           .@"type" => |t| switch (t) {
             .named => |named| switch (named.data) {
-              .tenum => |e| {
+              .@"enum" => |e| {
                 if (e.values.count() == 36) break :blk t;
                 self.ctx.logger.WrongNumberOfEnumValues(sym.defined_at, "36");
               },
@@ -2526,16 +2577,16 @@ pub const Interpreter = struct {
           try self.ctx.textFromString(
             l.node().pos, try self.ctx.global().dupe(u8, l.content), txt)
         ) |scalar| scalar.value() else try self.ctx.values.poison(l.node().pos),
-        .numeric => |*n| {
+        .int => |*n| {
           return if (
-            try self.ctx.numberFromText(l.node().pos, l.content, n)
+            try self.ctx.intFromText(l.node().pos, l.content, n)
           ) |nv| nv.value()
           else try self.ctx.values.poison(l.node().pos);
         },
         .float => |*fl| return if (
-          try self.ctx.floatFromString(l.node().pos, l.content, fl)
+          try self.ctx.floatFromText(l.node().pos, l.content, fl)
         ) |float| float.value() else try self.ctx.values.poison(l.node().pos),
-        .tenum => |*e| {
+        .@"enum" => |*e| {
           return if (try self.ctx.enumFrom(l.node().pos, l.content, e)) |ev|
             ev.value() else try self.ctx.values.poison(l.node().pos);
         },
@@ -2657,8 +2708,8 @@ pub const Interpreter = struct {
     std.debug.assert(switch (spec.t) {
       .structural => false,
       .named => |named| switch (named.data) {
-        .textual, .numeric, .float, .tenum, .literal, .space, .every,
-        .void => true,
+        .textual, .int, .float, .@"enum", .literal, .space, .every, .void =>
+          true,
         else => false,
       },
     });
@@ -2706,7 +2757,7 @@ pub const Interpreter = struct {
             const expr = (
               try self.tryInterpret(br.condition, stage)
             ) orelse return null;
-            if (expr.expected_type.isNamed(.tenum)) {
+            if (expr.expected_type.isNamed(.@"enum")) {
               break :cblk expr;
             } else if (!expr.expected_type.isNamed(.poison)) {
               self.ctx.logger.CannotBranchOn(
@@ -2749,7 +2800,7 @@ pub const Interpreter = struct {
         // force non-concatenable scalars to coerce to Raw
         const inner_scalar = switch (spec.t) {
           .named => |named| switch (named.data) {
-            .tenum, .numeric, .float => self.ctx.types().text().at(spec.pos),
+            .@"enum", .int, .float => self.ctx.types().text().at(spec.pos),
             else => spec,
           },
           .structural => unreachable,

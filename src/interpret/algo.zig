@@ -401,7 +401,6 @@ pub const DeclareResolution = struct {
       switch (std.hash.Adler32.hash(def.name.content)) {
       std.hash.Adler32.hash("Concat") => .concat,
       std.hash.Adler32.hash("Enum") => .@"enum",
-      std.hash.Adler32.hash("Float") => .float,
       std.hash.Adler32.hash("Intersection") => .intersection,
       std.hash.Adler32.hash("List") => .list,
       std.hash.Adler32.hash("Map") => .map,
@@ -423,14 +422,13 @@ pub const DeclareResolution = struct {
     const container =
       try self.intpr.ctx.global().create(model.VariableContainer);
     container.* = .{.num_values = switch (prototype) {
-      .@"enum", .float, .intersection, .numeric, .sequence, .record,
-      .textual => 1,
+      .@"enum", .intersection, .numeric, .sequence, .record, .textual => 1,
       .concat, .list, .optional => 2,
       .map => 3,
     }};
     const var_names: []const []const u8 = switch (prototype) {
-      .@"enum", .float, .intersection, .numeric, .sequence, .record,
-      .textual => &.{"This"},
+      .@"enum", .intersection, .numeric, .sequence, .record, .textual =>
+        &.{"This"},
       .concat, .list, .optional => &.{"This", "Inner"},
       .map => &.{"This", "Key", "Value"},
     };
@@ -459,10 +457,6 @@ pub const DeclareResolution = struct {
       .@"enum"  => blk: {
         types.constructors.prototypes.@"enum"      = constructor;
         break :blk &types.prototype_funcs.@"enum";
-      },
-      .float    => blk: {
-        types.constructors.prototypes.float        = constructor;
-        break :blk &types.prototype_funcs.float;
       },
       .intersection => blk: {
         types.constructors.prototypes.intersection = constructor;

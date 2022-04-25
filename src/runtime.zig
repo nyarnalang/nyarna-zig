@@ -161,7 +161,7 @@ pub const Evaluator = struct {
     if (ef.ns_dependent) {
       ns_val = .{
         .data = .{
-          .number = .{
+          .int = .{
             .t = undefined, // not accessed, since the wrapper assumes
                             // that the value adheres to the target
                             // type's constraints
@@ -336,7 +336,7 @@ pub const Evaluator = struct {
       .concat => |*vcon| {
         for (vcon.content.items) |item| try self.convertIntoConcat(item, into);
       },
-      .text, .number, .float, .@"enum", .record, .void => {
+      .text, .int, .float, .@"enum", .record, .void => {
         try into.push(try self.doConvert(value, into.scalar_type));
       },
       .seq => |*seq| {
@@ -745,16 +745,10 @@ pub const Evaluator = struct {
         // for .textual, this could be a coercion from any scalar type.
         .literal, .raw, .textual => {
           const content = switch (value.data) {
-            .text => |*text_val| text_val.content,
-            .number => |*num_val| try self.toString(num_val.content),
-            .float => |*float_val| try switch (float_val.t.precision) {
-              .half => self.toString(float_val.content.half),
-              .single => self.toString(float_val.content.single),
-              .double => self.toString(float_val.content.double),
-              .quadruple, .octuple =>
-                self.toString(float_val.content.quadruple),
-            },
-            .@"enum" => |ev| ev.t.values.entries.items(.key)[ev.index],
+            .text    => |*text_val|  text_val.content,
+            .int     => |*int_val|   try self.toString(int_val.content),
+            .float   => |*float_val| try self.toString(float_val.content),
+            .@"enum" => |ev|         ev.t.values.entries.items(.key)[ev.index],
             // type checking ensures this never happens
             else => unreachable,
           };
@@ -896,7 +890,7 @@ const ConcatBuilder = struct {
   pub fn push(self: *ConcatBuilder, item: *model.Value) !void {
     if (item.data == .void) return;
     const value = switch (item.data) {
-      .text, .number, .float, .@"enum" =>
+      .text, .int, .float, .@"enum" =>
         try self.ctx.evaluator().coerce(item, self.scalar_type),
       else => item,
     };

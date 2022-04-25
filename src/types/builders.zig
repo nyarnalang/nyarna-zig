@@ -21,9 +21,9 @@ pub const EnumBuilder = struct {
     named.* = .{
       .at = pos,
       .name = null,
-      .data = .{.tenum = .{.values = .{}}},
+      .data = .{.@"enum" = .{.values = .{}}},
     };
-    return Self{.ctx = ctx, .ret = &named.data.tenum};
+    return Self{.ctx = ctx, .ret = &named.data.@"enum"};
   }
 
   pub inline fn add(self: *Self, value: []const u8, pos: model.Position) !void {
@@ -191,71 +191,135 @@ pub const IntersectionBuilder = struct {
   }
 };
 
-pub const NumericBuilder = struct {
+pub const IntNumBuilder = struct {
   const Self = @This();
 
   ctx: nyarna.Context,
-  ret: *model.Type.Numeric,
+  ret: *model.Type.IntNum,
   pos: model.Position,
+  failed: bool = false,
 
   pub fn init(ctx: nyarna.Context, pos: model.Position) !Self {
     const named = try ctx.global().create(model.Type.Named);
     named.* = .{
       .at = pos,
       .name = null,
-      .data = .{.numeric = .{
+      .data = .{.int = .{
         .min = std.math.minInt(i64),
         .max = std.math.maxInt(i64),
-        // can be maximal 32. set to 33 to indicate errors during construction.
-        .decimals = 0,
       }},
     };
-    return Self{.ctx = ctx, .ret = &named.data.numeric, .pos = pos};
+    return Self{.ctx = ctx, .ret = &named.data.int, .pos = pos};
   }
 
   pub fn min(self: *Self, num: LiteralNumber, pos: model.Position) void {
-    if (num.decimals > self.ret.decimals) {
-      self.ctx.logger.TooManyDecimals(pos, num.repr);
-      self.ret.decimals = 33;
-    } else if (
-      @mulWithOverflow(i64, num.value,
-      std.math.pow(i64, 10, @intCast(i64, self.ret.decimals - num.decimals)),
-        &self.ret.min)
-    ) {
-      self.ctx.logger.NumberTooLarge(pos, num.repr);
-      self.ret.decimals = 33;
-    }
+    _ = pos;
+    //if (num.decimals > self.ret.decimals) {
+    //  self.ctx.logger.TooManyDecimals(pos, num.repr);
+    //  self.ret.decimals = 33;
+    //} else if (
+    //  @mulWithOverflow(i64, num.value,
+    //  std.math.pow(i64, 10, @intCast(i64, self.ret.decimals - num.decimals)),
+    //    &self.ret.min)
+    //) {
+    //  self.ctx.logger.NumberTooLarge(pos, num.repr);
+    //  self.ret.decimals = 33;
+    //}
+    self.ret.min = num.value; // TODO
   }
 
   pub fn max(self: *Self, num: LiteralNumber, pos: model.Position) void {
-    if (num.decimals > self.ret.decimals) {
-      self.ctx.logger.TooManyDecimals(pos, num.repr);
-      self.ret.decimals = 33;
-    } else if (
-      @mulWithOverflow(i64, num.value,
-        std.math.pow(i64, 10, @intCast(i64, self.ret.decimals - num.decimals)),
-        &self.ret.max)
-    ) {
-      self.ctx.logger.NumberTooLarge(pos, num.repr);
-      self.ret.decimals = 33;
-    }
+    _ = pos;
+    //if (num.decimals > self.ret.decimals) {
+    //  self.ctx.logger.TooManyDecimals(pos, num.repr);
+    //  self.ret.decimals = 33;
+    //} else if (
+    //  @mulWithOverflow(i64, num.value,
+    //    std.math.pow(i64, 10, @intCast(i64, self.ret.decimals - num.decimals)),
+    //    &self.ret.max)
+    //) {
+    //  self.ctx.logger.NumberTooLarge(pos, num.repr);
+    //  self.ret.decimals = 33;
+    //}
+    self.ret.max = num.value; // TODO
   }
 
-  pub fn decimals(self: *Self, num: LiteralNumber, pos: model.Position) void {
-    if (num.value > 32 or num.value < 0 or num.decimals > 0) {
-      self.ctx.logger.InvalidDecimals(pos, num.repr);
-      self.ret.decimals = 33;
-    } else if (self.ret.decimals != 33) {
-      self.ret.decimals = @intCast(u8, num.value);
-    }
-  }
-
-  pub fn finish(self: *Self) ?*model.Type.Numeric {
+  pub fn finish(self: *Self) ?*model.Type.IntNum {
     if (self.ret.min > self.ret.max) {
       self.ctx.logger.IllegalNumericInterval(self.pos);
-      self.ret.decimals = 33;
+      self.failed = true;
     }
-    if (self.ret.decimals > 32) {
+    if (self.failed) {
+      self.abort();
+      return null;
+    }
+    return self.ret;
+  }
+
+  pub fn abort(self: *Self) void {
+    self.ctx.global().destroy(self.ret.named());
+  }
+};
+
+pub const FloatNumBuilder = struct {
+  const Self = @This();
+
+  ctx: nyarna.Context,
+  ret: *model.Type.FloatNum,
+  pos: model.Position,
+  failed: bool = false,
+
+  pub fn init(ctx: nyarna.Context, pos: model.Position) !Self {
+    const named = try ctx.global().create(model.Type.Named);
+    named.* = .{
+      .at = pos,
+      .name = null,
+      .data = .{.float = .{
+        .min = -std.math.inf_f64,
+        .max = std.math.inf_f64,
+      }},
+    };
+    return Self{.ctx = ctx, .ret = &named.data.float, .pos = pos};
+  }
+
+  pub fn min(self: *Self, num: LiteralNumber, pos: model.Position) void {
+    _ = pos;
+    //if (num.decimals > self.ret.decimals) {
+    //  self.ctx.logger.TooManyDecimals(pos, num.repr);
+    //  self.ret.decimals = 33;
+    //} else if (
+    //  @mulWithOverflow(i64, num.value,
+    //  std.math.pow(i64, 10, @intCast(i64, self.ret.decimals - num.decimals)),
+    //    &self.ret.min)
+    //) {
+    //  self.ctx.logger.NumberTooLarge(pos, num.repr);
+    //  self.ret.decimals = 33;
+    //}
+    self.ret.min = @intToFloat(f64, num.value); // TODO
+  }
+
+  pub fn max(self: *Self, num: LiteralNumber, pos: model.Position) void {
+    _ = pos;
+    //if (num.decimals > self.ret.decimals) {
+    //  self.ctx.logger.TooManyDecimals(pos, num.repr);
+    //  self.ret.decimals = 33;
+    //} else if (
+    //  @mulWithOverflow(i64, num.value,
+    //    std.math.pow(i64, 10, @intCast(i64, self.ret.decimals - num.decimals)),
+    //    &self.ret.max)
+    //) {
+    //  self.ctx.logger.NumberTooLarge(pos, num.repr);
+    //  self.ret.decimals = 33;
+    //}
+    self.ret.max = @intToFloat(f64, num.value); // TODO
+  }
+
+  pub fn finish(self: *Self) ?*model.Type.FloatNum {
+    if (self.ret.min > self.ret.max) {
+      self.ctx.logger.IllegalNumericInterval(self.pos);
+      self.failed = true;
+    }
+    if (self.failed) {
       self.abort();
       return null;
     }
@@ -377,12 +441,12 @@ pub const SequenceBuilder = struct {
           return PushResult.success;
         },
         .textual, .location, .definition, .literal, .every => spec,
-        .tenum   => blk: {
+        .@"enum" => blk: {
           const res = self.errorIfForced(force_direct);
           if (res != .success) return res;
           break :blk self.types.system.identifier.at(spec.pos);
         },
-        .numeric, .float => blk: {
+        .float, .int => blk: {
           const res = self.errorIfForced(force_direct);
           if (res != .success) return res;
           break :blk self.types.text().at(spec.pos);

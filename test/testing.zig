@@ -392,10 +392,6 @@ const AstEmitter = struct {
           try self.emitLine(">MAX", .{});
           try self.process(max);
         }
-        if (gn.decimals) |decimals| {
-          try self.emitLine(">DECIMALS", .{});
-          try self.process(decimals);
-        }
         try gen.pop();
       },
       .gen_optional => |go| {
@@ -694,9 +690,9 @@ const AstEmitter = struct {
           const tc = try self.pushWithKey("TYPE", @tagName(i.data), null);
           switch (i.data) {
             .textual => |_| unreachable,
-            .numeric => |_| unreachable,
-            .float => |_| unreachable,
-            .tenum => |en| {
+            .int     => |_| unreachable,
+            .float   => |_| unreachable,
+            .@"enum" => |en| {
               for (en.values.entries.items(.key)) |*key| {
                 try self.emitLine("=ITEM {s}", .{key});
               }
@@ -724,12 +720,13 @@ const AstEmitter = struct {
         try self.emitLine("=TEXT {} \"{}\"",
           .{t_fmt, std.zig.fmtEscapes(txt.content)});
       },
-      .number => |num| {
-        const t_fmt = num.t.typedef().formatter();
-        try self.emitLine("=NUMBER {} {}", .{t_fmt, num.formatter()});
+      .int => |int| {
+        const t_fmt = int.t.typedef().formatter();
+        try self.emitLine("=INT {} {}", .{t_fmt, int.formatter()});
       },
-      .float => |_| {
-        unreachable;
+      .float => |fl| {
+        const t_fmt = fl.t.typedef().formatter();
+        try self.emitLine("=FLOAT {} {}", .{t_fmt, fl.formatter()});
       },
       .@"enum" => |ev| {
         const t_fmt = ev.t.typedef().formatter();

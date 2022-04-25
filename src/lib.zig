@@ -68,25 +68,28 @@ pub const Provider = struct {
         return switch (T) {
           model.Type => v.data.@"type".t,
           else => switch (@typeInfo(T)) {
+            .Int      => @intCast(T, v.data.int.content),
+            .Float    => @floatCast(T, v.data.float.content),
             .Optional => |opt| if (v.data == .void) null
                                else getTypedValue(opt.child, v),
-            .Pointer => |ptr| switch (ptr.child) {
-              model.Value.TextScalar => &v.data.text,
-              model.Value.Number => &v.data.number,
-              model.Value.FloatNumber => &v.data.float,
-              model.Value.Enum => &v.data.@"enum",
-              model.Value.Record => &v.data.record,
-              model.Value.Concat => &v.data.concat,
-              model.Value.List => &v.data.list,
-              model.Value.Map => &v.data.map,
-              model.Value.TypeVal => &v.data.@"type",
-              model.Value.FuncRef => &v.data.funcref,
-              model.Value.Location => &v.data.location,
-              model.Value.Definition => &v.data.definition,
-              model.Value.Ast => &v.data.ast,
+            .Pointer  => |ptr| switch (ptr.child) {
+              model.Node              => v.data.ast.root,
+              model.Value             => v,
+              model.Value.Ast         => &v.data.ast,
               model.Value.BlockHeader => &v.data.block_header,
-              model.Value => v,
-              model.Node => v.data.ast.root,
+              model.Value.Concat      => &v.data.concat,
+              model.Value.Definition  => &v.data.definition,
+              model.Value.Enum        => &v.data.@"enum",
+              model.Value.FloatNum    => &v.data.float,
+              model.Value.FuncRef     => &v.data.funcref,
+              model.Value.IntNum      => &v.data.int,
+              model.Value.List        => &v.data.list,
+              model.Value.Location    => &v.data.location,
+              model.Value.Map         => &v.data.map,
+              model.Value.Record      => &v.data.record,
+              model.Value.Seq         => &v.data.seq,
+              model.Value.TextScalar  => &v.data.text,
+              model.Value.TypeVal     => &v.data.@"type",
               u8 =>
                 if (ptr.is_const and ptr.size == .Slice)
                   v.data.text.content
@@ -95,8 +98,7 @@ pub const Provider = struct {
               else => std.debug.panic(
                 "invalid native parameter type: {s}", .{@typeName(T)}),
             },
-            .Int => @intCast(T, v.data.number.content),
-            else => unreachable,
+            else   => unreachable,
           },
         };
       }

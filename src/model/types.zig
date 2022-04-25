@@ -71,15 +71,11 @@ pub const Enum = struct {
   }
 };
 
-/// A Float type. While at most five structually different Float types can ever
-/// exist, Float types have name equivalence, which is why it is not five
-/// enumeration values in the Type enum.
-pub const Float = struct {
-  pub const Precision = enum {
-    half, single, double, quadruple, octuple
-  };
-
-  precision: Precision,
+/// A Numeric type with float backend.
+/// has a minimum value and a maximum value.
+pub const FloatNum = struct {
+  min: f64,
+  max: f64,
 
   pub inline fn pos(self: *@This()) Position {
     return Named.pos(self);
@@ -109,6 +105,25 @@ pub const Intersection = struct {
   }
 };
 
+/// A Numeric type with integer backend.
+/// has a minimum value and a maximum value.
+pub const IntNum = struct {
+  min: i64,
+  max: i64,
+
+  pub inline fn pos(self: *@This()) Position {
+    return Named.pos(self);
+  }
+
+  pub inline fn typedef(self: *const @This()) Type {
+    return Named.typedef(self);
+  }
+
+  pub inline fn named(self: *const @This()) *Named {
+    return Named.parent(self);
+  }
+};
+
 /// List type with an inner type.
 pub const List = struct {
   inner: Type,
@@ -133,27 +148,6 @@ pub const Map = struct {
 
   pub inline fn typedef(self: *const @This()) Type {
     return Structural.typedef(self);
-  }
-};
-
-/// A Numeric type, which has a minimum value, a maximum value, and a defined
-/// number of decimal digits. std.math.minInt(i64) and std.math.maxInt(i64)
-/// serve as the implementation-defined smallest and largest possible numbers.
-pub const Numeric = struct {
-  min: i64,
-  max: i64,
-  decimals: u8,
-
-  pub inline fn pos(self: *@This()) Position {
-    return Named.pos(self);
-  }
-
-  pub inline fn typedef(self: *const @This()) Type {
-    return Named.typedef(self);
-  }
-
-  pub inline fn named(self: *const @This()) *Named {
-    return Named.parent(self);
   }
 };
 
@@ -257,9 +251,9 @@ pub const Textual = struct {
 pub const Named = struct {
   pub const Data = union(enum) {
     textual: Textual,
-    numeric: Numeric,
-    float: Float,
-    tenum: Enum,
+    @"enum": Enum,
+    float: FloatNum,
+    int: IntNum,
     record: Record,
     // what follows are unique intrinsic types.
     @"void", prototype, schema, extension, ast, frame_root, block_header,
@@ -276,17 +270,16 @@ pub const Named = struct {
     const t = @typeInfo(@TypeOf(it)).Pointer.child;
     const addr = @ptrToInt(it) - switch (t) {
       Textual =>  offset(Data, "textual"),
-      Numeric => offset(Data, "numeric"),
-      Float => offset(Data, "float"),
-      Enum => offset(Data, "tenum"),
+      Enum => offset(Data, "enum"),
+      FloatNum => offset(Data, "float"),
+      IntNum => offset(Data, "int"),
       Record => offset(Data, "record"),
       else => unreachable
     };
     return @fieldParentPtr(Named, "data", @intToPtr(*Data, addr));
   }
 
-  /// calculates the position from a pointer to Textual, Numeric, Float,
-  /// Enum, or Record
+  /// calculates the position of Textual, Numeric, Enum, or Record
   pub fn pos(it: anytype) Position {
     return parent(it).at;
   }
@@ -325,8 +318,7 @@ pub const Structural = union(enum) {
     return @intToPtr(*Structural, addr);
   }
 
-  /// calculates the position from a pointer to Textual, Numeric, Float,
-  /// Enum, or Record
+  /// calculates the position from a pointer to one of the inner types
   fn pos(it: anytype) Position {
     return parent(it).at;
   }
@@ -352,8 +344,8 @@ pub const Type = union(enum) {
   pub const Structural = local.Structural;
 
   pub const Enum = local.Enum;
-  pub const Float = local.Float;
-  pub const Numeric = local.Numeric;
+  pub const FloatNum = local.FloatNum;
+  pub const IntNum = local.IntNum;
   pub const Record = local.Record;
   pub const Textual = local.Textual;
   pub const Named = local.Named;
@@ -380,7 +372,7 @@ pub const Type = union(enum) {
     return switch (t) {
       .structural => false,
       .named => |it| switch (it.data) {
-        .textual, .numeric, .float, .tenum, .space, .literal, .raw => true,
+        .textual, .int, .float, .@"enum", .space, .literal, .raw => true,
         else => false,
       },
     };

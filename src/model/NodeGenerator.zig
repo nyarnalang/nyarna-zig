@@ -190,8 +190,8 @@ pub inline fn raccess(
 }
 
 pub inline fn rcall(
-  self: *Self,
-  pos: Position,
+  self   : *Self,
+  pos    : Position,
   content: Node.ResolvedCall,
 ) !*Node.ResolvedCall {
   return &(try self.node(
@@ -199,8 +199,8 @@ pub inline fn rcall(
 }
 
 pub inline fn rsymref(
-  self: *Self,
-  pos: Position,
+  self   : *Self,
+  pos    : Position,
   content: Node.ResolvedSymref,
 ) !*Node.ResolvedSymref {
   return &(try self.node(
@@ -208,8 +208,8 @@ pub inline fn rsymref(
 }
 
 pub inline fn tgConcat(
-  self: *Self,
-  pos: Position,
+  self : *Self,
+  pos  : Position,
   inner: *Node,
 ) !*Node.tg.Concat {
   return &(try self.node(
@@ -217,26 +217,17 @@ pub inline fn tgConcat(
 }
 
 pub inline fn tgEnum(
-  self: *Self,
-  pos: Position,
+  self  : *Self,
+  pos   : Position,
   values: []Node.Varargs.Item,
 ) !*Node.tg.Enum {
   return &(try self.node(
     pos, .{.gen_enum = .{.values = values}})).data.gen_enum;
 }
 
-pub inline fn tgFloat(
-  self: *Self,
-  pos: Position,
-  precision: *Node,
-) !*Node.tg.Float {
-  return &(try self.node(
-    pos, .{.gen_float = .{.precision = precision}})).data.gen_float;
-}
-
 pub inline fn tgIntersection(
-  self: *Self,
-  pos: Position,
+  self : *Self,
+  pos  : Position,
   types: []Node.Varargs.Item
 ) !*Node.tg.Intersection {
   return &(try self.node(
@@ -244,8 +235,8 @@ pub inline fn tgIntersection(
 }
 
 pub inline fn tgList(
-  self: *Self,
-  pos: Position,
+  self : *Self,
+  pos  : Position,
   inner: *Node,
 ) !*Node.tg.List {
   return &(try self.node(
@@ -253,9 +244,9 @@ pub inline fn tgList(
 }
 
 pub inline fn tgMap(
-  self: *Self,
-  pos: Position,
-  key: *Node,
+  self : *Self,
+  pos  : Position,
+  key  : *Node,
   value: *Node,
 ) !*Node.tg.Map {
   return &(try self.node(
@@ -263,23 +254,24 @@ pub inline fn tgMap(
 }
 
 pub inline fn tgNumeric(
-  self: *Self,
-  pos: Position,
-  min: ?*Node, max: ?*Node,
-  decimals: ?*Node,
+  self   : *Self,
+  pos    : Position,
+  backend: *Node,
+  min    : ?*Node,
+  max    : ?*Node,
 ) !*Node.tg.Numeric {
   return &(try self.node(
     pos, .{.gen_numeric = .{
+      .backend = backend,
       .min = min,
       .max = max,
-      .decimals = decimals,
     }},
   )).data.gen_numeric;
 }
 
 pub inline fn tgOptional(
-  self: *Self,
-  pos: Position,
+  self : *Self,
+  pos  : Position,
   inner: *Node,
 ) !*Node.tg.Optional {
   return &(try self.node(
@@ -287,11 +279,11 @@ pub inline fn tgOptional(
 }
 
 pub inline fn tgSequence(
-  self: *Self,
-  pos: Position,
+  self  : *Self,
+  pos   : Position,
   direct: ?*Node,
-  inner: []Node.Varargs.Item,
-  auto: ?*Node,
+  inner : []Node.Varargs.Item,
+  auto  : ?*Node,
 ) !*Node.tg.Sequence {
   return &(try self.node(
     pos, .{.gen_sequence = .{
@@ -301,11 +293,11 @@ pub inline fn tgSequence(
 }
 
 pub inline fn tgPrototype(
-  self: *Self,
-  pos: Position,
-  params: *Node,
+  self       : *Self,
+  pos        : Position,
+  params     : *Node,
   constructor: ?*Node,
-  funcs: ?*Node,
+  funcs      : ?*Node,
 ) !*Node.tg.Prototype {
   return &(try self.node(
     pos, .{.gen_prototype = .{
@@ -317,8 +309,8 @@ pub inline fn tgPrototype(
 }
 
 pub inline fn tgRecord(
-  self: *Self,
-  pos: Position,
+  self  : *Self,
+  pos   : Position,
   fields: *Node,
 ) !*Node.tg.Record {
   return &(try self.node(pos, .{.gen_record = .{
@@ -327,9 +319,9 @@ pub inline fn tgRecord(
 }
 
 pub inline fn tgTextual(
-  self: *Self,
-  pos: Position,
-  categories: []Node.Varargs.Item,
+  self         : *Self,
+  pos          : Position,
+  categories   : []Node.Varargs.Item,
   include_chars: ?*Node,
   exclude_chars: ?*Node,
 ) !*Node.tg.Textual {
@@ -342,8 +334,8 @@ pub inline fn tgTextual(
 }
 
 pub inline fn tgUnique(
-  self: *Self,
-  pos: Position,
+  self  : *Self,
+  pos   : Position,
   params: ?*Node,
 ) !*Node.tg.Unique {
   return &(try self.node(
@@ -351,8 +343,8 @@ pub inline fn tgUnique(
 }
 
 pub inline fn uAccess(
-  self: *Self,
-  pos: Position,
+  self   : *Self,
+  pos    : Position,
   content: Node.UnresolvedAccess,
 ) !*Node.UnresolvedAccess {
   return &(try self.node(
@@ -360,8 +352,8 @@ pub inline fn uAccess(
 }
 
 pub inline fn uCall(
-  self: *Self,
-  pos: Position,
+  self   : *Self,
+  pos    : Position,
   content: Node.UnresolvedCall,
 ) !*Node.UnresolvedCall {
   return &(try self.node(
@@ -369,8 +361,8 @@ pub inline fn uCall(
 }
 
 pub inline fn uSymref(
-  self: *Self,
-  pos: Position,
+  self   : *Self,
+  pos    : Position,
   content: Node.UnresolvedSymref,
 ) !*Node.UnresolvedSymref {
   return &(try self.node(
