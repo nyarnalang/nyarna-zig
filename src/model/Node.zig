@@ -259,6 +259,23 @@ pub const Varargs = struct {
   }
 };
 
+pub const Varmap = struct {
+  pub const Item = struct {
+    key: union(enum) {
+      implicit: *Literal,
+      direct,
+    },
+    value: *Node,
+  };
+
+  t      : *Type.Map,
+  content: std.ArrayListUnmanaged(Item) = .{},
+
+  pub inline fn node(self: *@This()) *Node {
+    return Node.parent(self);
+  }
+};
+
 /// special node for the sole purpose of setting a variable's type later.
 /// variables must be established immediately so that references to their
 /// symbol can be resolved before the symbol goes out of scope. However, the
@@ -320,6 +337,7 @@ pub const tg = struct {
     backend : *Node,
     min     : ?*Node,
     max     : ?*Node,
+    suffixes: *Value.Map,
     pub inline fn node(self: *@This()) *Node {return Node.parent(self);}
   };
   pub const Optional = struct {
@@ -393,6 +411,7 @@ pub const Data = union(enum) {
   unresolved_call  : UnresolvedCall,
   unresolved_symref: UnresolvedSymref,
   varargs          : Varargs,
+  varmap           : Varmap,
   vt_setter        : VarTypeSetter,
   poison,
   void,
@@ -435,6 +454,7 @@ fn parent(it: anytype) *Node {
     UnresolvedCall   => offset(Data, "unresolved_call"),
     UnresolvedSymref => offset(Data, "unresolved_symref"),
     Varargs          => offset(Data, "varargs"),
+    Varmap           => offset(Data, "varmap"),
     VarTypeSetter    => offset(Data, "vt_setter"),
     else => unreachable
   };

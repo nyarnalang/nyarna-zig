@@ -115,6 +115,22 @@ pub const Varargs = struct {
   }
 };
 
+pub const Varmap = struct {
+  pub const Item = struct {
+    key: union(enum) {
+      value: *Value,
+      direct,
+    },
+    value: *Expression,
+  };
+
+  items: []Item,
+
+  pub fn expr(self: *@This()) *Expression {
+    return Expression.parent(self);
+  }
+};
+
 /// retrieval of a variable's value
 pub const VarRetrieval = struct {
   variable: *Symbol.Variable,
@@ -135,6 +151,15 @@ pub const tg = struct {
 
   pub const List = struct {
     inner: *Expression,
+
+    pub inline fn expr(self: *@This()) *Expression {
+      return Expression.parent(self);
+    }
+  };
+
+  pub const Map = struct {
+    key: *Expression,
+    value: *Expression,
 
     pub inline fn expr(self: *@This()) *Expression {
       return Expression.parent(self);
@@ -171,11 +196,13 @@ pub const Data = union(enum) {
   sequence     : Sequence,
   tg_concat    : tg.Concat,
   tg_list      : tg.List,
+  tg_map       : tg.Map,
   tg_optional  : tg.Optional,
   tg_sequence  : tg.Sequence,
   var_retrieval: VarRetrieval,
   value        : *Value,
   varargs      : Varargs,
+  varmap       : Varmap,
   poison, void,
 };
 
@@ -197,10 +224,12 @@ fn parent(it: anytype) *Expression {
     Sequence      => offset(Data, "sequence"),
     tg.Concat     => offset(Data, "tg_concat"),
     tg.List       => offset(Data, "tg_list"),
+    tg.Map        => offset(Data, "tg_map"),
     tg.Optional   => offset(Data, "tg_optional"),
     tg.Sequence   => offset(Data, "sequence"),
     VarRetrieval  => offset(Data, "var_retrieval"),
     Varargs       => offset(Data, "varargs"),
+    Varmap        => offset(Data, "varmap"),
     else => unreachable
   };
   return @fieldParentPtr(Expression, "data", @intToPtr(*Data, addr));

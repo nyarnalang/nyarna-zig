@@ -86,6 +86,8 @@ pub const SignatureMapper = struct {
   filled: []bool,
   intpr: *Interpreter,
   ns: u15,
+  /// used for arguments captured by varmap parameter
+  last_key: *model.Node.Literal = undefined,
 
   pub fn init(
     intpr: *Interpreter,
@@ -144,13 +146,24 @@ pub const SignatureMapper = struct {
         self.cur_pos = null;
         for (self.signature.parameters) |p, i| {
           const index = @intCast(u21, i);
-          if ((!self.varmapAt(index) or input == .direct) and
-              std.mem.eql(u8, name, p.name)) {
+          if (std.mem.eql(u8, name, p.name)) {
             if (p.capture == .varargs) self.cur_pos = index;
             try self.checkFrameRoot(p.spec.t);
-            return Mapper.Cursor{.param = .{.index = index},
-              .config = flag == .block_with_config, .direct = input == .direct};
+            return Mapper.Cursor{
+              .param = .{.index = index},
+              .config = flag == .block_with_config,
+              .direct = input == .direct,
+            };
           }
+        }
+        if (self.signature.varmap) |index| {
+          self.last_key = try self.intpr.node_gen.literal(
+            pos, .{.kind = .text, .content = name});
+          return Mapper.Cursor{
+            .param = .{.index = index},
+            .config = flag == .block_with_config,
+            .direct = input == .direct,
+          };
         }
         self.intpr.ctx.logger.UnknownParameter(pos, name);
         return null;
@@ -206,10 +219,10 @@ pub const SignatureMapper = struct {
   }
 
   fn addToVarargs(
-    self: *SignatureMapper,
-    index: usize,
-    t: model.Type,
-    arg: *model.Node,
+    self  : *SignatureMapper,
+    index : usize,
+    t     : model.Type,
+    arg   : *model.Node,
     direct: bool,
   ) !void {
     const vnode = if (self.filled[index]) (
@@ -222,6 +235,28 @@ pub const SignatureMapper = struct {
     };
     try vnode.content.append(
       self.intpr.allocator, .{.direct = direct, .node = arg});
+    vnode.node().pos = vnode.node().pos.span(arg.pos);
+  }
+
+  fn addToVarmap(
+    self  : *SignatureMapper,
+    index : usize,
+    t     : *model.Type.Map,
+    arg   : *model.Node,
+    direct: bool,
+  ) !void {
+    const vnode = if (self.filled[index]) (
+      &self.args[index].data.varmap
+    ) else blk: {
+      const varmap = try self.intpr.node_gen.varmap(arg.pos, t);
+      self.args[index] = varmap.node();
+      self.filled[index] = true;
+      break :blk varmap;
+    };
+    try vnode.content.append(self.intpr.allocator, .{
+      .key = if (direct) .direct else .{.implicit = self.last_key},
+      .value = arg,
+    });
     vnode.node().pos = vnode.node().pos.span(arg.pos);
   }
 
@@ -275,8 +310,11 @@ pub const SignatureMapper = struct {
       }
       break :blk content;
     };
-    if (self.varmapAt(at.param.index)) unreachable // TODO
-    else switch (param.capture) {
+    if (self.varmapAt(at.param.index)) {
+      try self.addToVarmap(
+        at.param.index, &param.spec.t.structural.map, arg, at.direct);
+      return;
+    } else switch (param.capture) {
       .varargs => {
         try self.addToVarargs(at.param.index, param.spec.t, arg, at.direct);
         return;
@@ -304,9 +342,13 @@ pub const SignatureMapper = struct {
           .structural => |strct| switch (strct.*) {
             .optional, .concat, .sequence =>
               try self.intpr.node_gen.@"void"(pos),
-            .list => if (param.capture == .varargs)
-                (try self.intpr.node_gen.varargs(pos, param.spec.t)).node()
-              else null,
+            .list => if (param.capture == .varargs) (
+              try self.intpr.node_gen.varargs(pos, param.spec.t)
+            ).node() else null,
+            .map => if (self.signature.varmap) |vi| if (vi == i) (
+              try self.intpr.node_gen.varmap(
+                pos, &param.spec.t.structural.map)
+            ).node() else null else null,
             else => null,
           },
           .named => |named| switch (named.data) {

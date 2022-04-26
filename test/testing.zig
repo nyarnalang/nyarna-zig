@@ -491,6 +491,17 @@ const AstEmitter = struct {
         }
         try varargs.pop();
       },
+      .varmap => |vm| {
+        const varmap = try self.push("VARMAP");
+        for (vm.content.items) |item| {
+          switch (item.key) {
+            .implicit => |lit| try self.emitLine(">KEY {s}", .{lit.content}),
+            .direct => try self.emitLine(">DIRECT", .{}),
+          }
+          try self.process(item.value);
+        }
+        try varmap.pop();
+      },
       .vt_setter => |vs| {
         const setter = try self.push("VT_SETTER");
         try self.emitLine("=VARIABLE {s}", .{vs.v.sym().name});
@@ -597,6 +608,12 @@ const AstEmitter = struct {
         try self.processExpr(tgl.inner);
         try l.pop();
       },
+      .tg_map => |tgm| {
+        const m = try self.push("TG_MAP");
+        try self.processExpr(tgm.key);
+        try self.processExpr(tgm.value);
+        try m.pop();
+      },
       .tg_optional => |tgo| {
         const o = try self.push("TG_OPTIONAL");
         try self.processExpr(tgo.inner);
@@ -633,6 +650,21 @@ const AstEmitter = struct {
           try self.processExpr(item.expr);
         }
         try varargs.pop();
+      },
+      .varmap => |vm| {
+        const varmap = try self.push("VARMAP");
+        for (vm.items) |item| {
+          switch (item.key) {
+            .direct => try self.emitLine(">DIRECT", .{}),
+            .value => |key| {
+              try self.emitLine(">KEY", .{});
+              try self.processValue(key);
+              try self.emitLine(">VALUE", .{});
+            },
+          }
+          try self.processExpr(item.value);
+        }
+        try varmap.pop();
       },
       .var_retrieval => |v| {
         try self.emitLine("=GETVAR {s}", .{v.variable.sym().name});

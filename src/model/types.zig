@@ -139,8 +139,8 @@ pub const List = struct {
 
 /// Map type with a key and a value type.
 pub const Map = struct {
-  key: Type,
-  value: Type,
+  key  : model.Type,
+  value: model.Type,
 
   pub inline fn pos(self: *@This()) Position {
     return Structural.pos(self);

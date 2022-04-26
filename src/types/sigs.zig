@@ -158,6 +158,14 @@ pub const SigBuilder = struct {
         self.val.primary = self.next_param;
       }
     }
+    if (loc.varmap) |v| {
+      if (self.val.varmap) |vindex| {
+        self.ctx.logger.DuplicateFlag(
+          "varmap", v, self.val.parameters[vindex].pos);
+      } else {
+        self.val.varmap = self.next_param;
+      }
+    }
     if (loc.header) |bh| {
       if (bh.swallow_depth) |depth| {
         if (self.val.auto_swallow) |as| {

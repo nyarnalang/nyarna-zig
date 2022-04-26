@@ -168,12 +168,30 @@ pub const Lattice = struct {
   const StructuralHashMap = std.HashMapUnmanaged(
     model.Type, *model.Type.Structural, model.Type.HashContext,
     std.hash_map.default_max_load_percentage);
+  const Entry = struct {
+    key  : model.Type,
+    value: model.Type,
+  };
+  const EntryHashContext = struct {
+    pub fn hash(_: EntryHashContext, e: Entry) u64 {
+      return model.Type.HashContext.hash(undefined, e.key) +%
+        model.Type.HashContext.hash(undefined, e.value);
+    }
+
+    pub fn eql(_: EntryHashContext, a: Entry, b: Entry) bool {
+      return a.key.eql(b.key) and a.value.eql(b.value);
+    }
+  };
+  const EntryHashMap = std.HashMapUnmanaged(
+    Entry, *model.Type.Structural, EntryHashContext,
+    std.hash_map.default_max_load_percentage);
 
   /// allocator used for data of structural types
   allocator: std.mem.Allocator,
-  optionals: StructuralHashMap,
-  concats  : StructuralHashMap,
-  lists    : StructuralHashMap,
+  optionals: StructuralHashMap = .{},
+  concats  : StructuralHashMap = .{},
+  lists    : StructuralHashMap = .{},
+  maps     : EntryHashMap = .{},
   /// this is the list type that contains itself. This is a special case and the
   /// only pure structural self-referential type structure (i.e. the only
   /// recursive type that is composed of nothing but structural types).
@@ -224,10 +242,10 @@ pub const Lattice = struct {
   /// multiple times, therefore the worst-case discovery time is O(nm). It is
   /// assumed that this is fine.
   prefix_trees: struct {
-    intersection: TreeNode(void),
-    sequence    : TreeNode(void),
-    callable    : TreeNode(bool),
-  },
+    intersection: TreeNode(void) = .{},
+    sequence    : TreeNode(void) = .{},
+    callable    : TreeNode(bool) = .{},
+  } = .{},
   /// Constructors for all unique types and prototypes that have constructors.
   /// These are to be queried via typeConstructor() and prototypeConstructor().
   ///
@@ -306,15 +324,7 @@ pub const Lattice = struct {
   pub fn init(ctx: nyarna.Context) !Lattice {
     var ret = Lattice{
       .allocator = ctx.global(),
-      .optionals = .{},
-      .concats = .{},
-      .lists = .{},
       .self_ref_list = try ctx.global().create(model.Type.Structural),
-      .prefix_trees = .{
-        .intersection = .{},
-        .sequence     = .{},
-        .callable     = .{},
-      },
       .constructors = .{}, // set later by loading the intrinsic lib
       .predefined = undefined,
       .system = undefined,
@@ -1004,6 +1014,46 @@ pub const Lattice = struct {
       };
     }
     return res.value_ptr.*.typedef();
+  }
+
+  pub fn map(
+    self: *Self,
+    key: model.Type,
+    value: model.Type,
+  ) std.mem.Allocator.Error!?model.Type {
+    switch (key) {
+      .named => |named| switch (named.data) {
+        .literal, .textual, .int, .float, .@"enum" => {},
+        else => return null,
+      },
+      .structural => return null,
+    }
+    const e = Entry{.key = key, .value = value};
+    const res = try self.maps.getOrPut(self.allocator, e);
+    if (!res.found_existing) {
+      const struc = try self.allocator.create(model.Type.Structural);
+      struc.* = .{.map = .{
+        .key = key,
+        .value = value,
+      }};
+      res.value_ptr.* = struc;
+    }
+    return res.value_ptr.*.typedef();
+  }
+
+  pub fn registerMap(self: *Self, t: *model.Type.Map) !bool {
+    switch (t.key) {
+      .named => |named| switch (named.data) {
+        .literal, .textual, .int, .float, .@"enum" => {},
+        else => return false,
+      },
+      .structural => return false,
+    }
+    const res = try self.maps.getOrPut(
+      self.allocator, Entry{.key = t.key, .value = t.value});
+    std.debug.assert(!res.found_existing);
+    res.value_ptr.* = t.typedef().structural;
+    return true;
   }
 
   /// returns the type of the given type if it was a Value.

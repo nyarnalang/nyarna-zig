@@ -196,6 +196,7 @@ fn previousOccurence(
     .CannotAssignToConst => " is constant and cannot be assigned to",
     .DuplicateEnumValue => " occurs multiple times",
     .MultipleModuleKinds => " has already been set",
+    .DuplicateMappingKey => " has been seen previously",
   };
 
   const entity_name: []const u8 = switch (id) {
@@ -209,6 +210,7 @@ fn previousOccurence(
     .CannotAssignToConst => "variable",
     .DuplicateEnumValue => "enum value",
     .MultipleModuleKinds => "module kind",
+    .DuplicateMappingKey => "key",
   };
 
   const prev_kind: []const u8 = switch (id) {
@@ -220,7 +222,7 @@ fn previousOccurence(
     .DuplicateSymbolName => "symbol definition",
     .MissingEndCommand => "here",
     .CannotAssignToConst => "variable definition",
-    .DuplicateEnumValue => "first seen",
+    .DuplicateEnumValue, .DuplicateMappingKey => "first seen",
     .MultipleModuleKinds => "set",
   };
 
@@ -293,6 +295,9 @@ fn typeError(
     },
     .InvalidDirectSequenceType => {
       self.renderError("invalid direct type for Sequence: '{}'", .{main});
+    },
+    .InvalidMappingKeyType => {
+      self.renderError("cannot use type as mapping key: '{}'", .{main});
     },
     .NonEmptyAfterNonSequentiable => {
       self.renderError("expression would force a sequence", .{});

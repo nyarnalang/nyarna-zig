@@ -1231,6 +1231,74 @@ pub const Interpreter = struct {
     return vexpr;
   }
 
+  fn tryInterpretVarmap(
+    self: *Interpreter,
+    vm: *model.Node.Varmap,
+    stage: Stage,
+  ) nyarna.Error!?*model.Expression {
+    var seen_poison = false;
+    var seen_unfinished = false;
+    for (vm.content.items) |item| {
+      if (try self.tryInterpret(item.value, stage)) |expr| {
+        if (expr.expected_type.isNamed(.poison)) seen_poison = true;
+        item.value.data = .{.expression = expr};
+      } else seen_unfinished = true;
+    }
+    if (seen_unfinished) {
+      return if (stage.kind == .keyword or stage.kind == .final)
+        try self.ctx.createValueExpr(
+          try self.ctx.values.poison(vm.node().pos))
+      else null;
+    } else if (seen_poison) {
+      return try self.ctx.createValueExpr(
+        try self.ctx.values.poison(vm.node().pos));
+    }
+    const items = try self.ctx.global().alloc(
+      model.Expression.Varmap.Item, vm.content.items.len);
+    for (vm.content.items) |item, index| {
+      items[index] = switch (item.key) {
+        .implicit => |name| blk: {
+          const pos = name.node().pos;
+          const key = switch (vm.t.key.named.data) {
+            .literal => (
+              try self.ctx.values.textScalar(
+                pos, vm.t.key, try self.ctx.global().dupe(u8, name.content))
+            ).value(),
+            .textual => |*txt| ((
+              try self.ctx.textFromString(
+                pos, try self.ctx.global().dupe(u8, name.content), txt)
+            ) orelse continue).value(),
+            .int => |*int| ((
+              try self.ctx.intFromText(
+                pos, try self.ctx.global().dupe(u8, name.content), int)
+            ) orelse continue).value(),
+            .float => |*fl| ((
+              try self.ctx.floatFromText(
+                pos, try self.ctx.global().dupe(u8, name.content), fl)
+            ) orelse continue).value(),
+            .@"enum" => |*en| if (
+              try self.ctx.enumFrom(pos, name.content, en)
+            ) |ev| ev.value() else continue,
+            else => unreachable,
+          };
+          break :blk
+            .{.key = .{.value = key}, .value = item.value.data.expression};
+        },
+        .direct => .{.key = .direct, .value = item.value.data.expression},
+      };
+    }
+
+    const vexpr = try self.ctx.global().create(model.Expression);
+    vexpr.* = .{
+      .pos = vm.node().pos,
+      .expected_type = vm.t.typedef(),
+      .data = .{.varmap = .{
+        .items = items,
+      }},
+    };
+    return vexpr;
+  }
+
   fn tryInterpretVarTypeSetter(
     self: *Interpreter,
     vs: *model.Node.VarTypeSetter,
@@ -1600,7 +1668,84 @@ pub const Interpreter = struct {
     gm: *model.Node.tg.Map,
     stage: Stage,
   ) nyarna.Error!?*model.Expression {
-    _ = self; _ = gm; _ = stage; unreachable;
+    var inner_t: [2]model.SpecType = undefined;
+    var inner_e = [2]?*model.Expression{null, null};
+    var seen_poison = false;
+    var seen_unfinished = false;
+    var seen_expr = false;
+    for ([_]*model.Node{gm.key, gm.value}) |item, index| {
+      inner_t[index] = switch (try self.tryGetType(item, stage)) {
+        .finished, .unfinished => |t| t.at(item.pos),
+        .expression => |expr| blk: {
+          inner_e[index] = expr;
+          switch (expr.data) {
+            .value => |val| switch (val.data) {
+              .@"type" => |tv| break :blk tv.t.at(item.pos),
+              .poison => {
+                seen_poison = true;
+                continue;
+              },
+              else => unreachable,
+            },
+            else => {
+              seen_expr = true;
+              continue;
+            },
+          }
+        },
+        .unavailable => {
+          seen_unfinished = true;
+          continue;
+        },
+        .failed => {
+          seen_poison = true;
+          continue;
+        }
+      };
+    }
+    if (seen_poison) {
+      return try self.ctx.createValueExpr(
+        try self.ctx.values.poison(gm.node().pos));
+    } else if (seen_unfinished) return null;
+
+    if (seen_expr) {
+      for (inner_e) |*target, index| {
+        if (target.* == null) target.* = try self.ctx.createValueExpr((
+            try self.ctx.values.@"type"(inner_t[index].pos, inner_t[index].t)
+        ).value());
+      }
+      const expr = try self.ctx.global().create(model.Expression);
+      expr.* = .{
+        .pos = gm.node().pos,
+        .expected_type = self.ctx.types().@"type"(),
+        .data = .{.tg_map = .{
+          .key = inner_e[0].?,
+          .value = inner_e[1].?,
+        }},
+      };
+      return expr;
+    }
+
+    const ret = if (gm.generated) |target| blk: {
+      target.* = .{.map = .{
+        .key = inner_t[0].t,
+        .value = inner_t[1].t,
+      }};
+      if (try self.ctx.types().registerMap(&target.map)) {
+        break :blk (
+          try self.ctx.values.@"type"(gm.node().pos, target.typedef())
+        ).value();
+      } else {
+        self.ctx.logger.InvalidMappingKeyType(inner_t[0..1]);
+        break :blk try self.ctx.values.poison(gm.node().pos);
+      }
+    } else if (try self.ctx.types().map(inner_t[0].t, inner_t[1].t)) |t|
+      (try self.ctx.values.@"type"(gm.node().pos, t)).value()
+    else blk: {
+      self.ctx.logger.InvalidMappingKeyType(inner_t[0..1]);
+      break :blk try self.ctx.values.poison(gm.node().pos);
+    };
+    return try self.ctx.createValueExpr(ret);
   }
 
   fn doGenNumeric(
@@ -2263,6 +2408,7 @@ pub const Interpreter = struct {
       .unresolved_call   => |*uc| self.tryInterpretUCall(uc, stage),
       .unresolved_symref => |*us| self.tryInterpretURef(us, stage),
       .varargs           => |*va| self.tryInterpretVarargs(va, stage),
+      .varmap            => |*vm| self.tryInterpretVarmap(vm, stage),
       .vt_setter         => |*vs| self.tryInterpretVarTypeSetter(vs, stage),
       .void, .poison => {
         const expr = try self.ctx.global().create(model.Expression);
@@ -2523,6 +2669,7 @@ pub const Interpreter = struct {
         };
       },
       .varargs => |*varargs| return varargs.t,
+      .varmap  => |*varmap| return varmap.t.typedef(),
       .void => return self.ctx.types().void(),
       .poison => return self.ctx.types().poison(),
     }
@@ -2719,7 +2866,7 @@ pub const Interpreter = struct {
       .gen_enum, .gen_float, .gen_intersection, .gen_list, .gen_map,
       .gen_numeric, .gen_optional, .gen_sequence, .gen_prototype, .gen_record,
       .gen_textual, .gen_unique, .unresolved_access, .unresolved_call,
-      .unresolved_symref, .varargs => {
+      .unresolved_symref, .varargs, .varmap => {
         if (try self.tryInterpret(input, stage)) |expr| {
           if (types.containedScalar(expr.expected_type)) |scalar_type| {
             if (self.ctx.types().lesserEqual(scalar_type, spec.t)) return expr;

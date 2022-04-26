@@ -584,6 +584,59 @@ pub const Evaluator = struct {
     return list.value();
   }
 
+  fn pushIntoMap(
+    self: *Evaluator,
+    map: *model.Value.Map,
+    key: *model.Value,
+    value: *model.Value,
+  ) !void {
+    const res = try map.items.getOrPut(key);
+    if (res.found_existing) {
+      var buffer: [64]u8 = undefined;
+      const repr = switch (key.data) {
+        .text => |*txt| txt.content,
+        .int  => |*int| blk: {
+          const fmt = int.formatter();
+          break :blk std.fmt.bufPrint(&buffer, "{}", .{fmt}) catch unreachable;
+        },
+        .float => |*fl| blk: {
+          const fmt = fl.formatter();
+          break :blk std.fmt.bufPrint(&buffer, "{}", .{fmt}) catch unreachable;
+        },
+        .@"enum" => |*en| en.t.values.entries.items(.key)[en.index],
+        else => unreachable,
+      };
+      self.ctx.logger.DuplicateMappingKey(
+        repr, key.origin, res.key_ptr.*.origin);
+    } else {
+      res.value_ptr.* = value;
+    }
+  }
+
+  fn evalVarmap(
+    self: *Evaluator,
+    varmap: *model.Expression.Varmap,
+  ) nyarna.Error!*model.Value {
+    const map = try self.ctx.values.map(
+      varmap.expr().pos, &varmap.expr().expected_type.structural.map);
+    for (varmap.items) |item| {
+      const val = try self.evaluate(item.value);
+      if (val.data == .poison) continue;
+      switch (item.key) {
+        .direct => {
+          var iter = val.data.map.items.iterator();
+          while (iter.next()) |entry| {
+            try self.pushIntoMap(map, entry.key_ptr.*, entry.value_ptr.*);
+          }
+        },
+        .value => |key| {
+          try self.pushIntoMap(map, key, val);
+        },
+      }
+    }
+    return map.value();
+  }
+
   fn evalGenUnary(
     self: *Evaluator,
     comptime name: []const u8,
@@ -596,6 +649,27 @@ pub const Evaluator = struct {
       .poison => return self.ctx.values.poison(input.expr().pos),
       else => unreachable,
     }
+  }
+
+  fn evalGenMap(
+    self: *Evaluator,
+    input: *model.Expression.tg.Map,
+  ) nyarna.Error!*model.Value {
+    var t: [2]model.Type = undefined;
+    var seen_poison = false;
+    for ([_]*model.Expression{input.key, input.value}) |item, index| {
+      switch ((try self.evaluate(item)).data) {
+        .@"type" => |tv| t[index] = tv.t,
+        .poison => seen_poison = true,
+        else => unreachable,
+      }
+    }
+    if (!seen_poison) if (try self.ctx.types().map(t[0], t[1])) |mt| {
+      return (try self.ctx.values.@"type"(input.expr().pos, mt)).value();
+    } else {
+      self.ctx.logger.InvalidMappingKeyType(&.{t[0].at(input.key.pos)});
+    };
+    return self.ctx.values.poison(input.expr().pos);
   }
 
   fn evalGenSequence(
@@ -667,10 +741,12 @@ pub const Evaluator = struct {
         self.evalGenUnary("concat", tgc, "InvalidInnerConcatType"),
       .tg_list       => |*tgl|
         self.evalGenUnary("list", tgl, "InvalidInnerListType"),
+      .tg_map        => |*tgm| self.evalGenMap(tgm),
       .tg_optional   => |*tgo|
         self.evalGenUnary("optional", tgo, "InvalidInnerOptionalType"),
       .tg_sequence   => |*tsq|        self.evalGenSequence(tsq),
       .varargs       => |*varargs|    self.evalVarargs(varargs),
+      .varmap        => |*varmap|     self.evalVarmap(varmap),
       .var_retrieval => |*var_retr|   var_retr.variable.curPtr().*,
       .poison        =>               return self.ctx.values.poison(expr.pos),
       .void          =>               return self.ctx.values.void(expr.pos),

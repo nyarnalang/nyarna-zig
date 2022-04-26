@@ -267,13 +267,16 @@ pub const Prototypes = lib.Provider.Wrapper(struct {
   }
 
   pub fn @"Numeric"(
-    intpr  : *Interpreter,
-    pos    : model.Position,
-    backend: *model.Node,
-    min    : ?*model.Node,
-    max    : ?*model.Node,
+    intpr   : *Interpreter,
+    pos     : model.Position,
+    backend : *model.Node,
+    min     : ?*model.Node,
+    max     : ?*model.Node,
+    suffixes: *model.Value.Map,
   ) nyarna.Error!*model.Node {
-    return (try intpr.node_gen.tgNumeric(pos, backend, min, max)).node();
+    return (
+      try intpr.node_gen.tgNumeric(pos, backend, min, max, suffixes)
+    ).node();
   }
 
   pub fn @"Optional"(

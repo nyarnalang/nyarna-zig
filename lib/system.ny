@@ -129,6 +129,7 @@
   Numeric = \prototype:
     backend : \Ast
     min, max: \Optional(\Ast)
+    suffixes: \Map(\Literal, \Ast) {varmap}
   :constructor:
     input: \Literal {primary}
   :funcs:

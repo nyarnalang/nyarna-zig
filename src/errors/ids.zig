@@ -94,7 +94,7 @@ pub const PreviousOccurenceError = enum {
   DuplicateBlockHeader, IncompatibleFlag, DuplicateAutoSwallow,
   DuplicateParameterArgument, MissingParameterArgument, DuplicateSymbolName,
   MissingEndCommand, CannotAssignToConst, DuplicateEnumValue,
-  MultipleModuleKinds,
+  MultipleModuleKinds, DuplicateMappingKey,
 };
 
 pub const PositionChainError = enum {
@@ -122,6 +122,8 @@ pub const TypeError = enum {
    InvalidInnerSequenceType,
    /// gives one type.
    InvalidDirectSequenceType,
+   /// gives one type.
+   InvalidMappingKeyType,
    /// gives two types: first the one currently given, then the previous one.
    NonEmptyAfterNonSequentiable,
    /// gives one type.

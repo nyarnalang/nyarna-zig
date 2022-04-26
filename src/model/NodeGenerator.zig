@@ -254,17 +254,19 @@ pub inline fn tgMap(
 }
 
 pub inline fn tgNumeric(
-  self   : *Self,
-  pos    : Position,
-  backend: *Node,
-  min    : ?*Node,
-  max    : ?*Node,
+  self    : *Self,
+  pos     : Position,
+  backend : *Node,
+  min     : ?*Node,
+  max     : ?*Node,
+  suffixes: *Value.Map,
 ) !*Node.tg.Numeric {
   return &(try self.node(
     pos, .{.gen_numeric = .{
       .backend = backend,
       .min = min,
       .max = max,
+      .suffixes = suffixes,
     }},
   )).data.gen_numeric;
 }
@@ -372,6 +374,11 @@ pub inline fn uSymref(
 pub inline fn varargs(self: *Self, pos: Position, t: Type) !*Node.Varargs {
   return &(try self.node(
     pos, .{.varargs = .{.t = t}})).data.varargs;
+}
+
+pub inline fn varmap(self: *Self, pos: Position, t: *Type.Map) !*Node.Varmap {
+  return &(try self.node(
+    pos, .{.varmap = .{.t = t}})).data.varmap;
 }
 
 pub inline fn vtSetter(self: *Self, v: *Symbol.Variable, n: *Node) !*Node {
