@@ -1756,6 +1756,17 @@ pub const Interpreter = struct {
   ) nyarna.Error!?*model.Expression {
     var seen_poison = false;
     var seen_unfinished = false;
+    var iter = gn.suffixes.items.iterator();
+    while (iter.next()) |entry| switch (
+      parse.LiteralNumber.from(entry.value_ptr.*.data.text.content)
+    ) {
+      .too_large => self.ctx.logger.NumberTooLarge(
+        entry.value_ptr.*.origin, entry.value_ptr.*.data.text.content),
+      .invalid => self.ctx.logger.InvalidNumber(
+        entry.value_ptr.*.origin, entry.value_ptr.*.data.text.content),
+      .success => |num| try builder.unit(
+        entry.value_ptr.*.origin, num, entry.key_ptr.*.data.text.content),
+    };
     for ([_]?*model.Node{gn.min, gn.max}) |e, index| if (e) |item| {
       if (
         try self.associate(
@@ -1784,6 +1795,7 @@ pub const Interpreter = struct {
         }
       } else seen_unfinished = true;
     };
+
     if (seen_unfinished) {
       builder.abort();
       return null;

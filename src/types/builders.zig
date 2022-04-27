@@ -9,7 +9,7 @@ const Lattice  = @import("../types.zig").Lattice;
 const LiteralNumber = @import("../parse.zig").LiteralNumber;
 
 const totalOrderLess = @import("helpers.zig").totalOrderLess;
-const gcd            = @import("helpers.zig").gcd;
+const gcd            = @import("../helpers.zig").gcd;
 
 pub const EnumBuilder = struct {
   const Self = @This();
@@ -231,7 +231,7 @@ pub const IntNumBuilder = struct {
       self.ctx.logger.FactorMustntBeNegative(pos, factor.repr);
       return;
     }
-    for (self.units) |item, index| {
+    for (self.units.items) |item, index| {
       if (std.mem.eql(u8, item.suffix, suffix)) {
         self.ctx.logger.DuplicateSuffix(
           suffix, pos, self.positions.items[index]);
@@ -239,8 +239,9 @@ pub const IntNumBuilder = struct {
       }
     }
     var actual = factor;
-    var actual_cur = self.cur;
-    while (actual.decimals > 0 and actual_cur % 10 == 0) {
+    var actual_cur = self.cur_factor;
+    // TODO: gcd?
+    while (actual.decimals > 0 and @mod(actual_cur, 10) == 0) {
       actual_cur = @divExact(actual_cur, 10);
       actual.decimals -= 1;
     }
@@ -251,9 +252,9 @@ pub const IntNumBuilder = struct {
     }
     if (actual.decimals > 0) {
       const target = std.math.pow(i64, 10, actual.decimals);
-      const x = actual.value % target;
+      const x = @mod(actual.value, target);
       const additional = gcd(target, x);
-      for (self.units) |*item, index| {
+      for (self.units.items) |*item, index| {
         if (@mulWithOverflow(i64, item.factor, additional, &item.factor)) {
           self.ctx.logger.FactorsTooFarApart(
             factor.repr, pos, self.positions.items[index]);
@@ -349,6 +350,31 @@ pub const FloatNumBuilder = struct {
       }},
     };
     return Self{.ctx = ctx, .ret = &named.data.float, .pos = pos};
+  }
+
+  pub fn unit(
+    self: *Self,
+    pos: model.Position,
+    factor: LiteralNumber,
+    suffix: []const u8,
+  ) !void {
+    if (factor.value < 0) {
+      self.ctx.logger.FactorMustntBeNegative(pos, factor.repr);
+      return;
+    }
+    for (self.units.items) |item, index| {
+      if (std.mem.eql(u8, item.suffix, suffix)) {
+        self.ctx.logger.DuplicateSuffix(
+          suffix, pos, self.positions.items[index]);
+        return;
+      }
+    }
+    const divisor = std.math.pow(f64, 10, @intToFloat(f64, factor.decimals));
+    try self.units.append(self.ctx.global(), .{
+      .suffix = suffix,
+      .factor = @intToFloat(f64, factor.value) / divisor,
+    });
+    try self.positions.append(self.ctx.local(), pos);
   }
 
   pub fn min(self: *Self, num: LiteralNumber, pos: model.Position) void {
