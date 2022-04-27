@@ -18,3 +18,14 @@ pub fn stringOrder(lhs: []const u8, rhs: []const u8) std.math.Order {
     if (order != .eq) return order;
   } else return std.math.order(i, rhs.len);
 }
+
+pub fn gcd(a: i64, b: i64) i64 {
+  var x = a;
+  var y = b;
+  while (x > 0) {
+    var t = x;
+    x = @mod(y, x);
+    y = t;
+  }
+  return y;
+}

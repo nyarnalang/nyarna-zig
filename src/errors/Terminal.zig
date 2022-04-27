@@ -146,6 +146,9 @@ fn scalarError(
     .NumberTooLarge        => "numeric literal has too many digits",
     .TooManyDecimals       => "numeric literal has too many decimal digits",
     .InvalidDecimals       => "not an integer between 0 and 32",
+    .FactorMustntBeNegative=> "factor must not be negative",
+    .MustHaveDefinedSuffix =>
+      "must have one of the defined suffixes (given: no or unknown suffix)",
   };
   self.renderError("{s}: '{s}'", .{entity, repr});
 }
@@ -180,11 +183,11 @@ fn previousOccurence(
   self.style(.{.bold}, "{s}", .{pos});
 
   const msg: []const u8 = switch (id) {
-    .IsNotANamespaceCharacter => " is not a namespace character",
+    .IsNotANamespaceCharacter   => " is not a namespace character",
     .AlreadyANamespaceCharacter => " is already a namespace character",
-    .DuplicateFlag => " has been seen previously",
+    .DuplicateFlag        => " has been seen previously",
     .DuplicateBlockHeader => " can only be given once per definition",
-    .IncompatibleFlag =>  " is incompatible with previously declared flag",
+    .IncompatibleFlag     =>  " is incompatible with previously declared flag",
     .DuplicateAutoSwallow =>
       " conflicts with another auto-swallow definition",
     .DuplicateParameterArgument =>
@@ -192,11 +195,13 @@ fn previousOccurence(
     .MissingParameterArgument =>
       " has not been given an argument",
     .DuplicateSymbolName => " hides existing symbol",
-    .MissingEndCommand => " is missing and explict end",
+    .MissingEndCommand   => " is missing and explict end",
     .CannotAssignToConst => " is constant and cannot be assigned to",
-    .DuplicateEnumValue => " occurs multiple times",
+    .DuplicateEnumValue  => " occurs multiple times",
     .MultipleModuleKinds => " has already been set",
     .DuplicateMappingKey => " has been seen previously",
+    .DuplicateSuffix     => " is already a suffix",
+    .FactorsTooFarApart  => " is too many magnitudes away",
   };
 
   const entity_name: []const u8 = switch (id) {
@@ -206,11 +211,13 @@ fn previousOccurence(
     .DuplicateAutoSwallow => "swallow def",
     .DuplicateParameterArgument, .MissingParameterArgument => "parameter",
     .DuplicateSymbolName => "symbol",
-    .MissingEndCommand => "command",
+    .MissingEndCommand   => "command",
     .CannotAssignToConst => "variable",
-    .DuplicateEnumValue => "enum value",
+    .DuplicateEnumValue  => "enum value",
     .MultipleModuleKinds => "module kind",
     .DuplicateMappingKey => "key",
+    .DuplicateSuffix     => "suffix",
+    .FactorsTooFarApart  => "factor",
   };
 
   const prev_kind: []const u8 = switch (id) {
@@ -224,6 +231,8 @@ fn previousOccurence(
     .CannotAssignToConst => "variable definition",
     .DuplicateEnumValue, .DuplicateMappingKey => "first seen",
     .MultipleModuleKinds => "set",
+    .DuplicateSuffix     => "suffix defined",
+    .FactorsTooFarApart  => "from this factor",
   };
 
   self.renderError("{s} '{s}'{s}", .{entity_name, repr, msg});
@@ -364,6 +373,11 @@ fn constructionError(
       "character '{s}' is not allowed in type {}", .{repr, t_fmt}),
     .InvalidFloat => self.renderError(
       "cannot parse as {}: '{s}'", .{t_fmt, repr}),
+    .MissingSuffix => self.renderError(
+      "'{s}' has no suffix, must have one of the suffixes of type {}",
+      .{repr, t_fmt}),
+    .UnknownSuffix => self.renderError(
+      "'{s}' is not a known suffix for type {}", .{repr, t_fmt}),
   }
 }
 

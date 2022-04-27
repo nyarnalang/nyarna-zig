@@ -3,7 +3,8 @@ const nyarna = @import("../nyarna.zig");
 
 pub const LiteralNumber = struct {
   value: i64,
-  decimals: usize,
+  decimals: i64,
+  suffix: []const u8,
   repr: []const u8,
 
   pub const Result = union(enum) {
@@ -23,15 +24,16 @@ pub const LiteralNumber = struct {
       else => text,
     };
     if (rest.len == 0) return Result.invalid;
-    var num_decimals: usize = 0;
+    var decimal_start: ?usize = null;
     var cur = rest.ptr;
     const end = rest[rest.len - 1 ..].ptr;
     while (true) : (cur += 1) {
       if (cur[0] == '.') {
-        if (num_decimals != 0 or cur == end) return Result.invalid;
-        num_decimals = @ptrToInt(end) - @ptrToInt(cur);
+        if (decimal_start != null or cur == end) return Result.invalid;
+        decimal_start = @ptrToInt(cur) - @ptrToInt(rest.ptr);
       } else if (cur[0] < '0' or cur[0] > '9') {
-        return Result.invalid;
+        cur -= 1;
+        break;
       } else {
         if (
           @mulWithOverflow(i64, val, 10, &val) or
@@ -42,11 +44,19 @@ pub const LiteralNumber = struct {
       }
       if (cur == end) break;
     }
+    if (@ptrToInt(cur) < @ptrToInt(rest.ptr)) return Result.invalid;
     if (neg) {
       if (@mulWithOverflow(i64, val, -1, &val)) return Result.too_large;
     }
     return Result{
-      .success = .{.value = val, .decimals = num_decimals, .repr = text},
+      .success = .{
+        .value = val,
+        .decimals = if (decimal_start) |start| (
+          @intCast(i64, @ptrToInt(cur - start))
+        ) else 0,
+        .repr = text,
+        .suffix = rest[@ptrToInt(cur) - @ptrToInt(rest.ptr) + 1 ..],
+      },
     };
   }
 };

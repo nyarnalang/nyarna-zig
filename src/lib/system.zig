@@ -451,14 +451,14 @@ pub const Impl = lib.Provider.Wrapper(struct {
               const val: i64 = if (int.min <= 0)
                 if (int.max >= 0) 0 else int.max
               else int.min;
-              const ival = try self.ip.ctx.values.int(vpos, int, val);
+              const ival = try self.ip.ctx.values.int(vpos, int, val, 0);
               return try self.ip.genValueNode(ival.value());
             },
             .float => |*fl| {
               const val: f64 = if (fl.min <= 0)
                 if (fl.max >= 0) 0 else fl.max
               else fl.min;
-              const fval = try self.ip.ctx.values.float(vpos, fl, val);
+              const fval = try self.ip.ctx.values.float(vpos, fl, val, 0);
               return try self.ip.genValueNode(fval.value());
             },
             .@"enum" => |*en| {
@@ -550,7 +550,7 @@ pub const Impl = lib.Provider.Wrapper(struct {
   ) nyarna.Error!*model.Value {
     return (try eval.ctx.values.int(
       pos, &eval.ctx.types().system.natural.named.data.int,
-      @intCast(i64, self.content.len))).value();
+      @intCast(i64, self.content.len), 0)).value();
   }
 
   pub fn @"Numeric::add"(
@@ -611,7 +611,7 @@ pub const Impl = lib.Provider.Wrapper(struct {
   ) nyarna.Error!*model.Value {
     return (try eval.ctx.values.int(
       pos, &eval.ctx.types().system.natural.named.data.int,
-      @intCast(i64, list.content.items.len))).value();
+      @intCast(i64, list.content.items.len), 0)).value();
   }
 
   pub fn @"List::item"(

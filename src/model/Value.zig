@@ -67,22 +67,49 @@ pub const Enum = struct {
 pub const FloatNum = struct {
   t: *const Type.FloatNum,
   content: f64,
+  cur_unit: usize,
 
   pub inline fn value(self: *@This()) *Value {
     return Value.parent(self);
   }
 
+  pub fn formatWithUnit(
+    self        : @This(),
+    unit_index  : usize,
+    max_decimals: usize,
+    decimal_sep : u8,
+    writer      : anytype,
+  ) @TypeOf(writer).Error!void {
+    const unit = self.t.suffixes[unit_index];
+    var out = self.content * unit.factor;
+    try std.fmt.format(writer, "{}", .{std.math.trunc(out)});
+    out = @mod(std.math.fabs(out), 1);
+    if (max_decimals > 0 and out > 0) {
+      try writer.writeByte(decimal_sep);
+      var rem_decimals = max_decimals;
+      while (rem_decimals > 0 and out > 0) : (rem_decimals -= 1) {
+        out *= 10;
+        try std.fmt.format(writer, "{}", .{std.math.trunc(out)});
+        out = @mod(out, 1);
+      }
+    }
+    try writer.writeAll(unit.suffix);
+  }
+
   fn format(
-    self      : *const @This(),
+    self      : @This(),
     comptime _: []const u8,
     _         : std.fmt.FormatOptions,
     writer    : anytype,
   ) @TypeOf(writer).Error!void {
-    // TODO
-    try std.fmt.format(writer, "{}", .{self.content});
+    if (self.t.suffixes.len > 0) {
+      try self.formatWithUnit(self.cur_unit, 2, '.', writer);
+    } else {
+      try std.fmt.format(writer, "{}", .{self.content});
+    }
   }
 
-  pub fn formatter(self: *const @This()) std.fmt.Formatter(format) {
+  pub fn formatter(self: @This()) std.fmt.Formatter(format) {
     return .{.data = self};
   }
 };
@@ -99,9 +126,34 @@ pub const FuncRef = struct {
 pub const IntNum = struct {
   t: *const Type.IntNum,
   content: i64,
+  cur_unit: usize,
 
   pub inline fn value(self: *@This()) *Value {
     return Value.parent(self);
+  }
+
+  pub fn formatWithUnit(
+    self: *const @This(),
+    unit_index: usize,
+    max_decimals: usize,
+    decimal_sep: u8,
+    writer: anytype,
+  ) @TypeOf(writer).Error!void {
+    const unit = self.t.suffixes[unit_index];
+    var trunc = @divTrunc(self.content, unit.factor);
+    try std.fmt.format(writer, "{}", .{trunc});
+    var rem = @rem(self.content, unit.factor);
+    if (max_decimals > 0 and rem != 0) {
+      try writer.writeByte(decimal_sep);
+      var rem_decimals = max_decimals;
+      while (rem != 0 and rem_decimals > 0) : (rem_decimals -= 1) {
+        rem = rem * 10;
+        trunc = @mod(@divTrunc(rem, unit.factor), 10);
+        rem = @rem(rem, unit.factor);
+        try writer.writeByte('0' + @intCast(u8, trunc));
+      }
+    }
+    try writer.writeAll(unit.suffix);
   }
 
   fn format(
@@ -110,14 +162,11 @@ pub const IntNum = struct {
     _         : std.fmt.FormatOptions,
     writer    : anytype,
   ) @TypeOf(writer).Error!void {
-    //const one = std.math.pow(i64, 10, self.t.decimals);
-    //try std.fmt.format(writer, "{}", .{@divTrunc(self.content, one)});
-    //const rest = @mod((std.math.absInt(self.content) catch unreachable), one);
-    //if (rest > 0) {
-    //  try std.fmt.format(writer, ".{}", .{rest});
-    //}
-    // TODO
-    try std.fmt.format(writer, "{}", .{self.content});
+    if (self.t.suffixes.len > 0) {
+      try self.formatWithUnit(self.cur_unit, 2, '.', writer);
+    } else {
+      try std.fmt.format(writer, "{}", .{self.content});
+    }
   }
 
   pub fn formatter(self: *const @This()) std.fmt.Formatter(format) {

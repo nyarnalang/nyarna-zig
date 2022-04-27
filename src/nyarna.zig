@@ -16,6 +16,8 @@ pub const default_stack_size = 1024 * 1024; // 1MB
 const parse = @import("parse.zig");
 const unicode = @import("unicode.zig");
 
+const gcd = @import("helpers.zig").gcd;
+
 pub const Error = error {
   /// occurs when any allocation failed during processing.
   OutOfMemory,
@@ -116,7 +118,7 @@ pub const Globals = struct {
     errdefer backing_allocator.free(ret.stack);
 
     var logger = errors.Handler{.reporter = reporter};
-    var init_ctx = Context{.data = ret, .logger = &logger};
+    var init_ctx = Context{.data = ret, .logger = &logger, .loader = null};
     ret.types = try types.Lattice.init(init_ctx);
     errdefer ret.types.deinit();
     if (logger.count > 0) {
@@ -203,16 +205,18 @@ pub const Context = struct {
   logger: *errors.Handler,
   /// public interface for generating values.
   values: model.ValueGenerator = .{},
+  /// set if this is a static context that has a module loader. null if this is
+  /// a runtime context.
+  loader: ?*ModuleLoader,
 
-  /// search a referenced module. must only be called while interpreting,
-  /// otherwise leads to undefined behavior.
+  /// search a referenced module. can only succeed in static context, otherwise
+  /// always returns null
   pub inline fn searchModule(
     self: *const Context,
     pos: model.Position,
     locator: model.Locator,
   ) !?usize {
-    return @fieldParentPtr(ModuleLoader, "logger", self.logger).searchModule(
-      pos, locator);
+    return if (self.loader) |ml| ml.searchModule(pos, locator) else null;
   }
 
   /// The allocator used for any global data. All data allocated with this
@@ -225,10 +229,10 @@ pub const Context = struct {
 
   /// The allocator used for data local to some processing step. Data allocated
   /// with this is owned by the current ModuleLoader and will be deallocated
-  /// when the module finished loading.
+  /// when the module finished loading. In a runtime context, there is no module
+  /// loader and thus the global allocator will be returned.
   pub inline fn local(self: *const Context) std.mem.Allocator {
-    const loader = @fieldParentPtr(ModuleLoader, "logger", self.logger);
-    return loader.storage.allocator();
+    return if (self.loader) |ml| ml.storage.allocator() else self.global();
   }
 
   /// Interface to the type lattice. It allows you to create and compare types.
@@ -256,16 +260,41 @@ pub const Context = struct {
   /// Create an enum value from a given text. If unsuccessful, logs error and
   /// returns null.
   pub fn enumFrom(
-    self: *const Context,
-    pos: model.Position,
+    self: Context,
+    pos : model.Position,
     text: []const u8,
-    t: *const model.Type.Enum,
+    t   : *const model.Type.Enum,
   ) !?*model.Value.Enum {
     const index = t.values.getIndex(text) orelse {
       self.logger.NotInEnum(pos, t.typedef(), text);
       return null;
     };
     return try self.values.@"enum"(pos, t, index);
+  }
+
+  pub fn applyIntUnit(
+    self  : Context,
+    unit  : model.Type.IntNum.Unit,
+    input : parse.LiteralNumber,
+    pos   : model.Position,
+    target: *i64,
+  ) bool {
+    var divisor = std.math.pow(i64, 10, input.decimals);
+    var factor = unit.factor;
+    const x = gcd(divisor, factor);
+    divisor = @divExact(divisor, x);
+    factor = @divExact(factor, x);
+    if (@mod(input.value, divisor) != 0) {
+      self.logger.InvalidDecimals(pos, input.repr);
+      return false;
+    }
+    if (
+      @mulWithOverflow(
+        i64, @divExact(input.value, divisor), factor, target)
+    ) {
+      self.logger.NumberTooLarge(pos, input.repr);
+      return false;
+    } else return true;
   }
 
   pub fn intFromText(
@@ -277,24 +306,33 @@ pub const Context = struct {
     switch (parse.LiteralNumber.from(text)) {
       .invalid => self.logger.InvalidNumber(pos, text),
       .too_large => self.logger.NumberTooLarge(pos, text),
-      .success => |parsed| {
-        //if (parsed.decimals > t.decimals) {
-        //  self.logger.TooManyDecimalsForType(pos, t.typedef(), text);
-        //  return null;
-        //}
-        //const dec_factor = std.math.pow(
-        //  i64, 10, @intCast(i64, t.decimals - parsed.decimals));
-        //var val: i64 = undefined;
-        //if (@mulWithOverflow(i64, parsed.value, dec_factor, &val)) {
-        //  self.logger.NumberTooLarge(pos, text);
-        //  return null;
-        //}
-        var val: i64 = parsed.value; // TODO
-        if (val < t.min or val > t.max) {
+      .success => |parsed| if (parsed.suffix.len == 0) {
+        if (t.suffixes.len > 0) {
+          self.logger.MissingSuffix(pos, t.typedef(), parsed.repr);
+          return null;
+        }
+        if (parsed.decimals > 0) {
+          self.logger.TooManyDecimalsForType(pos, t.typedef(), parsed.repr);
+          return null;
+        }
+        if (parsed.value < t.min or parsed.value > t.max) {
           self.logger.OutOfRange(pos, t.typedef(), text);
           return null;
         }
-        return try self.values.int(pos, t, val);
+        return try self.values.int(pos, t, parsed.value, 0);
+      } else {
+        for (t.suffixes) |unit, index| {
+          if (std.mem.eql(u8, unit.suffix, parsed.suffix)) {
+            var val: i64 = undefined;
+            if (!self.applyIntUnit(unit, parsed, pos, &val)) return null;
+            if (val < t.min or val > t.max) {
+              self.logger.OutOfRange(pos, t.typedef(), text);
+              return null;
+            }
+            return try self.values.int(pos, t, val, index);
+          }
+        }
+        self.logger.UnknownSuffix(pos, t.typedef(), parsed.suffix);
       }
     }
     return null;
@@ -306,11 +344,21 @@ pub const Context = struct {
     value: i64,
     t    : *const model.Type.IntNum,
   ) !*model.Value {
+    std.debug.assert(t.suffixes.len == 0);
     if (value < t.min or value > t.max) {
       const str = try std.fmt.allocPrint(self.global(), "{}", .{value});
       self.logger.OutOfRange(pos, t.typedef(), str);
       return try self.values.poison(pos);
-    } else return (try self.values.int(pos, t, value)).value();
+    } else return (try self.values.int(pos, t, value, 0)).value();
+  }
+
+  pub fn applyFloatUnit(
+    unit  : model.Type.FloatNum.Unit,
+    input : parse.LiteralNumber,
+  ) f64 {
+    var divisor = std.math.pow(f64, 10, @intToFloat(f64, input.decimals));
+    var factor = unit.factor;
+    return @intToFloat(f64, input.value) * (factor / divisor);
   }
 
   pub fn floatAsValue(
@@ -319,11 +367,12 @@ pub const Context = struct {
     value: f64,
     t    : *const model.Type.FloatNum,
   ) !*model.Value {
+    std.debug.assert(t.suffixes.len == 0);
     if (value < t.min or value > t.max) {
       const str = try std.fmt.allocPrint(self.global(), "{}", .{value});
       self.logger.OutOfRange(pos, t.typedef(), str);
       return try self.values.poison(pos);
-    } else return (try self.values.float(pos, t, value)).value();
+    } else return (try self.values.float(pos, t, value, 0)).value();
   }
 
   pub fn textFromString(
@@ -349,20 +398,40 @@ pub const Context = struct {
   }
 
   pub fn floatFromText(
-    self : Context,
-    pos  : model.Position,
-    input: []const u8,
-    t    : *const model.Type.FloatNum,
+    self: Context,
+    pos : model.Position,
+    text: []const u8,
+    t   : *const model.Type.FloatNum,
   ) !?*model.Value.FloatNum {
-    const val = std.fmt.parseFloat(f64, input) catch {
-      self.logger.InvalidFloat(pos, t.typedef(), input);
-      return null;
-    };
-    if (val < t.min or val > t.max) {
-      self.logger.OutOfRange(pos, t.typedef(), input);
-      return null;
+    switch (parse.LiteralNumber.from(text)) {
+      .invalid => self.logger.InvalidNumber(pos, text),
+      .too_large => self.logger.NumberTooLarge(pos, text),
+      .success => |parsed| if (parsed.suffix.len == 0) {
+        if (t.suffixes.len > 0) {
+          self.logger.MissingSuffix(pos, t.typedef(), parsed.repr);
+          return null;
+        }
+        var val = @intToFloat(f64, parsed.value);
+        if (val < t.min or val > t.max) {
+          self.logger.OutOfRange(pos, t.typedef(), text);
+          return null;
+        }
+        return try self.values.float(pos, t, val, 0);
+      } else {
+        for (t.suffixes) |unit, index| {
+          if (std.mem.eql(u8, unit.suffix, parsed.suffix)) {
+            var val = applyFloatUnit(unit, parsed);
+            if (val < t.min or val > t.max) {
+              self.logger.OutOfRange(pos, t.typedef(), text);
+              return null;
+            }
+            return try self.values.float(pos, t, val, index);
+          }
+        }
+        self.logger.UnknownSuffix(pos, t.typedef(), parsed.suffix);
+      }
     }
-    return try self.values.float(pos, t, val);
+    return null;
   }
 
   pub fn unaryTypeVal(
@@ -405,7 +474,7 @@ pub const Processor = struct {
 
       var logger = errors.Handler{.reporter = self.globals.reporter};
       const root = try (
-        Context{.data = self.globals, .logger = &logger}
+        Context{.data = self.globals, .logger = &logger, .loader = null}
       ).evaluator().evaluateRootModule(module);
       if (logger.count > 0) {
         self.deinit();

@@ -92,7 +92,7 @@ pub const ModuleLoader = struct {
   }
 
   inline fn ctx(self: *ModuleLoader) Context {
-    return Context{.data = self.data, .logger = &self.logger};
+    return Context{.data = self.data, .logger = &self.logger, .loader = self};
   }
 
   /// deallocates the loader and its owned data.

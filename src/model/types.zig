@@ -74,8 +74,14 @@ pub const Enum = struct {
 /// A Numeric type with float backend.
 /// has a minimum value and a maximum value.
 pub const FloatNum = struct {
+  pub const Unit = struct {
+    suffix: []const u8,
+    factor: f64,
+  };
+
   min: f64,
   max: f64,
+  suffixes: []Unit,
 
   pub inline fn pos(self: *@This()) Position {
     return Named.pos(self);
@@ -108,8 +114,14 @@ pub const Intersection = struct {
 /// A Numeric type with integer backend.
 /// has a minimum value and a maximum value.
 pub const IntNum = struct {
+  pub const Unit = struct {
+    suffix: []const u8,
+    factor: i64,
+  };
+
   min: i64,
   max: i64,
+  suffixes: []Unit,
 
   pub inline fn pos(self: *@This()) Position {
     return Named.pos(self);

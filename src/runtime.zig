@@ -166,6 +166,7 @@ pub const Evaluator = struct {
                             // that the value adheres to the target
                             // type's constraints
             .content = ns,
+            .cur_unit = undefined,
           },
         },
         .origin = undefined,

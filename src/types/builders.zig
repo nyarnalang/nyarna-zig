@@ -9,6 +9,7 @@ const Lattice  = @import("../types.zig").Lattice;
 const LiteralNumber = @import("../parse.zig").LiteralNumber;
 
 const totalOrderLess = @import("helpers.zig").totalOrderLess;
+const gcd            = @import("helpers.zig").gcd;
 
 pub const EnumBuilder = struct {
   const Self = @This();
@@ -198,6 +199,13 @@ pub const IntNumBuilder = struct {
   ret: *model.Type.IntNum,
   pos: model.Position,
   failed: bool = false,
+  positions: std.ArrayListUnmanaged(model.Position) = .{},
+  units: std.ArrayListUnmanaged(model.Type.IntNum.Unit) = .{},
+  /// factor with which each given unit's factor is multiplied so that the
+  /// smallest unit has factor `1`.
+  cur_factor: i64 = 1,
+  /// this will be set as soon as units.len > 0
+  smallest_factor: usize = undefined,
 
   pub fn init(ctx: nyarna.Context, pos: model.Position) !Self {
     const named = try ctx.global().create(model.Type.Named);
@@ -207,41 +215,97 @@ pub const IntNumBuilder = struct {
       .data = .{.int = .{
         .min = std.math.minInt(i64),
         .max = std.math.maxInt(i64),
+        .suffixes = undefined,
       }},
     };
     return Self{.ctx = ctx, .ret = &named.data.int, .pos = pos};
   }
 
+  pub fn unit(
+    self: *Self,
+    pos: model.Position,
+    factor: LiteralNumber,
+    suffix: []const u8,
+  ) !void {
+    if (factor.value < 0) {
+      self.ctx.logger.FactorMustntBeNegative(pos, factor.repr);
+      return;
+    }
+    for (self.units) |item, index| {
+      if (std.mem.eql(u8, item.suffix, suffix)) {
+        self.ctx.logger.DuplicateSuffix(
+          suffix, pos, self.positions.items[index]);
+        return;
+      }
+    }
+    var actual = factor;
+    var actual_cur = self.cur;
+    while (actual.decimals > 0 and actual_cur % 10 == 0) {
+      actual_cur = @divExact(actual_cur, 10);
+      actual.decimals -= 1;
+    }
+    if (@mulWithOverflow(i64, actual.value, actual_cur, &actual.value)) {
+      self.ctx.logger.FactorsTooFarApart(
+        factor.repr, pos, self.positions.items[self.smallest_factor]);
+      return;
+    }
+    if (actual.decimals > 0) {
+      const target = std.math.pow(i64, 10, actual.decimals);
+      const x = actual.value % target;
+      const additional = gcd(target, x);
+      for (self.units) |*item, index| {
+        if (@mulWithOverflow(i64, item.factor, additional, &item.factor)) {
+          self.ctx.logger.FactorsTooFarApart(
+            factor.repr, pos, self.positions.items[index]);
+          return;
+        }
+      }
+      self.cur_factor *= additional;
+      self.smallest_factor = self.units.items.len;
+      actual.value = @divExact(actual.value, x);
+    }
+    try self.units.append(
+      self.ctx.global(), .{.suffix = suffix, .factor = actual.value});
+    try self.positions.append(self.ctx.local(), pos);
+  }
+
+  fn setNum(
+    self: *Self,
+    input: LiteralNumber,
+    pos: model.Position,
+    target: *i64,
+  ) bool {
+    if (input.suffix.len > 0) {
+      for (self.units.items) |item| {
+        if (std.mem.eql(u8, item.suffix, input.suffix)) {
+          return self.ctx.applyIntUnit(item, input, pos, target);
+        }
+      } else {
+        self.ctx.logger.MustHaveDefinedSuffix(pos, input.repr);
+        return false;
+      }
+    } else if (self.units.items.len > 0) {
+      self.ctx.logger.MustHaveDefinedSuffix(pos, input.repr);
+      return false;
+    } else if (input.decimals > 0) {
+      self.ctx.logger.InvalidDecimals(pos, input.repr);
+      return false;
+    } else {
+      target.* = input.value;
+      return true;
+    }
+  }
+
   pub fn min(self: *Self, num: LiteralNumber, pos: model.Position) void {
-    _ = pos;
-    //if (num.decimals > self.ret.decimals) {
-    //  self.ctx.logger.TooManyDecimals(pos, num.repr);
-    //  self.ret.decimals = 33;
-    //} else if (
-    //  @mulWithOverflow(i64, num.value,
-    //  std.math.pow(i64, 10, @intCast(i64, self.ret.decimals - num.decimals)),
-    //    &self.ret.min)
-    //) {
-    //  self.ctx.logger.NumberTooLarge(pos, num.repr);
-    //  self.ret.decimals = 33;
-    //}
-    self.ret.min = num.value; // TODO
+    if (!self.setNum(num, pos, &self.ret.min)) {
+      self.ret.min = std.math.minInt(i64);
+    }
   }
 
   pub fn max(self: *Self, num: LiteralNumber, pos: model.Position) void {
-    _ = pos;
-    //if (num.decimals > self.ret.decimals) {
-    //  self.ctx.logger.TooManyDecimals(pos, num.repr);
-    //  self.ret.decimals = 33;
-    //} else if (
-    //  @mulWithOverflow(i64, num.value,
-    //    std.math.pow(i64, 10, @intCast(i64, self.ret.decimals - num.decimals)),
-    //    &self.ret.max)
-    //) {
-    //  self.ctx.logger.NumberTooLarge(pos, num.repr);
-    //  self.ret.decimals = 33;
-    //}
-    self.ret.max = num.value; // TODO
+    if (!self.setNum(num, pos ,&self.ret.max)) {
+      self.ret.max = std.math.maxInt(i64);
+    }
   }
 
   pub fn finish(self: *Self) ?*model.Type.IntNum {
@@ -253,6 +317,8 @@ pub const IntNumBuilder = struct {
       self.abort();
       return null;
     }
+    self.ret.suffixes = self.units.items;
+    self.positions.deinit(self.ctx.local());
     return self.ret;
   }
 
@@ -268,6 +334,8 @@ pub const FloatNumBuilder = struct {
   ret: *model.Type.FloatNum,
   pos: model.Position,
   failed: bool = false,
+  positions: std.ArrayListUnmanaged(model.Position) = .{},
+  units: std.ArrayListUnmanaged(model.Type.FloatNum.Unit) = .{},
 
   pub fn init(ctx: nyarna.Context, pos: model.Position) !Self {
     const named = try ctx.global().create(model.Type.Named);
@@ -277,6 +345,7 @@ pub const FloatNumBuilder = struct {
       .data = .{.float = .{
         .min = -std.math.inf_f64,
         .max = std.math.inf_f64,
+        .suffixes = undefined,
       }},
     };
     return Self{.ctx = ctx, .ret = &named.data.float, .pos = pos};
@@ -323,6 +392,8 @@ pub const FloatNumBuilder = struct {
       self.abort();
       return null;
     }
+    self.ret.suffixes = self.units.items;
+    self.positions.deinit(self.ctx.local());
     return self.ret;
   }
 

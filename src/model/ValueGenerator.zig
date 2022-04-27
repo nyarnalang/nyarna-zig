@@ -94,9 +94,11 @@ pub inline fn float(
   pos    : Position,
   t      : *const Type.FloatNum,
   content: f64,
+  unit   : usize,
 ) !*Value.FloatNum {
   return &(try self.value(
-    pos, .{.float = .{.t = t, .content = content}})).data.float;
+    pos, .{.float = .{.t = t, .content = content, .cur_unit = unit}}
+  )).data.float;
 }
 
 pub inline fn funcRef(
@@ -113,9 +115,10 @@ pub inline fn int(
   pos    : Position,
   t      : *const Type.IntNum,
   content: i64,
+  unit   : usize,
 ) !*Value.IntNum {
   return &(try self.value(
-    pos, .{.int = .{.t = t, .content = content}})).data.int;
+    pos, .{.int = .{.t = t, .content = content, .cur_unit = unit}})).data.int;
 }
 
 /// Generates an intrinsic location (contained positions are <intrinsic>).
