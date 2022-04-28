@@ -436,8 +436,12 @@ pub const Impl = lib.Provider.Wrapper(struct {
         return switch (t) {
           .structural => |strct| switch (strct.*) {
             .concat, .optional, .sequence => try self.ip.node_gen.void(vpos),
-            .list => null, // TODO: call list constructor
-            .map => null, // TODO: call map constructor
+            .list => |*lst| try self.ip.genValueNode(
+              (try self.ip.ctx.values.list(vpos, lst)).value()
+            ),
+            .map => |*map| try self.ip.genValueNode(
+              (try self.ip.ctx.values.map(vpos, map)).value()
+            ),
             .callable, .intersection => null,
           },
           .named => |named| switch (named.data) {

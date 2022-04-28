@@ -227,7 +227,7 @@ pub const Resolver = struct {
                 self.intpr, func.callable.typedef(), uacc.id)
             ) orelse break :blk ref.ns;
             switch (target) {
-              .field => unreachable, // TODO: do functions have fields?
+              .field => unreachable, // OPPORTUNITY: do functions have fields?
               .symbol => |sym| {
                 if (sym.data == .poison) return .poison;
                 return Resolution.symRef(

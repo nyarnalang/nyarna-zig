@@ -143,15 +143,6 @@ pub const Types = lib.Provider.Wrapper(struct {
     };
   }
 
-  pub fn @"Float"(
-    eval: *Evaluator,
-    pos: model.Position,
-    input: *model.Value.TextScalar,
-  ) nyarna.Error!*model.Value {
-    _ = eval; _ = pos; _ = input;
-    unreachable; // TODO
-  }
-
   pub fn @"Enum"(
     eval: *Evaluator,
     pos: model.Position,
