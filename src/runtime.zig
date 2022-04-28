@@ -402,6 +402,25 @@ pub const Evaluator = struct {
             .void => "",
             .text => |*intxt| intxt.content,
             .@"enum" => |*e| e.t.values.keys()[e.index],
+            .seq => |*seq| blk: {
+              var builder = std.ArrayListUnmanaged(u8){};
+              for (seq.content.items) |item, i| {
+                switch (item.content.data) {
+                  .void => {},
+                  .text => |*intxt| {
+                    try builder.appendSlice(self.ctx.global(), intxt.content);
+                  },
+                  .@"enum" => |*e| try builder.appendSlice(
+                    self.ctx.global(), e.t.values.keys()[e.index]),
+                  else => unreachable,
+                }
+                if (i < seq.content.items.len) {
+                  try builder.appendNTimes(
+                    self.ctx.global(), '\n', item.lf_after);
+                }
+              }
+              break :blk builder.items;
+            },
             else => unreachable,
           };
           return if (
@@ -947,7 +966,7 @@ const ConcatBuilder = struct {
   }
 
   fn enqueue(self: *ConcatBuilder, item: *model.Value) !void {
-    std.debug.assert(item.data != .seq); // TODO
+    std.debug.assert(item.data != .seq);
     if (self.cur) |first_val| {
       try self.initList(first_val);
       self.cur = null;

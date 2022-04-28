@@ -1,0 +1,9 @@
+=== Sequence in Concat
+--- input
+lorem ipsum \block:
+  dolor
+
+  sit amet
+\end(block) consectetur adipiscing elit
+--- document
+=TEXT Text "lorem ipsum dolor\n\nsit amet consectetur adipiscing elit"
