@@ -755,7 +755,8 @@ pub const Evaluator = struct {
   }
 
   inline fn toString(self: *Evaluator, input: anytype) ![]u8 {
-    return std.fmt.allocPrint(self.ctx.global(), "{}", .{input});
+    const fmt = input.formatter();
+    return std.fmt.allocPrint(self.ctx.global(), "{}", .{fmt});
   }
 
   fn coerce(
@@ -823,8 +824,8 @@ pub const Evaluator = struct {
         .literal, .raw, .textual => {
           const content = switch (value.data) {
             .text    => |*text_val|  text_val.content,
-            .int     => |*int_val|   try self.toString(int_val.content),
-            .float   => |*float_val| try self.toString(float_val.content),
+            .int     => |*int_val|   try self.toString(int_val),
+            .float   => |*float_val| try self.toString(float_val),
             .@"enum" => |ev|         ev.t.values.entries.items(.key)[ev.index],
             // type checking ensures this never happens
             else => unreachable,

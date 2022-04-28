@@ -145,7 +145,7 @@ fn scalarError(
     .InvalidNumber         => "invalid number",
     .NumberTooLarge        => "numeric literal has too many digits",
     .TooManyDecimals       => "numeric literal has too many decimal digits",
-    .InvalidDecimals       => "not an integer between 0 and 32",
+    .InvalidDecimals       => "too many decimals",
     .FactorMustntBeNegative=> "factor must not be negative",
     .MustHaveDefinedSuffix =>
       "must have one of the defined suffixes (given: no or unknown suffix)",
@@ -378,6 +378,9 @@ fn constructionError(
       .{repr, t_fmt}),
     .UnknownSuffix => self.renderError(
       "'{s}' is not a known suffix for type {}", .{repr, t_fmt}),
+    .DecimalsNotRepresentable => self.renderError(
+      "decimal digits given in '{s}' are not representable by type {}",
+      .{repr, t_fmt}),
   }
 }
 

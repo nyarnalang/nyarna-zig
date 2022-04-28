@@ -82,7 +82,7 @@ pub const ScalarError = enum {
   UnknownFlag, UnknownSyntax, UnknownParameter, UnknownSymbol, UnknownField,
   UnknownResolver, UnknownUnique, UnknownPrototype, UnknownBuiltin,
   DoesntHaveConstructor, InvalidNumber, NumberTooLarge, TooManyDecimals,
-  InvalidDecimals, FactorMustntBeNegative, MustHaveDefinedSuffix,
+  FactorMustntBeNegative, MustHaveDefinedSuffix, InvalidDecimals,
 };
 
 pub const WrongIdError = enum {
@@ -145,7 +145,7 @@ pub const TypeError = enum {
 
 pub const ConstructionError = enum {
   NotInEnum, OutOfRange, TooManyDecimalsForType, CharacterNotAllowed,
-  InvalidFloat, MissingSuffix, UnknownSuffix,
+  InvalidFloat, MissingSuffix, UnknownSuffix, DecimalsNotRepresentable,
 };
 
 pub const RuntimeError = enum {

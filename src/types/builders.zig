@@ -238,22 +238,23 @@ pub const IntNumBuilder = struct {
         return;
       }
     }
-    var actual = factor;
-    var actual_cur = self.cur_factor;
-    // TODO: gcd?
-    while (actual.decimals > 0 and @mod(actual_cur, 10) == 0) {
-      actual_cur = @divExact(actual_cur, 10);
-      actual.decimals -= 1;
-    }
-    if (@mulWithOverflow(i64, actual.value, actual_cur, &actual.value)) {
-      self.ctx.logger.FactorsTooFarApart(
-        factor.repr, pos, self.positions.items[self.smallest_factor]);
-      return;
-    }
-    if (actual.decimals > 0) {
-      const target = std.math.pow(i64, 10, actual.decimals);
-      const x = @mod(actual.value, target);
-      const additional = gcd(target, x);
+
+    var coeff = self.cur_factor;
+    var divisor = std.math.pow(i64, 10, factor.decimals);
+    const g = gcd(coeff, divisor);
+    coeff = @divExact(coeff, g);
+    divisor = @divExact(divisor, g);
+
+    var actual: i64 = undefined;
+    if (divisor == 1) {
+      if (@mulWithOverflow(i64, factor.value, coeff, &actual)) {
+        self.ctx.logger.FactorsTooFarApart(
+          factor.repr, pos, self.positions.items[self.smallest_factor]);
+        return;
+      }
+    } else {
+      const x = @mod(factor.value, divisor);
+      const additional = @divExact(divisor, gcd(divisor, x));
       for (self.units.items) |*item, index| {
         if (@mulWithOverflow(i64, item.factor, additional, &item.factor)) {
           self.ctx.logger.FactorsTooFarApart(
@@ -262,11 +263,10 @@ pub const IntNumBuilder = struct {
         }
       }
       self.cur_factor *= additional;
-      self.smallest_factor = self.units.items.len;
-      actual.value = @divExact(actual.value, x);
+      actual = 1;
     }
     try self.units.append(
-      self.ctx.global(), .{.suffix = suffix, .factor = actual.value});
+      self.ctx.global(), .{.suffix = suffix, .factor = actual});
     try self.positions.append(self.ctx.local(), pos);
   }
 

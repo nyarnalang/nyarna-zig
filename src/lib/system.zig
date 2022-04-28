@@ -567,12 +567,16 @@ pub const Impl = lib.Provider.Wrapper(struct {
             return try eval.ctx.values.poison(pos);
           }
         }
-        return try eval.ctx.intAsValue(pos, ret, int);
+        const unit = if (list.content.items.len == 0) 0
+        else list.content.items[0].data.int.cur_unit;
+        return try eval.ctx.intAsValue(pos, ret, unit, int);
       },
       .float => |*fl| {
         var ret: f64 = 0;
         for (list.content.items) |item| ret += item.data.float.content;
-        return try eval.ctx.floatAsValue(pos, ret, fl);
+        const unit = if (list.content.items.len == 0) 0
+        else list.content.items[0].data.float.cur_unit;
+        return try eval.ctx.floatAsValue(pos, ret, unit, fl);
       },
       else => unreachable,
     }
@@ -594,11 +598,13 @@ pub const Impl = lib.Provider.Wrapper(struct {
           eval.ctx.logger.OutOfRange(pos, eval.target_type, "<overflow>");
           return try eval.ctx.values.poison(pos);
         }
-        return try eval.ctx.intAsValue(pos, ret, int);
+        return try eval.ctx.intAsValue(
+          pos, ret, minuend.data.int.cur_unit, int);
       },
       .float => |*fl| {
         return try eval.ctx.floatAsValue(
-          pos, minuend.data.float.content - subtrahend.data.float.content, fl);
+          pos, minuend.data.float.content - subtrahend.data.float.content,
+          minuend.data.float.cur_unit, fl);
       },
       else => unreachable,
     }

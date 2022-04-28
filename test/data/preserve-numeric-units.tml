@@ -1,0 +1,14 @@
+=== Preserve Numeric Units
+--- input
+\declare:
+  # beauty in Helen, where 1H is the beauty to launch 1000 ships
+  # smallest step is 1mH because you can't launch half a ship.
+  Beauty = \Numeric(int, H=1, mH=0.001, kH=1000)
+\end(declare)
+
+\Beauty(12.5H)
+\Beauty(1200mH)
+\Beauty(7.246kH)
+\Beauty(200mH)::add(1H)
+--- document
+=TEXT Text "12.5H\n1200mH\n7.24kH\n1200mH"

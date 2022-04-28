@@ -342,14 +342,14 @@ pub const Context = struct {
     self : Context,
     pos  : model.Position,
     value: i64,
+    unit : usize,
     t    : *const model.Type.IntNum,
   ) !*model.Value {
-    std.debug.assert(t.suffixes.len == 0);
     if (value < t.min or value > t.max) {
       const str = try std.fmt.allocPrint(self.global(), "{}", .{value});
       self.logger.OutOfRange(pos, t.typedef(), str);
       return try self.values.poison(pos);
-    } else return (try self.values.int(pos, t, value, 0)).value();
+    } else return (try self.values.int(pos, t, value, unit)).value();
   }
 
   pub fn applyFloatUnit(
@@ -365,14 +365,14 @@ pub const Context = struct {
     self : Context,
     pos  : model.Position,
     value: f64,
+    unit : usize,
     t    : *const model.Type.FloatNum,
   ) !*model.Value {
-    std.debug.assert(t.suffixes.len == 0);
     if (value < t.min or value > t.max) {
       const str = try std.fmt.allocPrint(self.global(), "{}", .{value});
       self.logger.OutOfRange(pos, t.typedef(), str);
       return try self.values.poison(pos);
-    } else return (try self.values.float(pos, t, value, 0)).value();
+    } else return (try self.values.float(pos, t, value, unit)).value();
   }
 
   pub fn textFromString(

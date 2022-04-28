@@ -1757,16 +1757,42 @@ pub const Interpreter = struct {
     var seen_poison = false;
     var seen_unfinished = false;
     var iter = gn.suffixes.items.iterator();
-    while (iter.next()) |entry| switch (
-      parse.LiteralNumber.from(entry.value_ptr.*.data.text.content)
-    ) {
-      .too_large => self.ctx.logger.NumberTooLarge(
-        entry.value_ptr.*.origin, entry.value_ptr.*.data.text.content),
-      .invalid => self.ctx.logger.InvalidNumber(
-        entry.value_ptr.*.origin, entry.value_ptr.*.data.text.content),
-      .success => |num| try builder.unit(
-        entry.value_ptr.*.origin, num, entry.key_ptr.*.data.text.content),
-    };
+    while (iter.next()) |entry| {
+      const value = switch (entry.value_ptr.*.data) {
+        .ast => |*ast| blk: {
+          const expr = (try self.associate(
+            ast.root, self.ctx.types().literal().predef(), stage)
+          ) orelse {
+            seen_unfinished = true;
+            continue;
+          };
+          const val = try self.ctx.evaluator().evaluate(expr);
+          entry.value_ptr.* = val;
+          break :blk val;
+        },
+        else => entry.value_ptr.*,
+      };
+      switch (value.data) {
+        .text => |*text| switch (
+          parse.LiteralNumber.from(text.content)
+        ) {
+          .too_large => {
+            self.ctx.logger.NumberTooLarge(value.origin, text.content);
+            value.data = .poison;
+          },
+          .invalid => {
+            self.ctx.logger.InvalidNumber(value.origin, text.content);
+            value.data = .poison;
+          },
+          .success => |num| try builder.unit(
+            value.origin, num, entry.key_ptr.*.data.text.content),
+        },
+        .poison => {
+          seen_poison = true;
+        },
+        else => unreachable,
+      }
+    }
     for ([_]?*model.Node{gn.min, gn.max}) |e, index| if (e) |item| {
       if (
         try self.associate(

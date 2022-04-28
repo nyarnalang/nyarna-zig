@@ -30,7 +30,7 @@ pub const LiteralNumber = struct {
     while (true) : (cur += 1) {
       if (cur[0] == '.') {
         if (decimal_start != null or cur == end) return Result.invalid;
-        decimal_start = @ptrToInt(cur) - @ptrToInt(rest.ptr);
+        decimal_start = @ptrToInt(cur);
       } else if (cur[0] < '0' or cur[0] > '9') {
         cur -= 1;
         break;
@@ -52,7 +52,7 @@ pub const LiteralNumber = struct {
       .success = .{
         .value = val,
         .decimals = if (decimal_start) |start| (
-          @intCast(i64, @ptrToInt(cur - start))
+          @intCast(i64, @ptrToInt(cur) - start)
         ) else 0,
         .repr = text,
         .suffix = rest[@ptrToInt(cur) - @ptrToInt(rest.ptr) + 1 ..],
