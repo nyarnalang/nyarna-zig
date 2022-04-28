@@ -377,36 +377,42 @@ pub const FloatNumBuilder = struct {
     try self.positions.append(self.ctx.local(), pos);
   }
 
+  fn setNum(
+    self: *Self,
+    input: LiteralNumber,
+    pos: model.Position,
+    target: *f64,
+  ) bool {
+    if (input.suffix.len > 0) {
+      for (self.units.items) |item| {
+        if (std.mem.eql(u8, item.suffix, input.suffix)) {
+          target.* = nyarna.Context.applyFloatUnit(item, input);
+          return true;
+        }
+      } else {
+        self.ctx.logger.MustHaveDefinedSuffix(pos, input.repr);
+        return false;
+      }
+    } else if (self.units.items.len > 0) {
+      self.ctx.logger.MustHaveDefinedSuffix(pos, input.repr);
+      return false;
+    } else {
+      target.* = @intToFloat(f64, input.value) /
+        std.math.pow(f64, 10, @intToFloat(f64, input.decimals));
+      return true;
+    }
+  }
+
   pub fn min(self: *Self, num: LiteralNumber, pos: model.Position) void {
-    _ = pos;
-    //if (num.decimals > self.ret.decimals) {
-    //  self.ctx.logger.TooManyDecimals(pos, num.repr);
-    //  self.ret.decimals = 33;
-    //} else if (
-    //  @mulWithOverflow(i64, num.value,
-    //  std.math.pow(i64, 10, @intCast(i64, self.ret.decimals - num.decimals)),
-    //    &self.ret.min)
-    //) {
-    //  self.ctx.logger.NumberTooLarge(pos, num.repr);
-    //  self.ret.decimals = 33;
-    //}
-    self.ret.min = @intToFloat(f64, num.value); // TODO
+    if (!self.setNum(num, pos, &self.ret.min)) {
+      self.ret.min = -std.math.inf_f64;
+    }
   }
 
   pub fn max(self: *Self, num: LiteralNumber, pos: model.Position) void {
-    _ = pos;
-    //if (num.decimals > self.ret.decimals) {
-    //  self.ctx.logger.TooManyDecimals(pos, num.repr);
-    //  self.ret.decimals = 33;
-    //} else if (
-    //  @mulWithOverflow(i64, num.value,
-    //    std.math.pow(i64, 10, @intCast(i64, self.ret.decimals - num.decimals)),
-    //    &self.ret.max)
-    //) {
-    //  self.ctx.logger.NumberTooLarge(pos, num.repr);
-    //  self.ret.decimals = 33;
-    //}
-    self.ret.max = @intToFloat(f64, num.value); // TODO
+    if (!self.setNum(num, pos, &self.ret.max)) {
+      self.ret.max = std.math.inf_f64;
+    }
   }
 
   pub fn finish(self: *Self) ?*model.Type.FloatNum {
