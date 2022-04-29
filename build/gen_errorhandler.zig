@@ -1,5 +1,5 @@
 const std = @import("std");
-const ids = @import("../src/errors/ids.zig");
+const ids = @import("../src/nyarna/errors/ids.zig");
 
 const Writer = struct {
   output: std.fs.File,
@@ -44,18 +44,19 @@ const Writer = struct {
 };
 
 pub fn main() !void {
-  var handler = try Writer.init("src/errors/Handler.zig");
+  var handler = try Writer.init("src/nyarna/errors/Handler.zig");
   defer handler.close();
   try handler.header(
     \\const std = @import("std");
     \\
-    \\const model = @import("../model.zig");
+    \\const model  = @import("../model.zig");
     \\const errors = @import("../errors.zig");
     \\
     \\const WrongItemError = errors.WrongItemError;
     \\
     \\count: usize = 0,
     \\reporter: *errors.Reporter,
+    \\
     \\
   );
   try handler.writeHandlerFns(

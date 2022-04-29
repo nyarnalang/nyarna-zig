@@ -3,7 +3,7 @@
 *.exe
 zig-cache
 testgen
-src/errors/Handler.zig
+src/nyarna/errors/Handler.zig
 parse_test
 parse_test_orig
 lex_test

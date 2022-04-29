@@ -1,22 +1,20 @@
 const std = @import("std");
 
-pub const Evaluator = @import("runtime.zig").Evaluator;
-pub const model = @import("model.zig");
-pub const types = @import("types.zig");
-pub const errors = @import("errors.zig");
-pub const lib = @import("lib.zig");
-pub const resolve = @import("load/resolve.zig");
-pub const ModuleLoader = @import("load.zig").ModuleLoader;
-pub const EncodedCharacter = @import("unicode.zig").EncodedCharacter;
-pub const Resolver = resolve.Resolver;
-pub const FileSystemResolver = resolve.FileSystemResolver;
+pub const Evaluator    = @import("nyarna/Evaluator.zig");
+pub const errors       = @import("nyarna/errors.zig");
+pub const lib          = @import("nyarna/lib.zig");
+pub const load         = @import("nyarna/load.zig");
+pub const model        = @import("nyarna/model.zig");
+pub const ModuleLoader = @import("nyarna/load.zig").ModuleLoader;
+pub const Types        = @import("nyarna/Types.zig");
+
+const Globals = @import("nyarna/Globals.zig");
+const parse   = @import("nyarna/parse.zig");
+const unicode = @import("nyarna/unicode.zig");
+
+const gcd = @import("nyarna/helpers.zig").gcd;
 
 pub const default_stack_size = 1024 * 1024; // 1MB
-
-const parse = @import("parse.zig");
-const unicode = @import("unicode.zig");
-
-const gcd = @import("helpers.zig").gcd;
 
 pub const Error = error {
   /// occurs when any allocation failed during processing.
@@ -33,162 +31,6 @@ pub const Error = error {
   /// Details about the error are reported to the logger.
   init_error,
 };
-
-/// Globals is the owner of all data that lives through the processing pipeline.
-/// This data includes intrinsic and generated types, and most allocated
-/// model.Expression and model.Value objects. Quite some of those objects could
-/// theoretically be garbage-collected earlier, but the current implementation
-/// assumes we have enough memory to not waste time on implementing that.
-///
-/// This is an internal, not an external API. External code should solely
-/// interact with Globals via the limited interface of the Context and Processor
-/// types.
-pub const Globals = struct {
-  pub const ModuleEntry = union(enum) {
-    require_module: *ModuleLoader,
-    require_params: *ModuleLoader,
-    loaded: *model.Module,
-  };
-  const ResolverEntry = struct {
-    /// the prefix in absolute locators that refers to this resolver, e.g. "std"
-    name: []const u8,
-    /// whether this resolver is queried on any relative locator that can not be
-    /// resolved otherwise.
-    implicit: bool,
-    /// the actual resolver
-    resolver: *resolve.Resolver,
-  };
-
-  /// The error reporter for this loader, supplied externally.
-  reporter: *errors.Reporter,
-  /// The backing allocator for heap allocations used by this loader.
-  backing_allocator: std.mem.Allocator,
-  /// The type lattice contains all types ever named by operations of
-  /// this context. during the loading
-  /// process and provides the type lattice operations (e.g. type intersection
-  /// and type relation checks).
-  types: types.Lattice,
-  /// Used to allocate all non-source-local objects, i.e. all objects that are
-  /// not discarded after a source has been fully interpreted. Uses the
-  /// externally supplied allocator.
-  storage: std.heap.ArenaAllocator,
-  /// list of known keyword implementations. They bear no name since they are
-  /// referenced via their index.
-  keyword_registry: std.ArrayListUnmanaged(lib.Provider.KeywordWrapper) = .{},
-  /// list of known builtin implementations, analoguous to keyword_registry.
-  builtin_registry: std.ArrayListUnmanaged(lib.Provider.BuiltinWrapper) = .{},
-  /// list of symbols available in any namespace (\declare, \var, \import etc).
-  generic_symbols: std.ArrayListUnmanaged(*model.Symbol) = .{},
-  /// stack for evaluation. Size can be set during initialization.
-  stack: []model.StackItem,
-  /// current top of the stack, where new stack allocations happen.
-  stack_ptr: [*]model.StackItem,
-  /// modules that have already been referenced. the key is the absolute
-  /// locator. The first reference will add the module as .loading. The
-  /// loading process will load the last not onloaded module in a loop
-  ///  until all modules have been loaded.
-  ///
-  /// This list is also used to catch cyclic references.
-  known_modules: std.StringArrayHashMapUnmanaged(ModuleEntry) = .{},
-  /// known resolvers.
-  resolvers: []ResolverEntry,
-  /// set to true if any module encountered errors
-  seen_error: bool = false,
-
-  pub fn create(
-    backing_allocator: std.mem.Allocator,
-    reporter: *errors.Reporter,
-    stack_size: usize,
-    resolvers: []ResolverEntry,
-  ) !*Globals {
-    const ret = try backing_allocator.create(Globals);
-    ret.* = .{
-      .reporter = reporter,
-      .backing_allocator = backing_allocator,
-      .types = undefined,
-      .storage = std.heap.ArenaAllocator.init(backing_allocator),
-      .stack = undefined,
-      .stack_ptr = undefined,
-      .resolvers = resolvers,
-    };
-    errdefer backing_allocator.destroy(ret);
-    errdefer ret.storage.deinit();
-    ret.stack = try backing_allocator.alloc(model.StackItem, stack_size);
-    ret.stack_ptr = ret.stack.ptr;
-    errdefer backing_allocator.free(ret.stack);
-
-    var logger = errors.Handler{.reporter = reporter};
-    var init_ctx = Context{.data = ret, .logger = &logger, .loader = null};
-    ret.types = try types.Lattice.init(init_ctx);
-    errdefer ret.types.deinit();
-    if (logger.count > 0) {
-      return Error.init_error;
-    }
-    return ret;
-  }
-
-  pub fn destroy(self: *Globals) void {
-    self.types.deinit();
-    for (self.known_modules.values()) |value| switch (value) {
-      .require_module => |ml| ml.destroy(),
-      .require_params => |ml| ml.destroy(),
-      .loaded => {},
-    };
-    self.storage.deinit();
-    self.backing_allocator.free(self.stack);
-    self.backing_allocator.destroy(self);
-  }
-
-  fn lastLoadingModule(self: *Globals) ?usize {
-    var index: usize = self.known_modules.count();
-    while (index > 0) {
-      index -= 1;
-      switch (self.known_modules.values()[index]) {
-        .require_module => return index,
-        .require_params => |ml| switch (ml.state) {
-          .initial, .parsing => return index,
-          else => {},
-        },
-        .loaded => {},
-      }
-    }
-    return null;
-  }
-
-  /// while there is an unloaded module in .known_modules, continues loading the
-  /// last one. If the uppermost module encounters a parameter specification,
-  /// returns so that caller may inject those.
-  fn work(self: *Globals) !void {
-    while (self.lastLoadingModule()) |index| {
-      var must_finish = false;
-      const loader = switch (self.known_modules.values()[index]) {
-        .require_params => |ml| ml,
-        .require_module => |ml| blk: {
-          must_finish = true;
-          break :blk ml;
-        },
-        .loaded => unreachable,
-      };
-      while (true) {
-        _ = try loader.work();
-        switch (loader.state) {
-          .initial => unreachable,
-          .finished => {
-            const module = try loader.finalize();
-            self.known_modules.values()[index] = .{.loaded = module};
-            break;
-          },
-          .encountered_parameters => if (!must_finish) break,
-          .parsing, .interpreting => break,
-        }
-      }
-    }
-  }
-};
-
-// to avoid ambiguity in the following struct
-const Lattice = types.Lattice;
-const SigBuilderRes = types.SigBuilderRes;
 
 /// The Context is a public API for accessing global values and logging. This
 /// API is useful for external code that implements external functions for
@@ -236,7 +78,7 @@ pub const Context = struct {
   }
 
   /// Interface to the type lattice. It allows you to create and compare types.
-  pub inline fn types(self: *const Context) *Lattice {
+  pub inline fn types(self: *const Context) *Types {
     return &self.data.types;
   }
 
@@ -507,7 +349,7 @@ pub const Processor = struct {
     allocator: std.mem.Allocator,
     stack_size: usize,
     reporter: *errors.Reporter,
-    stdlib: *resolve.Resolver,
+    stdlib: *load.Resolver,
   ) !Processor {
     var ret = Processor{
       .allocator = allocator, .stack_size = stack_size, .reporter = reporter,
@@ -549,7 +391,7 @@ pub const Processor = struct {
 
     var checker = lib.system.Checker.init(&globals.types, logger);
     for (module.symbols) |sym| checker.check(sym);
-    checker.finish(module.root.pos.source, &globals.types);
+    checker.finish(module.root.pos.source, globals.types);
   }
 
   /// initialize loading of the given main module. should only be used for
@@ -560,7 +402,7 @@ pub const Processor = struct {
   /// This is used for testing.
   pub fn initMainModule(
     self: *Self,
-    doc_resolver: *resolve.Resolver,
+    doc_resolver: *load.Resolver,
     main_module: []const u8,
     fullast: bool,
   ) !MainLoader {
@@ -611,7 +453,7 @@ pub const Processor = struct {
   /// caller must either deinit() or finalize() the returned MainLoader.
   pub fn startLoading(
     self: *Self,
-    doc_resolver: *resolve.Resolver,
+    doc_resolver: *load.Resolver,
     main_module: []const u8,
   ) !MainLoader {
     const ret = try self.initMainModule(doc_resolver, main_module, false);

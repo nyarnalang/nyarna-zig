@@ -1,8 +1,13 @@
-const std = @import("std");
 const nyarna = @import("nyarna");
-const model = nyarna.model;
-pub const TestDataResolver = @import("resolve.zig").TestDataResolver;
+const std    = @import("std");
+
+const EncodedCharacter = @import("../src/nyarna/unicode.zig").EncodedCharacter;
+const Globals          = @import("../src/nyarna/Globals.zig");
+
 const errors = nyarna.errors;
+const model = nyarna.model;
+
+pub const TestDataResolver = @import("resolve.zig").TestDataResolver;
 
 const Error = error {
   no_match,
@@ -56,7 +61,7 @@ pub fn lexTest(data: *TestDataResolver) !void {
 
 const AdditionalsWithGlobal = struct {
   value: *const model.Node.Location.Additionals,
-  data: *nyarna.Globals,
+  data: *Globals,
 
   fn format(
     self: AdditionalsWithGlobal,
@@ -85,7 +90,7 @@ const AdditionalsWithGlobal = struct {
 
 const HeaderWithGlobal = struct {
   header: *const model.Value.BlockHeader,
-  data: *nyarna.Globals,
+  data: *Globals,
 
   fn format(
     self: HeaderWithGlobal,
@@ -99,22 +104,22 @@ const HeaderWithGlobal = struct {
       for (config.map) |*item| {
         if (item.to == 0) {
           if (first) first = false else try writer.writeAll(", ");
-          const ec = nyarna.EncodedCharacter.init(item.from);
+          const ec = EncodedCharacter.init(item.from);
           try writer.print("off {s}", .{ec.repr()});
         }
       }
       for (config.map) |*item| {
         if (item.from == 0) {
           if (first) first = false else try writer.writeAll(", ");
-          const ec = nyarna.EncodedCharacter.init(item.to);
+          const ec = EncodedCharacter.init(item.to);
           try writer.print("csym {s}", .{ec.repr()});
         }
       }
       for (config.map) |*item| {
         if (item.from != 0 and item.to != 0) {
           if (first) first = false else try writer.writeAll(", ");
-          const fc = nyarna.EncodedCharacter.init(item.from);
-          const tc = nyarna.EncodedCharacter.init(item.to);
+          const fc = EncodedCharacter.init(item.from);
+          const tc = EncodedCharacter.init(item.to);
           try writer.print("map {s} {s}", .{fc.repr(), tc.repr()});
         }
       }
@@ -182,9 +187,9 @@ const AstEmitter = struct {
 
   handler: *Checker,
   depth: usize,
-  data: *nyarna.Globals,
+  data: *Globals,
 
-  fn init(data: *nyarna.Globals, handler: *Checker) AstEmitter {
+  fn init(data: *Globals, handler: *Checker) AstEmitter {
     return .{.depth = 0, .handler = handler, .data = data};
   }
 
