@@ -9,7 +9,7 @@ pub const ModuleLoader = @import("nyarna/load.zig").ModuleLoader;
 pub const Types        = @import("nyarna/Types.zig");
 
 const Globals = @import("nyarna/Globals.zig");
-const parse   = @import("nyarna/parse.zig");
+const Parser  = @import("nyarna/Parser.zig");
 const unicode = @import("nyarna/unicode.zig");
 
 const gcd = @import("nyarna/helpers.zig").gcd;
@@ -117,7 +117,7 @@ pub const Context = struct {
   pub fn applyIntUnit(
     self  : Context,
     unit  : model.Type.IntNum.Unit,
-    input : parse.LiteralNumber,
+    input : Parser.LiteralNumber,
     pos   : model.Position,
     target: *i64,
   ) bool {
@@ -145,7 +145,7 @@ pub const Context = struct {
     text: []const u8,
     t   : *const model.Type.IntNum,
   ) !?*model.Value.IntNum {
-    switch (parse.LiteralNumber.from(text)) {
+    switch (Parser.LiteralNumber.from(text)) {
       .invalid => self.logger.InvalidNumber(pos, text),
       .too_large => self.logger.NumberTooLarge(pos, text),
       .success => |parsed| if (parsed.suffix.len == 0) {
@@ -196,7 +196,7 @@ pub const Context = struct {
 
   pub fn applyFloatUnit(
     unit  : model.Type.FloatNum.Unit,
-    input : parse.LiteralNumber,
+    input : Parser.LiteralNumber,
   ) f64 {
     var divisor = std.math.pow(f64, 10, @intToFloat(f64, input.decimals));
     var factor = unit.factor;
@@ -245,7 +245,7 @@ pub const Context = struct {
     text: []const u8,
     t   : *const model.Type.FloatNum,
   ) !?*model.Value.FloatNum {
-    switch (parse.LiteralNumber.from(text)) {
+    switch (Parser.LiteralNumber.from(text)) {
       .invalid => self.logger.InvalidNumber(pos, text),
       .too_large => self.logger.NumberTooLarge(pos, text),
       .success => |parsed| if (parsed.suffix.len == 0) {
@@ -434,7 +434,7 @@ pub const Processor = struct {
         ret.globals.storage.allocator(), desc.name, .{.require_module = ml});
     } else {
       try ret.globals.known_modules.put(
-        ret.globals.storage.allocator(), desc.name, .{.require_params = ml});
+        ret.globals.storage.allocator(), desc.name, .{.require_options = ml});
     }
     return ret;
   }

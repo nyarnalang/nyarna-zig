@@ -118,8 +118,10 @@ pub const Funcgen = struct {
 };
 
 pub const Import = struct {
-  ns_index: u15,
+  ns_index    : u15,
   module_index: usize,
+  proto_args  : []UnresolvedCall.ProtoArg,
+  first_block : usize,
 
   pub inline fn node(self: *@This()) *Node {
     return Node.parent(self);

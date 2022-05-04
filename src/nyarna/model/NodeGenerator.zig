@@ -108,6 +108,7 @@ pub inline fn import(
   return &(try self.node(
     pos, .{.import = .{
       .ns_index = ns_index, .module_index = module_index,
+      .proto_args = &.{}, .first_block = 0,
     }})).data.import;
 }
 

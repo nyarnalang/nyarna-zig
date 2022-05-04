@@ -21,7 +21,7 @@ const ModuleLoader = nyarna.load.ModuleLoader;
 
 pub const ModuleEntry = union(enum) {
   require_module: *ModuleLoader,
-  require_params: *ModuleLoader,
+  require_options: *ModuleLoader,
   loaded: *model.Module,
 };
 
@@ -107,7 +107,7 @@ pub fn destroy(self: *@This()) void {
   self.types.deinit();
   for (self.known_modules.values()) |value| switch (value) {
     .require_module => |ml| ml.destroy(),
-    .require_params => |ml| ml.destroy(),
+    .require_options => |ml| ml.destroy(),
     .loaded => {},
   };
   self.storage.deinit();
@@ -121,7 +121,7 @@ fn lastLoadingModule(self: *@This()) ?usize {
     index -= 1;
     switch (self.known_modules.values()[index]) {
       .require_module => return index,
-      .require_params => |ml| switch (ml.state) {
+      .require_options => |ml| switch (ml.state) {
         .initial, .parsing => return index,
         else => {},
       },
@@ -138,7 +138,7 @@ pub fn work(self: *@This()) !void {
   while (self.lastLoadingModule()) |index| {
     var must_finish = false;
     const loader = switch (self.known_modules.values()[index]) {
-      .require_params => |ml| ml,
+      .require_options => |ml| ml,
       .require_module => |ml| blk: {
         must_finish = true;
         break :blk ml;

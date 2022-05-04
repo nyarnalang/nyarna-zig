@@ -4,8 +4,8 @@ const algo     = @import("interpret/algo.zig");
 const chains   = @import("interpret/chains.zig");
 const graph    = @import("interpret/graph.zig");
 const nyarna   = @import("../nyarna.zig");
-const parse    = @import("parse.zig");
-const syntaxes = @import("parse/syntaxes.zig");
+const Parser   = @import("Parser.zig");
+const syntaxes = @import("Parser/syntaxes.zig");
 const unicode  = @import("unicode.zig");
 
 const errors = nyarna.errors;
@@ -645,16 +645,16 @@ pub const Interpreter = struct {
   pub fn tryInterpretImport(
     self: *Interpreter,
     import: *model.Node.Import,
-  ) parse.Error!?*model.Expression {
+  ) Parser.Error!?*model.Expression {
     const me = &self.ctx.data.known_modules.values()[import.module_index];
     switch (me) {
       .loaded => |module| {
         self.importModuleSyms(module, import.ns_index);
         return module.root;
       },
-      .require_params => |ml| {
+      .require_options => |ml| {
         me.* = .{.require_module = ml};
-        return parse.UnwindReason.referred_module_unavailable;
+        return Parser.UnwindReason.referred_module_unavailable;
       },
       .require_module => {
         // cannot happen. if the module is further down the dependency chain
@@ -1139,7 +1139,7 @@ pub const Interpreter = struct {
       try chains.CallContext.fromChain(self, uc.target, chain_res);
     switch (call_ctx) {
       .known => |k| {
-        var sm = try parse.Mapper.ToSignature.init(
+        var sm = try Parser.Mapper.ToSignature.init(
           self, k.target, k.ns, k.signature);
         if (k.first_arg) |prefix| {
           if (try sm.mapper.map(prefix.pos, .position, .flow)) |cursor| {
@@ -1147,7 +1147,7 @@ pub const Interpreter = struct {
           }
         }
         for (uc.proto_args) |*arg, index| {
-          const flag: parse.Mapper.ProtoArgFlag = flag: {
+          const flag: Parser.Mapper.ProtoArgFlag = flag: {
             if (index < uc.first_block_arg) break :flag .flow;
             if (arg.had_explicit_block_config) break :flag .block_with_config;
             break :flag .block_no_config;
@@ -1774,7 +1774,7 @@ pub const Interpreter = struct {
       };
       switch (value.data) {
         .text => |*text| switch (
-          parse.LiteralNumber.from(text.content)
+          Parser.LiteralNumber.from(text.content)
         ) {
           .too_large => {
             self.ctx.logger.NumberTooLarge(value.origin, text.content);
@@ -1802,7 +1802,7 @@ pub const Interpreter = struct {
         const value = try self.ctx.evaluator().evaluate(expr);
         switch (value.data) {
           .poison => seen_poison = true,
-          .text => |*txt| switch (parse.LiteralNumber.from(txt.content)) {
+          .text => |*txt| switch (Parser.LiteralNumber.from(txt.content)) {
             .invalid => {
               self.ctx.logger.InvalidNumber(expr.pos, txt.content);
               seen_poison = true;

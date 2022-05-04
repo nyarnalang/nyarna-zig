@@ -1,6 +1,6 @@
 const std = @import("std");
 
-const LiteralNumber = @import("../parse.zig").LiteralNumber;
+const LiteralNumber = @import("../Parser.zig").LiteralNumber;
 const nyarna        = @import("../../nyarna.zig");
 
 const errors = nyarna.errors;

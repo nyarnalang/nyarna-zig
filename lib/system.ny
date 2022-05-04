@@ -148,17 +148,19 @@
   \end(prototype)
 
   library    = \keyword:
-    params: \Optional(\Ast) {primary}:<syntax locations>
+    options: \Optional(\Ast) {primary}:<syntax locations>
   \end(keyword)
 
   standalone = \keyword:
-    params: \Optional(\Ast) {primary}:<syntax locations>
+    options: \Optional(\Ast) {primary}:<syntax locations>
+    params : \Optional(\Ast) {}:<syntax locations>
     # TODO: schema
   \end(keyword)
 
   fragment = \keyword:
-    root  : \Type
-    params: \Optional(\Ast)
+    root   : \Type
+    options: \Optional(\Ast) {primary}:<syntax locations>
+    params : \Optional(\Ast) {}:<syntax locations>
   \end(keyword)
 
   if = \keyword:

@@ -2,6 +2,7 @@ const std = @import("std");
 
 const Interpreter = @import("../interpret.zig").Interpreter;
 const nyarna      = @import("../../nyarna.zig");
+const ModuleEntry = @import("../Globals.zig").ModuleEntry;
 
 const model = nyarna.model;
 const Type  = model.Type;
@@ -373,11 +374,101 @@ pub const ToSignature = struct {
     }
     return if (missing_param) try self.intpr.node_gen.poison(pos) else
       (try self.intpr.node_gen.rcall(pos, .{
-        .ns = self.ns,
+        .ns     = self.ns,
         .target = self.subject,
-        .args = self.args,
-        .sig = self.signature,
+        .args   = self.args,
+        .sig    = self.signature,
       })).node();
+  }
+};
+
+pub const ToImport = struct {
+  mapper     : Self,
+  target     : *model.Node.Import,
+  intpr      : *Interpreter,
+  items      : std.ArrayListUnmanaged(model.Node.UnresolvedCall.ProtoArg) = .{},
+  first_block: ?usize = null,
+  /// whether positional arguments are currently accepted.
+  positional : bool = true,
+  /// non-null if target module accepts options
+  loader     : ?*nyarna.ModuleLoader,
+
+  pub fn init(
+    target     : *model.Node.Import,
+    intpr      : *Interpreter,
+  ) @This() {
+    const me = &intpr.ctx.data.known_modules.values()[target.module_index];
+    return .{
+      .mapper = .{
+        .mapFn       = @This().map,
+        .configFn    = @This().config,
+        .paramTypeFn = @This().paramType,
+        .pushFn      = @This().push,
+        .finalizeFn  = @This().finalize,
+        .subject_pos = target.node().pos,
+      },
+      .target = target,
+      .intpr  = intpr,
+      .loader = switch (me.*) {
+        .require_options => |ml| ml,
+        else => null,
+      },
+    };
+  }
+
+  fn map(
+    mapper: *Self,
+    pos   : model.Position,
+    input : ArgKind,
+    flag  : ProtoArgFlag,
+  ) nyarna.Error!?Cursor {
+    const self = @fieldParentPtr(@This(), "mapper", mapper);
+    if (input == .position and !self.positional) {
+      self.intpr.ctx.logger.InvalidPositionalArgument(pos);
+      return null;
+    }
+
+    // import parameters are mapped *after* having been read. They don't support
+    // implicit block configuration.
+    return Cursor{
+      .param  = .{.kind = input},
+      .config = flag == .block_with_config,
+      .direct = input.isDirect(),
+    };
+  }
+
+  fn config(_: *Self, _: Cursor) ?*model.BlockConfig {
+    return null;
+  }
+
+  fn paramType(_: *Self, _: Cursor) ?model.Type {
+    return null;
+  }
+
+  fn push(mapper : *Self, at: Cursor, content: *model.Node) nyarna.Error!void {
+    const self = @fieldParentPtr(@This(), "mapper", mapper);
+    switch (at.param.kind) {
+      .direct, .named => |name| {
+        if (self.loader) |ml| if (try ml.tryPushOption(name, content)) {
+          self.positional = false;
+          return;
+        };
+      },
+      else => {},
+    }
+    try self.items.append(self.intpr.allocator, .{
+      .kind = at.param.kind, .content = content,
+      .had_explicit_block_config = at.config,
+    });
+  }
+
+  fn finalize(mapper: *Self, pos: model.Position) nyarna.Error!*model.Node {
+    const self = @fieldParentPtr(@This(), "mapper", mapper);
+    self.target.proto_args = self.items.items;
+    self.target.first_block = self.first_block orelse self.items.items.len;
+    const ret = self.target.node();
+    ret.pos = ret.pos.span(pos);
+    return ret;
   }
 };
 
