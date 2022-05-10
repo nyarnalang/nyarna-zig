@@ -483,10 +483,49 @@ inline fn procTextual(self: *@This()) !void {
 
 inline fn procCommand(self: *@This()) !void {
   var lvl = self.curLevel();
-  switch (lvl.command.info.unknown.data) {
+  while (true) switch (lvl.command.info.unknown.data) {
     .import => |*import| {
-      if (self.cur != .list_start and self.cur != .blocks_sep) {
-        // import that isn't called. must load.
+      // ensure that the imported module has been parsed at least up until its
+      // options declaration.
+      const me = &self.intpr().ctx.data.known_modules.values()[
+        import.module_index];
+      switch (me.*) {
+        .require_options => |ml| if (ml.state == .initial) {
+          return Parser.UnwindReason.referred_module_unavailable;
+        },
+        .require_module => {
+          // if another module set require_module already, it had taken
+          // priority over the current module and therefore would have
+          // already been loaded.
+          unreachable;
+        },
+        .loaded => |module| {
+          // if the import is not called, generate an implicit call
+          if (self.cur != .list_start and self.cur != .blocks_sep) {
+            if (module.root != null) {
+              lvl.command.info.unknown = (
+                try self.intpr().node_gen.uCall(import.node().pos, .{
+                  .target = import.node(),
+                  .proto_args = &.{},
+                  .first_block_arg = 0,
+                })
+              ).node();
+            } else {
+              try self.intpr().importModuleSyms(module, import.ns_index);
+              lvl.command.info.unknown.data = .void;
+              break;
+            }
+          } else break;
+        }
+      }
+    },
+    .root_def => {
+      if (self.intpr().ctx.loader.?.state == .encountered_options) {
+        return Parser.UnwindReason.encountered_options;
+      } else break;
+    },
+    .unresolved_call => |*uc| switch (uc.target.data) {
+      .import => |*import| {
         const me = &self.intpr().ctx.data.known_modules.values()[
           import.module_index];
         switch (me.*) {
@@ -494,22 +533,25 @@ inline fn procCommand(self: *@This()) !void {
             me.* = .{.require_module = ml};
             return Parser.UnwindReason.referred_module_unavailable;
           },
-          .require_module => {
-            // if another module set require_module already, it had taken
-            // priority over the current module and therefore would have
-            // already been loaded.
-            unreachable;
-          },
+          .require_module => unreachable,
           .loaded => |module| {
-            try self.intpr().importModuleSyms(module, import.ns_index);
-            import.node().data = .{.expression = module.root};
-          },
+            if (module.root) |root| {
+              uc.target.data = .{
+                .expression = try self.intpr().ctx.createValueExpr((
+                  try self.intpr().ctx.values.funcRef(uc.node().pos, root)
+                ).value())
+              };
+            } else {
+              self.logger().CannotCallLibraryImport(uc.node().pos);
+              uc.target.data = .poison;
+            }
+          }
         }
-      }
-      // if the import is called, this is handled in the following switch.
+      },
+      else => break,
     },
-    else => {}
-  }
+    else => break,
+  };
   switch (self.cur) {
     .access => {
       const start = self.lexer.recent_end;

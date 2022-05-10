@@ -1,31 +1,20 @@
 === Document Parameter
 --- input
 \standalone:
-  who : \Raw
-:content:>
+:params:
+  who : \Text
+\end(standalone)
+
 Hello, \who!
 --- inline:who {strip}
 World
---- ast
-+ROOT "standalone"
-  +PROTO "who"
-    =TYPE Raw
-  -PROTO
-  >CONTENT
-  +CALL
-    +TARGET
-      +FUNC
-        =NAME "concatOf"
-      -FUNC
-    -TARGET
-    +PROTO "items"
-      +VARARGS
-        =RAW Raw "Hello, "
-        =VARIABLE "who"
-        =RAW Raw "!"
-      -VARARGS
-    -PROTO
-  -CALL
--ROOT
+--- expr
++PARAM who
+  =TYPE textual .std.system.Text
+-PARAM
+>BODY
+=TEXT Text "Hello, "
+=GETVAR who
+=TEXT Text "!"
 --- document
 =RAW Raw "Hello, World!"

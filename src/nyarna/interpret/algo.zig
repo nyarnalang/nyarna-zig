@@ -326,10 +326,12 @@ pub const DeclareResolution = struct {
       (try self.intpr.tryInterpretLocationsList(
         params, .{.kind = .final, .resolve = resolve}))
     ) {
-      var finder = (
-        try self.intpr.processLocations(
-          &params.resolved.locations, .{.kind = .final})
-      ) orelse return null;
+      var finder = nyarna.Types.CallableReprFinder.init(self.intpr.ctx.types());
+      if (
+        !(try self.intpr.processLocations(
+          &params.resolved.locations, .{.kind = .final}, &finder)
+        )
+      ) return null;
 
       const finder_res = try finder.finish(ret_type, true);
       var builder = try nyarna.Types.SigBuilder.init(
@@ -437,13 +439,12 @@ pub const DeclareResolution = struct {
       const vsym = try self.intpr.ctx.global().create(model.Symbol);
       vsym.* = .{
         .defined_at = model.Position.intrinsic(),
-        .name = var_name,
-        .data = .{.variable = .{
-          .spec = types.type().predef(),
-          .container = container,
-          .offset = @intCast(u15, i),
-          .assignable = false,
-          .borrowed = true,
+        .name       = var_name,
+        .data       = .{.variable = .{
+          .spec       = types.type().predef(),
+          .container  = container,
+          .offset     = @intCast(u15, i),
+          .kind       = .given,
         }},
       };
       var success = try ns_data.tryRegister(self.intpr, vsym);
@@ -480,7 +481,7 @@ pub const DeclareResolution = struct {
         break :blk &types.prototype_funcs.optional;
       },
       .sequence => blk: {
-        types.constructors.prototypes.sequence   = constructor;
+        types.constructors.prototypes.sequence     = constructor;
         break :blk &types.prototype_funcs.sequence;
       },
       .record   => blk: {
@@ -549,8 +550,8 @@ pub const DeclareResolution = struct {
               .name = try self.intpr.ctx.values.textScalar(
                 fdef.node().pos, types.literal(),
                 try self.intpr.ctx.global().dupe(u8, fdef.name.content)),
-              .params = try self.genParams(bg.params.resolved.locations),
-              .returns = bg.returns.expr,
+              .params     = try self.genParams(bg.params.resolved.locations),
+              .returns    = bg.returns.expr,
               .impl_index = impl_index,
             };
             next += 1;
@@ -593,7 +594,7 @@ pub const DeclareResolution = struct {
   pub fn execute(self: *DeclareResolution) !void {
     const ns_data = switch (self.in) {
       .ns => |index| self.intpr.namespace(index),
-      .t => |t| try self.intpr.type_namespace(t),
+      .t  => |t|     try self.intpr.type_namespace(t),
     };
 
     try self.processor.firstStep();
@@ -663,7 +664,7 @@ pub const DeclareResolution = struct {
             const named =
               try self.intpr.ctx.global().create(model.Type.Named);
             named.* = .{
-              .at = def.content.pos,
+              .at   = def.content.pos,
               .name = null,
               .data = .{.record = .{.constructor = undefined}},
             };
@@ -782,9 +783,9 @@ pub const DeclareResolution = struct {
               ) orelse continue;
               const types = self.intpr.ctx.types();
               switch (gu.generated.named.data) {
-                .location   => types.constructors.location = constructor,
+                .location   => types.constructors.location   = constructor,
                 .definition => types.constructors.definition = constructor,
-                .void       => types.constructors.void = constructor,
+                .void       => types.constructors.void       = constructor,
                 else => unreachable,
               }
             },
@@ -863,12 +864,16 @@ pub const DeclareResolution = struct {
                     bgen.returns.expr)).data
                 ) {
                   .@"type" => |tv| tv.t,
-                  .poison => break :blk,
-                  else => unreachable,
+                  .poison  => break :blk,
+                  else     => unreachable,
                 };
                 const locations = &bgen.params.resolved.locations;
-                var finder = (try self.intpr.processLocations(
-                  locations, .{.kind = .final})) orelse break :blk;
+                var finder =
+                  nyarna.Types.CallableReprFinder.init(self.intpr.ctx.types());
+                if (
+                  !(try self.intpr.processLocations(
+                    locations, .{.kind = .final}, &finder))
+                ) break :blk;
                 const finder_res = try finder.finish(ret_type, false);
                 var builder = try nyarna.Types.SigBuilder.init(
                   self.intpr.ctx, locations.len, ret_type,
@@ -878,7 +883,7 @@ pub const DeclareResolution = struct {
 
                 const impl_name = switch (self.in) {
                   .ns => def.name.content,
-                  .t => |t| tblk: {
+                  .t  => |t| tblk: {
                     const t_name = switch (t) {
                       .named => |named| named.name.?.name,
                       .structural => |struc| @tagName(struc.*),

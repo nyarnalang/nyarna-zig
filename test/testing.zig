@@ -455,6 +455,20 @@ const AstEmitter = struct {
           try self.emitLine("=UNIQUE", .{});
         }
       },
+      .root_def => |rd| {
+        const r = try self.pushWithKey("ROOTDEF", @tagName(rd.kind), null);
+        if (rd.kind != .library) {
+          if (rd.params) |params| {
+            try self.emitLine(">PARAMS", .{});
+            try self.process(params);
+          }
+          if (rd.root) |root| {
+            try self.emitLine(">ROOT", .{});
+            try self.process(root);
+          }
+        }
+        try r.pop();
+      },
       .unresolved_access => |a| {
         const access = try self.push("ACCESS");
         {
@@ -835,6 +849,23 @@ const AstEmitter = struct {
       },
     }
   }
+
+  fn processModule(self: *Self, module: *const model.Module) !void {
+    if (module.root) |root| {
+      if (root.sig().parameters.len > 0) {
+        for (root.sig().parameters) |*param| {
+          const p = try self.pushWithKey("PARAM", param.name, null);
+          try self.processType(param.spec.t);
+          if (param.default) |default| try self.processExpr(default);
+          try p.pop();
+        }
+        try self.emitLine(">BODY", .{});
+      }
+      try self.processExpr(root.data.ny.body);
+    } else {
+      try self.emitLine("=LIBRARY", .{});
+    }
+  }
 };
 
 /// implements Reporter. forwards lines to the registered checker.
@@ -1184,7 +1215,7 @@ pub fn interpretTest(data: *TestDataResolver) !void {
   const module = try loader.finishMainModule();
   try std.testing.expect(!loader.globals.seen_error);
   var emitter = AstEmitter.init(loader.globals, &checker);
-  try emitter.processExpr(module.root);
+  try emitter.processModule(module);
   try checker.finish();
 }
 

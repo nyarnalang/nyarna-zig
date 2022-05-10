@@ -39,14 +39,14 @@ pub const UnwindReason = error {
   /// if arguments have been processed or none have been given, the referred
   /// module needs tob e fully loaded.
   referred_module_unavailable,
-  /// emitted when a module's parameter declaration has been encountered. Caller
+  /// emitted when a module's options declaration has been encountered. Caller
   /// may inspect declared parameters, push available arguments, then resume
   /// parsing.
   ///
   /// Caller is not required to check whether all parameters get an argument or
   /// whether pushed arguments can be bound. This will be checked and handled by
   /// the parser, errors will be logged.
-  encountered_parameters,
+  encountered_options,
 };
 
 pub const Error = nyarna.Error || UnwindReason;
@@ -66,9 +66,11 @@ pub fn init() @This() {
   }};
 }
 
-/// parse context.input. If it returns .referred_source_unavailable, parsing
+/// parse context.input. If it returns .referred_module_unavailable, parsing
 /// may be resumed via resumeParse() after the referred source has been
-/// loaded. Other returned errors are not recoverable.
+/// loaded. If it returns .encountered_options, option values must be pushed
+/// into the module loader and options must be finalized before parsing may
+/// continue. Other returned errors are not recoverable.
 ///
 /// Errors in the given input are not returned as errors of this function.
 /// Instead, they are handed to the loader's errors.Handler. To check whether
@@ -88,7 +90,8 @@ pub fn parseSource(
 /// never returned a *model.Node.
 ///
 /// Apart from the precondition, this function has the same semantics as
-/// parseSource(), including that it may return .referred_source_unavailable.
+/// parseSource(), including that it may return .referred_module_unavailable or
+/// .encountered_options.
 pub fn resumeParse(self: *@This()) Error!*model.Node {
   // when resuming, the fullast value is irrelevant since it is only inspected
   // when encountering the first non-space token in the file – which will

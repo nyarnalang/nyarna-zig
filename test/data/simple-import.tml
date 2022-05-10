@@ -7,8 +7,12 @@ Dolor sit amet
 \import(foo)
 \import(bar)
 --- expr
-=TEXT Text "Lorem ipsum"
++CALL
+  =FUNCREF .doc.foo.<anonymous>
+-CALL
 =TEXT Text "\n"
-=TEXT Text "Dolor sit amet"
++CALL
+  =FUNCREF .doc.bar.<anonymous>
+-CALL
 --- document
 =TEXT Text "Lorem ipsum\nDolor sit amet"

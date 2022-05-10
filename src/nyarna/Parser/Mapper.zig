@@ -464,11 +464,12 @@ pub const ToImport = struct {
 
   fn finalize(mapper: *Self, pos: model.Position) nyarna.Error!*model.Node {
     const self = @fieldParentPtr(@This(), "mapper", mapper);
-    self.target.proto_args = self.items.items;
-    self.target.first_block = self.first_block orelse self.items.items.len;
-    const ret = self.target.node();
-    ret.pos = ret.pos.span(pos);
-    return ret;
+    if (self.loader) |loader| try loader.finalizeOptions(pos);
+    return (try self.intpr.node_gen.uCall(pos, .{
+      .target = self.target.node(),
+      .proto_args = self.items.items,
+      .first_block_arg = self.first_block orelse self.items.items.len,
+    })).node();
   }
 };
 

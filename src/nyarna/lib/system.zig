@@ -119,6 +119,7 @@ pub const DefCollector = struct {
   }
 };
 
+///
 const VarProc = struct {
   ip: *Interpreter,
   keyword_pos: model.Position,
@@ -183,7 +184,7 @@ const VarProc = struct {
           loc.default orelse (try self.defaultValue(spec.t, n.pos)) orelse {
             self.ip.ctx.logger.MissingInitialValue(loc.name.pos);
             return try self.empty();
-          }, if (loc.additionals) |a| a.borrow != null else false);
+          });
       },
       .concat => |*con| {
         const items =
@@ -237,8 +238,7 @@ const VarProc = struct {
             continue;
           };
           items[index] = try self.variable(
-            loc.name.value().origin, loc.spec, loc.name.content, initial,
-            loc.borrow != null);
+            loc.name.value().origin, loc.spec, loc.name.content, initial);
         }
         return (try self.ip.node_gen.concat(
           self.keyword_pos, .{.items = items})).node();
@@ -253,7 +253,6 @@ const VarProc = struct {
     spec    : model.SpecType,
     name    : []const u8,
     initial : *model.Node,
-    borrowed: bool,
   ) !*model.Node {
     const sym = try self.ip.ctx.global().create(model.Symbol);
     const offset =
@@ -265,8 +264,7 @@ const VarProc = struct {
         .spec = spec,
         .container = self.ac.container,
         .offset = offset,
-        .assignable = true,
-        .borrowed = borrowed,
+        .kind = .assignable,
       }},
       .parent_type = null,
     };
@@ -482,11 +480,10 @@ pub const Impl = lib.Provider.Wrapper(struct {
   }
 
   pub fn library(
-    intpr : *Interpreter,
-    pos   : model.Position,
-    params: ?*model.Node,
+    intpr  : *Interpreter,
+    pos    : model.Position,
+    options: ?*model.Node,
   ) nyarna.Error!*model.Node {
-    _ = params; // TODO
     switch (intpr.specified_content) {
       .library => |lpos|
         intpr.ctx.logger.MultipleModuleKinds("library", pos, lpos),
@@ -495,18 +492,29 @@ pub const Impl = lib.Provider.Wrapper(struct {
       .fragment => |*f|
         intpr.ctx.logger.MultipleModuleKinds("fragment", pos, f.pos),
       .unspecified => {
-        intpr.specified_content = .{.library = pos};
+        if (options) |input| {
+          var list = std.ArrayList(model.locations.Ref).init(intpr.allocator);
+          try intpr.collectLocations(input, &list);
+          var registrar =
+            nyarna.ModuleLoader.OptionRegistrar{.ml = intpr.ctx.loader.?};
+          _ = try
+            intpr.processLocations(&list.items, .{.kind = .final}, &registrar);
+          try registrar.finalize(0);
+        }
+        return (
+          try intpr.node_gen.rootDef(pos, .library, undefined, undefined)
+        ).node();
       }
     }
-    return intpr.node_gen.@"void"(pos);
+    return try intpr.node_gen.poison(pos);
   }
 
   pub fn standalone(
-    intpr : *Interpreter,
-    pos   : model.Position,
-    params: ?*model.Node,
+    intpr  : *Interpreter,
+    pos    : model.Position,
+    options: ?*model.Node,
+    params : ?*model.Node,
   ) nyarna.Error!*model.Node {
-    _ = params; // TODO
     switch (intpr.specified_content) {
       .library => |lpos|
         intpr.ctx.logger.MultipleModuleKinds("library", pos, lpos),
@@ -515,22 +523,32 @@ pub const Impl = lib.Provider.Wrapper(struct {
       .fragment => |*f|
         intpr.ctx.logger.MultipleModuleKinds("fragment", pos, f.pos),
       .unspecified => {
-        intpr.specified_content = .{.standalone = .{
-          .pos = pos,
-          .root_type = intpr.ctx.types().text(), // TODO
-        }};
+        if (options) |input| {
+          if (try intpr.locationsCanGenVars(input, .{.kind = .keyword})) {
+            var list = std.ArrayList(model.locations.Ref).init(intpr.allocator);
+            try intpr.collectLocations(input, &list);
+            var registrar =
+              nyarna.ModuleLoader.OptionRegistrar{.ml = intpr.ctx.loader.?};
+            _ = try intpr.processLocations(
+              &list.items, .{.kind = .final}, &registrar);
+            try registrar.finalize(0);
+          }
+        }
+        return ( // TODO: schema
+          try intpr.node_gen.rootDef(pos, .standalone, undefined, params)
+        ).node();
       }
     }
-    return intpr.node_gen.@"void"(pos);
+    return try intpr.node_gen.poison(pos);
   }
 
   pub fn fragment(
-    intpr : *Interpreter,
-    pos   : model.Position,
-    root  : *model.Value.TypeVal,
-    params: ?*model.Node,
+    intpr  : *Interpreter,
+    pos    : model.Position,
+    root   : *model.Node,
+    options: ?*model.Node,
+    params : ?*model.Node,
   ) nyarna.Error!*model.Node {
-    _ = params; // TODO
     switch (intpr.specified_content) {
       .library => |lpos|
         intpr.ctx.logger.MultipleModuleKinds("library", pos, lpos),
@@ -539,13 +557,21 @@ pub const Impl = lib.Provider.Wrapper(struct {
       .fragment => |*f|
         intpr.ctx.logger.MultipleModuleKinds("fragment", pos, f.pos),
       .unspecified => {
-        intpr.specified_content = .{.fragment = .{
-          .pos = pos,
-          .root_type = root.t,
-        }};
+        if (options) |input| {
+          var list = std.ArrayList(model.locations.Ref).init(intpr.allocator);
+          try intpr.collectLocations(input, &list);
+          var registrar =
+            nyarna.ModuleLoader.OptionRegistrar{.ml = intpr.ctx.loader.?};
+          _ = try
+            intpr.processLocations(&list.items, .{.kind = .final}, &registrar);
+          try registrar.finalize(0);
+        }
+        return (
+          try intpr.node_gen.rootDef(pos, .fragment, root, params)
+        ).node();
       }
     }
-    return intpr.node_gen.@"void"(pos);
+    return try intpr.node_gen.poison(pos);
   }
 
   pub fn @"Textual::len"(

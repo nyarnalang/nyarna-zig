@@ -76,8 +76,12 @@ const Impl = lib.Provider.Wrapper(struct {
               else => unreachable,
             };
             const locations = &bg.params.resolved.locations;
-            var finder = (try intpr.processLocations(
-              locations, .{.kind = .final})) orelse continue;
+            var finder =
+              nyarna.Types.CallableReprFinder.init(intpr.ctx.types());
+            if (
+              !(try intpr.processLocations(
+                locations, .{.kind = .final}, &finder))
+            ) continue;
             const finder_res = try finder.finish(ret_type, false);
             var builder = try Types.SigBuilder.init(
               intpr.ctx, locations.len, ret_type,
@@ -169,9 +173,10 @@ fn prototypeConstructor(
 /// interpret system.ny.
 pub fn magicModule(ctx: Context) !*model.Module {
   const module = try ctx.global().create(model.Module);
-  module.root = try ctx.createValueExpr(
-    try ctx.values.@"void"(model.Position.intrinsic()));
-  module.symbols = try ctx.global().alloc(*model.Symbol, 9);
+  module.* = .{
+    .root = null,
+    .symbols = try ctx.global().alloc(*model.Symbol, 9),
+  };
   var index: usize = 0;
 
   const impl = Impl.init();

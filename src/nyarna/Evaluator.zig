@@ -887,28 +887,6 @@ pub fn evaluate(
   return try self.coerce(res, expected_type);
 }
 
-/// evaluates the root module of the current document. Allocates all global
-/// variables on the stack, then evaluates the root expression of the given
-/// module.
-pub fn evaluateRootModule(
-  self: *Evaluator,
-  module: *model.Module,
-) nyarna.Error!*model.Value {
-  // allocate all global variables
-  var num_globals: usize = 0;
-  for (self.ctx.data.known_modules.values()) |entry| {
-    num_globals += entry.loaded.container.num_values;
-  }
-  var frame: ?[*]model.StackItem =
-    try self.allocateStackFrame(num_globals, null);
-  defer self.resetStackFrame(&frame, num_globals, false);
-  for (self.ctx.data.known_modules.values()) |entry| {
-    const container = entry.loaded.container;
-    container.cur_frame = frame;
-  }
-  return self.evaluate(module.root);
-}
-
 const ConcatBuilder = struct {
   const MoreText = struct {
     pos: model.Position,

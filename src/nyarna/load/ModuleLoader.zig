@@ -32,6 +32,11 @@ const model = nyarna.model;
 
 const ModuleLoader = @This();
 
+const Option = struct {
+  param: model.Signature.Parameter,
+  given: bool,
+};
+
 data  : *Globals,
 parser: Parser,
 /// for data local to the module loading process. will go out of scope when
@@ -45,13 +50,17 @@ logger: errors.Handler,
 public_syms: std.ArrayListUnmanaged(*model.Symbol) = .{},
 state: union(enum) {
   initial,
-  /// encountered a parameter specification
-  encountered_parameters,
+  /// encountered an option specification
+  encountered_options,
   parsing,
   interpreting: *model.Node,
-  finished: *model.Expression,
+  finished    : ?*model.Function,
+  /// for referenced module paths that cannot be resolved to a module source
+  poison,
 },
 fullast: bool,
+options: []Option = &.{},
+option_container: model.VariableContainer = .{.num_values = 0},
 
 /// allocates the loader and initializes it. Give no_interpret if you want to
 /// load the input as Node without interpreting it.
@@ -79,14 +88,8 @@ pub fn create(
       ret.storage.allocator(), data.storage.allocator(), input, location,
       &ret.logger))
     orelse blk: {
-      const poison = try data.storage.allocator().create(model.Expression);
-      poison.* = .{
-        .pos           = model.Position.intrinsic(),
-        .data          = .poison,
-        .expected_type = data.types.poison(),
-      };
-      ret.state = .{.finished = poison};
-      // it is safe to leave the source undefined here, as a finished
+      ret.state = .poison;
+      // it is safe to leave the source undefined here, as a poisoned
       // ModuleLoader will never call its interpreter.
       break :blk undefined;
     };
@@ -109,14 +112,22 @@ pub fn destroy(self: *ModuleLoader) void {
 fn handleError(self: *ModuleLoader, e: Parser.Error) nyarna.Error!bool {
   switch (e) {
     Parser.UnwindReason.referred_module_unavailable =>
-      if (self.state == .initial or self.state == .encountered_parameters) {
+      if (self.state == .initial or self.state == .encountered_options) {
         self.state = .parsing;
       },
-    Parser.UnwindReason.encountered_parameters =>
-      self.state = .encountered_parameters,
+    Parser.UnwindReason.encountered_options =>
+      self.state = .encountered_options,
     else => |actual_error| return actual_error,
   }
   return false;
+}
+
+fn ensureSpecifiedContent(self: *ModuleLoader, pos: model.Position) !void {
+  if (self.interpreter.specified_content == .unspecified) {
+    const root_def = try self.interpreter.node_gen.rootDef(
+      pos.before(), .standalone, null, null);
+    _ = try self.interpreter.interpret(root_def.node());
+  }
 }
 
 /// return true if finished
@@ -133,29 +144,51 @@ pub fn work(self: *ModuleLoader) !bool {
 
       const node = self.parser.parseSource(self.interpreter, self.fullast)
         catch |e| return self.handleError(e);
+      try self.ensureSpecifiedContent(node.pos);
       self.state = .{.interpreting = node};
     },
-    .parsing, .encountered_parameters => {
+    .encountered_options => unreachable,
+    .parsing => {
       const node = self.parser.resumeParse()
         catch |e| return self.handleError(e);
+      try self.ensureSpecifiedContent(node.pos);
       self.state = .{.interpreting = node};
     },
     .interpreting => |node| {
       if (self.fullast) return true;
-      const root_type = switch (self.interpreter.specified_content) {
-        .unspecified => self.data.types.text(),
-        .standalone  => |*s| s.root_type,
-        .library     => self.data.types.@"void"(),
-        .fragment    => |*f| f.root_type,
+      const callable = switch (self.interpreter.specified_content) {
+        .unspecified => unreachable,
+        .standalone  => |*s| s.callable,
+        .library     => {
+          const root = self.interpreter.interpretAs(
+            node, self.data.types.@"void"().predef()
+          ) catch |e| return self.handleError(e);
+          // TODO: in case of library, ensure that content contains no statements
+          // other than void literals.
+          _ = root;
+          self.state = .{.finished = null};
+          return true;
+        },
+        .fragment    => |*f| f.callable,
       };
 
       const root = self.interpreter.interpretAs(
-        node, root_type.predef()
+        node, callable.sig.returns.predef()
       ) catch |e| return self.handleError(e);
-      self.state = .{.finished = root};
+      // TODO: in case of library, ensure that content contains no statements
+      // other than void literals.
+      const func = try self.data.storage.allocator().create(model.Function);
+      func.* = .{
+        .callable   = callable,
+        .name       = null,
+        .data       = .{.ny = .{.body = root}},
+        .defined_at = root.pos,
+        .variables  = self.interpreter.var_containers.items[0].container,
+      };
+      self.state = .{.finished = func};
       return true;
     },
-    .finished => return true,
+    .finished, .poison => return true,
   };
 }
 
@@ -172,7 +205,6 @@ pub fn finalize(self: *ModuleLoader) !*model.Module {
   ret.* = .{
     .symbols   = self.public_syms.items,
     .root      = self.state.finished,
-    .container = self.interpreter.var_containers.items[0].container,
   };
   if (self.logger.count > 0) self.data.seen_error = true;
   return ret;
@@ -283,6 +315,42 @@ pub fn searchModule(
   return res.index;
 }
 
+pub const OptionSetter = struct {
+  ml   : *ModuleLoader,
+  index: usize,
+
+  pub fn set(self: OptionSetter, node: *model.Node) !void {
+    const item = &self.ml.options[self.index];
+    const slot = &self.ml.option_container.cur_frame.?[1 + self.index];
+    if (item.given) {
+      self.ml.logger.DuplicateParameterArgument(
+        item.param.name, node.pos, slot.value.origin);
+      return;
+    }
+    const value = blk: {
+      const expr = (
+        try self.ml.interpreter.associate(
+          node, item.param.spec, .{.kind = .final})
+      ) orelse break :blk try self.ml.interpreter.ctx.values.poison(node.pos);
+      break :blk try self.ml.interpreter.ctx.evaluator().evaluate(expr);
+    };
+    slot.* = .{.value = value};
+    item.given = true;
+  }
+};
+
+pub fn getOption(
+  self: *ModuleLoader,
+  name: []const u8
+) ?OptionSetter {
+  for (self.options) |*item, index| {
+    if (std.mem.eql(u8, item.param.name, name)) {
+      return OptionSetter{.ml = self, .index = index};
+    }
+  }
+  return null;
+}
+
 /// try to push a named parameter as option. Returns true iff an option of that
 /// name exists and thus the node has been consumed.
 pub fn tryPushOption(
@@ -290,8 +358,86 @@ pub fn tryPushOption(
   name: []const u8,
   node: *model.Node,
 ) !bool {
-  _ = self;
-  _ = name;
-  _ = node;
-  unreachable; // TODO
+  if (self.getOption(name)) |setter| {
+    try setter.set(node);
+    return true;
+  } else return false;
 }
+
+pub fn finalizeOptions(self: *ModuleLoader, pos: model.Position) !void {
+  std.debug.assert(self.state == .encountered_options);
+  for (self.options) |item, index| {
+    const slot = &self.option_container.cur_frame.?[1 + index];
+    if (!item.given) {
+      self.logger.MissingParameterArgument(
+        item.param.name, pos, item.param.pos);
+      slot.* = .{.value = try self.interpreter.ctx.values.poison(pos)};
+    }
+  }
+  self.state = .parsing;
+}
+
+pub const OptionRegistrar = struct {
+  const Item = struct {
+    param   : model.Signature.Parameter,
+    name_pos: model.Position,
+  };
+
+  ml  : *ModuleLoader,
+  data: std.ArrayListUnmanaged(Item) = .{},
+
+  pub fn push(self: *OptionRegistrar, loc: *model.Value.Location) !void {
+    if (loc.header) |header| {
+      self.ml.logger.NotAllowedForOption(header.value().origin);
+    }
+    for ([_]?model.Position{loc.primary, loc.varargs, loc.varmap}) |item| {
+      if (item) |pos| self.ml.logger.NotAllowedForOption(pos);
+    }
+    for (self.ml.options) |item| {
+      if (std.mem.eql(u8, item.param.name, loc.name.content)) {
+        self.ml.logger.DuplicateSymbolName(
+          item.param.name, loc.name.value().origin, item.param.pos);
+        return;
+      }
+    }
+    try self.data.append(self.ml.storage.allocator(), .{
+      .param = .{
+        .pos     = loc.value().origin,
+        .name    = loc.name.content,
+        .spec    = loc.spec,
+        .capture = .default,
+        .default = loc.default,
+        .config  = null,
+      },
+      .name_pos = loc.name.value().origin,
+    });
+  }
+
+  pub fn finalize(self: *OptionRegistrar, ns: u15) !void {
+    const option_stack = try self.ml.storage.allocator().alloc(
+      model.StackItem, self.data.items.len + 1);
+    option_stack[0] = .{.frame_ref = null};
+    const option_arr =
+      try self.ml.storage.allocator().alloc(Option, self.data.items.len);
+    self.ml.option_container.num_values = @intCast(u15, self.data.items.len);
+    self.ml.option_container.cur_frame = option_stack.ptr;
+    for (self.data.items) |item, index| {
+      option_arr[index] = .{.param = item.param, .given = false};
+      const varsym = try self.ml.storage.allocator().create(model.Symbol);
+      varsym.* = .{
+        .defined_at = item.name_pos,
+        .name       = item.param.name,
+        .data       = .{.variable = .{
+          .spec       = item.param.spec,
+          .container  = &self.ml.option_container,
+          .offset     = @intCast(u15, index),
+          .kind       = .static,
+        }},
+      };
+      _ = try self.ml.interpreter.namespace(ns).tryRegister(
+        self.ml.interpreter, varsym);
+    }
+    self.ml.options = option_arr;
+    self.ml.state = .encountered_options;
+  }
+};

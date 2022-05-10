@@ -382,10 +382,11 @@ pub const Value = @import("model/Value.zig");
 pub const Module = struct {
   /// exported symbols
   symbols: []*Symbol,
-  /// the root expression contained in the file
-  root: *Expression,
-  /// for all variables at root level (i.e. not in functions, templates etc)
-  container: *VariableContainer,
+  /// a module's root is a function that, when called with arguments for the
+  /// module's parameters, returns the module's content value. libraries have
+  /// no root function.
+  root: ?*Function,
+  // TODO: schema
 
   pub fn locator(self: *Module) Locator {
     return self.root.pos.source.locator;

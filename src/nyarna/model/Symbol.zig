@@ -18,11 +18,18 @@ pub const Variable = struct {
   /// `container.cur_frame + offset + 1` is the location of this variable's
   /// current value. The 1 skips the current frame's header.
   offset: u15,
-  /// whether this variable can be assigned a new value. false for argument
-  /// and const variables.
-  assignable: bool,
-  /// whether this variable points to a borrowed value.
-  borrowed: bool,
+  kind: enum {
+    /// actual variable. can be assigned to and has no restrictions.
+    assignable,
+    /// mutable argument. cannot be assigned to but can be associated with
+    /// mutable parameters in calls.
+    mutable,
+    /// non-mutable argument. must be copied to get a mutable value.
+    given,
+    /// static option. references to this variable will be immediately replaced
+    /// by the value it points to.
+    static,
+  },
 
   pub inline fn sym(self: *Variable) *Symbol {
     return Symbol.parent(self);

@@ -108,7 +108,6 @@ pub inline fn import(
   return &(try self.node(
     pos, .{.import = .{
       .ns_index = ns_index, .module_index = module_index,
-      .proto_args = &.{}, .first_block = 0,
     }})).data.import;
 }
 
@@ -167,14 +166,6 @@ pub fn locationFromValue(
   return loc_node;
 }
 
-pub inline fn seq(
-  self   : *Self,
-  pos    : Position,
-  content: Node.Seq,
-) !*Node.Seq {
-  return &(try self.node(pos, .{.seq = content})).data.seq;
-}
-
 pub inline fn raccess(
   self         : *Self,
   pos          : Position,
@@ -207,6 +198,30 @@ pub inline fn rsymref(
 ) !*Node.ResolvedSymref {
   return &(try self.node(
     pos, .{.resolved_symref = content})).data.resolved_symref;
+}
+
+pub inline fn rootDef(
+  self  : *Self,
+  pos   : Position,
+  kind  : std.meta.fieldInfo(Node.RootDef, .kind).field_type,
+  root  : ?*Node,
+  params: ?*Node,
+) !*Node.RootDef {
+  return &(try self.node(
+    pos, .{.root_def = .{
+      .kind   = kind,
+      .root   = root,
+      .params = params,
+    }}
+  )).data.root_def;
+}
+
+pub inline fn seq(
+  self   : *Self,
+  pos    : Position,
+  content: Node.Seq,
+) !*Node.Seq {
+  return &(try self.node(pos, .{.seq = content})).data.seq;
 }
 
 pub inline fn tgConcat(

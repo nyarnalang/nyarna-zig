@@ -97,6 +97,21 @@ pub const Definition = struct {
   }
 };
 
+/// RootDef is a node created from \library, \fragment and \standalone keywords.
+/// it postpones the interpretation of parameters and the root type / schema
+/// until after any options have been fed into the module loader. Generating a
+/// RootDef causes the current module to stop parsing if at least one option is
+/// specified, and will query the importing location for option values.
+pub const RootDef = struct {
+  kind  : enum { library, fragment, standalone },
+  root  : ?*Node,
+  params: ?*Node,
+
+  pub inline fn node(self: *@This()) *Node {
+    return Node.parent(self);
+  }
+};
+
 /// Funcgen nodes define functions. Just like type generator nodes, they may
 /// need multiple passes to be processed.
 pub const Funcgen = struct {
@@ -120,8 +135,6 @@ pub const Funcgen = struct {
 pub const Import = struct {
   ns_index    : u15,
   module_index: usize,
-  proto_args  : []UnresolvedCall.ProtoArg,
-  first_block : usize,
 
   pub inline fn node(self: *@This()) *Node {
     return Node.parent(self);
@@ -413,10 +426,11 @@ pub const Data = union(enum) {
   import           : Import,
   literal          : Literal,
   location         : Location,
-  seq              : Seq,
   resolved_access  : ResolvedAccess,
   resolved_call    : ResolvedCall,
   resolved_symref  : ResolvedSymref,
+  root_def         : RootDef,
+  seq              : Seq,
   unresolved_access: UnresolvedAccess,
   unresolved_call  : UnresolvedCall,
   unresolved_symref: UnresolvedSymref,
@@ -443,10 +457,11 @@ fn parent(it: anytype) *Node {
     Import           => offset(Data, "import"),
     Literal          => offset(Data, "literal"),
     Location         => offset(Data, "location"),
-    Seq              => offset(Data, "seq"),
     ResolvedAccess   => offset(Data, "resolved_access"),
     ResolvedCall     => offset(Data, "resolved_call"),
     ResolvedSymref   => offset(Data, "resolved_symref"),
+    RootDef          => offset(Data, "root_def"),
+    Seq              => offset(Data, "seq"),
     tg.Concat        => offset(Data, "gen_concat"),
     tg.Enum          => offset(Data, "gen_enum"),
     tg.Float         => offset(Data, "gen_float"),

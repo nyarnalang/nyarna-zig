@@ -2,6 +2,7 @@ const std = @import("std");
 
 pub const Evaluator    = @import("nyarna/Evaluator.zig");
 pub const errors       = @import("nyarna/errors.zig");
+pub const Interpreter  = @import("nyarna/interpret.zig").Interpreter;
 pub const lib          = @import("nyarna/lib.zig");
 pub const load         = @import("nyarna/load.zig");
 pub const model        = @import("nyarna/model.zig");
@@ -315,16 +316,40 @@ pub const Processor = struct {
       }
 
       var logger = errors.Handler{.reporter = self.globals.reporter};
-      const root = try (
-        Context{.data = self.globals, .logger = &logger, .loader = null}
-      ).evaluator().evaluateRootModule(module);
+      // TODO: check if main module is standalone
+      const descr = model.Source.Descriptor{
+        .name = ".exec.invoke",
+        .locator = model.Locator.parse(".exec.invoke") catch unreachable,
+        .argument = false,
+      };
+      var source = model.Source{
+        .meta        = &descr,
+        .content     = "",
+        .locator_ctx = descr.name[0..6],
+        .offsets     = .{},
+      };
+      var ns = std.ArrayListUnmanaged(*model.Symbol){};
+      var intpr = try Interpreter.create(
+        Context{.data = self.globals, .logger = &logger, .loader = null},
+        self.globals.storage.allocator(),
+        &source, &ns, null);
+
+      var mapper = try Parser.Mapper.ToSignature.init(
+        intpr, try intpr.genValueNode((try intpr.ctx.values.funcRef(
+          source.at(model.Cursor.unknown()), module.root.?
+        )).value()), 0, module.root.?.callable.sig);
+      // TODO: push arguments
+      const call =
+        try mapper.mapper.finalize(source.at(model.Cursor.unknown()));
+      const result = try intpr.ctx.evaluator().evaluate(
+        try intpr.interpret(call));
       if (logger.count > 0) {
         self.deinit();
         return null;
       }
       const doc = try self.globals.storage.allocator().create(model.Document);
       doc.* = .{
-        .root = root,
+        .root    = result,
         .globals = self.globals,
       };
       return doc;
@@ -333,6 +358,14 @@ pub const Processor = struct {
     /// finish interpreting the main module and returns it. Does not finalize
     /// the MainLoader. finalize() or deinit() must still be called afterwards.
     pub fn finishMainModule(self: *MainLoader) !*model.Module {
+      switch (self.globals.known_modules.values()[1]) {
+        .require_options, .require_module => |ml| {
+          if (ml.state == .encountered_options) {
+            try ml.finalizeOptions(model.Position.intrinsic());
+          }
+        },
+        .loaded => {},
+      }
       try self.globals.work();
       return self.globals.known_modules.values()[1].loaded;
     }
@@ -385,13 +418,14 @@ pub const Processor = struct {
       model.Locator.parse(".std.system") catch unreachable,
       false, &lib.system.instance.provider);
     _ = try system_loader.work();
+    const source = system_loader.interpreter.input.meta;
     const module = try system_loader.finalize();
     try globals.known_modules.put(
       globals.storage.allocator(), system_ny.name, .{.loaded = module});
 
     var checker = lib.system.Checker.init(&globals.types, logger);
     for (module.symbols) |sym| checker.check(sym);
-    checker.finish(module.root.pos.source, globals.types);
+    checker.finish(source, globals.types);
   }
 
   /// initialize loading of the given main module. should only be used for

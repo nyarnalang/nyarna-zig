@@ -136,27 +136,17 @@ fn lastLoadingModule(self: *@This()) ?usize {
 /// returns so that caller may inject those.
 pub fn work(self: *@This()) !void {
   while (self.lastLoadingModule()) |index| {
-    var must_finish = false;
     const loader = switch (self.known_modules.values()[index]) {
       .require_options => |ml| ml,
       .require_module => |ml| blk: {
-        must_finish = true;
         break :blk ml;
       },
       .loaded => unreachable,
     };
-    while (true) {
-      _ = try loader.work();
-      switch (loader.state) {
-        .initial => unreachable,
-        .finished => {
-          const module = try loader.finalize();
-          self.known_modules.values()[index] = .{.loaded = module};
-          break;
-        },
-        .encountered_parameters => if (!must_finish) break,
-        .parsing, .interpreting => break,
-      }
+    _ = try loader.work();
+    if (loader.state == .finished) {
+      const module = try loader.finalize();
+      self.known_modules.values()[index] = .{.loaded = module};
     }
   }
 }

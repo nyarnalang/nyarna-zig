@@ -158,7 +158,7 @@
   \end(keyword)
 
   fragment = \keyword:
-    root   : \Type
+    root   : \Ast
     options: \Optional(\Ast) {primary}:<syntax locations>
     params : \Optional(\Ast) {}:<syntax locations>
   \end(keyword)
