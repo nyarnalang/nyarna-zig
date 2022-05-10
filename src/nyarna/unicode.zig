@@ -333,11 +333,11 @@ pub const CategorySet = struct {
 };
 
 pub const Lut = CategorySet.create(.{.Lu, .Lt});
-pub const LC = CategorySet.create(.{.Lu, .Ll, .Lt});
-pub const L = CategorySet.create(.{.Lu, .Ll, .Lt, .Lm, .Lo});
-pub const M = CategorySet.create(.{.Mc, .Me, .Mn});
-pub const P = CategorySet.create(.{.Pc, .Pd, .Pe, .Pf, .Pi, .Po, .Ps});
-pub const S = CategorySet.create(.{.Sc, .Sk, .Sm, .So});
+pub const LC  = CategorySet.create(.{.Lu, .Ll, .Lt});
+pub const L   = CategorySet.create(.{.Lu, .Ll, .Lt, .Lm, .Lo});
+pub const M   = CategorySet.create(.{.Mc, .Me, .Mn});
+pub const P   = CategorySet.create(.{.Pc, .Pd, .Pe, .Pf, .Pi, .Po, .Ps});
+pub const S   = CategorySet.create(.{.Sc, .Sk, .Sm, .So});
 pub const MPS = CategorySet{.content = M.content | P.content | S.content};
 
 test "character categories" {
@@ -349,7 +349,7 @@ test "character categories" {
 
 pub const EncodedCharacter = struct {
   buffer: [4]u8,
-  len: u3,
+  len   : u3,
 
   pub fn init(character: u21) EncodedCharacter {
     var ret: EncodedCharacter = undefined;

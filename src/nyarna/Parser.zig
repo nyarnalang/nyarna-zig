@@ -3,29 +3,14 @@
 //! evaluated immediately, and if so, asks the interpreter to do so, which will
 //! yield the replacement for the original node.
 
-const Interpreter = @import("interpret.zig").Interpreter;
 const Lexer       = @import("Parser/Lexer.zig");
 const nyarna      = @import("../nyarna.zig");
-const model       = @import("model.zig");
+
+const Interpreter = nyarna.Interpreter;
+const model       = nyarna.model;
 
 pub const LiteralNumber = @import("Parser/LiteralNumber.zig");
-
-/// Mapper is the interface for mapping call arguments to parameters.
-/// This is a multi-stage process for each argument:
-///
-///  * first, the argument is mapped via `map()`. For block arguments, this must
-///    occur before the argument content is read so that block config can be
-///    applied. Unmappable arguments must also return a valid cursor.
-///  * `map()` returns a Cursor that can be used to query implicit block config
-///    of the target parameter via `config()`.
-///  * Similarly, `paramType()` can be used to query the type of the target
-///    parameter. This may return `null` for unmappable arguments.
-///  * After the content of the argument has been read, `push()` is to be called
-///    to finalize the argument by pushing its content.
-///
-/// When all arguments have been pushed, `finalize()` is to be called to
-/// generate the node resulting from the call.
-pub const Mapper = @import("Parser/Mapper.zig");
+pub const Mapper        = @import("Parser/Mapper.zig");
 
 /// The parser can return one of these if outside action is required before
 /// resuming parsing.

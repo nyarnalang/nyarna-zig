@@ -266,9 +266,9 @@ pub const Named = struct {
   pub const Data = union(enum) {
     textual: Textual,
     @"enum": Enum,
-    float: FloatNum,
-    int: IntNum,
-    record: Record,
+    float  : FloatNum,
+    int    : IntNum,
+    record : Record,
     // what follows are unique intrinsic types.
     @"void", prototype, schema, extension, ast, frame_root, block_header,
     @"type", space, literal, raw, location, definition, backend, poison, every,
@@ -283,11 +283,11 @@ pub const Named = struct {
   fn parent(it: anytype) *Named {
     const t = @typeInfo(@TypeOf(it)).Pointer.child;
     const addr = @ptrToInt(it) - switch (t) {
-      Textual =>  offset(Data, "textual"),
-      Enum => offset(Data, "enum"),
+      Textual  =>  offset(Data, "textual"),
+      Enum     => offset(Data, "enum"),
       FloatNum => offset(Data, "float"),
-      IntNum => offset(Data, "int"),
-      Record => offset(Data, "record"),
+      IntNum   => offset(Data, "int"),
+      Record   => offset(Data, "record"),
       else => unreachable
     };
     return @fieldParentPtr(Named, "data", @intToPtr(*Data, addr));
@@ -309,13 +309,13 @@ pub const Named = struct {
 /// types with structural equivalence
 pub const Structural = union(enum) {
   /// general type for anything callable, has flag for whether it's a type
-  callable: Callable,
-  concat: Concat,
+  callable    : Callable,
+  concat      : Concat,
   intersection: Intersection,
-  list: List,
-  map: Map,
-  optional: Optional,
-  sequence: Sequence,
+  list        : List,
+  map         : Map,
+  optional    : Optional,
+  sequence    : Sequence,
 
   fn parent(it: anytype) *Structural {
     const t = @typeInfo(@TypeOf(it)).Pointer.child;
@@ -348,21 +348,21 @@ pub const Structural = union(enum) {
 //----------------------------------------------------------------------------//
 
 pub const Type = union(enum) {
-  pub const Callable = local.Callable;
-  pub const Concat = local.Concat;
+  pub const Callable     = local.Callable;
+  pub const Concat       = local.Concat;
   pub const Intersection = local.Intersection;
-  pub const Map = local.Map;
-  pub const Optional = local.Optional;
-  pub const Sequence = local.Sequence;
-  pub const List = local.List;
-  pub const Structural = local.Structural;
+  pub const Map          = local.Map;
+  pub const Optional     = local.Optional;
+  pub const Sequence     = local.Sequence;
+  pub const List         = local.List;
+  pub const Structural   = local.Structural;
 
-  pub const Enum = local.Enum;
+  pub const Enum     = local.Enum;
   pub const FloatNum = local.FloatNum;
-  pub const IntNum = local.IntNum;
-  pub const Record = local.Record;
-  pub const Textual = local.Textual;
-  pub const Named = local.Named;
+  pub const IntNum   = local.IntNum;
+  pub const Record   = local.Record;
+  pub const Textual  = local.Textual;
+  pub const Named    = local.Named;
 
   /// types with structural equivalence.
   structural: *local.Structural,
@@ -416,11 +416,11 @@ pub const Type = union(enum) {
   }
 
   fn listTypes(
-    comptime fmt: []const u8,
-    opt: std.fmt.FormatOptions,
-    data: anytype,
-    index: *usize,
-    writer: anytype
+    comptime fmt   : []const u8,
+             opt   : std.fmt.FormatOptions,
+             data  : anytype,
+             index : *usize,
+             writer: anytype
   ) @TypeOf(writer).Error!void {
     switch (comptime @typeInfo(@TypeOf(data))) {
       .Optional => if (data) |value| {
@@ -447,11 +447,11 @@ pub const Type = union(enum) {
   }
 
   fn formatParameterized(
-    comptime fmt: []const u8,
-    opt: std.fmt.FormatOptions,
-    name: []const u8,
-    inners: anytype,
-    writer: anytype,
+    comptime fmt   : []const u8,
+             opt   : std.fmt.FormatOptions,
+             name  : []const u8,
+             inners: anytype,
+             writer: anytype,
   ) @TypeOf(writer).Error!void {
     try writer.writeAll(name);
     try writer.writeByte('<');
@@ -461,10 +461,10 @@ pub const Type = union(enum) {
   }
 
   pub fn format(
-    self: Type,
-    comptime fmt: []const u8,
-    opt: std.fmt.FormatOptions,
-    writer: anytype
+             self  : Type,
+    comptime fmt   : []const u8,
+             opt   : std.fmt.FormatOptions,
+             writer: anytype
   ) @TypeOf(writer).Error!void {
     switch (self) {
       .structural => |struc| try switch (struc.*) {
@@ -507,10 +507,10 @@ pub const Type = union(enum) {
   }
 
   pub fn formatAll(
-    types: []const Type,
-    comptime fmt: []const u8,
-    options: std.fmt.FormatOptions,
-    writer: anytype,
+             types  : []const Type,
+    comptime fmt    : []const u8,
+             options: std.fmt.FormatOptions,
+             writer : anytype,
   ) @TypeOf(writer).Error!void {
     for (types) |t, i| {
       if (i > 0) try writer.writeAll(", ");

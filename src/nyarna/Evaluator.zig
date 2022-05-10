@@ -2,11 +2,11 @@
 
 const std = @import("std");
 
-const Interpreter = @import("interpret.zig").Interpreter;
 const nyarna      = @import("../nyarna.zig");
 
-const model = nyarna.model;
-const Types = nyarna.Types;
+const Interpreter = nyarna.Interpreter;
+const model       = nyarna.model;
+const Types       = nyarna.Types;
 
 const Evaluator = @This();
 

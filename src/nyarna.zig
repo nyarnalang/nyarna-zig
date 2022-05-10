@@ -2,7 +2,7 @@ const std = @import("std");
 
 pub const Evaluator    = @import("nyarna/Evaluator.zig");
 pub const errors       = @import("nyarna/errors.zig");
-pub const Interpreter  = @import("nyarna/interpret.zig").Interpreter;
+pub const Interpreter  = @import("nyarna/Interpreter.zig");
 pub const lib          = @import("nyarna/lib.zig");
 pub const load         = @import("nyarna/load.zig");
 pub const model        = @import("nyarna/model.zig");

@@ -1,10 +1,10 @@
 const std = @import("std");
 
-const Interpreter = @import("../interpret.zig").Interpreter;
 const nyarna      = @import("../../nyarna.zig");
 
-const errors = nyarna.errors;
-const model  = nyarna.model;
+const errors      = nyarna.errors;
+const Interpreter = nyarna.Interpreter;
+const model       = nyarna.model;
 
 pub const SpecialSyntax = struct {
   pub const Item = union(enum) {

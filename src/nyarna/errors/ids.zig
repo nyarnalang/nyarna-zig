@@ -34,13 +34,13 @@ pub const WrongItemError = enum {
     node,
 
     pub fn format(
-      self: ItemDescr,
-      comptime _: []const u8,
-      options: std.fmt.FormatOptions,
-      writer: anytype
+               self   : ItemDescr,
+      comptime _      : []const u8,
+               options: std.fmt.FormatOptions,
+               writer : anytype,
     ) @TypeOf(writer).Error!void {
       switch (self) {
-        .token => |t| try writer.writeAll(@tagName(t)),
+        .token     => |t| try writer.writeAll(@tagName(t)),
         .character => |c| {
           try writer.writeByte('\'');
           try std.fmt.formatUnicodeCodepoint(c, options, writer);
@@ -51,10 +51,10 @@ pub const WrongItemError = enum {
     }
 
     pub fn formatAll(
-      data: []const ItemDescr,
+               data     : []const ItemDescr,
       comptime specifier: []const u8,
-      options: std.fmt.FormatOptions,
-      writer: anytype
+               options  : std.fmt.FormatOptions,
+               writer   : anytype,
     ) @TypeOf(writer).Error!void {
       if ((comptime std.mem.eql(u8, specifier, "?")) and data.len == 1) {
         try data[0].format("", options, writer);

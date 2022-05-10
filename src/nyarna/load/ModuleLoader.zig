@@ -18,17 +18,17 @@
 const std = @import("std");
 
 const Globals     = @import("../Globals.zig");
-const Interpreter = @import("../interpret.zig").Interpreter;
 const Lexer       = @import("../Parser/Lexer.zig");
 const magic       = @import("../lib/magic.zig");
 const nyarna      = @import("../../nyarna.zig");
 const Parser      = @import("../Parser.zig");
 const Resolver    = @import("Resolver.zig");
 
-const Context = nyarna.Context;
-const errors = nyarna.errors;
-const lib = nyarna.lib;
-const model = nyarna.model;
+const Context     = nyarna.Context;
+const errors      = nyarna.errors;
+const Interpreter = nyarna.Interpreter;
+const lib         = nyarna.lib;
+const model       = nyarna.model;
 
 const ModuleLoader = @This();
 
@@ -83,16 +83,16 @@ pub fn create(
     .storage     = std.heap.ArenaAllocator.init(data.backing_allocator),
   };
   errdefer data.storage.allocator().destroy(ret);
-  const source =
-    (try resolver.getSource(
+  const source = (
+    try resolver.getSource(
       ret.storage.allocator(), data.storage.allocator(), input, location,
-      &ret.logger))
-    orelse blk: {
-      ret.state = .poison;
-      // it is safe to leave the source undefined here, as a poisoned
-      // ModuleLoader will never call its interpreter.
-      break :blk undefined;
-    };
+      &ret.logger)
+  ) orelse blk: {
+    ret.state = .poison;
+    // it is safe to leave the source undefined here, as a poisoned
+    // ModuleLoader will never call its interpreter.
+    break :blk undefined;
+  };
   ret.interpreter = try Interpreter.create(
     ret.ctx(), ret.storage.allocator(), source, &ret.public_syms, provider);
   return ret;

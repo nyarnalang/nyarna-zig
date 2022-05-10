@@ -1,9 +1,8 @@
 const std = @import("std");
 
-const interpret = @import("../interpret.zig");
 const nyarna    = @import("../../nyarna.zig");
 
-const Interpreter = interpret.Interpreter;
+const Interpreter = nyarna.Interpreter;
 const model       = nyarna.model;
 
 /// Used for resolution of cyclical references inside \declare and templates.
@@ -37,8 +36,8 @@ pub const ResolutionContext = struct {
   };
   pub const StrippedResult = union(enum) {
     unfinished_function: model.Type,
-    unfinished_type: model.Type,
-    variable: *model.Symbol.Variable,
+    unfinished_type    : model.Type,
+    variable           : *model.Symbol.Variable,
     /// subject *may* be resolvable in the future but currently isn't.
     unknown,
     /// subject is guaranteed to be poison and an error message has been logged.
@@ -51,7 +50,7 @@ pub const ResolutionContext = struct {
 
   pub const Target = union(enum) {
     ns: u15,
-    t: model.Type,
+    t : model.Type,
   };
 
   /// try to resolve an unresolved name in the current context.
@@ -60,8 +59,8 @@ pub const ResolutionContext = struct {
   /// correct type or an expression of the correct type
   /// (if context is type-based).
   resolveNameFn: fn(
-    ctx: *ResolutionContext,
-    name: []const u8,
+    ctx     : *ResolutionContext,
+    name    : []const u8,
     name_pos: model.Position,
   ) nyarna.Error!Result,
 
@@ -73,9 +72,9 @@ pub const ResolutionContext = struct {
   target: Target,
 
   fn strip(
-    ctx: *ResolutionContext,
+    ctx  : *ResolutionContext,
     local: std.mem.Allocator,
-    res: Result
+    res  : Result
   ) !StrippedResult {
     return switch (res) {
       .unfinished_function => |t| StrippedResult{.unfinished_function = t},
@@ -96,9 +95,9 @@ pub const ResolutionContext = struct {
   /// manually establish a link to the symbol of the given name. used for some
   /// system.ny bootstrapping.
   pub fn establishLink(
-    ctx: *ResolutionContext,
+    ctx  : *ResolutionContext,
     intpr: *Interpreter,
-    name: []const u8,
+    name : []const u8,
   ) !StrippedResult {
     const res = try ctx.resolveNameFn(ctx, name, model.Position.intrinsic());
     return try ctx.strip(intpr.allocator, res);
@@ -106,9 +105,9 @@ pub const ResolutionContext = struct {
 
   /// try to resolve an unresolved symbol reference in the context.
   pub fn resolveSymbol(
-    ctx: *ResolutionContext,
+    ctx  : *ResolutionContext,
     intpr: *Interpreter,
-    item: *model.Node.UnresolvedSymref,
+    item : *model.Node.UnresolvedSymref,
   ) !StrippedResult {
     switch (ctx.target) {
       .ns => |ns| if (ns == item.ns) {
@@ -122,10 +121,10 @@ pub const ResolutionContext = struct {
 
   /// try to resolve an unresolved access node in the context.
   pub fn resolveAccess(
-    ctx: *ResolutionContext,
+    ctx  : *ResolutionContext,
     intpr: *Interpreter,
-    item: *model.Node.UnresolvedAccess,
-    stage: interpret.Stage,
+    item : *model.Node.UnresolvedAccess,
+    stage: Interpreter.Stage,
   ) !AccessData {
     switch (ctx.target) {
       .ns => {},
@@ -217,12 +216,12 @@ pub fn Processor(comptime Graph: type) type {
     }
 
     const Tarjan = struct {
-      proc: *Self,
-      index: u21,
-      stack: []*NodeRef,
-      stack_top: usize,
+      proc          : *Self,
+      index         : u21,
+      stack         : []*NodeRef,
+      stack_top     : usize,
       first_unsorted: usize,
-      components: std.ArrayList(usize),
+      components    : std.ArrayList(usize),
 
       fn init(allocator: std.mem.Allocator, proc: *Self) !Tarjan {
         return Tarjan{
@@ -240,8 +239,10 @@ pub fn Processor(comptime Graph: type) type {
         self.components.deinit();
       }
 
-      fn strongConnect(self: *Tarjan, v: *NodeRef)
-          std.mem.Allocator.Error!void {
+      fn strongConnect(
+        self: *Tarjan,
+        v   : *NodeRef,
+      ) std.mem.Allocator.Error!void {
         v.assigned_index = self.index;
         v.lowlink = self.index;
         self.index += 1;

@@ -69,24 +69,24 @@ pub const PrototypeFuncs = struct {
 };
 
 pub const InstanceFuncs = struct {
-  pt: *PrototypeFuncs,
+  pt  : *PrototypeFuncs,
   syms: []?*model.Symbol,
   /// arguments of the instantiation. The first argument is always the resulting
   /// type, then come the user-supplied arguments to the Prototype call.
-  arguments: []*model.Value.TypeVal,
+  arguments  : []*model.Value.TypeVal,
   constructor: ?*model.Type.Callable,
 
   pub fn create(
-    pt: *PrototypeFuncs,
+    pt       : *PrototypeFuncs,
     allocator: std.mem.Allocator,
     arguments: []*model.Value.TypeVal,
   ) !*InstanceFuncs {
     var ret = try allocator.create(InstanceFuncs);
     errdefer allocator.destroy(ret);
     ret.* = .{
-      .pt = pt,
-      .syms = try allocator.alloc(?*model.Symbol, pt.defs.len),
-      .arguments = arguments,
+      .pt          = pt,
+      .syms        = try allocator.alloc(?*model.Symbol, pt.defs.len),
+      .arguments   = arguments,
       .constructor = null,
     };
     std.mem.set(?*model.Symbol, ret.syms, null);
@@ -99,10 +99,10 @@ pub const InstanceFuncs = struct {
   }
 
   fn buildCallable(
-    self: *InstanceFuncs,
-    ctx: nyarna.Context,
+    self  : *InstanceFuncs,
+    ctx   : nyarna.Context,
     params: []*model.Expression,
-    ret: anytype,
+    ret   : anytype,
   ) !buildCallableRes(@TypeOf(ret)) {
     // fill variable container with argument values.
     var eval = ctx.evaluator();
@@ -118,8 +118,8 @@ pub const InstanceFuncs = struct {
       (try eval.evaluate(ret)).data
     ) {
       .@"type" => |tv| tv.t,
-      .poison => return null,
-      else => unreachable,
+      .poison  => return null,
+      else     => unreachable,
     } else ret;
 
     // since this is language defined, we can be sure no func has more than 10
@@ -146,7 +146,7 @@ pub const InstanceFuncs = struct {
 
   pub fn find(
     self: *InstanceFuncs,
-    ctx: nyarna.Context,
+    ctx : nyarna.Context,
     name: []const u8,
   ) !?*model.Symbol {
     const index = self.pt.find(name) orelse return null;
@@ -155,9 +155,9 @@ pub const InstanceFuncs = struct {
 
     const sym = try ctx.global().create(model.Symbol);
     sym.* = .{
-      .defined_at = def.name.value().origin,
-      .name = def.name.content,
-      .data = undefined,
+      .defined_at  = def.name.value().origin,
+      .name        = def.name.content,
+      .data        = undefined,
       .parent_type = self.arguments[0].t,
     };
 
@@ -174,14 +174,12 @@ pub const InstanceFuncs = struct {
       .{.num_values = @intCast(u15, builder_res.sig.parameters.len)};
     const func = try ctx.global().create(model.Function);
     func.* = .{
-      .callable = try builder_res.createCallable(ctx.global(), .function),
+      .callable   = try builder_res.createCallable(ctx.global(), .function),
       .defined_at = def.name.value().origin,
-      .data = .{
-        .ext = .{
-          .ns_dependent = false,
-          .impl_index = def.impl_index,
-        },
-      },
+      .data = .{.ext = .{
+        .ns_dependent = false,
+        .impl_index   = def.impl_index,
+      }},
       .name = sym,
       .variables = container,
     };
@@ -192,7 +190,7 @@ pub const InstanceFuncs = struct {
 
   pub fn genConstructor(
     self: *InstanceFuncs,
-    ctx: nyarna.Context,
+    ctx : nyarna.Context,
   ) !void {
     if (self.constructor != null) return;
     if (self.pt.constructor) |constr| {

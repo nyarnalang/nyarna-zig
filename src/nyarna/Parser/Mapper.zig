@@ -1,11 +1,27 @@
+//! Mapper is the interface for mapping call arguments to parameters.
+//! This is a multi-stage process for each argument:
+//!
+//!  * first, the argument is mapped via `map()`. For block arguments, this must
+//!    occur before the argument content is read so that block config can be
+//!    applied. Unmappable arguments must also return a valid cursor.
+//!  * `map()` returns a Cursor that can be used to query implicit block config
+//!    of the target parameter via `config()`.
+//!  * Similarly, `paramType()` can be used to query the type of the target
+//!    parameter. This may return `null` for unmappable arguments.
+//!  * After the content of the argument has been read, `push()` is to be called
+//!    to finalize the argument by pushing its content.
+//!
+//! When all arguments have been pushed, `finalize()` is to be called to
+//! generate the node resulting from the call.
+
 const std = @import("std");
 
-const Interpreter = @import("../interpret.zig").Interpreter;
 const nyarna      = @import("../../nyarna.zig");
 const ModuleEntry = @import("../Globals.zig").ModuleEntry;
 
-const model = nyarna.model;
-const Type  = model.Type;
+const Interpreter = nyarna.Interpreter;
+const model       = nyarna.model;
+const Type        = model.Type;
 
 const Self = @This();
 
@@ -26,10 +42,10 @@ pub const ProtoArgFlag = enum {
 const ArgKind = model.Node.UnresolvedCall.ArgKind;
 
 mapFn: fn(
-  self: *Self,
-  pos: model.Position,
+  self : *Self,
+  pos  : model.Position,
   input: ArgKind,
-  flag: ProtoArgFlag,
+  flag : ProtoArgFlag,
 ) nyarna.Error!?Cursor,
 pushFn: fn(self: *Self, at: Cursor, content: *model.Node) nyarna.Error!void,
 configFn: fn(self: *Self, at: Cursor) ?*model.BlockConfig,
@@ -39,10 +55,10 @@ finalizeFn: fn(self: *Self, pos: model.Position) nyarna.Error!*model.Node,
 subject_pos: model.Position,
 
 pub fn map(
-  self: *Self,
-  pos: model.Position,
+  self : *Self,
+  pos  : model.Position,
   input: ArgKind,
-  flag: ProtoArgFlag,
+  flag : ProtoArgFlag,
 ) nyarna.Error!?Cursor {
   return self.mapFn(self, pos, input, flag);
 }
@@ -136,7 +152,7 @@ pub const ToSignature = struct {
             if (p.capture == .varargs) self.cur_pos = index;
             try self.checkFrameRoot(p.spec.t);
             return Cursor{
-              .param = .{.index = index},
+              .param  = .{.index = index},
               .config = flag == .block_with_config,
               .direct = input == .direct,
             };
@@ -146,7 +162,7 @@ pub const ToSignature = struct {
           self.last_key = try self.intpr.node_gen.literal(
             pos, .{.kind = .text, .content = name});
           return Cursor{
-            .param = .{.index = index},
+            .param  = .{.index = index},
             .config = flag == .block_with_config,
             .direct = input == .direct,
           };
@@ -394,8 +410,8 @@ pub const ToImport = struct {
   loader     : ?*nyarna.ModuleLoader,
 
   pub fn init(
-    target     : *model.Node.Import,
-    intpr      : *Interpreter,
+    target: *model.Node.Import,
+    intpr : *Interpreter,
   ) @This() {
     const me = &intpr.ctx.data.known_modules.values()[target.module_index];
     return .{

@@ -19,7 +19,7 @@ pub const EnumBuilder = struct {
   pub fn init(ctx: nyarna.Context, pos: model.Position) !Self {
     const named = try ctx.global().create(model.Type.Named);
     named.* = .{
-      .at = pos,
+      .at   = pos,
       .name = null,
       .data = .{.@"enum" = .{.values = .{}}},
     };
@@ -73,9 +73,9 @@ pub const IntersectionBuilder = struct {
     return Static(sources.len).init(sources);
   }
 
-  sources: [][]const model.Type,
-  indexes: []usize,
-  filled: usize,
+  sources  : [][]const model.Type,
+  indexes  : []usize,
+  filled   : usize,
   allocator: ?std.mem.Allocator,
 
   pub fn init(
@@ -83,9 +83,9 @@ pub const IntersectionBuilder = struct {
     allocator  : std.mem.Allocator,
   ) !Self {
     return Self{
-      .sources = try allocator.alloc([]const model.Type, max_sources),
-      .indexes = try allocator.alloc(usize, max_sources),
-      .filled = 0,
+      .sources   = try allocator.alloc([]const model.Type, max_sources),
+      .indexes   = try allocator.alloc(usize, max_sources),
+      .filled    = 0,
       .allocator = allocator,
     };
   }
@@ -98,9 +98,9 @@ pub const IntersectionBuilder = struct {
 
   fn initStatic(static: anytype) Self {
     return Self{
-      .sources = &static.sources,
-      .indexes = &static.indexes,
-      .filled = static.sources.len,
+      .sources   = &static.sources,
+      .indexes   = &static.indexes,
+      .filled    = static.sources.len,
       .allocator = null,
     };
   }
@@ -194,12 +194,12 @@ pub const IntersectionBuilder = struct {
 pub const IntNumBuilder = struct {
   const Self = @This();
 
-  ctx: nyarna.Context,
-  ret: *model.Type.IntNum,
-  pos: model.Position,
-  failed: bool = false,
+  ctx      : nyarna.Context,
+  ret      : *model.Type.IntNum,
+  pos      : model.Position,
+  failed   : bool = false,
   positions: std.ArrayListUnmanaged(model.Position) = .{},
-  units: std.ArrayListUnmanaged(model.Type.IntNum.Unit) = .{},
+  units    : std.ArrayListUnmanaged(model.Type.IntNum.Unit) = .{},
   /// factor with which each given unit's factor is multiplied so that the
   /// smallest unit has factor `1`.
   cur_factor: i64 = 1,
@@ -209,11 +209,11 @@ pub const IntNumBuilder = struct {
   pub fn init(ctx: nyarna.Context, pos: model.Position) !Self {
     const named = try ctx.global().create(model.Type.Named);
     named.* = .{
-      .at = pos,
+      .at   = pos,
       .name = null,
       .data = .{.int = .{
-        .min = std.math.minInt(i64),
-        .max = std.math.maxInt(i64),
+        .min      = std.math.minInt(i64),
+        .max      = std.math.maxInt(i64),
         .suffixes = undefined,
       }},
     };
@@ -330,21 +330,21 @@ pub const IntNumBuilder = struct {
 pub const FloatNumBuilder = struct {
   const Self = @This();
 
-  ctx: nyarna.Context,
-  ret: *model.Type.FloatNum,
-  pos: model.Position,
-  failed: bool = false,
+  ctx      : nyarna.Context,
+  ret      : *model.Type.FloatNum,
+  pos      : model.Position,
+  failed   : bool = false,
   positions: std.ArrayListUnmanaged(model.Position) = .{},
-  units: std.ArrayListUnmanaged(model.Type.FloatNum.Unit) = .{},
+  units    : std.ArrayListUnmanaged(model.Type.FloatNum.Unit) = .{},
 
   pub fn init(ctx: nyarna.Context, pos: model.Position) !Self {
     const named = try ctx.global().create(model.Type.Named);
     named.* = .{
-      .at = pos,
+      .at   = pos,
       .name = null,
       .data = .{.float = .{
-        .min = -std.math.inf_f64,
-        .max = std.math.inf_f64,
+        .min      = -std.math.inf_f64,
+        .max      = std.math.inf_f64,
         .suffixes = undefined,
       }},
     };
@@ -437,13 +437,13 @@ pub const SequenceBuilder = struct {
   const Self = @This();
 
   pub const TypeAt = struct {
-    t: model.Type,
+    t  : model.Type,
     pos: model.Position,
   };
 
   pub const PushResult = union(enum) {
-    not_disjoint: model.SpecType,
-    not_compatible: model.SpecType,
+    not_disjoint    : model.SpecType,
+    not_compatible  : model.SpecType,
     invalid_non_void: model.SpecType,
     invalid_direct, invalid_inner, success,
 
@@ -484,13 +484,13 @@ pub const SequenceBuilder = struct {
     }
   };
 
-  types: *Types,
+  types     : *Types,
   temp_alloc: std.mem.Allocator,
-  direct: ?model.SpecType = null,
-  single: ?model.SpecType = null,
-  list: std.ArrayListUnmanaged(*model.Type.Record) = .{},
-  positions: std.ArrayListUnmanaged(model.Position) = .{},
-  non_voids: u21 = 0,
+  direct    : ?model.SpecType = null,
+  single    : ?model.SpecType = null,
+  list      : std.ArrayListUnmanaged(*model.Type.Record) = .{},
+  positions : std.ArrayListUnmanaged(model.Position) = .{},
+  non_voids : u21 = 0,
   /// if true, a \Sequence type will always be created. Also errors will be
   /// logged if pushed types are merged into previously given types.
   force: bool,
@@ -502,10 +502,10 @@ pub const SequenceBuilder = struct {
     force     : bool,
   ) Self {
     return .{
-      .types = types,
+      .types      = types,
       .temp_alloc = temp_alloc,
-      .force = force,
-      .poison = false,
+      .force      = force,
+      .poison     = false,
     };
   }
 

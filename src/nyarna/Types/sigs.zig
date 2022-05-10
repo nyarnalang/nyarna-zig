@@ -24,7 +24,7 @@ pub const CallableReprFinder = struct {
         .types = types,
       },
       .needs_different_repr = false,
-      .count = 0,
+      .count                = 0,
     };
   }
 
@@ -39,9 +39,9 @@ pub const CallableReprFinder = struct {
   pub fn finish(self: *Self, returns: model.Type, is_type: bool) !Result {
     try self.iter.descend(returns, is_type);
     return Result{
-      .found = &self.iter.cur.value,
+      .found                = &self.iter.cur.value,
       .needs_different_repr = self.needs_different_repr,
-      .num_items = self.count,
+      .num_items            = self.count,
     };
   }
 };
@@ -54,15 +54,15 @@ pub const SigBuilderResult = struct {
   repr: ?*model.Signature,
 
   pub fn createCallable(
-    self: *const @This(),
+    self     : @This(),
     allocator: std.mem.Allocator,
-    kind: model.Type.Callable.Kind,
+    kind     : model.Type.Callable.Kind,
   ) !*model.Type.Callable {
     const strct = try allocator.create(model.Type.Structural);
     errdefer allocator.destroy(strct);
     strct.* = .{
       .callable = .{
-        .sig = self.sig,
+        .sig  = self.sig,
         .kind = kind,
         .repr = undefined,
       },
@@ -72,7 +72,7 @@ pub const SigBuilderResult = struct {
       errdefer allocator.destroy(repr);
       repr.* = .{
         .callable = .{
-          .sig = repr_sig,
+          .sig  = repr_sig,
           .kind = kind,
           .repr = undefined,
         },
@@ -87,9 +87,9 @@ pub const SigBuilderResult = struct {
 pub const SigBuilder = struct {
   const Result = SigBuilderResult;
 
-  val: *model.Signature,
-  repr: ?*model.Signature,
-  ctx: nyarna.Context,
+  val       : *model.Signature,
+  repr      : ?*model.Signature,
+  ctx       : nyarna.Context,
   next_param: u21,
 
   const Self = @This();
@@ -100,35 +100,35 @@ pub const SigBuilder = struct {
   /// if build_repr is true, a second signature will be built to be the
   /// signature of the repr Callable in the type lattice.
   pub fn init(
-    ctx: nyarna.Context,
+    ctx       : nyarna.Context,
     num_params: usize,
-    returns: model.Type,
+    returns   : model.Type,
     build_repr: bool,
   ) !Self {
     var ret = Self{
-      .val = try ctx.global().create(model.Signature),
-      .repr = if (build_repr)
+      .val  = try ctx.global().create(model.Signature),
+      .repr = if (build_repr) (
           try ctx.global().create(model.Signature)
-        else null,
-      .ctx = ctx,
+      ) else null,
+      .ctx        = ctx,
       .next_param = 0,
     };
     ret.val.* = .{
-      .parameters = try ctx.global().alloc(
-        model.Signature.Parameter, num_params),
-      .primary = null,
-      .varmap = null,
+      .parameters =
+        try ctx.global().alloc(model.Signature.Parameter, num_params),
+      .primary      = null,
+      .varmap       = null,
       .auto_swallow = null,
-      .returns = returns,
+      .returns      = returns,
     };
     if (ret.repr) |sig| {
       sig.* = .{
-        .parameters = try ctx.global().alloc(
-          model.Signature.Parameter, num_params),
-        .primary = null,
-        .varmap = null,
+        .parameters =
+          try ctx.global().alloc(model.Signature.Parameter, num_params),
+        .primary      = null,
+        .varmap       = null,
         .auto_swallow = null,
-        .returns = returns,
+        .returns      = returns,
       };
     }
     return ret;
@@ -137,13 +137,13 @@ pub const SigBuilder = struct {
   pub fn push(self: *Self, loc: *model.Value.Location) !void {
     const param = &self.val.parameters[self.next_param];
     param.* = .{
-      .pos = loc.value().origin,
-      .name = loc.name.content,
-      .spec = loc.spec,
+      .pos     = loc.value().origin,
+      .name    = loc.name.content,
+      .spec    = loc.spec,
       .capture = if (loc.varargs) |_| .varargs else if (loc.borrow) |_|
         @as(@TypeOf(param.capture), .borrow) else .default,
       .default = loc.default,
-      .config = if (loc.header) |bh| bh.config else null,
+      .config  = if (loc.header) |bh| bh.config else null,
     };
     const t: model.Type =
       if (!self.val.isKeyword() and Types.containsAst(loc.spec.t)) blk: {
@@ -188,12 +188,12 @@ pub const SigBuilder = struct {
     }
     if (self.repr) |sig| {
       sig.parameters[self.next_param] = .{
-        .pos = loc.value().origin,
-        .name = loc.name.content,
-        .spec = t.at(loc.spec.pos),
+        .pos     = loc.value().origin,
+        .name    = loc.name.content,
+        .spec    = t.at(loc.spec.pos),
         .capture = .default,
         .default = null,
-        .config = null,
+        .config  = null,
       };
     }
     self.next_param += 1;
@@ -202,7 +202,7 @@ pub const SigBuilder = struct {
   pub fn finish(self: *Self) Result {
     std.debug.assert(self.next_param == self.val.parameters.len);
     return Result{
-      .sig = self.val,
+      .sig  = self.val,
       .repr = self.repr,
     };
   }

@@ -1,13 +1,12 @@
 const std = @import("std");
 
-const algo      = @import("../interpret/algo.zig");
-const interpret = @import("../interpret.zig");
+const algo      = @import("../Interpreter/algo.zig");
 const nyarna    = @import("../../nyarna.zig");
 
-const errors = nyarna.errors;
-const Interpreter = interpret.Interpreter;
-const lib    = nyarna.lib;
-const model  = nyarna.model;
+const errors      = nyarna.errors;
+const Interpreter = nyarna.Interpreter;
+const lib         = nyarna.lib;
+const model       = nyarna.model;
 
 const stringOrder = @import("../helpers.zig").stringOrder;
 
@@ -121,12 +120,12 @@ pub const DefCollector = struct {
 
 ///
 const VarProc = struct {
-  ip: *Interpreter,
+  ip         : *Interpreter,
   keyword_pos: model.Position,
-  concat_loc: model.Type,
-  ac: *Interpreter.ActiveVarContainer,
-  namespace: *interpret.Namespace,
-  ns_index: u15,
+  concat_loc : model.Type,
+  ac         : *Interpreter.ActiveVarContainer,
+  namespace  : *Interpreter.Namespace,
+  ns_index   : u15,
 
   fn init(
     ip         : *Interpreter,
@@ -196,8 +195,9 @@ const VarProc = struct {
       .expression => |expr| return self.expression(expr),
       .poison, .void => return try self.empty(),
       else => {
-        const expr = (try self.ip.tryInterpret(n, .{.kind = .keyword}))
-          orelse return self.empty();
+        const expr = (
+          try self.ip.tryInterpret(n, .{.kind = .keyword})
+        ) orelse return self.empty();
         return self.expression(expr);
       }
     }

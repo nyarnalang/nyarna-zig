@@ -44,9 +44,9 @@ pub const Variable = struct {
 };
 
 pub const Data = union(enum) {
-  func: *model.Function,
-  variable: Variable,
-  @"type": Type,
+  func     : *model.Function,
+  variable : Variable,
+  @"type"  : Type,
   prototype: model.Prototype,
   poison,
 };

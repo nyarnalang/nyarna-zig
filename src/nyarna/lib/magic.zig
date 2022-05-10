@@ -2,19 +2,18 @@ const std = @import("std");
 const lib = @import("../lib.zig");
 
 const constructors = @import("constructors.zig");
-const interpret    = @import("../interpret.zig");
 const nyarna       = @import("../../nyarna.zig");
 const system       = @import("system.zig");
 
 const Context     = nyarna.Context;
-const Interpreter = interpret.Interpreter;
+const Interpreter = nyarna.Interpreter;
 const model       = nyarna.model;
 const Types       = nyarna.Types;
 
 fn registerMagicFunc(
-  intpr: *Interpreter,
-  namespace: *interpret.Namespace,
-  sym: *model.Symbol,
+  intpr    : *Interpreter,
+  namespace: *Interpreter.Namespace,
+  sym      : *model.Symbol,
 ) !void {
   try intpr.ctx.data.generic_symbols.append(intpr.ctx.global(), sym);
   const res = try namespace.data.getOrPut(intpr.allocator, sym.name);
@@ -25,11 +24,11 @@ fn registerMagicFunc(
 }
 
 fn extFuncSymbol(
-  ctx: Context,
-  name: []const u8,
+  ctx         : Context,
+  name        : []const u8,
   ns_dependent: bool,
-  bres: Types.SigBuilderResult,
-  p: *const lib.Provider,
+  bres        : Types.SigBuilderResult,
+  p           : *const lib.Provider,
 ) !?*model.Symbol {
   const ret = try ctx.global().create(model.Symbol);
   ret.defined_at = model.Position.intrinsic();
@@ -48,9 +47,9 @@ const Impl = lib.Provider.Wrapper(struct {
   /// \magic defines the functions implicitly available in every namespace.
   pub fn magic(
     intpr: *Interpreter,
-    pos: model.Position,
-    ns: u15,
-    arg: *model.Node,
+    pos  : model.Position,
+    ns   : u15,
+    arg  : *model.Node,
   ) nyarna.Error!*model.Node {
     var collector = system.DefCollector{.dt = intpr.ctx.types().definition()};
     try collector.collect(arg, intpr);
@@ -61,9 +60,9 @@ const Impl = lib.Provider.Wrapper(struct {
     const namespace = intpr.namespace(ns);
     for (decls) |decl| {
       switch (decl.content.data) {
-        .gen_concat, .gen_enum, .gen_float, .gen_intersection, .gen_list,
-        .gen_map, .gen_numeric, .gen_optional, .gen_sequence, .gen_prototype,
-        .gen_record, .gen_textual, .gen_unique =>
+        .gen_concat, .gen_enum, .gen_intersection, .gen_list, .gen_map,
+        .gen_numeric, .gen_optional, .gen_sequence, .gen_prototype, .gen_record,
+        .gen_textual, .gen_unique =>
           intpr.ctx.logger.TypeInMagic(decl.node().pos),
         .funcgen => intpr.ctx.logger.NyFuncInMagic(decl.node().pos),
         .builtingen => |*bg| {

@@ -2,10 +2,9 @@ const std = @import("std");
 
 const chains    = @import("chains.zig");
 const graph     = @import("graph.zig");
-const interpret = @import("../interpret.zig");
 const nyarna    = @import("../../nyarna.zig");
 
-const Interpreter = interpret.Interpreter;
+const Interpreter = nyarna.Interpreter;
 const lib         = nyarna.lib;
 const model       = nyarna.model;
 
@@ -35,12 +34,12 @@ fn subjectIsType(uacc: *model.Node.UnresolvedAccess, t: model.Type) bool {
 /// only be used to construct types, never be called or used as value while this
 /// context is active.
 const TypeResolver = struct {
-  ctx: graph.ResolutionContext,
-  dres: *DeclareResolution,
+  ctx     : graph.ResolutionContext,
+  dres    : *DeclareResolution,
   worklist: std.ArrayListUnmanaged(*model.Node) = .{},
-  ns_data: *interpret.Namespace,
+  ns_data : *Interpreter.Namespace,
 
-  fn init(dres: *DeclareResolution, ns: *interpret.Namespace) TypeResolver {
+  fn init(dres: *DeclareResolution, ns: *Interpreter.Namespace) TypeResolver {
     return .{
       .dres = dres,
       .ctx = .{
@@ -392,7 +391,7 @@ pub const DeclareResolution = struct {
     self   : *DeclareResolution,
     def    : *model.Node.Definition,
     gp     : *model.Node.tg.Prototype,
-    ns_data: *interpret.Namespace,
+    ns_data: *Interpreter.Namespace,
   ) !bool {
     const constructor = (
       try self.genConstructor(
@@ -638,7 +637,7 @@ pub const DeclareResolution = struct {
           .gen_concat => |*gc| {
             try self.createStructural(gc); continue :alloc_types;
           },
-          .gen_enum, .gen_float => unreachable,
+          .gen_enum         => unreachable,
           .gen_intersection => |*gi| {
             try self.createStructural(gi); continue :alloc_types;
           },

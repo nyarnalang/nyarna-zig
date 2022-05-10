@@ -1,10 +1,10 @@
 const std = @import("std");
 
-const Interpreter = @import("../interpret.zig").Interpreter;
 const nyarna      = @import("../../nyarna.zig");
 const unicode     = @import("../unicode.zig");
 
 const EncodedCharacter = unicode.EncodedCharacter;
+const Interpreter      = nyarna.Interpreter;
 const model            = nyarna.model;
 const Token            = model.Token;
 
@@ -42,19 +42,11 @@ pub const Walker = struct {
     };
     defer w.cur += w.recent_length;
     switch (w.recent_length) {
-      1 => {
-        return @intCast(u21, w.cur[0]);
-      },
-      2 => {
-        return std.unicode.utf8Decode2(w.cur[0..2]);
-      },
-      3 => {
-        return std.unicode.utf8Decode3(w.cur[0..3]);
-      },
-      4 => {
-        return std.unicode.utf8Decode4(w.cur[0..4]);
-      },
-      else => unreachable
+      1    => return @intCast(u21, w.cur[0]),
+      2    => return std.unicode.utf8Decode2(w.cur[0..2]),
+      3    => return std.unicode.utf8Decode3(w.cur[0..3]),
+      4    => return std.unicode.utf8Decode4(w.cur[0..4]),
+      else => unreachable,
     }
   }
 
@@ -261,31 +253,31 @@ newline_count: u16,
 
 pub fn init(intpr: *Interpreter) !Lexer {
   var ret = Lexer{
-    .intpr = intpr,
-    .cur_stored = undefined,
-    .state = .indent_capture,
-    .walker = Walker.init(intpr.input),
+    .intpr       = intpr,
+    .cur_stored  = undefined,
+    .state       = .indent_capture,
+    .walker      = Walker.init(intpr.input),
     .paren_depth = 0,
-    .colons_disabled_at = null,
+    .colons_disabled_at   = null,
     .comments_disabled_at = null,
     .levels =
       try std.ArrayListUnmanaged(Level).initCapacity(
         intpr.allocator, 32),
     .level = .{
       .indentation = 0,
-      .tabs = null,
-      .id = undefined,
-      .end_char = undefined,
-      .special = .disabled,
+      .tabs        = null,
+      .id          = undefined,
+      .end_char    = undefined,
+      .special     = .disabled,
     },
-    .newline_count = 0,
-    .recent_end = undefined,
-    .recent_id = undefined,
+    .newline_count      = 0,
+    .recent_end         = undefined,
+    .recent_id          = undefined,
     .recent_expected_id = undefined,
-    .line_start = undefined,
-    .indent_char_seen = undefined,
-    .code_point = undefined,
-    .ns = undefined,
+    .line_start         = undefined,
+    .indent_char_seen   = undefined,
+    .code_point         = undefined,
+    .ns                 = undefined,
   };
   ret.cur_stored = ret.walker.nextInline();
   ret.recent_end = ret.walker.before;
@@ -396,10 +388,13 @@ inline fn emptyLines(self: *Lexer, cur: *u21) u16 {
 
 /// transition to a new state via the offset between base_from and base_to.
 /// used for transparently handling special_syntax transitions.
-inline fn transition(l: *Lexer, comptime base_from: State, base_to: State)
-    void {
-  l.state = @intToEnum(State,
-    @enumToInt(l.state) + (@enumToInt(base_to) - @enumToInt(base_from)));
+inline fn transition(
+           self     : *Lexer,
+  comptime base_from: State,
+           base_to  : State,
+) void {
+  self.state = @intToEnum(State,
+    @enumToInt(self.state) + (@enumToInt(base_to) - @enumToInt(base_from)));
 }
 
 inline fn procIndentCapture(self: *Lexer, cur: *u21) ?Token {
@@ -803,9 +798,9 @@ inline fn hitLineEnd(self: *Lexer, cr: bool) ContentResult {
 }
 
 inline fn hitCommentChar(
-  self: *Lexer,
-  comptime ctx: Surrounding,
-  cur: *u21,
+           self: *Lexer,
+  comptime ctx : Surrounding,
+           cur : *u21,
 ) ?ContentResult {
   switch (ctx) {
     .block_name => return null,
@@ -850,9 +845,9 @@ inline fn hitWhitespace(self: *Lexer, cur: *u21) ContentResult {
 }
 
 inline fn hitColon(
-  self: *Lexer,
-  comptime ctx: Surrounding,
-  cur: *u21,
+           self: *Lexer,
+  comptime ctx : Surrounding,
+           cur : *u21,
 ) ?ContentResult {
   switch (ctx) {
     .block_name =>
@@ -878,9 +873,9 @@ inline fn hitColon(
 /// return null for an unescaped line end since it may be part of a parsep.
 /// hit_line_end is true if the recently processed character was a line break.
 inline fn processContent(
-  self: *Lexer,
-  comptime ctx: Surrounding,
-  cur: *u21,
+           self: *Lexer,
+  comptime ctx : Surrounding,
+           cur : *u21,
 ) !ContentResult {
   switch (cur.*) {
     4 => return ContentResult{.token = .end_source},
@@ -962,8 +957,8 @@ inline fn processContent(
 }
 
 inline fn advanceAndReturn(
-  self: *Lexer,
-  value: Token,
+           self     : *Lexer,
+           value    : Token,
   comptime new_state: ?State,
 ) ContentResult {
   self.cur_stored = self.walker.nextInline();
@@ -974,9 +969,9 @@ inline fn advanceAndReturn(
 }
 
 fn readLiteral(
-  self: *Lexer,
-  comptime ctx: Surrounding,
-  cur: *u21,
+           self: *Lexer,
+  comptime ctx : Surrounding,
+           cur : *u21,
 ) void {
   while (true) {
     switch (cur.*) {
@@ -985,7 +980,7 @@ fn readLiteral(
       '>' => if (ctx == .config) break,
       ':' => switch (ctx) {
         .block_name => break,
-        .args => {
+        .args       => {
           self.walker.mark();
           cur.* = self.walker.nextInline() catch |e| {
             self.cur_stored = e;
@@ -1012,8 +1007,8 @@ fn readLiteral(
 }
 
 fn genCommand(
-  self: *Lexer,
-  cur: *u21,
+  self       : *Lexer,
+  cur        : *u21,
   end_allowed: bool,
 ) ContentResult {
   self.code_point = cur.*;
@@ -1140,8 +1135,8 @@ fn readNumber(self: *Lexer, cur: *u21) void {
 
 inline fn advancing(
   self: *Lexer,
-  cur: *u21,
-  f: @TypeOf(Walker.nextInline)
+  cur : *u21,
+  f   : @TypeOf(Walker.nextInline),
 ) !bool {
   cur.* = f(&self.walker) catch |e| {
     if (self.recent_end.byte_offset != self.walker.before.byte_offset) {
@@ -1318,9 +1313,11 @@ fn pushLevel(self: *Lexer) !void {
 }
 
 inline fn curBaseState(self: *Lexer) State {
-  return if (self.paren_depth > 0) .in_arg
-          else if (self.level.special == .disabled) State.in_block
-          else State.special_syntax;
+  return if (self.paren_depth > 0) (
+    State.in_arg
+  ) else if (self.level.special == .disabled) (
+    State.in_block
+  ) else State.special_syntax;
 }
 
 pub fn disableColons(self: *Lexer) void {
@@ -1336,7 +1333,7 @@ pub fn disableComments(self: *Lexer) void {
 }
 
 pub fn enableSpecialSyntax(
-  self: *Lexer,
+  self                    : *Lexer,
   comments_include_newline: bool,
 ) void {
   self.level.special =
@@ -1355,6 +1352,7 @@ pub fn readBlockHeader(self: *Lexer) void {
 /// block headers are aborted on the first error, to avoid parsing large
 /// chunks of code as block header if it's not properly closed.
 pub fn abortBlockHeader(self: *Lexer) void {
-  self.state =
-    if (self.level.special == .disabled) .at_header else .special_syntax;
+  self.state = if (self.level.special == .disabled) (
+    .at_header
+  ) else .special_syntax;
 }

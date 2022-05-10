@@ -5,7 +5,7 @@ const EncodedCharacter = @import("../src/nyarna/unicode.zig").EncodedCharacter;
 const Globals          = @import("../src/nyarna/Globals.zig");
 
 const errors = nyarna.errors;
-const model = nyarna.model;
+const model  = nyarna.model;
 
 pub const TestDataResolver = @import("resolve.zig").TestDataResolver;
 
@@ -61,13 +61,13 @@ pub fn lexTest(data: *TestDataResolver) !void {
 
 const AdditionalsWithGlobal = struct {
   value: *const model.Node.Location.Additionals,
-  data: *Globals,
+  data : *Globals,
 
   fn format(
-    self: AdditionalsWithGlobal,
-    comptime fmt: []const u8,
-    options: std.fmt.FormatOptions,
-    writer: anytype,
+             self   : AdditionalsWithGlobal,
+    comptime fmt    : []const u8,
+             options: std.fmt.FormatOptions,
+             writer : anytype,
   ) !void {
     try writer.writeByte('{');
     var first = true;
@@ -90,13 +90,13 @@ const AdditionalsWithGlobal = struct {
 
 const HeaderWithGlobal = struct {
   header: *const model.Value.BlockHeader,
-  data: *Globals,
+  data  : *Globals,
 
   fn format(
-    self: HeaderWithGlobal,
-    comptime _: []const u8,
-    _: std.fmt.FormatOptions,
-    writer: anytype,
+             self  : HeaderWithGlobal,
+    comptime _     : []const u8,
+             _     : std.fmt.FormatOptions,
+             writer: anytype,
   ) !void {
     if (self.header.config) |config| {
       try writer.writeAll(":<");
@@ -172,9 +172,9 @@ const AstEmitter = struct {
     }
 
     fn append(
-      self: *LineBuilder,
-      comptime fmt: []const u8,
-      args: anytype,
+               self: *LineBuilder,
+      comptime fmt : []const u8,
+               args: anytype,
     ) !void {
       const ret = try std.fmt.bufPrint(self.buffer[self.i..], fmt, args);
       self.i += ret.len;
@@ -186,8 +186,8 @@ const AstEmitter = struct {
   };
 
   handler: *Checker,
-  depth: usize,
-  data: *Globals,
+  depth  : usize,
+  data   : *Globals,
 
   fn init(data: *Globals, handler: *Checker) AstEmitter {
     return .{.depth = 0, .handler = handler, .data = data};
@@ -206,10 +206,10 @@ const AstEmitter = struct {
   }
 
   fn pushWithKey(
-    self: *Self,
-    comptime name: []const u8,
-    key: []const u8,
-    value: ?[]const u8,
+             self : *Self,
+    comptime name : []const u8,
+             key  : []const u8,
+             value: ?[]const u8,
   ) !Popper {
     if (value) |v| try self.emitLine("+{s} {s}=\"{s}\"", .{name, key, v})
     else try self.emitLine("+{s} {s}", .{name, key});
@@ -218,9 +218,9 @@ const AstEmitter = struct {
   }
 
   fn pushWithType(
-    self: *Self,
+             self: *Self,
     comptime name: []const u8,
-    t: model.Type,
+             t   : model.Type,
   ) !Popper {
     const t_fmt = t.formatter();
     try self.emitLine("+{s} {}", .{name, t_fmt});
@@ -366,11 +366,6 @@ const AstEmitter = struct {
         for (ge.values) |value| try self.process(value.node);
         try gen.pop();
       },
-      .gen_float => |gf| {
-        const gen = try self.pushWithKey("TGEN", "Float", null);
-        try self.process(gf.precision);
-        try gen.pop();
-      },
       .gen_intersection => |gi| {
         const gen = try self.pushWithKey("TGEN", "Intersection", null);
         for (gi.types) |item| try self.process(item.node);
@@ -422,10 +417,10 @@ const AstEmitter = struct {
         const gen = try self.pushWithKey("TGEN", "Record", null);
         switch (gr.fields) {
           .unresolved => |node| try self.process(node),
-          .resolved => |*res| for (res.locations) |loc| switch (loc) {
-            .node => |lnode| try self.process(lnode.node()),
-            .expr => |lexpr| try self.processExpr(lexpr),
-            .value => |lval| try self.processValue(lval.value()),
+          .resolved   => |*res| for (res.locations) |loc| switch (loc) {
+            .node   => |lnode| try self.process(lnode.node()),
+            .expr   => |lexpr| try self.processExpr(lexpr),
+            .value  => |lval| try self.processValue(lval.value()),
             .poison => try self.emitLine("=POISON", .{}),
           },
           .pregen => try self.processType(.{.named = gr.generated.?}),
@@ -489,9 +484,9 @@ const AstEmitter = struct {
         for (uc.proto_args) |a| {
           const parg = try switch (a.kind) {
             .position => self.pushWithKey("PROTO", "pos", null),
-            .named => |named| self.pushWithKey("PROTO", "name", named),
-            .direct => |direct| self.pushWithKey("PROTO", "direct", direct),
-            .primary => self.pushWithKey("PROTO", "primary", null),
+            .named    => |named| self.pushWithKey("PROTO", "name", named),
+            .direct   => |direct| self.pushWithKey("PROTO", "direct", direct),
+            .primary  => self.pushWithKey("PROTO", "primary", null),
           };
           try self.process(a.content);
           try parg.pop();
@@ -587,7 +582,7 @@ const AstEmitter = struct {
         try c.pop();
       },
       .concatenation => |c| for (c) |expr| try self.processExpr(expr),
-      .conversion => |c| {
+      .conversion    => |c| {
         const conv = try self.pushWithType("CONVERT", c.target_type);
         try self.processExpr(c.inner);
         try conv.pop();
@@ -651,7 +646,7 @@ const AstEmitter = struct {
         }
         try s.pop();
       },
-      .value => |value| try self.processValue(value),
+      .value    => |value| try self.processValue(value),
       .sequence => |seq| {
         const p = try self.push("SEQUENCE");
         for (seq) |item| {
@@ -689,7 +684,7 @@ const AstEmitter = struct {
         try self.emitLine("=GETVAR {s}", .{v.variable.sym().name});
       },
       .poison => try self.emitLine("=POISON", .{}),
-      .void => try self.emitLine("=VOID", .{}),
+      .void   => try self.emitLine("=VOID", .{}),
     }
   }
 
@@ -835,13 +830,13 @@ const AstEmitter = struct {
         try self.process(a.root);
         try ast.pop();
       },
-      .@"type" => |tv| try self.processType(tv.t),
+      .@"type"   => |tv| try self.processType(tv.t),
       .prototype => |pv| try self.emitLine("=PROTO {s}", .{@tagName(pv.pt)}),
-      .funcref => |fr| try self.emitLine("=FUNCREF {s}.{s}",
+      .funcref   => |fr| try self.emitLine("=FUNCREF {s}.{s}",
         .{fr.func.defined_at.source.locator.repr, if (fr.func.name) |sym|
           sym.name else "<anonymous>"}),
-      .poison => try self.emitLine("=POISON", .{}),
-      .void => try self.emitLine("=VOID", .{}),
+      .poison       => try self.emitLine("=POISON", .{}),
+      .void         => try self.emitLine("=VOID", .{}),
       .block_header => |*h| {
         const hf =
           (HeaderWithGlobal{.header = h, .data = self.data}).formatter();
@@ -870,8 +865,8 @@ const AstEmitter = struct {
 
 /// implements Reporter. forwards lines to the registered checker.
 const ErrorEmitter = struct {
-  api: errors.Reporter,
-  buffer: [1024]u8 = undefined,
+  api    : errors.Reporter,
+  buffer : [1024]u8 = undefined,
   handler: *Checker,
 
   fn init(handler: *Checker) ErrorEmitter {
@@ -896,8 +891,8 @@ const ErrorEmitter = struct {
 
   fn forwardError(
     self: *ErrorEmitter,
-    id: anytype,
-    pos: model.Position,
+    id  : anytype,
+    pos : model.Position,
   ) void {
     const line = std.fmt.bufPrint(&self.buffer, "{} - {} {s}",
       .{pos.start.formatter(), pos.end.formatter(), @tagName(id)})
@@ -906,10 +901,10 @@ const ErrorEmitter = struct {
   }
 
   fn forwardArg(
-    self: *ErrorEmitter,
-    name: []const u8,
-    comptime fmt: []const u8,
-    value: anytype,
+             self : *ErrorEmitter,
+             name : []const u8,
+    comptime fmt  : []const u8,
+             value: anytype,
   ) void {
     const line = std.fmt.bufPrint(
       &self.buffer, "  {s} = " ++ fmt, .{name, value}) catch unreachable;
@@ -917,11 +912,11 @@ const ErrorEmitter = struct {
   }
 
   fn forwardArgAt(
-    self: *ErrorEmitter,
-    name: []const u8,
-    pos: model.Position,
-    comptime fmt: []const u8,
-    value: anytype,
+             self : *ErrorEmitter,
+             name : []const u8,
+             pos  : model.Position,
+    comptime fmt  : []const u8,
+             value: anytype,
   ) void {
     var line = (if (std.mem.eql(u8, pos.source.locator.resolver.?, "doc")) (
       std.fmt.bufPrint(&self.buffer, "  {s} = {s}", .{name, pos})
@@ -939,26 +934,26 @@ const ErrorEmitter = struct {
 
   fn lexerError(
     reporter: *errors.Reporter,
-    id: errors.LexerError,
-    pos: model.Position
+    id      : errors.LexerError,
+    pos     : model.Position,
   ) void {
     @fieldParentPtr(ErrorEmitter, "api", reporter).forwardError(id, pos);
   }
 
   fn parserError(
     reporter: *errors.Reporter,
-    id: errors.GenericParserError,
-    pos: model.Position
+    id      : errors.GenericParserError,
+    pos     : model.Position,
   ) void {
     @fieldParentPtr(ErrorEmitter, "api", reporter).forwardError(id, pos);
   }
 
   fn wrongItemError(
     reporter: *errors.Reporter,
-    id: errors.WrongItemError,
-    pos: model.Position,
+    id      : errors.WrongItemError,
+    pos     : model.Position,
     expected: []const errors.WrongItemError.ItemDescr,
-    got: errors.WrongItemError.ItemDescr
+    got     : errors.WrongItemError.ItemDescr,
   ) void {
     const self = @fieldParentPtr(ErrorEmitter, "api", reporter);
     self.forwardError(id, pos);
@@ -969,9 +964,9 @@ const ErrorEmitter = struct {
 
   fn scalarError(
     reporter: *errors.Reporter,
-    id: errors.ScalarError,
-    pos: model.Position,
-    repr: []const u8
+    id      : errors.ScalarError,
+    pos     : model.Position,
+    repr    : []const u8,
   ) void {
     const self = @fieldParentPtr(ErrorEmitter, "api", reporter);
     self.forwardError(id, pos);
@@ -979,12 +974,12 @@ const ErrorEmitter = struct {
   }
 
   fn wrongIdError(
-    reporter: *errors.Reporter,
-    id: errors.WrongIdError,
-    pos: model.Position,
-    expected: []const u8,
-    got: []const u8,
-    defined_at: model.Position
+    reporter  : *errors.Reporter,
+    id        : errors.WrongIdError,
+    pos       : model.Position,
+    expected  : []const u8,
+    got       : []const u8,
+    defined_at: model.Position,
   ) void {
     const self = @fieldParentPtr(ErrorEmitter, "api", reporter);
     self.forwardError(id, pos);
@@ -995,10 +990,10 @@ const ErrorEmitter = struct {
 
   fn previousOccurence(
     reporter: *errors.Reporter,
-    id: errors.PreviousOccurenceError,
-    repr: []const u8,
-    pos: model.Position,
-    previous: model.Position
+    id      : errors.PreviousOccurenceError,
+    repr    : []const u8,
+    pos     : model.Position,
+    previous: model.Position,
   ) void {
     const self = @fieldParentPtr(ErrorEmitter, "api", reporter);
     self.forwardError(id, pos);
@@ -1007,9 +1002,9 @@ const ErrorEmitter = struct {
   }
 
   fn posChain(
-    reporter: *errors.Reporter,
-    id: errors.PositionChainError,
-    pos: model.Position,
+    reporter  : *errors.Reporter,
+    id        : errors.PositionChainError,
+    pos       : model.Position,
     referenced: []model.Position,
   ) void {
     const self = @fieldParentPtr(ErrorEmitter, "api", reporter);
@@ -1019,8 +1014,8 @@ const ErrorEmitter = struct {
 
   fn typeError(
     reporter: *errors.Reporter,
-    id: errors.TypeError,
-    types: []const model.SpecType,
+    id      : errors.TypeError,
+    types   : []const model.SpecType,
   ) void {
     const self = @fieldParentPtr(ErrorEmitter, "api", reporter);
     self.forwardError(id, types[0].pos);
@@ -1034,9 +1029,9 @@ const ErrorEmitter = struct {
 
   fn constructionError(
     reporter: *errors.Reporter,
-    id: errors.ConstructionError,
-    pos: model.Position,
-    t: model.Type,
+    id      : errors.ConstructionError,
+    pos     : model.Position,
+    t       : model.Type,
     repr: []const u8
   ) void {
     const self = @fieldParentPtr(ErrorEmitter, "api", reporter);
@@ -1048,9 +1043,9 @@ const ErrorEmitter = struct {
 
   fn runtimeError(
     reporter: *errors.Reporter,
-    id: errors.RuntimeError,
-    pos: model.Position,
-    msg: []const u8,
+    id      : errors.RuntimeError,
+    pos     : model.Position,
+    msg     : []const u8,
   ) void {
     const self = @fieldParentPtr(ErrorEmitter, "api", reporter);
     self.forwardError(id, pos);
@@ -1059,9 +1054,9 @@ const ErrorEmitter = struct {
 
   fn systemNyError(
     reporter: *errors.Reporter,
-    id: errors.SystemNyError,
-    pos: model.Position,
-    msg: []const u8,
+    id      : errors.SystemNyError,
+    pos     : model.Position,
+    msg     : []const u8,
   ) void {
     const self = @fieldParentPtr(ErrorEmitter, "api", reporter);
     self.forwardError(id, pos);
@@ -1070,10 +1065,10 @@ const ErrorEmitter = struct {
 
   fn fileError(
     reporter: *errors.Reporter,
-    id: errors.FileError,
-    pos: model.Position,
-    path: []const u8,
-    message: []const u8
+    id      : errors.FileError,
+    pos     : model.Position,
+    path    : []const u8,
+    message : []const u8
   ) void {
     const self = @fieldParentPtr(ErrorEmitter, "api", reporter);
     self.forwardError(id, pos);
@@ -1084,10 +1079,10 @@ const ErrorEmitter = struct {
 
 const Checker = struct {
   expected_iter: std.mem.SplitIterator(u8),
-  line: usize,
-  full_output: std.ArrayListUnmanaged(u8),
-  failed: bool,
-  data: *TestDataResolver,
+  line         : usize,
+  full_output  : std.ArrayListUnmanaged(u8),
+  failed       : bool,
+  data         : *TestDataResolver,
 
   fn init(data: *TestDataResolver, name_in_input: []const u8) Checker {
     return Checker{
@@ -1099,14 +1094,16 @@ const Checker = struct {
   }
 
   fn initErrorChecker(
-    data: *TestDataResolver,
+    data          : *TestDataResolver,
     name_in_errors: []const u8,
   ) Checker {
     return Checker{
       .expected_iter = data.paramLines("errors", name_in_errors),
-      .line = data.source.params.errors.get(name_in_errors).?.line_offset + 1,
-      .full_output = .{}, .failed = false,
-      .data = data,
+      .line          =
+        data.source.params.errors.get(name_in_errors).?.line_offset + 1,
+      .full_output = .{},
+      .failed      = false,
+      .data        = data,
     };
   }
 

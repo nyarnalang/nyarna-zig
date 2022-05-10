@@ -37,10 +37,10 @@ pub const Cursor = struct {
 
   /// format the cursor in the form "<line>:<column>", without byte offset.
   pub fn format(
-    self: Cursor,
-    comptime _: []const u8,
-    _: std.fmt.FormatOptions,
-    writer: anytype
+             self  : Cursor,
+    comptime _     : []const u8,
+             _     : std.fmt.FormatOptions,
+             writer: anytype
   ) !void {
     try std.fmt.format(writer, "{}:{}", .{self.at_line, self.before_column});
   }
@@ -54,12 +54,12 @@ pub const Cursor = struct {
 /// source file, but can also come from command line parameters.
 pub const Position = struct {
   source: *const Source.Descriptor,
-  start: Cursor,
-  end: Cursor,
+  start : Cursor,
+  end   : Cursor,
 
   const intrinsic_source = Source.Descriptor{
-    .name = "<intrinsic>",
-    .locator = Locator.parse(".std.intrinsic") catch unreachable,
+    .name     = "<intrinsic>",
+    .locator  = Locator.parse(".std.intrinsic") catch unreachable,
     .argument = false
   };
 
@@ -72,17 +72,17 @@ pub const Position = struct {
 
   pub inline fn intrinsic() Position {
     return .{
-      .start = Cursor.unknown(),
-      .end = Cursor.unknown(),
+      .start  = Cursor.unknown(),
+      .end    = Cursor.unknown(),
       .source = &intrinsic_source,
     };
   }
 
   pub fn trimFrontChar(self: Position, byte_len: u3) Position {
     const nstart = Cursor{
-      .at_line = self.start.at_line,
+      .at_line       = self.start.at_line,
       .before_column = self.start.before_column + 1,
-      .byte_offset = self.start.byte_offset + byte_len,
+      .byte_offset   = self.start.byte_offset + byte_len,
     };
     return Position{
       .source = self.source, .start = nstart, .end = self.end,
@@ -117,10 +117,10 @@ pub const Position = struct {
   ///
   /// instead. give "s" as specifier if you only want the <start>.
   pub fn format(
-    self: Position,
+             self     : Position,
     comptime specifier: []const u8,
-    _: std.fmt.FormatOptions,
-    writer: anytype
+             _        : std.fmt.FormatOptions,
+             writer   : anytype
   ) @TypeOf(writer).Error!void {
     if (self.source.argument) {
       try std.fmt.format(writer, "argument \"{s}\"", .{self.source.name});
@@ -172,8 +172,8 @@ pub const Source = struct {
   /// these will be added to line/column reporting.
   /// this feature is exists to support the testing framework.
   offsets: struct {
-    line: usize = 0,
-    column: usize = 0
+    line  : usize = 0,
+    column: usize = 0,
   },
   /// the locator minus its final element, used for resolving relative locators
   /// inside this source. See Descriptor.genLocatorCtx().
@@ -196,9 +196,9 @@ pub const Locator = struct {
     parse_error
   };
 
-  repr: []const u8,
+  repr    : []const u8,
   resolver: ?[]const u8,
-  path: []const u8,
+  path    : []const u8,
 
   pub fn parse(input: []const u8) !Locator {
     if (input.len == 0) return Error.parse_error;
@@ -218,13 +218,13 @@ pub const Locator = struct {
     if (self.path.len == 0) return null;
     const end = std.mem.lastIndexOfScalar(u8, self.path, '.') orelse 0;
     return if (self.resolver) |res| Locator{
-      .repr = self.repr[0..res.len + 2 + end],
+      .repr     = self.repr[0..res.len + 2 + end],
       .resolver = res,
-      .path = self.path[0..end],
+      .path     = self.path[0..end],
     } else Locator{
-      .repr = self.repr[0..end],
+      .repr     = self.repr[0..end],
       .resolver = null,
-      .path = self.path[0..end],
+      .path     = self.path[0..end],
     };
   }
 };
@@ -242,9 +242,9 @@ pub const BlockConfig = struct {
   pub const Map = struct {
     /// mappings are not defined by intrinsic functions, therefore position is
     /// always in some Input.
-    pos: Position,
+    pos : Position,
     from: u21,
-    to: u21
+    to  : u21
   };
 
   pub const SyntaxDef =  struct {
@@ -276,7 +276,7 @@ pub const BlockConfig = struct {
 /// a type that has been specified at a certain position as target type.
 /// usually a type of a location such as a parameter or variable.
 pub const SpecType = struct {
-  t: Type,
+  t  : Type,
   pos: Position,
 };
 
@@ -305,8 +305,8 @@ pub const Function = struct {
   callable: *Type.Callable,
   /// if the function is named, this is the reference to the symbol naming the
   /// function.
-  name: ?*Symbol,
-  data: Data,
+  name      : ?*Symbol,
+  data      : Data,
   defined_at: Position,
   /// contains the pointer to the function's current stack frame.
   /// referenced by the variables that represent the arguments of the invocation
@@ -370,8 +370,8 @@ pub const Signature = struct {
 
 
 pub const Prototype = enum {
-  textual, numeric, @"enum", optional, concat, list, sequence, map,
-  record, intersection,
+  textual, numeric, @"enum", optional, concat, list, sequence, map, record,
+  intersection,
 };
 
 pub const Expression = @import("model/Expression.zig");

@@ -8,9 +8,8 @@ const builtin = @import("builtin");
 
 const BlockConfig  = @import("BlockConfig.zig");
 const ContentLevel = @import("ContentLevel.zig");
-const chains       = @import("../interpret/chains.zig");
+const chains       = @import("../Interpreter/chains.zig");
 const Globals      = @import("../Globals.zig");
-const Interpreter  = @import("../interpret.zig").Interpreter;
 const Lexer        = @import("Lexer.zig");
 const nyarna       = @import("../../nyarna.zig");
 const ModuleEntry  = @import("../Globals.zig").ModuleEntry;
@@ -18,8 +17,9 @@ const Parser       = @import("../Parser.zig");
 const syntaxes     = @import("syntaxes.zig");
 const unicode      = @import("../unicode.zig");
 
-const errors = nyarna.errors;
-const model  = nyarna.model;
+const errors      = nyarna.errors;
+const Interpreter = nyarna.Interpreter;
+const model       = nyarna.model;
 
 const last = @import("../helpers.zig").last;
 

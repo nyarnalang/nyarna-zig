@@ -1,12 +1,12 @@
 const std = @import("std");
 
-const interpret = @import("../interpret.zig");
 const graph     = @import("graph.zig");
 const nyarna    = @import("../../nyarna.zig");
 
-const errors = nyarna.errors;
-const lib    = nyarna.lib;
-const model  = nyarna.model;
+const errors      = nyarna.errors;
+const Interpreter = nyarna.Interpreter;
+const lib         = nyarna.lib;
+const model       = nyarna.model;
 
 /// Result of resolving an accessor chain.
 pub const Resolution = union(enum) {
@@ -55,10 +55,10 @@ pub const Resolution = union(enum) {
   poison,
 
   fn symRef(
-    ns: u15,
-    sym: *model.Symbol,
-    prefix: ?*model.Node,
-    name_pos: model.Position,
+    ns         : u15,
+    sym        : *model.Symbol,
+    prefix     : ?*model.Node,
+    name_pos   : model.Position,
     preliminary: bool,
   ) Resolution {
     return .{.sym_ref = .{
@@ -90,23 +90,23 @@ pub const Resolver = struct {
   const SearchResult = union(enum) {
     field: struct {
       index: usize,
-      t: model.Type,
+      t    : model.Type,
     },
     symbol: *model.Symbol,
   };
 
 
-  intpr: *interpret.Interpreter,
-  stage: interpret.Stage,
+  intpr: *Interpreter,
+  stage: Interpreter.Stage,
 
-  pub fn init(intpr: *interpret.Interpreter, stage: interpret.Stage) Resolver {
+  pub fn init(intpr: *Interpreter, stage: Interpreter.Stage) Resolver {
     return .{.intpr = intpr, .stage = stage};
   }
 
   fn searchAccessible(
-    intpr: *interpret.Interpreter,
-    t: model.Type,
-    name: []const u8
+    intpr: *Interpreter,
+    t    : model.Type,
+    name : []const u8
   ) !?SearchResult {
     switch (t) {
       .named => |named| switch (named.data) {
@@ -152,13 +152,13 @@ pub const Resolver = struct {
   }
 
   fn fromGraphResult(
-    self: Resolver,
-    node: *model.Node,
-    ns: u15,
-    name: []const u8,
+    self    : Resolver,
+    node    : *model.Node,
+    ns      : u15,
+    name    : []const u8,
     name_pos: model.Position,
-    res: graph.ResolutionContext.StrippedResult,
-    stage: interpret.Stage,
+    res     : graph.ResolutionContext.StrippedResult,
+    stage   : Interpreter.Stage,
   ) Resolution {
     switch (res) {
       .variable => |v| {
@@ -271,7 +271,7 @@ pub const Resolver = struct {
   }
 
   fn resolveUCall(
-    self: Resolver,
+    self : Resolver,
     ucall: *model.Node.UnresolvedCall,
   ) nyarna.Error!Resolution {
     const res = try self.resolve(ucall.target);
@@ -296,9 +296,9 @@ pub const Resolver = struct {
           }
           return Resolution{.failed = rc.ns}; // TODO: or poison (?)
         } else {
-          const expr =
-            (try self.intpr.interpretCallToChain(ucall, res, self.stage))
-          orelse return Resolution{.failed = rc.ns};
+          const expr = (
+            try self.intpr.interpretCallToChain(ucall, res, self.stage)
+          ) orelse return Resolution{.failed = rc.ns};
           const node = ucall.node();
           node.data = .{.expression = expr};
           return Resolution.chain(
@@ -331,9 +331,9 @@ pub const Resolver = struct {
             .poison => return Resolution.poison,
           }
         } else {
-          const expr =
-            (try self.intpr.interpretCallToChain(ucall, res, self.stage))
-          orelse return Resolution{.failed = sr.ns};
+          const expr = (
+            try self.intpr.interpretCallToChain(ucall, res, self.stage)
+          ) orelse return Resolution{.failed = sr.ns};
           const node = ucall.node();
           node.data = .{.expression = expr};
           return Resolution.chain(
@@ -397,18 +397,18 @@ pub const Resolver = struct {
 
 pub const CallContext = union(enum) {
   known: struct {
-    target: *model.Node,
-    ns: u15,
+    target   : *model.Node,
+    ns       : u15,
     signature: *const model.Signature,
     first_arg: ?*model.Node,
   },
   unknown, poison,
 
   fn chainIntoCallCtx(
-    intpr: *interpret.Interpreter,
+    intpr : *Interpreter,
     target: *model.Node,
-    t: model.Type,
-    ns: u15,
+    t     : model.Type,
+    ns    : u15,
   ) !CallContext {
     const callable = switch (t) {
       .structural => |strct| switch (strct.*) {
@@ -432,9 +432,9 @@ pub const CallContext = union(enum) {
   }
 
   pub fn fromChain(
-    intpr: *interpret.Interpreter,
-    node: *model.Node,
-    res: Resolution,
+    intpr: *Interpreter,
+    node : *model.Node,
+    res  : Resolution,
   ) !CallContext {
     switch (res) {
       .runtime_chain => |rc| {

@@ -93,7 +93,7 @@ const InnerIntend = enum {
       },
       .named => |named| switch (named.data) {
         .every => InnerIntend.exalt,
-        .void => InnerIntend.collapse,
+        .void  => InnerIntend.collapse,
         .prototype, .schema, .extension => InnerIntend.forbidden,
         else => InnerIntend.allowed,
       },
@@ -126,11 +126,11 @@ const Self = @This();
 /// see doc on the prefix_trees field.
 pub fn TreeNode(comptime Flag: type) type {
   return struct {
-    key: model.Type = undefined,
-    value: ?*model.Type.Structural = null,
-    next: ?*TreeNode(Flag) = null,
+    key     : model.Type = undefined,
+    value   : ?*model.Type.Structural = null,
+    next    : ?*TreeNode(Flag) = null,
     children: ?*TreeNode(Flag) = null,
-    flag: Flag = undefined,
+    flag    : Flag = undefined,
 
     /// This type is used to navigate the intersections field. Given a node,
     /// it will descend into its children and search the node matching the
@@ -153,11 +153,11 @@ pub fn TreeNode(comptime Flag: type) type {
         self.cur = hit orelse blk: {
           var new = try self.types.allocator.create(TreeNode(Flag));
           new.* = .{
-            .key = t,
-            .value = null,
-            .next = next.*,
+            .key      = t,
+            .value    = null,
+            .next     = next.*,
             .children = null,
-            .flag = flag,
+            .flag     = flag,
           };
           next.* = new;
           break :blk new;
@@ -169,7 +169,8 @@ pub fn TreeNode(comptime Flag: type) type {
 
 const StructuralHashMap = std.HashMapUnmanaged(
   model.Type, *model.Type.Structural, model.Type.HashContext,
-  std.hash_map.default_max_load_percentage);
+  std.hash_map.default_max_load_percentage,
+);
 const Entry = struct {
   key  : model.Type,
   value: model.Type,
@@ -325,16 +326,16 @@ instantiating_instance_funcs: bool = false,
 
 pub fn init(ctx: nyarna.Context) !Self {
   var ret = Self{
-    .allocator = ctx.global(),
+    .allocator     = ctx.global(),
     .self_ref_list = try ctx.global().create(model.Type.Structural),
-    .constructors = .{}, // set later by loading the intrinsic lib
-    .predefined = undefined,
-    .system = undefined,
+    .constructors  = .{}, // set later by loading the intrinsic lib
+    .predefined    = undefined,
+    .system        = undefined,
   };
   inline for (@typeInfo(@TypeOf(ret.predefined)).Struct.fields) |field| {
     const val = &@field(ret.predefined, field.name);
     val.* = .{
-      .at = model.Position.intrinsic(),
+      .at   = model.Position.intrinsic(),
       .name = null,
       .data = @unionInit(@TypeOf(val.data), field.name, .{}),
     };
@@ -342,9 +343,7 @@ pub fn init(ctx: nyarna.Context) !Self {
 
   ret.self_ref_list.* = .{
     .list = .{
-      .inner = .{
-        .structural = ret.self_ref_list,
-      },
+      .inner = .{.structural = ret.self_ref_list},
     },
   };
 
@@ -419,16 +418,16 @@ pub fn typeConstructor(self: *Self, t: model.Type) !Constructor {
     .named => |named| switch (named.data) {
       .definition  => self.constructors.definition,
       .@"enum"     => Constructor{
-        .callable = (try self.constructorOf(t)).?,
+        .callable   = (try self.constructorOf(t)).?,
         .impl_index = self.prototype_funcs.@"enum".constructor.?.impl_index,
       },
       .float, .int => Constructor{
-        .callable = (try self.constructorOf(t)).?,
+        .callable   = (try self.constructorOf(t)).?,
         .impl_index = self.prototype_funcs.numeric.constructor.?.impl_index,
       },
       .location    => self.constructors.location,
       .textual     => Constructor{
-        .callable = (try self.constructorOf(t)).?,
+        .callable   = (try self.constructorOf(t)).?,
         .impl_index = self.prototype_funcs.textual.constructor.?.impl_index,
       },
       .void        => self.constructors.void,
@@ -436,7 +435,7 @@ pub fn typeConstructor(self: *Self, t: model.Type) !Constructor {
     },
     .structural => |strct| switch (strct.*) {
       .list => Constructor{
-        .callable = (try self.constructorOf(t)).?,
+        .callable   = (try self.constructorOf(t)).?,
         .impl_index = self.prototype_funcs.list.constructor.?.impl_index,
       },
       else => unreachable,
@@ -446,7 +445,7 @@ pub fn typeConstructor(self: *Self, t: model.Type) !Constructor {
 
 pub fn prototypeConstructor(
   self: *const Self,
-  pt: model.Prototype,
+  pt  : model.Prototype,
 ) Constructor {
   return switch (pt) {
     .optional     => self.constructors.prototypes.optional,
@@ -582,11 +581,11 @@ pub fn sup(
         }
         const ret = try self.allocator.create(model.Type.Named);
         ret.* = .{
-          .at = model.Position.intrinsic(),
+          .at   = model.Position.intrinsic(),
           .name = null,
           .data = .{.textual = .{
             .include = .{
-              .chars = include,
+              .chars      = include,
               .categories = categories,
             },
             .exclude = exclude,
@@ -618,8 +617,8 @@ pub fn registerSequence(
   iter.cur.value = t.typedef().structural;
   t.* = .{
     .direct = direct,
-    .inner = inner,
-    .auto = null,
+    .inner  = inner,
+    .auto   = null,
   };
 }
 
@@ -636,13 +635,11 @@ pub fn calcSequence(
   for (inner) |t| try iter.descend(t.typedef(), {});
   return model.Type{.structural = iter.cur.value orelse blk: {
     var new = try self.allocator.create(model.Type.Structural);
-    new.* = .{
-      .sequence = .{
-        .direct = direct,
-        .inner = inner,
-        .auto = null,
-      },
-    };
+    new.* = .{.sequence = .{
+      .direct = direct,
+      .inner  = inner,
+      .auto   = null,
+    }};
     iter.cur.value = new;
     break :blk new;
   }};
@@ -709,9 +706,9 @@ fn supWithStructure(
     },
     .named => |named| switch (named.data) {
       .every => return struc.typedef(),
-      .void => return switch (struc.*) {
+      .void  => return switch (struc.*) {
         .concat => model.Type{.structural = struc},
-        else => (try self.optional(struc.typedef())) orelse self.poison(),
+        else    => (try self.optional(struc.typedef())) orelse self.poison(),
       },
       .space, .literal, .textual => {},
       .@"type" => return switch (struc.*) {
@@ -960,7 +957,7 @@ pub fn registerOptional(self: *Self, t: *model.Type.Optional) !bool {
 
 pub fn concat(
   self: *Self,
-  t: model.Type,
+  t   : model.Type,
 ) std.mem.Allocator.Error!?model.Type {
   switch (InnerIntend.concat(t)) {
     .forbidden => return null,
@@ -1019,8 +1016,8 @@ pub fn list(self: *Self, t: model.Type) std.mem.Allocator.Error!?model.Type {
 }
 
 pub fn map(
-  self: *Self,
-  key: model.Type,
+  self : *Self,
+  key  : model.Type,
   value: model.Type,
 ) std.mem.Allocator.Error!?model.Type {
   switch (key) {
@@ -1035,7 +1032,7 @@ pub fn map(
   if (!res.found_existing) {
     const struc = try self.allocator.create(model.Type.Structural);
     struc.* = .{.map = .{
-      .key = key,
+      .key   = key,
       .value = value,
     }};
     res.value_ptr.* = struc;
@@ -1159,13 +1156,13 @@ pub fn instanceFuncsOf(self: *Self, t: model.Type) !?*funcs.InstanceFuncs {
   if (self.instantiating_instance_funcs) return null;
   const pt = switch (t) {
     .structural => |struc| switch (struc.*) {
-      .callable => return null,
-      .concat => &self.prototype_funcs.concat,
+      .callable     => return null,
+      .concat       => &self.prototype_funcs.concat,
       .intersection => &self.prototype_funcs.intersection,
-      .list => &self.prototype_funcs.list,
-      .map => &self.prototype_funcs.map,
-      .optional => &self.prototype_funcs.optional,
-      .sequence => &self.prototype_funcs.sequence,
+      .list         => &self.prototype_funcs.list,
+      .map          => &self.prototype_funcs.map,
+      .optional     => &self.prototype_funcs.optional,
+      .sequence     => &self.prototype_funcs.sequence,
     },
     .named => |named| switch (named.data) {
       .@"enum"     => &self.prototype_funcs.@"enum",
@@ -1189,7 +1186,7 @@ pub fn instanceFuncsOf(self: *Self, t: model.Type) !?*funcs.InstanceFuncs {
 /// calculate the expected type in E_(target) to which the value is to be
 /// coerced [8.3].
 pub fn expectedType(
-  self: *Self,
+  self  : *Self,
   actual: model.Type,
   target: model.Type,
 ) model.Type {
@@ -1213,7 +1210,7 @@ pub fn expectedType(
         if (actual.isNamed(.void) or actual.isNamed(.every)) actual
         else self.expectedType(actual, opt.inner),
       .concat, .sequence, .list, .map => target,
-      .callable => unreachable, // TODO
+      .callable     => unreachable, // TODO
       .intersection => |*inter| blk: {
         if (inter.scalar) |scalar_type|
           if (self.lesserEqual(actual, scalar_type)) break :blk scalar_type;
@@ -1325,7 +1322,7 @@ pub fn containsAst(t: model.Type) bool {
   return switch (t) {
     .named => |named| named.data == .ast or named.data == .frame_root,
     .structural => |struc| switch (struc.*) {
-      .list => |*lst| return containsAst(lst.inner),
+      .list     => |*lst| return containsAst(lst.inner),
       .optional => |*opt| return containsAst(opt.inner),
       else => false,
     },

@@ -5,38 +5,38 @@ const model    = @import("../model.zig");
 const Reporter = @import("Reporter.zig");
 
 const Style = enum(u8) {
-  reset = 0,
-  bold = 1,
-  underline = 4,
-  fg_black = 30,
-  fg_red = 31,
-  fg_green = 32,
-  fg_yellow = 33,
-  fg_blue = 34,
+  reset      = 0,
+  bold       = 1,
+  underline  = 4,
+  fg_black   = 30,
+  fg_red     = 31,
+  fg_green   = 32,
+  fg_yellow  = 33,
+  fg_blue    = 34,
   fg_magenta = 35,
-  fg_cyan = 36,
-  fg_white = 37,
+  fg_cyan    = 36,
+  fg_white   = 37,
 };
 
 reporter: Reporter,
-writer: std.fs.File.Writer,
+writer  : std.fs.File.Writer,
 do_style: bool,
 
 pub fn init(target: std.fs.File) @This() {
   return .{
     .reporter = .{
-      .lexerErrorFn = lexerError,
-      .parserErrorFn = parserError,
+      .lexerErrorFn        = lexerError,
+      .parserErrorFn       = parserError,
       .previousOccurenceFn = previousOccurence,
-      .posChainFn = posChain,
-      .wrongItemErrorFn = wrongItemError,
-      .scalarErrorFn = scalarError,
-      .wrongIdErrorFn = wrongIdError,
-      .typeErrorFn = typeError,
+      .posChainFn          = posChain,
+      .wrongItemErrorFn    = wrongItemError,
+      .scalarErrorFn       = scalarError,
+      .wrongIdErrorFn      = wrongIdError,
+      .typeErrorFn         = typeError,
       .constructionErrorFn = constructionError,
-      .runtimeErrorFn = runtimeError,
-      .systemNyErrorFn = systemNyError,
-      .fileErrorFn = fileError,
+      .runtimeErrorFn      = runtimeError,
+      .systemNyErrorFn     = systemNyError,
+      .fileErrorFn         = fileError,
     },
     .writer = target.writer(),
     .do_style = std.os.isatty(target.handle),
@@ -44,10 +44,10 @@ pub fn init(target: std.fs.File) @This() {
 }
 
 fn style(
-  self: *@This(),
-  styles: anytype,
-  comptime fmt: []const u8,
-  args: anytype,
+           self  : *@This(),
+           styles: anytype,
+  comptime fmt   : []const u8,
+           args  : anytype,
 ) void {
   if (self.do_style) {
     inline for (styles) |s| {
@@ -60,9 +60,9 @@ fn style(
 }
 
 fn renderError(
-  self: *@This(),
-  comptime fmt: []const u8,
-  args: anytype,
+           self: *@This(),
+  comptime fmt : []const u8,
+           args: anytype,
 ) void {
   self.style(.{.bold, .fg_red}, "[error] ", .{});
   self.style(.{.bold}, fmt, args);
@@ -70,9 +70,9 @@ fn renderError(
 }
 
 fn renderInfo(
-  self: *@This(),
-  comptime fmt: []const u8,
-  args: anytype,
+           self: *@This(),
+  comptime fmt : []const u8,
+           args: anytype,
 ) void {
   self.style(.{.bold, .fg_white}, "[info] ", .{});
   self.style(.{.bold}, fmt, args);
@@ -81,8 +81,8 @@ fn renderInfo(
 
 fn lexerError(
   reporter: *Reporter,
-  id: errors.LexerError,
-  pos: model.Position,
+  id      : errors.LexerError,
+  pos     : model.Position,
 ) void {
   const self = @fieldParentPtr(@This(), "reporter", reporter);
   self.style(.{.bold}, "{s}", .{pos});
@@ -91,8 +91,8 @@ fn lexerError(
 
 fn parserError(
   reporter: *Reporter,
-  id: errors.GenericParserError,
-  pos: model.Position,
+  id      : errors.GenericParserError,
+  pos     : model.Position,
 ) void {
   const self = @fieldParentPtr(@This(), "reporter", reporter);
   self.style(.{.bold}, "{s}", .{pos});
@@ -101,10 +101,10 @@ fn parserError(
 
 fn wrongItemError(
   reporter: *Reporter,
-  id: errors.WrongItemError,
-  pos: model.Position,
+  id      : errors.WrongItemError,
+  pos     : model.Position,
   expected: []const errors.WrongItemError.ItemDescr,
-  got: errors.WrongItemError.ItemDescr,
+  got     : errors.WrongItemError.ItemDescr,
 ) void {
   const self = @fieldParentPtr(@This(), "reporter", reporter);
   self.style(.{.bold}, "{s}", .{pos});
@@ -126,9 +126,9 @@ fn wrongItemError(
 
 fn scalarError(
   reporter: *Reporter,
-  id: errors.ScalarError,
-  pos: model.Position,
-  repr: []const u8,
+  id      : errors.ScalarError,
+  pos     : model.Position,
+  repr    : []const u8,
 ) void {
   const self = @fieldParentPtr(@This(), "reporter", reporter);
   self.style(.{.bold}, "{s}", .{pos});
@@ -155,11 +155,11 @@ fn scalarError(
 }
 
 fn wrongIdError(
-  reporter: *Reporter,
-  id: errors.WrongIdError,
-  pos: model.Position,
-  expected: []const u8,
-  got: []const u8,
+  reporter  : *Reporter,
+  id        : errors.WrongIdError,
+  pos       : model.Position,
+  expected  : []const u8,
+  got       : []const u8,
   defined_at: model.Position,
 ) void {
   const self = @fieldParentPtr(@This(), "reporter", reporter);
@@ -175,9 +175,9 @@ fn wrongIdError(
 
 fn previousOccurence(
   reporter: *Reporter,
-  id: errors.PreviousOccurenceError,
-  repr: []const u8,
-  pos: model.Position,
+  id      : errors.PreviousOccurenceError,
+  repr    : []const u8,
+  pos     : model.Position,
   previous: model.Position,
 ) void {
   const self = @fieldParentPtr(@This(), "reporter", reporter);
@@ -354,10 +354,10 @@ fn typeError(
 
 fn constructionError(
   reporter: *Reporter,
-  id: errors.ConstructionError,
-  pos: model.Position,
-  t: model.Type,
-  repr: []const u8,
+  id      : errors.ConstructionError,
+  pos     : model.Position,
+  t       : model.Type,
+  repr    : []const u8,
 ) void {
   const self = @fieldParentPtr(@This(), "reporter", reporter);
   self.style(.{.bold}, "{s}", .{pos});
@@ -387,9 +387,9 @@ fn constructionError(
 
 fn runtimeError(
   reporter: *Reporter,
-  id: errors.RuntimeError,
-  pos: model.Position,
-  msg: []const u8,
+  id      : errors.RuntimeError,
+  pos     : model.Position,
+  msg     : []const u8,
 ) void {
   const self = @fieldParentPtr(@This(), "reporter", reporter);
   self.style(.{.bold}, "{s}", .{pos});
@@ -400,9 +400,9 @@ fn runtimeError(
 
 fn systemNyError(
   reporter: *Reporter,
-  id: errors.SystemNyError,
-  pos: model.Position,
-  msg: []const u8,
+  id      : errors.SystemNyError,
+  pos     : model.Position,
+  msg     : []const u8,
 ) void {
   const self = @fieldParentPtr(@This(), "reporter", reporter);
   self.style(.{.bold}, "{s}", .{pos});
@@ -411,10 +411,10 @@ fn systemNyError(
 
 fn fileError(
   reporter: *Reporter,
-  id: errors.FileError,
-  pos: model.Position,
-  path: []const u8,
-  message: []const u8,
+  id      : errors.FileError,
+  pos     : model.Position,
+  path    : []const u8,
+  message : []const u8,
 ) void {
   const self = @fieldParentPtr(@This(), "reporter", reporter);
   self.style(.{.bold}, "{s}", .{pos});

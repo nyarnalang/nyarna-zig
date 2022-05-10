@@ -7,10 +7,12 @@
 const std = @import("std");
 
 const Impl        = @import("Impl.zig");
-const Interpreter = @import("../interpret.zig").Interpreter;
 const Mapper      = @import("Mapper.zig");
-const model       = @import("../model.zig");
+const nyarna      = @import("../../nyarna.zig");
 const syntaxes    = @import("syntaxes.zig");
+
+const Interpreter = nyarna.Interpreter;
+const model       = nyarna.model;
 
 const last = @import("../helpers.zig").last;
 

@@ -1,13 +1,12 @@
 const std = @import("std");
 
-const algo      = @import("interpret/algo.zig");
-const interpret = @import("interpret.zig");
-const nyarna    = @import("../nyarna.zig");
-const unicode   = @import("unicode.zig");
+const algo        = @import("Interpreter/algo.zig");
+const nyarna      = @import("../nyarna.zig");
+const unicode     = @import("unicode.zig");
 
 const Context     = nyarna.Context;
 const Evaluator   = nyarna.Evaluator;
-const Interpreter = interpret.Interpreter;
+const Interpreter = nyarna.Interpreter;
 const model       = nyarna.model;
 
 pub const system       = @import("lib/system.zig");
@@ -16,11 +15,15 @@ pub const constructors = @import("lib/constructors.zig");
 /// A provider implements all external functions for a certain Nyarna module.
 pub const Provider = struct {
   pub const KeywordWrapper = fn(
-    ctx: *Interpreter, pos: model.Position,
-    stack_frame: [*]model.StackItem) nyarna.Error!*model.Node;
+    ctx        : *Interpreter,
+    pos        : model.Position,
+    stack_frame: [*]model.StackItem,
+  ) nyarna.Error!*model.Node;
   pub const BuiltinWrapper = fn(
-    ctx: *Evaluator, pos: model.Position,
-    stack_frame: [*]model.StackItem) nyarna.Error!*model.Value;
+    ctx        : *Evaluator,
+    pos        : model.Position,
+    stack_frame: [*]model.StackItem,
+  ) nyarna.Error!*model.Value;
 
   getKeyword: fn(name: []const u8) ?KeywordWrapper,
   getBuiltin: fn(name: []const u8) ?BuiltinWrapper,
@@ -41,9 +44,9 @@ pub const Provider = struct {
 
     return @Type(std.builtin.TypeInfo{
       .Struct = .{
-        .layout = .Auto,
-        .fields = &fields,
-        .decls = &[_]std.builtin.TypeInfo.Declaration{},
+        .layout   = .Auto,
+        .fields   = &fields,
+        .decls    = &[_]std.builtin.TypeInfo.Declaration{},
         .is_tuple = true
       },
     });
@@ -106,8 +109,8 @@ pub const Provider = struct {
 
       fn SingleWrapper(
         comptime FirstArg: type,
-        comptime decl: std.builtin.TypeInfo.Declaration,
-        comptime Ret: type,
+        comptime decl    : std.builtin.TypeInfo.Declaration,
+        comptime Ret     : type,
       ) type {
         return struct {
           fn wrapper(
@@ -117,8 +120,9 @@ pub const Provider = struct {
           ) nyarna.Error!*Ret {
             var unwrapped: Params(@typeInfo(decl.data.Fn.fn_type).Fn) =
               undefined;
-            inline for (@typeInfo(@TypeOf(unwrapped)).Struct.fields)
-                |f, index| {
+            inline for (
+              @typeInfo(@TypeOf(unwrapped)).Struct.fields
+            ) |f, index| {
               unwrapped[index] = switch (index) {
                 0 => ctx,
                 1 => pos,
@@ -176,8 +180,8 @@ pub const Provider = struct {
 };
 
 pub fn registerExtImpl(
-  ctx: Context,
-  p: *const Provider,
+  ctx : Context,
+  p   : *const Provider,
   name: []const u8,
   is_keyword: bool,
 ) !?usize {
@@ -193,12 +197,13 @@ pub fn registerExtImpl(
 }
 
 fn registerGenericImpl(
-  ctx: Context,
-  p: *const Provider,
+  ctx : Context,
+  p   : *const Provider,
   name: []const u8,
 ) !usize {
-  const impl = p.getBuiltin(name) orelse
-    std.debug.panic("don't know generic builtin: {s}\n", .{name});
+  const impl = p.getBuiltin(name) orelse (
+    std.debug.panic("don't know generic builtin: {s}\n", .{name})
+  );
   try ctx.data.builtin_registry.append(ctx.global(), impl);
   return ctx.data.builtin_registry.items.len - 1;
 }
@@ -219,15 +224,13 @@ pub fn extFunc(
   };
   const ret = try ctx.global().create(model.Function);
   ret.* = .{
-    .callable = try bres.createCallable(ctx.global(), .function),
+    .callable   = try bres.createCallable(ctx.global(), .function),
     .defined_at = model.Position.intrinsic(),
-    .data = .{
-      .ext = .{
-        .ns_dependent = ns_dependent,
-        .impl_index = index,
-      },
-    },
-    .name = null,
+    .data       = .{.ext = .{
+      .ns_dependent = ns_dependent,
+      .impl_index   = index,
+    }},
+    .name      = null,
     .variables = container,
   };
   return ret;

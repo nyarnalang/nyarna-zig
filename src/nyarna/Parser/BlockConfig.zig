@@ -21,9 +21,9 @@ pub fn init(
   parser   : *Impl,
 ) @This() {
   return .{
-    .into = into,
-    .map_list = std.ArrayList(model.BlockConfig.Map).init(allocator),
-    .parser = parser,
+    .into           = into,
+    .map_list       = std.ArrayList(model.BlockConfig.Map).init(allocator),
+    .parser         = parser,
     .cur_item_start = undefined,
   };
 }
@@ -180,11 +180,11 @@ inline fn procOff(self: *BlockConfig) !ResultAction {
 pub fn parse(self: *BlockConfig) !void {
   std.debug.assert(self.parser.cur == .diamond_open);
   self.into.* = .{
-    .syntax = null,
-    .off_colon = null,
+    .syntax      = null,
+    .off_colon   = null,
     .off_comment = null,
-    .full_ast = null,
-    .map = undefined,
+    .full_ast    = null,
+    .map         = undefined,
   };
   var first = true;
   var recover = false;
@@ -201,10 +201,10 @@ pub fn parse(self: *BlockConfig) !void {
     } else true;
     if (!recover) consume_next: {
       switch (kind) {
-        .csym => if (!(try self.procCsym())) {recover = true;},
+        .csym   => if (!(try self.procCsym())) {recover = true;},
         .syntax => if (!self.procSyntax()) {recover = true;},
-        .map => if (!(try self.procMap())) {recover = true;},
-        .off => switch (try self.procOff()) {
+        .map    => if (!(try self.procMap())) {recover = true;},
+        .off    => switch (try self.procOff()) {
           .none => {},
           .recover => recover = true,
           .dont_consume_next => break :consume_next,

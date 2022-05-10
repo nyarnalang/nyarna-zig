@@ -74,19 +74,19 @@ seen_error: bool = false,
 
 pub fn create(
   backing_allocator: std.mem.Allocator,
-  reporter: *errors.Reporter,
-  stack_size: usize,
-  resolvers: []ResolverEntry,
+  reporter         : *errors.Reporter,
+  stack_size       : usize,
+  resolvers        : []ResolverEntry,
 ) !*@This() {
   const ret = try backing_allocator.create(@This());
   ret.* = .{
-    .reporter = reporter,
+    .reporter          = reporter,
     .backing_allocator = backing_allocator,
-    .types = undefined,
-    .storage = std.heap.ArenaAllocator.init(backing_allocator),
-    .stack = undefined,
-    .stack_ptr = undefined,
-    .resolvers = resolvers,
+    .types             = undefined,
+    .storage           = std.heap.ArenaAllocator.init(backing_allocator),
+    .stack             = undefined,
+    .stack_ptr         = undefined,
+    .resolvers         = resolvers,
   };
   errdefer backing_allocator.destroy(ret);
   errdefer ret.storage.deinit();
@@ -138,7 +138,7 @@ pub fn work(self: *@This()) !void {
   while (self.lastLoadingModule()) |index| {
     const loader = switch (self.known_modules.values()[index]) {
       .require_options => |ml| ml,
-      .require_module => |ml| blk: {
+      .require_module  => |ml| blk: {
         break :blk ml;
       },
       .loaded, .pushed_param => unreachable,

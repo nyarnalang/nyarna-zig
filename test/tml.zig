@@ -15,26 +15,26 @@ const ParseError = error {
 
 const Tags = struct {
   strip: bool = false,
-  crlf: bool = false,
+  crlf : bool = false,
   chars: bool = false,
 };
 
 pub const File = struct {
-  arena: std.heap.ArenaAllocator,
-  name: []const u8,
-  items: Values,
+  arena : std.heap.ArenaAllocator,
+  name  : []const u8,
+  items : Values,
   params: struct {
     @"inline": Values,
-    file: Values,
-    input: Values,
-    output: Values,
-    errors: Values,
+    file     : Values,
+    input    : Values,
+    output   : Values,
+    errors   : Values,
   },
 
   fn failWith(
-    path: []const u8,
-    comptime msg: []const u8,
-    args: anytype,
+             path: []const u8,
+    comptime msg : []const u8,
+             args: anytype,
   ) ParseError {
     std.log.err("{s}: " ++ msg ++ "\n", .{path} ++ args);
     return ParseError.parsing_failed;
@@ -54,7 +54,7 @@ pub const File = struct {
   }
 
   pub fn loadFile(
-    dir: *std.fs.Dir,
+    dir : *std.fs.Dir,
     path: []const u8,
     file: *std.fs.File,
   ) !File {
@@ -80,10 +80,10 @@ pub const File = struct {
     ret.items = Values.init(ret.allocator());
     ret.params = .{
       .@"inline" = Values.init(ret.allocator()),
-      .file = Values.init(ret.allocator()),
-      .input = Values.init(ret.allocator()),
-      .output = Values.init(ret.allocator()),
-      .errors = Values.init(ret.allocator()),
+      .file      = Values.init(ret.allocator()),
+      .input     = Values.init(ret.allocator()),
+      .output    = Values.init(ret.allocator()),
+      .errors    = Values.init(ret.allocator()),
     };
     ret.name = try ret.allocator().dupe(u8, line[4..]);
 

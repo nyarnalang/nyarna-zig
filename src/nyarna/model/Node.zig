@@ -336,10 +336,6 @@ pub const tg = struct {
     values: []Node.Varargs.Item,
     pub inline fn node(self: *@This()) *Node {return Node.parent(self);}
   };
-  pub const Float = struct {
-    precision: *Node,
-    pub inline fn node(self: *@This()) *Node {return Node.parent(self);}
-  };
   pub const Intersection = struct {
     types    : []Varargs.Item,
     generated: ?*Type.Structural = null,
@@ -412,7 +408,6 @@ pub const Data = union(enum) {
   funcgen          : Funcgen,
   gen_concat       : tg.Concat,
   gen_enum         : tg.Enum,
-  gen_float        : tg.Float,
   gen_intersection : tg.Intersection,
   gen_list         : tg.List,
   gen_map          : tg.Map,
@@ -464,7 +459,6 @@ fn parent(it: anytype) *Node {
     Seq              => offset(Data, "seq"),
     tg.Concat        => offset(Data, "gen_concat"),
     tg.Enum          => offset(Data, "gen_enum"),
-    tg.Float         => offset(Data, "gen_float"),
     tg.Intersection  => offset(Data, "gen_intersection"),
     tg.List          => offset(Data, "gen_list"),
     tg.Map           => offset(Data, "gen_map"),

@@ -15,8 +15,9 @@ pub fn build(b: *Builder) !void {
   //const target = b.standardTargetOptions(.{});
   const test_filter =
     b.option([]const u8, "test-filter", "filters tests when testing");
-  const emit_bin = b.option(bool, "emit_bin", "emit binaries for tests")
-    orelse false;
+  const emit_bin = (
+    b.option(bool, "emit_bin", "emit binaries for tests")
+  ) orelse false;
 
   var ehgen_exe = b.addExecutable("ehgen", "build/gen_errorhandler.zig");
   ehgen_exe.main_pkg_path = ".";
