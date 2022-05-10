@@ -17,4 +17,4 @@ World
 =GETVAR who
 =TEXT Text "!"
 --- document
-=RAW Raw "Hello, World!"
+=TEXT Text "Hello, World!"

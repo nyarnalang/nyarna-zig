@@ -295,6 +295,17 @@ pub const Context = struct {
   }
 };
 
+const callsite_desc = model.Source.Descriptor{
+  .name     = "callsite",
+  .locator  = model.Locator.parse(".callsite.args") catch unreachable,
+  .argument = true,
+};
+const callsite_pos = model.Position{
+  .source = &callsite_desc,
+  .start = model.Cursor.unknown(),
+  .end = model.Cursor.unknown(),
+};
+
 /// This type is the API's entry point.
 pub const Processor = struct {
   pub const MainLoader = struct {
@@ -338,7 +349,20 @@ pub const Processor = struct {
         intpr, try intpr.genValueNode((try intpr.ctx.values.funcRef(
           source.at(model.Cursor.unknown()), module.root.?
         )).value()), 0, module.root.?.callable.sig);
-      // TODO: push arguments
+      for (self.globals.known_modules.values()) |me| switch (me) {
+        .pushed_param => |ml| {
+          const res = try ml.work();
+          std.debug.assert(res);
+          const node = ml.finalizeNode();
+          if (
+            try mapper.mapper.map(
+              callsite_pos, .{.named = node.pos.source.name}, .flow)
+          ) |cursor| {
+            try mapper.mapper.push(cursor, node);
+          }
+        },
+        else => {},
+      };
       const call =
         try mapper.mapper.finalize(source.at(model.Cursor.unknown()));
       const result = try intpr.ctx.evaluator().evaluate(
@@ -355,19 +379,67 @@ pub const Processor = struct {
       return doc;
     }
 
+    fn mainModule(self: *MainLoader) *Globals.ModuleEntry {
+      return &self.globals.known_modules.values()[1];
+    }
+
     /// finish interpreting the main module and returns it. Does not finalize
     /// the MainLoader. finalize() or deinit() must still be called afterwards.
     pub fn finishMainModule(self: *MainLoader) !*model.Module {
-      switch (self.globals.known_modules.values()[1]) {
+      switch (self.mainModule().*) {
         .require_options, .require_module => |ml| {
           if (ml.state == .encountered_options) {
             try ml.finalizeOptions(model.Position.intrinsic());
           }
         },
         .loaded => {},
+        .pushed_param => unreachable,
       }
       try self.globals.work();
       return self.globals.known_modules.values()[1].loaded;
+    }
+
+    pub fn pushArg(
+      self   : *MainLoader,
+      name   : []const u8,
+      content: []const u8,
+    ) !void {
+      const repr = try self.globals.storage.allocator().alloc(u8, name.len + 7);
+      std.mem.copy(u8, repr, ".param.");
+      std.mem.copy(u8, repr[7..], name);
+      var logger = errors.Handler{.reporter = self.globals.reporter};
+      var locator = model.Locator.parse(repr) catch {
+        logger.InvalidLocator(callsite_pos);
+        return;
+      };
+      var cursor = load.ParamResolver.Cursor{
+        .api     = .{.name = name},
+        .content = content,
+      };
+      var resolver = load.ParamResolver.init();
+      const loader = try ModuleLoader.create(
+        self.globals, &cursor.api, &resolver.api, locator, true, null);
+      const res = try self.globals.known_modules.getOrPut(
+        self.globals.storage.allocator(), repr);
+      if (res.found_existing) {
+        logger.DuplicateParameterArgument(name, callsite_pos, callsite_pos);
+      } else {
+        switch (self.mainModule().*) {
+          .pushed_param    => unreachable,
+          .require_options => |ml| if (ml.getOption(name)) |option| {
+            // TODO: these assertions should be enforced by disallowing
+            // \fragment \library and \standalone in parameters.
+            // This should be done by presetting the module kind.
+            const finished = try loader.work();
+            std.debug.assert(finished);
+            const node = loader.finalizeNode();
+            try option.set(node);
+            return;
+          },
+          .require_module, .loaded => {},
+        }
+        res.value_ptr.* = .{.pushed_param = loader};
+      }
     }
   };
 

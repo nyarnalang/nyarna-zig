@@ -98,7 +98,7 @@ fn getSource(
     return null;
   };
   std.debug.assert(read == content.len - 4);
-  std.mem.copy(u8, (content.ptr + read)[0..4], "\x04\x04\x04\x04");
+  std.mem.copy(u8, content[read..], "\x04\x04\x04\x04");
   errdefer allocator.free(content);
   const ret = try allocator.create(model.Source);
   ret.* = .{

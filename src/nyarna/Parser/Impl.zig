@@ -499,6 +499,7 @@ inline fn procCommand(self: *@This()) !void {
           // already been loaded.
           unreachable;
         },
+        .pushed_param => unreachable,
         .loaded => |module| {
           // if the import is not called, generate an implicit call
           if (self.cur != .list_start and self.cur != .blocks_sep) {
@@ -533,7 +534,7 @@ inline fn procCommand(self: *@This()) !void {
             me.* = .{.require_module = ml};
             return Parser.UnwindReason.referred_module_unavailable;
           },
-          .require_module => unreachable,
+          .require_module, .pushed_param => unreachable,
           .loaded => |module| {
             if (module.root) |root| {
               uc.target.data = .{

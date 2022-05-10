@@ -341,7 +341,7 @@ pub const OptionSetter = struct {
 
 pub fn getOption(
   self: *ModuleLoader,
-  name: []const u8
+  name: []const u8,
 ) ?OptionSetter {
   for (self.options) |*item, index| {
     if (std.mem.eql(u8, item.param.name, name)) {

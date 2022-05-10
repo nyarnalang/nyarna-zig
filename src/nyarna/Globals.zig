@@ -20,7 +20,8 @@ const Types  = nyarna.Types;
 const ModuleLoader = nyarna.load.ModuleLoader;
 
 pub const ModuleEntry = union(enum) {
-  require_module: *ModuleLoader,
+  pushed_param   : *ModuleLoader,
+  require_module : *ModuleLoader,
   require_options: *ModuleLoader,
   loaded: *model.Module,
 };
@@ -106,8 +107,7 @@ pub fn create(
 pub fn destroy(self: *@This()) void {
   self.types.deinit();
   for (self.known_modules.values()) |value| switch (value) {
-    .require_module => |ml| ml.destroy(),
-    .require_options => |ml| ml.destroy(),
+    .require_module, .require_options, .pushed_param => |ml| ml.destroy(),
     .loaded => {},
   };
   self.storage.deinit();
@@ -120,12 +120,12 @@ fn lastLoadingModule(self: *@This()) ?usize {
   while (index > 0) {
     index -= 1;
     switch (self.known_modules.values()[index]) {
-      .require_module => return index,
+      .require_module  => return index,
       .require_options => |ml| switch (ml.state) {
         .initial, .parsing => return index,
-        else => {},
+        else               => {},
       },
-      .loaded => {},
+      .loaded, .pushed_param => {},
     }
   }
   return null;
@@ -141,7 +141,7 @@ pub fn work(self: *@This()) !void {
       .require_module => |ml| blk: {
         break :blk ml;
       },
-      .loaded => unreachable,
+      .loaded, .pushed_param => unreachable,
     };
     _ = try loader.work();
     if (loader.state == .finished) {

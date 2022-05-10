@@ -1244,6 +1244,10 @@ pub fn loadTest(data: *TestDataResolver) !void {
     &data.stdlib.api);
   defer proc.deinit();
   var loader = try proc.startLoading(&data.api, "input");
+  var iter = data.source.params.@"inline".iterator();
+  while (iter.next()) |item| {
+    try loader.pushArg(item.key_ptr.*, item.value_ptr.content.items);
+  }
   if (try loader.finalize()) |document| {
     defer document.destroy();
     var emitter = AstEmitter.init(document.globals, &checker);
