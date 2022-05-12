@@ -9,6 +9,7 @@ pub const LexerError = enum {
   IllegalContentAtHeader, IllegalCharacters, InvalidEndCommand,
   SwallowDepthWithoutDiamondClose, InvalidLocator, IllegalColon, IllegalNameSep,
   AssignmentWithoutExpression, MissingId, IllegalContentAfterId,
+  MissingColon,
 };
 
 pub const GenericParserError = enum {
@@ -17,14 +18,14 @@ pub const GenericParserError = enum {
   MissingSymbolType, MissingSymbolEntity, PrefixedSymbolMustBeCalled,
   AstNodeInNonKeyword, CannotResolveImmediately, InvalidLvalue, CantBeCalled,
   TooManyArguments, UnexpectedPrimaryBlock, InvalidPositionalArgument,
-  BlockNeedsConfig, InvalidNamedArgInAssign, UnfinishedCallInTypeArg, NotAType,
+  BlockNeedsConfig, InvalidNamedArg, UnfinishedCallInTypeArg, NotAType,
   CantCallUnfinished, FailedToCalculateReturnType, FieldAccessWithoutInstance,
   MethodOutsideDeclare, CannotResolveLocator, ImportIllegalInFullast,
   MissingInitialValue, IllegalNumericInterval, EntityCannotBeNamed,
   SurplusFlags, TypeInMagic, NyFuncInMagic, BuiltinMustBeNamed, NoBlockToEnd,
   ConstructorUnavailable, NoBuiltinProvider, IllegalContentInPrototypeFuncs,
   BlockNameAtTopLevel, KeywordMustBeCalled, NotAllowedForOption,
-  CannotCallLibraryImport,
+  CannotCallLibraryImport, UnexpectedBlockNameExpr,
 };
 
 pub const WrongItemError = enum {

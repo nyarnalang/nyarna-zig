@@ -125,13 +125,9 @@ fn pushLevel(self: *@This(), fullast: bool) !void {
     std.debug.assert(self.curLevel().command.info != .unknown);
   }
   try self.levels.append(self.allocator(), ContentLevel{
-    .start = self.lexer.recent_end,
-    .changes = null,
-    .command = undefined,
-    .nodes = .{},
-    .seq = .{},
-    .block_config = null,
-    .fullast = fullast,
+    .start          = self.lexer.recent_end,
+    .command        = undefined,
+    .fullast        = fullast,
     .variable_start = self.intpr().variables.items.len,
   });
 }
@@ -299,6 +295,24 @@ inline fn procParagraphEnd(self: *@This()) !void {
   }
 }
 
+/// skip over possible block configuration, including swallow spec.
+/// used for top-level block names that do not correspond to a call.
+fn skipOverBlockConfig(self: *@This()) !void {
+  self.advance();
+  var colon_start: ?model.Position = null;
+  var buffer: model.BlockConfig = undefined;
+  const check_swallow = if (self.cur == .diamond_open) blk: {
+    try BlockConfig.init(
+      &buffer, self.allocator(), self).parse();
+    if (self.cur == .blocks_sep) {
+      colon_start = self.lexer.walker.posFrom(self.cur_start);
+      self.advance();
+      break :blk true;
+    } else break :blk false;
+  } else true;
+  if (check_swallow) _ = self.checkSwallow(colon_start);
+}
+
 inline fn procBlockNameStart(self: *@This()) !void {
   if (self.levels.items.len == 1) {
     const start = self.cur_start;
@@ -310,25 +324,46 @@ inline fn procBlockNameStart(self: *@This()) !void {
       ) break;
     }
     if (self.cur == .block_name_sep) {
-      self.advance();
-      var colon_start: ?model.Position = null;
-      var buffer: model.BlockConfig = undefined;
-      const check_swallow = if (self.cur == .diamond_open) blk: {
-        try BlockConfig.init(
-          &buffer, self.allocator(), self).parse();
-        if (self.cur == .blocks_sep) {
-          colon_start = self.lexer.walker.posFrom(self.cur_start);
-          self.advance();
-          break :blk true;
-        } else break :blk false;
-      } else true;
-      if (check_swallow) _ = self.checkSwallow(colon_start);
-      self.logger().BlockNameAtTopLevel(self.lexer.walker.posFrom(start));
+      try self.skipOverBlockConfig();
     } else self.advance();
+    self.logger().BlockNameAtTopLevel(self.lexer.walker.posFrom(start));
   } else {
     try self.leaveLevel();
     self.state = .block_name;
   }
+}
+
+inline fn enterBlockNameExpr(self: *@This(), valid: bool) !void {
+  const start = self.cur_start;
+  while (self.cur == .space) self.advance();
+  try self.pushLevel(self.curLevel().fullast);
+  const lvl = self.curLevel();
+  lvl.start = start;
+  lvl.semantics = if (valid) .block_name else .discarded_block_name;
+  // we create a command with a void target, then an assignment mapper on it.
+  // This is okay because we won't finalize the assignment and extract the
+  // pushed node instead. The assignment mapper is used because it handles
+  // multiple values just like we want it here, with error messages.
+  lvl.command = .{
+    .start      = self.cur_start,
+    .info       = .{
+      .unknown =
+        try self.intpr().node_gen.@"void"(self.intpr().input.at(start)),
+    },
+    .mapper     = undefined,
+    .cur_cursor = undefined,
+  };
+  lvl.command.startAssignment(self.intpr());
+  self.state = .possible_start;
+  self.advance();
+}
+
+inline fn procBlockNameExprStart(self: *@This()) !void {
+  const valid = if (self.levels.items.len > 1) blk: {
+    try self.leaveLevel();
+    break :blk true;
+  } else false;
+  try self.enterBlockNameExpr(valid);
 }
 
 inline fn procEndCommand(self: *@This()) !void {
@@ -441,7 +476,7 @@ inline fn procTextual(self: *@This()) !void {
   const lvl = self.curLevel();
   const pos = switch (self.cur) {
     .block_end_open, .block_name_sep, .comma, .name_sep, .list_end,
-    .end_source => blk: {
+    .list_end_missing_colon, .end_source => blk: {
       content.shrinkAndFree(self.allocator(), non_space_len);
       break :blk self.intpr().input.between(textual_start, non_space_end);
     },
@@ -650,15 +685,54 @@ inline fn procCommand(self: *@This()) !void {
 
 inline fn procAfterList(self: *@This()) !void {
   const end = self.lexer.recent_end;
-  self.advance();
-  if (self.cur == .blocks_sep) {
-    // call continues
-    self.state = .after_blocks_start;
-    self.advance();
-  } else {
-    self.state = .command;
-    try self.curLevel().command.shift(
-      self.intpr(), end, self.curLevel().fullast);
+  const lvl = self.curLevel();
+  switch (lvl.semantics) {
+    .default => {
+      self.advance();
+      if (self.cur == .blocks_sep) {
+        // call continues
+        self.state = .after_blocks_start;
+        self.advance();
+      } else {
+        self.state = .command;
+        try lvl.command.shift(
+          self.intpr(), end, lvl.fullast);
+      }
+      return;
+    },
+    .discarded_block_name => {
+      if (self.cur == .list_end) {
+        try self.skipOverBlockConfig();
+      } else {
+        self.logger().MissingColon(self.intpr().input.at(end));
+      }
+      self.logger().BlockNameAtTopLevel(self.lexer.walker.posFrom(lvl.start));
+      _ = self.levels.pop();
+      self.state = if (
+        self.curLevel().syntax_proc != null
+      ) .special else .default;
+    },
+    .block_name => {
+      const node = (
+        lvl.command.info.assignment.pushed
+      ) orelse (
+        try self.intpr().node_gen.@"void"(
+          self.intpr().input.at(lvl.command.start))
+      );
+      _ = self.levels.pop();
+      const parent = self.curLevel();
+      self.advance();
+      try parent.command.pushNameExpr(node, self.cur == .diamond_open);
+      try self.pushLevel(
+        if (parent.command.choseAstNodeParam()) false else parent.fullast);
+      if (!(try self.processBlockHeader(null))) {
+        if (parent.implicitBlockConfig()) |c| {
+          try self.applyBlockConfig(self.intpr().input.at(self.cur_start), c);
+        }
+        while (self.cur == .space or self.cur == .indent) self.advance();
+      }
+      self.state = if (parent.syntax_proc != null) .special else .default;
+    }
   }
 }
 
@@ -669,7 +743,7 @@ inline fn procAfterBlocksStart(self: *@This()) !void {
       if (self.curLevel().syntax_proc != null) .special else .default;
   } else {
     while (self.cur == .space or self.cur == .indent) self.advance();
-    if (self.cur == .block_name_sep) {
+    if (self.cur == .block_name_sep or self.cur == .list_start) {
       switch (pb_exists) {
         .unknown => {},
         .maybe => {
@@ -678,7 +752,11 @@ inline fn procAfterBlocksStart(self: *@This()) !void {
         },
         .yes => try self.leaveLevel(),
       }
-      self.state = .block_name;
+      if (self.cur == .list_start) {
+        try self.enterBlockNameExpr(true);
+      } else {
+        self.state = .block_name;
+      }
     } else {
       if (pb_exists == .unknown) {
         const lvl = self.curLevel();
@@ -769,7 +847,7 @@ inline fn procAfterId(self: *@This()) !void {
       self.advance();
       _ = self.levels.pop();
     },
-    .list_end => {
+    .list_end, .list_end_missing_colon => {
       self.state = .after_list;
       self.advance();
       _ = self.levels.pop();
@@ -811,7 +889,7 @@ inline fn procSpecial(self: *@This()) !void {
         if (self.cur != .indent) break;
       }
       switch (self.cur) {
-        .end_source, .block_name_sep, .block_end_open => {
+        .end_source, .block_name_sep, .list_start, .block_end_open => {
           self.state = .default;
           return;
         },
@@ -822,7 +900,7 @@ inline fn procSpecial(self: *@This()) !void {
         },
       }
     },
-    .end_source, .symref, .block_name_sep, .block_end_open => {
+    .end_source, .symref, .block_name_sep, .list_start, .block_end_open => {
       self.state = .default;
       return;
     },
@@ -875,9 +953,10 @@ pub fn doParse(
         },
         .indent           => self.advance(),
         .symref           => try self.procSymref(),
-        .list_end, .comma => try self.procLeaveArg(),
+        .list_end, .comma, .list_end_missing_colon => try self.procLeaveArg(),
         .parsep           => try self.procParagraphEnd(),
         .block_name_sep   => try self.procBlockNameStart(),
+        .list_start       => try self.procBlockNameExprStart(),
         .block_end_open   => try self.procEndCommand(),
         .name_sep         => self.procIllegalNameSep(),
         .id_set           => self.procIdSet(),

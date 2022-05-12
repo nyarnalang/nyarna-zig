@@ -122,7 +122,7 @@ pub const Varargs = struct {
 pub const Varmap = struct {
   pub const Item = struct {
     key: union(enum) {
-      value: *Value,
+      expr: *Expression,
       direct,
     },
     value: *Expression,

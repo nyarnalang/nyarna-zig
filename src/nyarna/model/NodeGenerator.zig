@@ -388,14 +388,24 @@ pub inline fn uSymref(
     pos, .{.unresolved_symref = content})).data.unresolved_symref;
 }
 
-pub inline fn varargs(self: *Self, pos: Position, t: Type) !*Node.Varargs {
+pub inline fn varargs(
+  self    : *Self,
+  pos     : Position,
+  spec_pos: Position,
+  t       : *Type.List,
+) !*Node.Varargs {
   return &(try self.node(
-    pos, .{.varargs = .{.t = t}})).data.varargs;
+    pos, .{.varargs = .{.t = t, .spec_pos = spec_pos}})).data.varargs;
 }
 
-pub inline fn varmap(self: *Self, pos: Position, t: *Type.Map) !*Node.Varmap {
+pub inline fn varmap(
+  self    : *Self,
+  pos     : Position,
+  spec_pos: Position,
+  t       : *Type.Map,
+) !*Node.Varmap {
   return &(try self.node(
-    pos, .{.varmap = .{.t = t}})).data.varmap;
+    pos, .{.varmap = .{.t = t, .spec_pos = spec_pos}})).data.varmap;
 }
 
 pub inline fn vtSetter(self: *Self, v: *Symbol.Variable, n: *Node) !*Node {

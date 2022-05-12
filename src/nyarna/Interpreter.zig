@@ -1282,7 +1282,10 @@ fn tryInterpretVarargs(
   var seen_poison = false;
   var seen_unfinished = false;
   for (va.content.items) |item| {
-    if (try self.tryInterpret(item.node, stage)) |expr| {
+    const t = if (item.direct) va.t.typedef() else va.t.inner;
+    if (
+      try self.associate(item.node, .{.t = t, .pos = va.spec_pos}, stage)
+    ) |expr| {
       if (expr.expected_type.isNamed(.poison)) seen_poison = true;
       item.node.data = .{.expression = expr};
     } else seen_unfinished = true;
@@ -1309,7 +1312,7 @@ fn tryInterpretVarargs(
     .data = .{.varargs = .{
       .items = items,
     }},
-    .expected_type = va.t,
+    .expected_type = va.t.typedef(),
   };
   return vexpr;
 }
@@ -1322,10 +1325,32 @@ fn tryInterpretVarmap(
   var seen_poison = false;
   var seen_unfinished = false;
   for (vm.content.items) |item| {
-    if (try self.tryInterpret(item.value, stage)) |expr| {
-      if (expr.expected_type.isNamed(.poison)) seen_poison = true;
-      item.value.data = .{.expression = expr};
-    } else seen_unfinished = true;
+    switch (item.key) {
+      .node => |node| {
+        if (
+          try self.associate(node, .{.t = vm.t.key, .pos = vm.spec_pos}, stage)
+        ) |expr| {
+          if (expr.expected_type.isNamed(.poison)) seen_poison = true;
+          node.data = .{.expression = expr};
+        } else seen_unfinished = true;
+        if (
+          try self.associate(
+            item.value, .{.t = vm.t.value, .pos = vm.spec_pos}, stage)
+        ) |expr| {
+          if (expr.expected_type.isNamed(.poison)) seen_poison = true;
+          item.value.data = .{.expression = expr};
+        } else seen_unfinished = true;
+      },
+      .direct => {
+        if (
+          try self.associate(
+            item.value, .{.t = vm.t.typedef(), .pos = vm.spec_pos}, stage)
+        ) |expr| {
+          if (expr.expected_type.isNamed(.poison)) seen_poison = true;
+          item.value.data = .{.expression = expr};
+        } else seen_unfinished = true;
+      }
+    }
   }
   if (seen_unfinished) {
     return if (stage.kind == .keyword or stage.kind == .final)
@@ -1340,32 +1365,9 @@ fn tryInterpretVarmap(
     model.Expression.Varmap.Item, vm.content.items.len);
   for (vm.content.items) |item, index| {
     items[index] = switch (item.key) {
-      .implicit => |name| blk: {
-        const pos = name.node().pos;
-        const key = switch (vm.t.key.named.data) {
-          .literal => (
-            try self.ctx.values.textScalar(
-              pos, vm.t.key, try self.ctx.global().dupe(u8, name.content))
-          ).value(),
-          .textual => |*txt| ((
-            try self.ctx.textFromString(
-              pos, try self.ctx.global().dupe(u8, name.content), txt)
-          ) orelse continue).value(),
-          .int => |*int| ((
-            try self.ctx.intFromText(
-              pos, try self.ctx.global().dupe(u8, name.content), int)
-          ) orelse continue).value(),
-          .float => |*fl| ((
-            try self.ctx.floatFromText(
-              pos, try self.ctx.global().dupe(u8, name.content), fl)
-          ) orelse continue).value(),
-          .@"enum" => |*en| if (
-            try self.ctx.enumFrom(pos, name.content, en)
-          ) |ev| ev.value() else continue,
-          else => unreachable,
-        };
-        break :blk
-          .{.key = .{.value = key}, .value = item.value.data.expression};
+      .node => |key_node| .{
+        .key   = .{.expr = key_node.data.expression},
+        .value = item.value.data.expression,
       },
       .direct => .{.key = .direct, .value = item.value.data.expression},
     };
@@ -2789,7 +2791,7 @@ pub fn probeType(
         },
       };
     },
-    .varargs => |*varargs| return varargs.t,
+    .varargs => |*varargs| return varargs.t.typedef(),
     .varmap  => |*varmap| return varmap.t.typedef(),
     .void    => return self.ctx.types().void(),
     .poison  => return self.ctx.types().poison(),

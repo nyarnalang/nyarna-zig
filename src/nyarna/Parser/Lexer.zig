@@ -25,11 +25,14 @@ pub const Walker = struct {
   pub fn init(s: *const model.Source) Walker {
     return .{
       .source = s,
-      .cur = s.content.ptr,
-      .before = .{.at_line = s.offsets.line + 1,
-                  .before_column = s.offsets.column, .byte_offset = 0},
+      .cur    = s.content.ptr,
+      .before = .{
+        .at_line       = s.offsets.line + 1,
+        .before_column = s.offsets.column,
+        .byte_offset   = 0,
+      },
       .recent_length = 0,
-      .marked = undefined
+      .marked        = undefined
     };
   }
 
@@ -454,11 +457,8 @@ inline fn procCheckParsep(self: *Lexer, cur: *u21) ?Token {
   } else return null;
 }
 
-inline fn procCheckBlockName(self: *Lexer, cur: *u21) ?Token {
+inline fn procCheckBlockName(self: *Lexer, cur: *u21) !?Token {
   if (cur.* == ':') {
-    self.state = .read_block_name;
-    self.cur_stored = self.walker.nextInline();
-    self.recent_end = self.walker.before;
     // if previous block disabled comments, re-enable them. this needs
     // not be done for disabled colons, because if colons are disabled,
     // we would never end up here.
@@ -467,6 +467,27 @@ inline fn procCheckBlockName(self: *Lexer, cur: *u21) ?Token {
     }
     // if previous block had special syntax, disable it.
     self.level.special = .disabled;
+
+    if (self.walker.nextInline()) |next_char| {
+      if (next_char == '(') {
+        try self.levels.append(self.intpr.allocator, self.level);
+        self.level = .{
+          .indentation = undefined,
+          .tabs        = null,
+          .id          = undefined,
+          .end_char    = ':',
+          .special     = .disabled,
+        };
+        self.paren_depth += 1;
+        self.state = .arg_start;
+        self.cur_stored = self.walker.nextInline();
+        self.recent_end = self.walker.before;
+        return .list_start;
+      }
+      self.cur_stored = next_char;
+    } else |err| self.cur_stored = err;
+    self.recent_end = self.walker.before;
+    self.state = .read_block_name;
     return .block_name_sep;
   }
   self.transition(.check_block_name, .in_block);
@@ -759,7 +780,7 @@ pub fn next(self: *Lexer) !Token {
     .check_parsep, .special_syntax_check_parsep =>
       if (self.procCheckParsep(&cur)) |t| return t,
     .check_block_name, .special_syntax_check_block_name =>
-      if (self.procCheckBlockName(&cur)) |t| return t,
+      if (try self.procCheckBlockName(&cur)) |t| return t,
     .in_block, .special_syntax =>
       if (try self.procBlock(&cur)) |t| return t,
     .in_arg => return try self.procArg(&cur),
@@ -902,7 +923,24 @@ inline fn processContent(
     },
     ')' => if (ctx == .args) {
       self.paren_depth -= 1;
-      return self.advanceAndReturn(.list_end, .after_args);
+      if (self.level.end_char == ':') {
+        self.level = self.levels.pop();
+        if (self.walker.nextInline()) |next_char| {
+          if (next_char == ':') {
+            self.state = .after_blocks_colon;
+            self.cur_stored = self.walker.nextInline();
+            return ContentResult{.token = .list_end};
+          } else {
+            self.state = .at_header;
+            self.cur_stored = next_char;
+            return ContentResult{.token =  .list_end_missing_colon};
+          }
+        } else |err| {
+          self.cur_stored = err;
+          self.state = .at_header;
+          return ContentResult{.token = .list_end_missing_colon};
+        }
+      } else return self.advanceAndReturn(.list_end, .after_args);
     },
     else => {}
   }

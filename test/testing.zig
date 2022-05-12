@@ -483,10 +483,17 @@ const AstEmitter = struct {
         }
         for (uc.proto_args) |a| {
           const parg = try switch (a.kind) {
-            .position => self.pushWithKey("PROTO", "pos", null),
-            .named    => |named| self.pushWithKey("PROTO", "name", named),
-            .direct   => |direct| self.pushWithKey("PROTO", "direct", direct),
-            .primary  => self.pushWithKey("PROTO", "primary", null),
+            .position  => self.pushWithKey("PROTO", "pos", null),
+            .named     => |named| self.pushWithKey("PROTO", "name", named),
+            .direct    => |direct| self.pushWithKey("PROTO", "direct", direct),
+            .primary   => self.pushWithKey("PROTO", "primary", null),
+            .name_expr => |node| blk: {
+              const lvl = self.pushWithKey("PROTO", "name_expr", null);
+              try self.emitLine(">KEY", .{});
+              try self.process(node);
+              try self.emitLine(">VALUE", .{});
+              break :blk lvl;
+            },
           };
           try self.process(a.content);
           try parg.pop();
@@ -509,7 +516,10 @@ const AstEmitter = struct {
         const varmap = try self.push("VARMAP");
         for (vm.content.items) |item| {
           switch (item.key) {
-            .implicit => |lit| try self.emitLine(">KEY {s}", .{lit.content}),
+            .node   => |node| {
+              try self.emitLine(">KEY", .{});
+              try self.process(node);
+            },
             .direct => try self.emitLine(">DIRECT", .{}),
           }
           try self.process(item.value);
@@ -670,9 +680,9 @@ const AstEmitter = struct {
         for (vm.items) |item| {
           switch (item.key) {
             .direct => try self.emitLine(">DIRECT", .{}),
-            .value => |key| {
+            .expr => |key_expr| {
               try self.emitLine(">KEY", .{});
-              try self.processValue(key);
+              try self.processExpr(key_expr);
               try self.emitLine(">VALUE", .{});
             },
           }

@@ -27,8 +27,8 @@ const Self = @This();
 
 pub const Cursor = struct {
   param: union(enum) {
-    index: u21,
-    kind: ArgKind,
+    index : u21,
+    kind  : ArgKind,
   },
   config: bool,
   // true iff kind in {direct,primary}. exists to preserve this fact after
@@ -89,7 +89,7 @@ pub const ToSignature = struct {
   intpr    : *Interpreter,
   ns       : u15,
   /// used for arguments captured by varmap parameter
-  last_key: *model.Node.Literal = undefined,
+  last_key: *model.Node = undefined,
 
   pub fn init(
     intpr  : *Interpreter,
@@ -159,8 +159,10 @@ pub const ToSignature = struct {
           }
         }
         if (self.signature.varmap) |index| {
-          self.last_key = try self.intpr.node_gen.literal(
-            pos, .{.kind = .text, .content = name});
+          self.last_key = (
+            try self.intpr.node_gen.literal(
+              pos, .{.kind = .text, .content = name})
+          ).node();
           return Cursor{
             .param  = .{.index = index},
             .config = flag == .block_with_config,
@@ -175,8 +177,10 @@ pub const ToSignature = struct {
         if (self.signature.primary) |index| {
           try self.checkFrameRoot(self.signature.parameters[index].spec.t);
           return Cursor{
-            .param = .{.index = index},
-            .config = flag == .block_with_config, .direct = true};
+            .param  = .{.index = index},
+            .config = flag == .block_with_config,
+            .direct = true,
+          };
         } else {
           self.intpr.ctx.logger.UnexpectedPrimaryBlock(pos);
           return null;
@@ -189,8 +193,11 @@ pub const ToSignature = struct {
               self.cur_pos = index + 1;
             }
             try self.checkFrameRoot(self.signature.parameters[index].spec.t);
-            return Cursor{.param = .{.index = index},
-              .config = flag == .block_with_config, .direct = false};
+            return Cursor{
+              .param  = .{.index = index},
+              .config = flag == .block_with_config,
+              .direct = false,
+            };
           } else {
             self.intpr.ctx.logger.TooManyArguments(pos);
             return null;
@@ -200,37 +207,60 @@ pub const ToSignature = struct {
           return null;
         }
       },
+      .name_expr => |node| {
+        if (self.signature.varmap) |index| {
+          self.last_key = node;
+          return Cursor{
+            .param  = .{.index = index},
+            .config = flag == .block_with_config,
+            .direct = false,
+          };
+        } else {
+          self.intpr.ctx.logger.UnexpectedBlockNameExpr(pos);
+          return null;
+        }
+      },
     }
   }
 
   fn config(mapper: *Self, at: Cursor) ?*model.BlockConfig {
     const self = @fieldParentPtr(@This(), "mapper", mapper);
     return switch (at.param) {
-      .index => |index|
+      .index  => |index|
         if (self.signature.parameters[index].config) |*bc| bc else null,
-      .kind => null
+      .kind   => null,
     };
   }
 
   fn paramType(mapper: *Self, at: Cursor) ?model.Type {
     const self = @fieldParentPtr(@This(), "mapper", mapper);
-    return switch (at.param) {
-      .index => |index| self.signature.parameters[index].spec.t,
-      .kind => null
-    };
+    switch (at.param) {
+      .index  => |index| {
+        const p = &self.signature.parameters[index];
+        if (!at.direct) {
+          if (index == self.signature.varmap) {
+            return p.spec.t.structural.map.value;
+          }
+          if (p.capture == .varargs) return p.spec.t.structural.list.inner;
+        }
+        return p.spec.t;
+      },
+      .kind   => return null,
+    }
   }
 
   fn addToVarargs(
     self  : *@This(),
     index : usize,
-    t     : model.Type,
+    param : model.Signature.Parameter,
     arg   : *model.Node,
     direct: bool,
   ) !void {
     const vnode = if (self.filled[index]) (
       &self.args[index].data.varargs
     ) else blk: {
-      const varargs = try self.intpr.node_gen.varargs(arg.pos, t);
+      const varargs = try self.intpr.node_gen.varargs(
+        arg.pos, param.spec.pos, &param.spec.t.structural.list);
       self.args[index] = varargs.node();
       self.filled[index] = true;
       break :blk varargs;
@@ -243,20 +273,21 @@ pub const ToSignature = struct {
   fn addToVarmap(
     self  : *@This(),
     index : usize,
-    t     : *model.Type.Map,
+    param : model.Signature.Parameter,
     arg   : *model.Node,
     direct: bool,
   ) !void {
     const vnode = if (self.filled[index]) (
       &self.args[index].data.varmap
     ) else blk: {
-      const varmap = try self.intpr.node_gen.varmap(arg.pos, t);
+      const varmap = try self.intpr.node_gen.varmap(
+        arg.pos, param.spec.pos, &param.spec.t.structural.map);
       self.args[index] = varmap.node();
       self.filled[index] = true;
       break :blk varmap;
     };
     try vnode.content.append(self.intpr.allocator, .{
-      .key = if (direct) .direct else .{.implicit = self.last_key},
+      .key = if (direct) .direct else .{.node = self.last_key},
       .value = arg,
     });
     vnode.node().pos = vnode.node().pos.span(arg.pos);
@@ -313,12 +344,11 @@ pub const ToSignature = struct {
       break :blk content;
     };
     if (self.varmapAt(at.param.index)) {
-      try self.addToVarmap(
-        at.param.index, &param.spec.t.structural.map, arg, at.direct);
+      try self.addToVarmap(at.param.index, param.*, arg, at.direct);
       return;
     } else switch (param.capture) {
       .varargs => {
-        try self.addToVarargs(at.param.index, param.spec.t, arg, at.direct);
+        try self.addToVarargs(at.param.index, param.*, arg, at.direct);
         return;
       },
       else => {}
@@ -345,11 +375,12 @@ pub const ToSignature = struct {
             .optional, .concat, .sequence =>
               try self.intpr.node_gen.@"void"(pos),
             .list => if (param.capture == .varargs) (
-              try self.intpr.node_gen.varargs(pos, param.spec.t)
+              try self.intpr.node_gen.varargs(
+                pos, param.spec.pos, &param.spec.t.structural.list)
             ).node() else null,
             .map => if (self.signature.varmap) |vi| if (vi == i) (
               try self.intpr.node_gen.varmap(
-                pos, &param.spec.t.structural.map)
+                pos, param.spec.pos, &param.spec.t.structural.map)
             ).node() else null else null,
             else => null,
           },
@@ -556,11 +587,14 @@ pub const Collect = struct {
   }
 };
 
+/// Expects at most one argument. Absense of this argument pushes void instead.
+/// Finalizes into an assignment node. Also used for block name expression,
+/// which doesn't finalize it and just grabs the pushed node.
 pub const ToAssignment = struct {
-  mapper     : Self,
-  subject    : *model.Node,
-  replacement: ?*model.Node,
-  intpr      : *Interpreter,
+  mapper : Self,
+  subject: *model.Node,
+  pushed : ?*model.Node = null,
+  intpr  : *Interpreter,
 
   pub fn init(subject: *model.Node, intpr: *Interpreter) ToAssignment {
     return .{
@@ -573,7 +607,6 @@ pub const ToAssignment = struct {
         .subject_pos = subject.lastIdPos(),
       },
       .subject     = subject,
-      .replacement = null,
       .intpr       = intpr,
     };
   }
@@ -586,9 +619,9 @@ pub const ToAssignment = struct {
   ) nyarna.Error!?Cursor {
     const self = @fieldParentPtr(@This(), "mapper", mapper);
     if (input == .named or input == .direct) {
-      self.intpr.ctx.logger.InvalidNamedArgInAssign(pos);
+      self.intpr.ctx.logger.InvalidNamedArg(pos);
       return null;
-    } else if (self.replacement != null) {
+    } else if (self.pushed != null) {
       self.intpr.ctx.logger.TooManyArguments(pos);
       return null;
     }
@@ -601,7 +634,7 @@ pub const ToAssignment = struct {
 
   fn push(mapper: *Self, _: Cursor, content: *model.Node) !void {
     const self = @fieldParentPtr(@This(), "mapper", mapper);
-    self.replacement = content;
+    self.pushed = content;
   }
 
   fn config(_: *Self, _: Cursor) ?*model.BlockConfig {
@@ -618,7 +651,7 @@ pub const ToAssignment = struct {
     const self = @fieldParentPtr(@This(), "mapper", mapper);
     return (try self.intpr.node_gen.assign(pos, .{
       .target = .{.unresolved = self.subject},
-      .replacement = self.replacement orelse (
+      .replacement = self.pushed orelse (
         try self.intpr.node_gen.@"void"(pos)
       ),
     })).node();

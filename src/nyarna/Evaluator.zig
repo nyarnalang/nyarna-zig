@@ -61,10 +61,10 @@ fn setupParameterStackFrame(
 }
 
 pub fn resetStackFrame(
-  self: *Evaluator,
-  frame_ptr: *?[*]model.StackItem,
+  self         : *Evaluator,
+  frame_ptr    : *?[*]model.StackItem,
   num_variables: usize,
-  ns_dependent: bool,
+  ns_dependent : bool,
 ) void {
   //std.debug.print("[stack] {} pop\n", .{@ptrToInt(frame_ptr.*.?)});
   frame_ptr.* = frame_ptr.*.?[0].frame_ref;
@@ -105,9 +105,9 @@ fn FnTypeForCtx(comptime ImplCtx: type) type {
 }
 
 fn registeredFnForCtx(
-  self            : *Evaluator,
+           self   : *Evaluator,
   comptime ImplCtx: type,
-  index           : usize,
+           index  : usize,
 ) FnTypeForCtx(ImplCtx) {
   return switch (ImplCtx) {
     *Evaluator => self.ctx.data.builtin_registry.items[index],
@@ -147,12 +147,12 @@ fn callConstructor(
 }
 
 fn evalExtFuncCall(
-  self: *Evaluator,
+  self    : *Evaluator,
   impl_ctx: anytype,
-  pos: model.Position,
-  func: *model.Function,
-  ns: u15,
-  args: []*model.Expression,
+  pos     : model.Position,
+  func    : *model.Function,
+  ns      : u15,
+  args    : []*model.Expression,
 ) nyarna.Error!RetTypeForCtx(@TypeOf(impl_ctx)) {
   const ef = &func.data.ext;
   const target_impl =
@@ -191,9 +191,9 @@ fn evalExtFuncCall(
 }
 
 fn evalCall(
-  self: *Evaluator,
+  self    : *Evaluator,
   impl_ctx: anytype,
-  call: *model.Expression.Call,
+  call    : *model.Expression.Call,
 ) nyarna.Error!RetTypeForCtx(@TypeOf(impl_ctx)) {
   const target = try self.evaluate(call.target);
   switch (target.data) {
@@ -260,12 +260,12 @@ fn evalCall(
 }
 
 pub fn evaluateKeywordCall(
-  self: *Evaluator,
-  intpr: *Interpreter,
-  pos: model.Position,
-  ns: u15,
+  self  : *Evaluator,
+  intpr : *Interpreter,
+  pos   : model.Position,
+  ns    : u15,
   target: *model.Symbol,
-  args: []*model.Expression,
+  args  : []*model.Expression,
 ) !*model.Node {
   switch (target.data) {
     .func => |func| {
@@ -280,7 +280,7 @@ pub fn evaluateKeywordCall(
 }
 
 fn evalAccess(
-  self: *Evaluator,
+  self  : *Evaluator,
   access: *model.Expression.Access,
 ) nyarna.Error!*model.Value {
   var cur = try self.evaluate(access.subject);
@@ -296,7 +296,7 @@ fn evalAccess(
 
 fn evalAssignment(
   self: *Evaluator,
-  ass: *model.Expression.Assignment,
+  ass : *model.Expression.Assignment,
 ) nyarna.Error!*model.Value {
   var cur_ptr = ass.target.curPtr();
   for (ass.path) |index| {
@@ -312,7 +312,7 @@ fn evalAssignment(
 
 fn evalBranches(
   self: *Evaluator,
-  br: *model.Expression.Branches,
+  br  : *model.Expression.Branches,
 ) nyarna.Error!*model.Value {
   var condition = try self.evaluate(br.condition);
   if ((try self.ctx.types().valueType(condition)).isNamed(.poison)) {
@@ -322,8 +322,8 @@ fn evalBranches(
 }
 
 fn evalConcatenation(
-  self: *Evaluator,
-  expr: *model.Expression,
+  self  : *Evaluator,
+  expr  : *model.Expression,
   concat: model.Expression.Concatenation,
 ) nyarna.Error!*model.Value {
   var builder = ConcatBuilder.init(
@@ -333,9 +333,9 @@ fn evalConcatenation(
 }
 
 fn convertIntoConcat(
-  self: *Evaluator,
+  self : *Evaluator,
   value: *model.Value,
-  into: *ConcatBuilder,
+  into : *ConcatBuilder,
 ) nyarna.Error!void {
   switch (value.data) {
     .concat => |*vcon| {
@@ -357,12 +357,12 @@ fn convertIntoConcat(
 }
 
 fn convertIntoSequence(
-  self: *Evaluator,
-  value: *model.Value,
+  self    : *Evaluator,
+  value   : *model.Value,
   lf_after: usize,
-  into: *SequenceBuilder,
-  direct: model.Type,
-  others: []*model.Type.Record,
+  into    : *SequenceBuilder,
+  direct  : model.Type,
+  others  : []*model.Type.Record,
 ) nyarna.Error!void {
   switch (value.data) {
     .seq => |*seq| for (seq.content.items) |item| {
@@ -435,13 +435,13 @@ fn doConvert(
     },
     .structural => |struc| switch (struc.*) {
       .callable => unreachable,
-      .concat => {
+      .concat   => {
         var builder = ConcatBuilder.init(self.ctx, value.origin, to);
         try self.convertIntoConcat(value, &builder);
         return try builder.finish();
       },
       .intersection => unreachable,
-      .list => |*lst| {
+      .list         => |*lst| {
         const ret = try self.ctx.values.list(value.origin, lst);
         for (value.data.list.content.items) |item| {
           try ret.content.append(try self.doConvert(item, lst.inner));
@@ -471,7 +471,7 @@ fn doConvert(
 }
 
 fn evalConversion(
-  self: *Evaluator,
+  self   : *Evaluator,
   convert: *model.Expression.Conversion,
 ) nyarna.Error!*model.Value {
   const inner_val = try self.evaluate(convert.inner);
@@ -480,7 +480,7 @@ fn evalConversion(
 
 fn evalLocation(
   self: *Evaluator,
-  loc: *model.Expression.Location,
+  loc : *model.Expression.Location,
 ) nyarna.Error!*model.Value {
   const spec: model.SpecType = if (loc.@"type") |t| blk: {
     const eval_t = switch ((try self.evaluate(t)).data) {
@@ -543,20 +543,20 @@ fn evalLocation(
   loc_val.primary = if (loc.additionals) |add| add.primary else null;
   loc_val.varargs = if (loc.additionals) |add| add.varargs else null;
   loc_val.varmap  = if (loc.additionals) |add| add.varmap  else null;
-  loc_val.borrow =  if (loc.additionals) |add| add.borrow  else null;
+  loc_val.borrow  = if (loc.additionals) |add| add.borrow  else null;
   loc_val.header  = if (loc.additionals) |add| add.header  else null;
   return loc_val.value();
 }
 
 fn evalSequence(
-  self: *Evaluator,
-  expr: *model.Expression,
+  self  : *Evaluator,
+  expr : *model.Expression,
   paras: model.Expression.Sequence,
 ) nyarna.Error!*model.Value {
   const gen_para = switch (expr.expected_type) {
     .structural => |strct| switch (strct.*) {
       .sequence => true,
-      else => false
+      else      => false
     },
     else => false
   };
@@ -583,7 +583,7 @@ fn evalSequence(
 }
 
 fn evalVarargs(
-  self: *Evaluator,
+  self   : *Evaluator,
   varargs: *model.Expression.Varargs,
 ) nyarna.Error!*model.Value {
   const list = try self.ctx.values.list(
@@ -609,9 +609,9 @@ fn evalVarargs(
 }
 
 fn pushIntoMap(
-  self: *Evaluator,
-  map: *model.Value.Map,
-  key: *model.Value,
+  self : *Evaluator,
+  map  : *model.Value.Map,
+  key  : *model.Value,
   value: *model.Value,
 ) !void {
   const res = try map.items.getOrPut(key);
@@ -638,7 +638,7 @@ fn pushIntoMap(
 }
 
 fn evalVarmap(
-  self: *Evaluator,
+  self  : *Evaluator,
   varmap: *model.Expression.Varmap,
 ) nyarna.Error!*model.Value {
   const map = try self.ctx.values.map(
@@ -653,8 +653,8 @@ fn evalVarmap(
           try self.pushIntoMap(map, entry.key_ptr.*, entry.value_ptr.*);
         }
       },
-      .value => |key| {
-        try self.pushIntoMap(map, key, val);
+      .expr => |key_expr| {
+        try self.pushIntoMap(map, try self.evaluate(key_expr), val);
       },
     }
   }
@@ -662,9 +662,9 @@ fn evalVarmap(
 }
 
 fn evalGenUnary(
-  self: *Evaluator,
-  comptime name: []const u8,
-  input: anytype,
+           self      : *Evaluator,
+  comptime name      : []const u8,
+           input     : anytype,
   comptime error_name: []const u8,
 ) nyarna.Error!*model.Value {
   switch ((try self.evaluate(input.inner)).data) {
@@ -676,7 +676,7 @@ fn evalGenUnary(
 }
 
 fn evalGenMap(
-  self: *Evaluator,
+  self : *Evaluator,
   input: *model.Expression.tg.Map,
 ) nyarna.Error!*model.Value {
   var t: [2]model.Type = undefined;
@@ -697,7 +697,7 @@ fn evalGenMap(
 }
 
 fn evalGenSequence(
-  self: *Evaluator,
+  self : *Evaluator,
   input: *model.Expression.tg.Sequence,
 ) nyarna.Error!*model.Value {
   var builder = Types.SequenceBuilder.init(
@@ -783,8 +783,8 @@ inline fn toString(self: *Evaluator, input: anytype) ![]u8 {
 }
 
 fn coerce(
-  self: *Evaluator,
-  value: *model.Value,
+  self         : *Evaluator,
+  value        : *model.Value,
   expected_type: model.Type,
 ) std.mem.Allocator.Error!*model.Value {
   const value_type = try self.ctx.types().valueType(value);
@@ -889,17 +889,17 @@ pub fn evaluate(
 
 const ConcatBuilder = struct {
   const MoreText = struct {
-    pos: model.Position,
+    pos    : model.Position,
     content: std.ArrayListUnmanaged(u8) = .{},
   };
 
-  cur: ?*model.Value,
-  cur_items: ?std.ArrayList(*model.Value),
-  ctx: nyarna.Context,
-  pos: model.Position,
-  inner_type: model.Type,
+  cur          : ?*model.Value                = null,
+  cur_items    : ?std.ArrayList(*model.Value) = null,
+  ctx          : nyarna.Context,
+  pos          : model.Position,
+  inner_type   : model.Type,
   expected_type: model.Type,
-  scalar_type: model.Type,
+  scalar_type  : model.Type,
   state: union(enum) {
     initial,
     first_text: *model.Value,
@@ -907,18 +907,16 @@ const ConcatBuilder = struct {
   },
 
   fn init(
-    ctx: nyarna.Context,
-    pos: model.Position,
+    ctx          : nyarna.Context,
+    pos          : model.Position,
     expected_type: model.Type,
   ) ConcatBuilder {
     return .{
-      .cur = null,
-      .cur_items = null,
-      .ctx = ctx,
-      .pos = pos,
-      .inner_type = ctx.types().every(),
+      .ctx           = ctx,
+      .pos           = pos,
+      .inner_type    = ctx.types().every(),
       .expected_type = expected_type,
-      .scalar_type =
+      .scalar_type   =
         nyarna.Types.containedScalar(expected_type) orelse undefined,
       .state = .initial,
     };
@@ -930,7 +928,7 @@ const ConcatBuilder = struct {
   }
 
   fn concatWith(
-    self: *ConcatBuilder,
+    self     : *ConcatBuilder,
     first_val: *model.Value,
   ) !*model.Value.Concat {
     const cval = try self.emptyConcat();
@@ -1049,7 +1047,10 @@ const ConcatBuilder = struct {
       std.debug.assert(t.isStruc(.concat));
       concat.* = .{
         .origin = self.pos,
-        .data = .{.concat = .{.t = &t.structural.concat, .content = cval}},
+        .data   = .{.concat = .{
+          .t       = &t.structural.concat,
+          .content = cval,
+        }},
       };
       return concat;
     } else if (self.cur) |single| {

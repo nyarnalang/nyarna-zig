@@ -58,6 +58,20 @@ const Command = struct {
     } else .failed;
   }
 
+  pub fn pushNameExpr(
+    self       : *Command,
+    node       : *model.Node,
+    with_config: bool,
+  ) !void {
+    self.cur_cursor = if (
+      try self.mapper.map(
+        node.pos, .{.name_expr = node},
+        if (with_config) .block_with_config else .block_no_config)
+    ) |mapped| .{
+      .mapped = mapped,
+    } else .failed;
+  }
+
   pub fn pushArg(self: *Command, arg: *model.Node) !void {
     defer self.cur_cursor = .not_pushed;
     const cursor = switch (self.cur_cursor) {
@@ -168,7 +182,7 @@ const Command = struct {
 start: model.Cursor,
 /// Changes to command characters that occurred upon entering this level.
 /// For implicit block configs, this links to the block config definition.
-changes: ?[]model.BlockConfig.Map,
+changes: ?[]model.BlockConfig.Map = null,
 /// the currently open command on this content level. info === unknown if no
 /// command is open or only the subject has been read.
 /// every ContentLevel but the innermost one must have an open command.
@@ -176,11 +190,11 @@ command: Command,
 /// whether this level has fullast semantics.
 fullast: bool,
 /// list of nodes in the current paragraph parsed at this content level.
-nodes: std.ArrayListUnmanaged(*model.Node),
+nodes: std.ArrayListUnmanaged(*model.Node) = .{},
 /// finished sequence items at this content level.
-seq: std.ArrayListUnmanaged(model.Node.Seq.Item),
+seq: std.ArrayListUnmanaged(model.Node.Seq.Item) = .{},
 /// block configuration of this level. only applicable to block arguments.
-block_config: ?*const model.BlockConfig,
+block_config: ?*const model.BlockConfig = null,
 /// syntax that parses this level. only applicable to block arguments.
 syntax_proc: ?*syntaxes.SpecialSyntax.Processor = null,
 /// recently parsed whitespace. might be either added to nodes to discarded
@@ -189,6 +203,15 @@ dangling_space: ?*model.Node = null,
 /// number of variables existing in intpr.variables when this level has
 /// been started.
 variable_start: usize,
+semantics: enum{
+  /// this level is for default content
+  default,
+  /// this level contains a block name expression
+  block_name,
+  /// this level contains a block name, but it's at top level and doesn't map
+  /// to a call so it must be discarded.
+  discarded_block_name,
+} = .default,
 
 pub fn append(
   self : *ContentLevel,

@@ -94,6 +94,8 @@ pub const Token = enum(u16) {
   illegal_indentation,
   /// content behind a ':', ':<…>' or ':>'.
   illegal_content_at_header,
+  /// ')' not followed by colon when it ends a block name expression.
+  list_end_missing_colon,
   /// '\end' without opening parenthesis following
   invalid_end_command,
   /// '\end(' with \ being the wrong command character
