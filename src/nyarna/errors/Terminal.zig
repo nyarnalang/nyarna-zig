@@ -150,6 +150,7 @@ fn scalarError(
     .FactorMustntBeNegative=> "factor must not be negative",
     .MustHaveDefinedSuffix =>
       "must have one of the defined suffixes (given: no or unknown suffix)",
+    .UnexpectedBlockVar    => "block capture variable not allowed here",
   };
   self.renderError("{s}: '{s}'", .{entity, repr});
 }
@@ -203,6 +204,7 @@ fn previousOccurence(
     .DuplicateMappingKey => " has been seen previously",
     .DuplicateSuffix     => " is already a suffix",
     .FactorsTooFarApart  => " is too many magnitudes away",
+    .DuplicateBlockVar   => " has been given previously",
   };
 
   const entity_name: []const u8 = switch (id) {
@@ -219,6 +221,7 @@ fn previousOccurence(
     .DuplicateMappingKey => "key",
     .DuplicateSuffix     => "suffix",
     .FactorsTooFarApart  => "factor",
+    .DuplicateBlockVar   => "name for variable",
   };
 
   const prev_kind: []const u8 = switch (id) {
@@ -234,6 +237,7 @@ fn previousOccurence(
     .MultipleModuleKinds => "set",
     .DuplicateSuffix     => "suffix defined",
     .FactorsTooFarApart  => "from this factor",
+    .DuplicateBlockVar   => "previous definition",
   };
 
   self.renderError("{s} '{s}'{s}", .{entity_name, repr, msg});

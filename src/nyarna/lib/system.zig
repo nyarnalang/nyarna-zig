@@ -217,7 +217,7 @@ const VarProc = struct {
     }
     expr.expected_type = self.concat_loc;
     const val = try self.ip.ctx.evaluator().evaluate(expr);
-    return self.value(val);
+    return try self.value(val);
   }
 
   fn value(self: *@This(), val: *model.Value) !*model.Node {
@@ -274,6 +274,8 @@ const VarProc = struct {
       if (offset + 1 > self.ac.container.num_values) {
         self.ac.container.num_values = offset + 1;
       }
+      try self.ac.defined_variables.append(
+        self.ip.allocator, &sym.data.variable);
       const replacement = if (spec.t.isNamed(.every))
         // t being .every means that it depends on the initial expression,
         // and that expression can't be interpreted right now. This commonly

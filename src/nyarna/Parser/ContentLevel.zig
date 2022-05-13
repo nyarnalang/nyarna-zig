@@ -270,8 +270,17 @@ pub fn implicitBlockConfig(self: *ContentLevel) ?*model.BlockConfig {
 }
 
 pub fn finalize(self: *ContentLevel, p: *Impl) !*model.Node {
-  if (self.block_config) |c| try p.revertBlockConfig(c.*);
   const ip = p.intpr();
+  var capture: ?*model.Node.Capture = null;
+  if (self.block_config) |c| {
+    if (c.val != null or c.key != null or c.index != null) {
+      // position and content set later from the calculated content_node.
+      capture = try ip.node_gen.capture(
+        undefined, c.val, c.key, c.index, undefined);
+    }
+    try p.revertBlockConfig(c.*);
+  }
+
   while (ip.variables.items.len > self.variable_start) {
     const av = ip.variables.pop();
     const ns = ip.namespace(av.ns);
@@ -279,13 +288,14 @@ pub fn finalize(self: *ContentLevel, p: *Impl) !*model.Node {
   }
 
   const alloc = p.allocator();
-  if (self.syntax_proc) |proc| {
-    return try proc.finish(
-      proc, ip.input.between(self.start, p.cur_start));
-  } else if (self.seq.items.len == 0) {
-    return (try self.finalizeParagraph(p.intpr())) orelse
-      try ip.node_gen.void(p.intpr().input.at(self.start));
-  } else {
+  const content_node = if (self.syntax_proc) |proc| (
+    try proc.finish(
+      proc, ip.input.between(self.start, p.cur_start))
+  ) else if (self.seq.items.len == 0) (
+    (
+      try self.finalizeParagraph(p.intpr())
+    ) orelse try ip.node_gen.void(p.intpr().input.at(self.start))
+  ) else blk: {
     if (self.nodes.items.len > 0) {
       if (try self.finalizeParagraph(p.intpr())) |content| {
         try self.seq.append(alloc, .{
@@ -294,11 +304,16 @@ pub fn finalize(self: *ContentLevel, p: *Impl) !*model.Node {
         });
       }
     }
-    return (try ip.node_gen.seq(
+    break :blk (try ip.node_gen.seq(
       self.seq.items[0].content.pos.span(
         last(self.seq.items).content.pos),
       .{.items = self.seq.items})).node();
-  }
+  };
+  if (capture) |c_node| {
+    c_node.content = content_node;
+    c_node.node().pos = content_node.pos;
+    return c_node.node();
+  } else return content_node;
 }
 
 pub fn pushParagraph(

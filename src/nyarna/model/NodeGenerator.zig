@@ -60,6 +60,19 @@ pub inline fn builtinGen(
   }})).data.builtingen;
 }
 
+pub inline fn capture(
+  self   : *Self,
+  pos    : Position,
+  val    : ?model.BlockConfig.VarDef,
+  key    : ?model.BlockConfig.VarDef,
+  index  : ?model.BlockConfig.VarDef,
+  content: *Node,
+) !*Node.Capture {
+  return &(try self.node(pos, .{.capture = .{
+    .val = val, .key = key, .index = index, .content = content,
+  }})).data.capture;
+}
+
 pub inline fn concat(
   self   : *Self,
   pos    : Position,

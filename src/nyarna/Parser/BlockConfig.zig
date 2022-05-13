@@ -10,9 +10,9 @@ const Impl   = @import("Impl.zig");
 
 const BlockConfig = @This();
 
-into: *model.BlockConfig,
-map_list: std.ArrayList(model.BlockConfig.Map),
-parser: *Impl,
+into          : *model.BlockConfig,
+map_list      : std.ArrayList(model.BlockConfig.Map),
+parser        : *Impl,
 cur_item_start: model.Cursor,
 
 pub fn init(
@@ -29,7 +29,7 @@ pub fn init(
 }
 
 const ConfigItemKind = enum {
-  csym, empty, fullast, map, off,syntax, unknown,
+  csym, empty, fullast, map, off,syntax, val, key, index, unknown,
 };
 
 inline fn getItemKind(self: *BlockConfig, first: bool) ?ConfigItemKind {
@@ -54,12 +54,15 @@ inline fn getItemKind(self: *BlockConfig, first: bool) ?ConfigItemKind {
   const name = self.parser.lexer.walker.contentFrom(
     self.parser.cur_start.byte_offset);
   return switch (std.hash.Adler32.hash(name)) {
-    std.hash.Adler32.hash("csym") => .csym,
-    std.hash.Adler32.hash("syntax") => .syntax,
-    std.hash.Adler32.hash("map") => .map,
-    std.hash.Adler32.hash("off") => .off,
+    std.hash.Adler32.hash("csym")    => .csym,
+    std.hash.Adler32.hash("syntax")  => .syntax,
+    std.hash.Adler32.hash("map")     => .map,
+    std.hash.Adler32.hash("off")     => .off,
     std.hash.Adler32.hash("fullast") => .fullast,
-    std.hash.Adler32.hash("") => .empty,
+    std.hash.Adler32.hash("val")     => .val,
+    std.hash.Adler32.hash("key")     => .key,
+    std.hash.Adler32.hash("index")   => .index,
+    std.hash.Adler32.hash("")        => .empty,
     else => blk: {
       self.parser.logger().UnknownConfigDirective(
         self.parser.lexer.walker.posFrom(self.cur_item_start));
@@ -69,7 +72,7 @@ inline fn getItemKind(self: *BlockConfig, first: bool) ?ConfigItemKind {
 }
 
 inline fn procCsym(self: *BlockConfig) !bool {
-  if (self.parser.cur == .ns_sym) {
+  if (self.parser.cur == .ns_char) {
     try self.map_list.append(.{
       .pos = self.parser.lexer.walker.posFrom(self.cur_item_start),
       .from = 0, .to = self.parser.lexer.code_point});
@@ -77,7 +80,7 @@ inline fn procCsym(self: *BlockConfig) !bool {
   } else {
     self.parser.logger().ExpectedXGotY(
       self.parser.lexer.walker.posFrom(self.parser.cur_start),
-      &[_]errors.WrongItemError.ItemDescr{.{.token = .ns_sym}},
+      &[_]errors.WrongItemError.ItemDescr{.{.token = .ns_char}},
       .{.token = self.parser.cur});
     return false;
   }
@@ -117,10 +120,10 @@ inline fn procSyntax(self: *BlockConfig) bool {
 
 inline fn procMap(self: *BlockConfig) !bool {
   var failed = false;
-  if (self.parser.cur == .ns_sym) {
+  if (self.parser.cur == .ns_char) {
     const from = self.parser.lexer.code_point;
     failed = while (self.parser.getNext()) {
-      if (self.parser.cur != .space) break self.parser.cur != .ns_sym;
+      if (self.parser.cur != .space) break self.parser.cur != .ns_char;
     } else true;
     if (!failed) {
       try self.map_list.append(.{
@@ -132,7 +135,7 @@ inline fn procMap(self: *BlockConfig) !bool {
   if (failed) {
     self.parser.logger().ExpectedXGotY(
       self.parser.lexer.walker.posFrom(self.parser.cur_start),
-      &[_]errors.WrongItemError.ItemDescr{.{.token = .ns_sym}},
+      &[_]errors.WrongItemError.ItemDescr{.{.token = .ns_char}},
       .{.token = self.parser.cur});
   }
   return !failed;
@@ -148,7 +151,7 @@ inline fn procOff(self: *BlockConfig) !ResultAction {
       self.parser.lexer.walker.posFrom(self.parser.cur_start),
     .block_name_sep => self.into.off_colon =
       self.parser.lexer.walker.posFrom(self.parser.cur_start),
-    .ns_sym =>
+    .ns_char =>
       try self.map_list.append(.{
         .pos = self.parser.lexer.walker.posFrom(self.cur_item_start),
         .from = self.parser.lexer.code_point, .to = 0,
@@ -168,13 +171,39 @@ inline fn procOff(self: *BlockConfig) !ResultAction {
       self.parser.logger().ExpectedXGotY(
         self.parser.lexer.walker.posFrom(self.parser.cur_start),
         &[_]errors.WrongItemError.ItemDescr{
-          .{.token = .ns_sym}, .{.character = '#'},
+          .{.token = .ns_char}, .{.character = '#'},
           .{.character = ':'},
         }, .{.token = self.parser.cur});
       return .recover;
     }
   }
   return .none;
+}
+
+inline fn procVarSym(self: *BlockConfig, kind: ConfigItemKind) !bool {
+  const pos = self.parser.lexer.walker.posFrom(self.parser.cur_start);
+  if (self.parser.cur == .symref) {
+    const target = switch (kind) {
+      .val   => &self.into.val,
+      .key   => &self.into.key,
+      .index => &self.into.index,
+      else   => unreachable,
+    };
+    if (target.*) |prev| {
+      self.parser.logger().DuplicateBlockHeader(@tagName(kind), pos, prev.pos);
+      return false;
+    }
+    target.* = .{
+      .cmd_char = self.parser.lexer.code_point,
+      .name     = self.parser.lexer.recent_id,
+      .pos      = pos,
+    };
+    return true;
+  } else {
+    self.parser.logger().ExpectedXGotY(
+      pos, &.{.{.token = .symref}}, .{.token = self.parser.cur});
+    return false;
+  }
 }
 
 pub fn parse(self: *BlockConfig) !void {
@@ -213,6 +242,9 @@ pub fn parse(self: *BlockConfig) !void {
           self.into.full_ast =
             self.parser.lexer.walker.posFrom(self.parser.cur_start);
           break :consume_next;
+        },
+        .val, .key, .index => if (!(try self.procVarSym(kind))) {
+          recover = true;
         },
         .empty => {
           self.parser.logger().ExpectedXGotY(

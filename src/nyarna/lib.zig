@@ -235,3 +235,15 @@ pub fn extFunc(
   };
   return ret;
 }
+
+pub fn ensureVarAbsense(
+  logger: *nyarna.errors.Handler,
+  bc    : *model.BlockConfig,
+  fields: anytype,
+) void {
+  inline for (fields) |field| {
+    if (@field(bc, @tagName(field))) |given| {
+      logger.UnexpectedBlockVar(given.pos, @tagName(field));
+    }
+  }
+}

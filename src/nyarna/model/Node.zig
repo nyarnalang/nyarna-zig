@@ -75,6 +75,24 @@ pub const Branches = struct {
     return Node.parent(self);
   }
 };
+
+/// Capture nodes are generated from block configuration that defines capture
+/// variables. They wrap the actual content.
+pub const Capture = struct {
+  /// given name for 'val' in block config
+  val  : ?model.BlockConfig.VarDef = null,
+  /// given name for 'key' in block config
+  key  : ?model.BlockConfig.VarDef = null,
+  /// given name for 'index' in block config, if any
+  index: ?model.BlockConfig.VarDef = null,
+  /// block's content
+  content: *Node,
+
+  pub inline fn node(self: *@This()) *Node {
+    return Node.parent(self);
+  }
+};
+
 pub const Concat = struct {
   items: []*Node,
 
@@ -422,6 +440,7 @@ pub const Data = union(enum) {
   assign           : Assign,
   branches         : Branches,
   builtingen       : BuiltinGen,
+  capture          : Capture,
   concat           : Concat,
   definition       : Definition,
   expression       : *Expression,
@@ -465,6 +484,7 @@ fn parent(it: anytype) *Node {
     Assign           => offset(Data, "assign"),
     Branches         => offset(Data, "branches"),
     BuiltinGen       => offset(Data, "builtingen"),
+    Capture          => offset(Data, "capture"),
     Concat           => offset(Data, "concat"),
     Definition       => offset(Data, "definition"),
     *Expression      => offset(Data, "expression"),

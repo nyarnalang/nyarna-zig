@@ -25,7 +25,7 @@ pub const Token = enum(u16) {
   /// ':,' that closes currently open command [7.6]
   closer,
   /// command character inside block config [7.11]
-  ns_sym,
+  ns_char,
   /// symbol reference [7.6.1] started with a command character.
   /// will never be '\end' since that is covered by block_end_open.
   symref,

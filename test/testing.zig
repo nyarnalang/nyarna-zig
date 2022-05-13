@@ -275,6 +275,17 @@ const AstEmitter = struct {
         try self.process(bg.params.unresolved);
         try lvl.pop();
       },
+      .capture => |cpt| {
+        const c = try self.push("CAPTURE");
+        inline for (.{.val, .key, .index}) |name| {
+          if (@field(cpt, @tagName(name))) |item| {
+            const char = EncodedCharacter.init(item.cmd_char);
+            try self.emitLine(
+              "=VAR {s} {s}{s}", .{@tagName(name), char.repr(), item.name});
+          }
+        }
+        try c.pop();
+      },
       .concat => |c| {
         for (c.items) |item| try self.process(item);
       },

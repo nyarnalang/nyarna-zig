@@ -247,30 +247,33 @@ pub const BlockConfig = struct {
     to  : u21
   };
 
-  pub const SyntaxDef =  struct {
-    pos: Position,
-    index: usize
+  pub const SyntaxDef = struct {
+    pos  : Position,
+    index: usize,
+  };
+
+  pub const VarDef = struct {
+    cmd_char: u21,
+    name    : []const u8,
+    pos     : Position,
   };
 
   /// custom syntax to use in this block.
-  syntax: ?SyntaxDef,
+  syntax: ?SyntaxDef = null,
   /// see doc of Map
-  map: []Map,
+  map: []Map = .{},
   /// whether begin-of-line colon shall be disabled
-  off_colon: ?Position,
+  off_colon: ?Position = null,
   /// whether comments shall be disabled
-  off_comment: ?Position,
+  off_comment: ?Position = null,
   /// whether keyword calls shall *not* be evaluated in this block.
   /// this requires the block being used in a context where it can return an
   /// Ast value.
-  full_ast: ?Position,
-
-  pub fn empty() BlockConfig {
-    return .{
-      .syntax = null, .map = &.{}, .off_colon = null, .off_comment = null,
-      .full_ast = null
-    };
-  }
+  full_ast: ?Position = null,
+  // the three kinds of variables that may be defined in a block config
+  key  : ?VarDef = null,
+  val  : ?VarDef = null,
+  index: ?VarDef = null,
 };
 
 /// a type that has been specified at a certain position as target type.

@@ -36,15 +36,6 @@ pub const Assignment = struct {
   }
 };
 
-/// an ast subtree
-pub const Ast = struct {
-  root: *Node,
-
-  pub fn expr(self: *@This()) *Expression {
-    return Expression.parent(self);
-  }
-};
-
 // if or switch expression
 pub const Branches = struct {
   condition: *Expression,

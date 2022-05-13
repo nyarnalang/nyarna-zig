@@ -15,16 +15,15 @@
 3:9 - 3:12 UnknownConfigDirective
 7:9 - 7:10 ExpectedXGotY
   expected = {identifier}
-  got = ns_sym
+  got = ns_char
 7:11 - 7:13 IllegalContentAtHeader
 7:14 - 7:16 IllegalContentAtHeader
 11:15 - 11:16 ExpectedXGotY
-  expected = {ns_sym}
+  expected = {ns_char}
   got = literal
-13:9 - 13:10 ExpectedXGotY
+13:9 - 13:12 ExpectedXGotY
   expected = {identifier}
-  got = ns_sym
-13:10 - 13:12 IllegalContentAtHeader
+  got = symref
 13:2 - 13:7 MissingEndCommand
   repr = block
   previous = input(13:12)

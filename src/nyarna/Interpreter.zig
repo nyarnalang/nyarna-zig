@@ -109,6 +109,14 @@ pub const ActiveVarContainer = struct {
   offset: usize,
   /// unfinished. required to link newly created variables to it.
   container: *model.VariableContainer,
+  /// list of variables defined in this container. used for collision checking
+  /// against function parameters, which are established after parsing the body.
+  ///
+  /// if you think this can be merged with Interpreter.variables: no it can't.
+  /// this list operates on VariableContainer level, while Interpreter.variables
+  /// operates on ContentLevel, i.e. variables get removed at the end of their
+  /// lifetime. This list preserves variables even after their lifetime.
+  defined_variables: std.ArrayListUnmanaged(*model.Symbol.Variable) = .{},
 };
 
 /// The source that is being parsed. Must not be changed during an
@@ -152,7 +160,8 @@ syntax_registry: [2]syntaxes.SpecialSyntax,
 /// convenience object to generate nodes using the interpreter's storage.
 node_gen: model.NodeGenerator,
 /// variables declared in the source code. At any time, this list contains all
-/// variables that are currently established in a namespace.
+/// variables that are currently established in a namespace. This list is used
+/// to deregister variables at the end of their lifetime.
 variables: std.ArrayListUnmanaged(ActiveVariable),
 /// length equals the current list of open levels whose type is FrameRoot.
 var_containers: std.ArrayListUnmanaged(ActiveVarContainer),
@@ -608,6 +617,21 @@ fn tryInterpretCall(
     }
     return interpreted_res;
   }
+}
+
+fn tryInterpretCapture(
+  self: *Interpreter,
+  cpt : *model.Node.Capture,
+) !?*model.Expression {
+  inline for (.{.val, .key, .index}) |name| {
+    if (@field(cpt, @tagName(name))) |item| {
+      self.ctx.logger.UnexpectedBlockVar(item.pos, @tagName(name));
+    }
+  }
+  // remove capture from the tree, replace it with content
+  const content = cpt.content;
+  cpt.node().data = content.data;
+  return null;
 }
 
 fn tryInterpretLoc(
@@ -1542,7 +1566,8 @@ fn tryGenEnum(
     } else {
       const expr = (
         try self.associate(
-          item.node, self.ctx.types().literal().predef(), stage)
+          item.node.data.expression.data.value.data.ast.root,
+          self.ctx.types().literal().predef(), stage)
       ) orelse {
         if (result.kind != .poison) result.kind = .failed;
         continue;
@@ -1693,7 +1718,10 @@ fn tryGenIntersection(
         else => unreachable,
       }
     } else {
-      const inner = switch (try self.tryGetType(item.node, stage)) {
+      const inner = switch (
+        try self.tryGetType(
+          item.node.data.expression.data.value.data.ast.root, stage)
+      ) {
         .finished   => |t| t,
         .unfinished => |t| t,
         .expression => |expr| switch (
@@ -2043,7 +2071,10 @@ fn tryGenSequence(
       failed_some = true;
       continue;
     } else blk: {
-      const inner = switch (try self.tryGetType(item.node, stage)) {
+      const inner = switch (
+        try self.tryGetType(
+          item.node.data.expression.data.value.data.ast.root, stage)
+      ) {
         .finished, .unfinished => |t| try self.ctx.createValueExpr(
           (try self.ctx.values.@"type"(item.node.pos, t)).value()),
         .expression  => |expr| expr,
@@ -2360,13 +2391,14 @@ fn tryGenTextual(
         else => unreachable,
       }
     } else {
+      const root = item.node.data.expression.data.value.data.ast.root;
       const expr = (
-        try self.associate(item.node, unicode_category.predef(), stage)
+        try self.associate(root, unicode_category.predef(), stage)
       ) orelse {
         failed_some = true;
         continue;
       };
-      item.node.data = .{.expression = expr};
+      root.data = .{.expression = expr};
       const val = try self.ctx.evaluator().evaluate(expr);
       if (!putIntoCategories(val, &categories)) seen_poison = true;
     }
@@ -2465,7 +2497,8 @@ pub fn tryInterpret(
       _ = try self.tryInterpretBuiltin(bg, stage);
       return null;
     },
-    .concat => |*concat| if (stage.kind == .resolve) {
+    .capture => |*cpt| self.tryInterpretCapture(cpt),
+    .concat  => |*concat| if (stage.kind == .resolve) {
       for (concat.items) |item| _ = try self.tryInterpret(item, stage);
       return null;
     } else self.tryProbeAndInterpret(input, stage),
@@ -2719,7 +2752,8 @@ pub fn probeType(
     },
     .branches => |br|
       return try self.probeNodeList(br.branches, stage, sloppy),
-    .concat => |con| {
+    .capture => |cpt| return try self.probeType(cpt.content, stage, sloppy),
+    .concat  => |con| {
       var inner =
         (try self.probeNodeList(con.items, stage, sloppy)) orelse return null;
       if (!inner.isNamed(.poison)) {
@@ -2984,7 +3018,7 @@ pub fn interpretWithTargetScalar(
     },
   });
   switch (input.data) {
-    .assign, .builtingen, .definition, .funcgen, .import, .location,
+    .assign, .builtingen, .capture, .definition, .funcgen, .import, .location,
     .resolved_access, .resolved_symref, .resolved_call, .gen_concat,
     .gen_enum, .gen_intersection, .gen_list, .gen_map, .gen_numeric,
     .gen_optional, .gen_sequence, .gen_prototype, .gen_record, .gen_textual,

@@ -11,8 +11,12 @@ const offset = @import("../helpers.zig").offset;
 const Value = @This();
 
 pub const Ast = struct {
-  root: *Node,
-  container: ?*model.VariableContainer,
+  root        : *Node,
+  container   : ?*model.VariableContainer,
+  defined_vars: []*model.Symbol.Variable,
+  val         : ?model.BlockConfig.VarDef,
+  key         : ?model.BlockConfig.VarDef,
+  index       : ?model.BlockConfig.VarDef,
 
   pub inline fn value(self: *@This()) *Value {
     return Value.parent(self);

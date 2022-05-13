@@ -35,12 +35,19 @@ pub inline fn value(
 }
 
 pub inline fn ast(
-  self     : *const Self,
-  root     : *Node,
-  container: ?*model.VariableContainer,
+  self        : *const Self,
+  root        : *Node,
+  container   : ?*model.VariableContainer,
+  defined_vars: []*model.Symbol.Variable,
+  capture     : ?*Node.Capture,
 ) !*Value.Ast {
   return &(try self.value(root.pos, .{.ast = .{
-    .root = root, .container = container,
+    .root         = root,
+    .container    = container,
+    .defined_vars = defined_vars,
+    .val          = if (capture) |c| c.val   else null,
+    .key          = if (capture) |c| c.key   else null,
+    .index        = if (capture) |c| c.index else null,
   }})).data.ast;
 }
 

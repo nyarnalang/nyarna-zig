@@ -86,6 +86,7 @@ pub const ScalarError = enum {
   UnknownResolver, UnknownUnique, UnknownPrototype, UnknownBuiltin,
   DoesntHaveConstructor, InvalidNumber, NumberTooLarge, TooManyDecimals,
   FactorMustntBeNegative, MustHaveDefinedSuffix, InvalidDecimals,
+  UnexpectedBlockVar,
 };
 
 pub const WrongIdError = enum {
@@ -98,7 +99,7 @@ pub const PreviousOccurenceError = enum {
   DuplicateParameterArgument, MissingParameterArgument, DuplicateSymbolName,
   MissingEndCommand, CannotAssignToConst, DuplicateEnumValue,
   MultipleModuleKinds, DuplicateMappingKey, DuplicateSuffix,
-  FactorsTooFarApart,
+  FactorsTooFarApart, DuplicateBlockVar,
 };
 
 pub const PositionChainError = enum {

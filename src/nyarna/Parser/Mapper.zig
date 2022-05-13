@@ -329,19 +329,33 @@ pub const ToSignature = struct {
       else => param.spec,
     };
     const behavior = ArgBehavior.calc(target_spec.t);
-    const arg = if (behavior == .ast_node or behavior == .frame_root) blk: {
-      if (at.direct or param.capture != .varargs) {
-        const container = if (behavior == .frame_root)
-          self.intpr.var_containers.pop().container else null;
+    const arg = switch (behavior) {
+      .ast_node => try self.intpr.genValueNode(
+        (try self.intpr.ctx.values.ast(content, null, &.{}, null)).value()),
+      .frame_root => blk: {
+        const ac = self.intpr.var_containers.pop();
+        var capture: ?*model.Node.Capture = null;
+        const inner = switch (content.data) {
+          .capture => |*cpt| iblk: {
+            capture = cpt;
+            break :iblk cpt.content;
+          },
+          else => content,
+        };
         break :blk try self.intpr.genValueNode(
-          (try self.intpr.ctx.values.ast(content, container)).value());
-      } else break :blk content;
-    } else blk: {
-      if (try self.intpr.associate(
-          content, target_spec, .{.kind = .intermediate})) |expr| {
-        content.data = .{.expression = expr};
+          (try self.intpr.ctx.values.ast(
+            inner, ac.container, ac.defined_variables.items, capture)).value()
+        );
+      },
+      else => blk: {
+        if (
+          try self.intpr.associate(
+            content, target_spec, .{.kind = .intermediate})
+        ) |expr| {
+          content.data = .{.expression = expr};
+        }
+        break :blk content;
       }
-      break :blk content;
     };
     if (self.varmapAt(at.param.index)) {
       try self.addToVarmap(at.param.index, param.*, arg, at.direct);
@@ -396,7 +410,8 @@ pub const ToSignature = struct {
               container.* = .{.num_values = 0};
               break :blk try self.intpr.genValueNode(
                 (try self.intpr.ctx.values.ast(
-                  try self.intpr.node_gen.@"void"(pos), container)).value());
+                  try self.intpr.node_gen.@"void"(pos), container, &.{}, null)
+                ).value());
             },
             else => null,
           },
@@ -412,7 +427,8 @@ pub const ToSignature = struct {
           .list => |*list| if (list.inner.isNamed(.ast)) {
             const content = self.args[i];
             self.args[i] = try self.intpr.genValueNode(
-              (try self.intpr.ctx.values.ast(content, null)).value());
+              (try self.intpr.ctx.values.ast(
+                content, null, &.{}, null)).value());
           },
           else => {},
         },

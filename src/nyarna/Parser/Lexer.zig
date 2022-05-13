@@ -947,7 +947,18 @@ inline fn processContent(
   switch (ctx) {
     .config => if (unicode.MPS.contains(unicode.category(cur.*))) {
       self.code_point = cur.*;
-      return self.advanceAndReturn(.ns_sym, null);
+      if (self.walker.nextInline()) |next_char| {
+        cur.* = next_char;
+        if (self.readIdentifier(cur)) {
+          return ContentResult{.token = .symref};
+        } else {
+          self.cur_stored = cur.*;
+          return ContentResult{.token = .ns_char};
+        }
+      } else |err| {
+        self.cur_stored = err;
+        return ContentResult{.token = .ns_char};
+      }
     },
     .block_name => {},
     else => if (self.intpr.command_characters.get(cur.*)) |ns| {
