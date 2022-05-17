@@ -209,6 +209,8 @@ pub const Seq = struct {
   }
 };
 
+/// this node if both for \match and \matcher, subject being null for the
+/// latter.
 pub const Match = struct {
   pub const Case = struct {
     t        : *Node,
@@ -222,6 +224,7 @@ pub const Match = struct {
     },
   };
 
+  subject: ?*Node,
   cases  : []Case,
 
   pub inline fn node(self: *@This()) *Node {

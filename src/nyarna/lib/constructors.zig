@@ -264,11 +264,19 @@ pub const Prototypes = lib.Provider.Wrapper(struct {
     backend : *model.Node,
     min     : ?*model.Node,
     max     : ?*model.Node,
-    suffixes: *model.Value.Map,
+    suffixes: *model.Node,
   ) nyarna.Error!*model.Node {
-    return (
-      try intpr.node_gen.tgNumeric(pos, backend, min, max, suffixes)
-    ).node();
+    const expr = try intpr.interpret(suffixes);
+    const value = try intpr.ctx.evaluator().evaluate(expr);
+    switch (value.data) {
+      .map => |*m| {
+        return (
+          try intpr.node_gen.tgNumeric(pos, backend, min, max, m)
+        ).node();
+      },
+      .poison => return try intpr.node_gen.poison(pos),
+      else => unreachable,
+    }
   }
 
   pub fn @"Optional"(

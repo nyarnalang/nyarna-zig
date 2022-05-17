@@ -281,6 +281,20 @@ pub const BlockConfig = struct {
 pub const SpecType = struct {
   t  : Type,
   pos: Position,
+
+  /// this context ignores the position.
+  pub const HashContext = struct {
+    pub fn hash(_: HashContext, st: SpecType) u64 {
+      return switch (st.t) {
+        .structural => |s|  @intCast(u64, @ptrToInt(s)),
+        .named      => |in| @intCast(u64, @ptrToInt(in)),
+      };
+    }
+
+    pub fn eql(_: HashContext, a: SpecType, b: SpecType) bool {
+      return a.t.eql(b.t);
+    }
+  };
 };
 
 /// a callable function.

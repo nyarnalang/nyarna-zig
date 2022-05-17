@@ -1,0 +1,43 @@
+=== Simple Match
+--- input
+\declare:
+  Bold = \Record:
+    content: \Text {primary}
+  \end(Record)
+\end(declare)
+\var:
+  val: \Intersection(\Text, \Bold) = \Text(foo)
+\end(var)
+
+\match(\val):
+:(\Text):
+  lorem
+:(\Bold):
+  ipsum
+\end(match)
+--- expr
++SEQUENCE
+  >ITEM 2
+  =VOID
+  +ASSIGNMENT
+    =TARGET val
+    >EXPR
+    +CALL
+      =TYPE textual .std.system.Text
+      >ARG input
+      =TEXT Literal "foo"
+    -CALL
+  -ASSIGNMENT
+  >ITEM 0
+  +MATCH
+    =GETVAR val
+    +CASE
+      =TYPE textual .std.system.Text
+    -CASE
+    =TEXT Literal "lorem\n"
+    +CASE
+      =TYPE record .doc.input.Bold
+    -CASE
+    =TEXT Literal "ipsum"
+  -MATCH
+-SEQUENCE

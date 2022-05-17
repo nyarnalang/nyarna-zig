@@ -1,4 +1,4 @@
-
+const std = @import("std");
 
 const model = @import("../model.zig");
 
@@ -28,7 +28,7 @@ pub const Assignment = struct {
   target: *Symbol.Variable,
   /// list of indexes that identify which part of the variable is to be
   /// assigned.
-  path: []const usize,
+  path : []const usize,
   rexpr: *Expression,
 
   pub fn expr(self: *@This()) *Expression {
@@ -39,7 +39,7 @@ pub const Assignment = struct {
 // if or switch expression
 pub const Branches = struct {
   condition: *Expression,
-  branches: []*Expression,
+  branches : []*Expression,
 
   pub fn expr(self: *@This()) *Expression {
     return Expression.parent(self);
@@ -49,9 +49,9 @@ pub const Branches = struct {
 /// a call to a function or type constructor.
 pub const Call = struct {
   /// only set for calls to keywords, for which it may be relevant.
-  ns: u15,
+  ns    : u15,
   target: *Expression,
-  exprs: []*Expression,
+  exprs : []*Expression,
 
   pub fn expr(self: *@This()) *Expression {
     return Expression.parent(self);
@@ -59,7 +59,7 @@ pub const Call = struct {
 };
 
 pub const Conversion = struct {
-  inner: *Expression,
+  inner      : *Expression,
   target_type: model.Type,
 
   pub fn expr(self: *@This()) *Expression {
@@ -73,10 +73,24 @@ pub const Concatenation = []*Expression;
 /// expression that generates a Location. This is necessary for locations of
 /// prototype functions that may contain references to the prototype's params.
 pub const Location = struct {
-  name: *Expression,
-  @"type": ?*Expression,
-  default: ?*Expression,
+  name       : *Expression,
+  @"type"    : ?*Expression,
+  default    : ?*Expression,
   additionals: ?*model.Node.Location.Additionals,
+
+  pub fn expr(self: *@This()) *Expression {
+    return Expression.parent(self);
+  }
+};
+
+pub const Match = struct {
+  pub const HashMap = std.HashMapUnmanaged(
+    model.SpecType, *Expression, model.SpecType.HashContext,
+    std.hash_map.default_max_load_percentage
+  );
+
+  subject: *Expression,
+  cases  : HashMap,
 
   pub fn expr(self: *@This()) *Expression {
     return Expression.parent(self);
@@ -100,7 +114,7 @@ pub const Sequence = []Paragraph;
 pub const Varargs = struct {
   pub const Item = struct {
     direct: bool,
-    expr: *Expression,
+    expr  : *Expression,
   };
 
   items: []Item,
@@ -188,6 +202,7 @@ pub const Data = union(enum) {
   concatenation: Concatenation,
   conversion   : Conversion,
   location     : Location,
+  match        : Match,
   sequence     : Sequence,
   tg_concat    : tg.Concat,
   tg_list      : tg.List,
@@ -216,6 +231,7 @@ fn parent(it: anytype) *Expression {
     Call          => offset(Data, "call"),
     Concatenation => offset(Data, "concatenation"),
     Location      => offset(Data, "location"),
+    Match         => offset(Data, "match"),
     Sequence      => offset(Data, "sequence"),
     tg.Concat     => offset(Data, "tg_concat"),
     tg.List       => offset(Data, "tg_list"),

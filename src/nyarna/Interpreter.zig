@@ -11,13 +11,14 @@
 
 const std = @import("std");
 
-const algo     = @import("Interpreter/algo.zig");
-const chains   = @import("Interpreter/chains.zig");
-const graph    = @import("Interpreter/graph.zig");
-const nyarna   = @import("../nyarna.zig");
-const Parser   = @import("Parser.zig");
-const syntaxes = @import("Parser/syntaxes.zig");
-const unicode  = @import("unicode.zig");
+const algo         = @import("Interpreter/algo.zig");
+const chains       = @import("Interpreter/chains.zig");
+const graph        = @import("Interpreter/graph.zig");
+const MatchBuilder = @import("Interpreter/MatchBuilder.zig");
+const nyarna       = @import("../nyarna.zig");
+const Parser       = @import("Parser.zig");
+const syntaxes     = @import("Parser/syntaxes.zig");
+const unicode      = @import("unicode.zig");
 
 const errors = nyarna.errors;
 const lib    = nyarna.lib;
@@ -1296,6 +1297,7 @@ fn tryInterpretMatch(
     if (
       try self.associate(case.t, self.ctx.types().@"type"().predef(), stage)
     ) |expr| {
+      case.t.data = .{.expression = expr};
       const value = try self.ctx.evaluator().evaluate(expr);
       expr.data = .{.value = value};
       expr.expected_type = try self.ctx.types().valueType(value);
@@ -1345,7 +1347,18 @@ fn tryInterpretMatch(
     return expr;
   } else if (seen_unfinished) return null;
 
-  unreachable; // TODO
+  var builder = try MatchBuilder.init(self, match.node().pos);
+  for (match.cases) |case| {
+    try builder.push(
+      case.t.data.expression.data.value.data.@"type".t.at(case.t.pos),
+      case.content.root.data.expression,
+    );
+  }
+  if (match.subject) |subject| {
+    return try builder.finalize(subject);
+  } else {
+    unreachable; // TODO
+  }
 }
 
 fn tryInterpretUCall(

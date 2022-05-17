@@ -345,6 +345,49 @@ const VarProc = struct {
   }
 };
 
+pub fn createMatch(
+  intpr: *Interpreter,
+  pos    : model.Position,
+  cases  : *model.Node.Varmap,
+) nyarna.Error!*model.Node.Match {
+  const map_type = (
+    try intpr.ctx.types().map(
+      intpr.ctx.types().@"type"(), intpr.ctx.types().ast())
+  ).?;
+  var collected = try std.ArrayList(model.Node.Match.Case).initCapacity(
+    intpr.allocator, cases.content.items.len);
+  for (cases.content.items) |case| switch (case.key) {
+    .direct => {
+      const res = try intpr.interpret(case.value);
+      if (!res.expected_type.isNamed(.poison)) {
+        intpr.ctx.logger.ExpectedExprOfTypeXGotY(&.{
+          res.expected_type.at(res.pos),
+          map_type.predef(),
+        });
+      }
+    },
+    .node => |node| {
+      const ast = &case.value.data.expression.data.value.data.ast;
+      const T = std.meta.fieldInfo(model.Node.Match.Case, .variable).field_type;
+      const variable: T = if (ast.capture) |capture| blk: {
+        if (capture.key) |key| {
+          intpr.ctx.logger.UnexpectedBlockVar(key.pos, "key");
+        }
+        if (capture.index) |index| {
+          intpr.ctx.logger.UnexpectedBlockVar(index.pos, "index");
+        }
+        break :blk @as(T, if (capture.val) |val| .{.def = val} else .none);
+      } else T.none;
+      try collected.append(.{
+        .t        = node,
+        .content  = ast,
+        .variable = variable,
+      });
+    },
+  };
+  return try intpr.node_gen.match(pos, collected.items);
+}
+
 pub const Impl = lib.Provider.Wrapper(struct {
   //---------
   // keywords
@@ -530,47 +573,22 @@ pub const Impl = lib.Provider.Wrapper(struct {
   }
 
   pub fn match(
-    intpr  : *Interpreter,
+    intpr: *Interpreter,
+    pos    : model.Position,
+    subject: *model.Node,
+    cases  : *model.Node.Varmap,
+  ) nyarna.Error!*model.Node {
+    const ret = try createMatch(intpr, pos, cases);
+    ret.subject = subject;
+    return ret.node();
+  }
+
+  pub fn matcher(
+    intpr: *Interpreter,
     pos    : model.Position,
     cases  : *model.Node.Varmap,
   ) nyarna.Error!*model.Node {
-    const map_type = (
-      try intpr.ctx.types().map(
-        intpr.ctx.types().@"type"(), intpr.ctx.types().ast())
-    ).?;
-    var collected = try std.ArrayList(model.Node.Match.Case).initCapacity(
-      intpr.allocator, cases.content.items.len);
-    for (cases.content.items) |case| switch (case.key) {
-      .direct => {
-        const res = try intpr.interpret(case.value);
-        if (!res.expected_type.isNamed(.poison)) {
-          intpr.ctx.logger.ExpectedExprOfTypeXGotY(&.{
-            res.expected_type.at(res.pos),
-            map_type.predef(),
-          });
-        }
-      },
-      .node => |node| {
-        const ast = &case.value.data.expression.data.value.data.ast;
-        const T =
-          std.meta.fieldInfo(model.Node.Match.Case, .variable).field_type;
-        const variable: T = if (ast.capture) |capture| blk: {
-          if (capture.key) |key| {
-            intpr.ctx.logger.UnexpectedBlockVar(key.pos, "key");
-          }
-          if (capture.index) |index| {
-            intpr.ctx.logger.UnexpectedBlockVar(index.pos, "index");
-          }
-          break :blk @as(T, if (capture.val) |val| .{.def = val} else .none);
-        } else T.none;
-        try collected.append(.{
-          .t        = node,
-          .content  = ast,
-          .variable = variable,
-        });
-      },
-    };
-    return (try intpr.node_gen.match(pos, collected.items)).node();
+    return (try createMatch(intpr, pos, cases)).node();
   }
 
   pub fn standalone(
@@ -802,6 +820,7 @@ pub const Checker = struct {
     .{"keyword",         .keyword},
     .{"library",         .keyword},
     .{"match",           .keyword},
+    .{"matcher",         .keyword},
     .{"standalone",      .keyword},
   });
 

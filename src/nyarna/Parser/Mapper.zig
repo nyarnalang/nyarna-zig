@@ -426,15 +426,28 @@ pub const ToSignature = struct {
       }
       if (param.capture == .varargs) switch (param.spec.t) {
         .structural => |strct| switch (strct.*) {
-          .list => |*list| if (list.inner.isNamed(.ast)) {
+          .list => |*list| if (ArgBehavior.calc(list.inner) != .normal) {
             const content = self.args[i];
-            self.args[i] = try self.intpr.genValueNode(
-              (try self.intpr.ctx.values.ast(
-                content, null, &.{}, null)).value());
+            self.args[i] = try self.intpr.genValueNode((
+              try self.intpr.ctx.values.ast(content, null, &.{}, null)
+            ).value());
           },
           else => {},
         },
         else => {},
+      } else if (self.signature.varmap) |varmap| if (varmap == i) {
+        switch (param.spec.t) {
+          .structural => |strct| switch (strct.*) {
+            .map => |*m_type| if (ArgBehavior.calc(m_type.value) != .normal) {
+              const content = self.args[i];
+              self.args[i] = try self.intpr.genValueNode((
+                try self.intpr.ctx.values.ast(content, null, &.{}, null)
+              ).value());
+            },
+            else => {},
+          },
+          else => {},
+        }
       };
     }
     return if (missing_param) try self.intpr.node_gen.poison(pos) else

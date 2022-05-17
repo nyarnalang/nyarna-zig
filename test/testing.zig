@@ -638,6 +638,18 @@ const AstEmitter = struct {
         }
         try l.pop();
       },
+      .match => |match| {
+        const m = try self.push("MATCH");
+        try self.processExpr(match.subject);
+        var iter = match.cases.iterator();
+        while (iter.next()) |item| {
+          const c = try self.push("CASE");
+          try self.processType(item.key_ptr.t);
+          try c.pop();
+          try self.processExpr(item.value_ptr.*);
+        }
+        try m.pop();
+      },
       .tg_concat => |tgc| {
         const c = try self.push("TG_CONCAT");
         try self.processExpr(tgc.inner);

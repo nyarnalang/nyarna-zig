@@ -1,52 +1,59 @@
 === Block Name Expressions
 --- input
-\match():
+\match(\val):
 :(\Text):
   lorem
-:(\Integer):
+:(\Location):
   ipsum
 \end(match)
 --- tokens
 3:1[0] symref
 3:7[6] list_start
-3:8[7] list_end
-3:9[8] blocks_sep
-3:10[9] space
-4:1[10] list_start
-4:3[12] symref
-4:8[17] list_end
-4:10[19] space
-5:1[20] indent
-5:3[22] literal
-5:8[27] ws_break
-6:1[28] list_start
-6:3[30] symref
-6:11[38] list_end
-6:13[40] space
-7:1[41] indent
-7:3[43] literal
-7:8[48] ws_break
-8:1[49] block_end_open
-8:6[54] call_id
-8:11[59] list_end
-8:12[60] ws_break
-9:1[61] end_source
+3:8[7] symref
+3:12[11] list_end
+3:13[12] blocks_sep
+3:14[13] space
+4:1[14] list_start
+4:3[16] symref
+4:8[21] list_end
+4:10[23] space
+5:1[24] indent
+5:3[26] literal
+5:8[31] ws_break
+6:1[32] list_start
+6:3[34] symref
+6:12[43] list_end
+6:14[45] space
+7:1[46] indent
+7:3[48] literal
+7:8[53] ws_break
+8:1[54] block_end_open
+8:6[59] call_id
+8:11[64] list_end
+8:12[65] ws_break
+9:1[66] end_source
 --- rawast
 +RCALL
   =SYMREF .std.system.match
+  >ARG subject
+  +AST
+    =SYMREF [0]val
+  -AST
   >ARG cases
-  +VARMAP
-    >KEY
-    =SYMREF .std.system.Text
-    >VALUE
-    +AST
-      =LIT text "lorem\n"
-    -AST
-    >KEY
-    =SYMREF .std.system.Integer
-    >VALUE
-    +AST
-      =LIT text "ipsum"
-    -AST
-  -VARMAP
+  +AST
+    +VARMAP
+      >KEY
+      =SYMREF .std.system.Text
+      >VALUE
+      +AST
+        =LIT text "lorem\n"
+      -AST
+      >KEY
+      =SYMREF .std.system.Location
+      >VALUE
+      +AST
+        =LIT text "ipsum"
+      -AST
+    -VARMAP
+  -AST
 -RCALL

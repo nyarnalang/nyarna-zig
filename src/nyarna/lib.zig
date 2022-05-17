@@ -78,6 +78,7 @@ pub const Provider = struct {
                                else getTypedValue(opt.child, v),
             .Pointer  => |ptr| switch (ptr.child) {
               model.Node              => v.data.ast.root,
+              model.Node.Varmap       => &v.data.ast.root.data.varmap,
               model.Value             => v,
               model.Value.Ast         => &v.data.ast,
               model.Value.BlockHeader => &v.data.block_header,

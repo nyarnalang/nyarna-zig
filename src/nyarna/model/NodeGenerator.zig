@@ -182,11 +182,12 @@ pub fn locationFromValue(
 }
 
 pub inline fn match(
-  self   : *Self,
-  pos    : Position,
-  cases  : []Node.Match.Case,
+  self : *Self,
+  pos  : Position,
+  cases: []Node.Match.Case,
 ) !*Node.Match {
   return &(try self.node(pos, .{.match = .{
+    .subject = null,
     .cases   = cases,
   }})).data.match;
 }

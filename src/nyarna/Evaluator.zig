@@ -548,6 +548,19 @@ fn evalLocation(
   return loc_val.value();
 }
 
+fn evalMatch(
+  self : *Evaluator,
+  match: *model.Expression.Match,
+) nyarna.Error!*model.Value {
+  const subject = try self.evaluate(match.subject);
+  const s_type = try self.ctx.types().valueType(subject);
+  if (s_type.isNamed(.poison)) {
+    subject.origin = match.expr().pos;
+    return subject;
+  }
+  unreachable; // TODO
+}
+
 fn evalSequence(
   self  : *Evaluator,
   expr : *model.Expression,
@@ -759,6 +772,7 @@ fn doEvaluate(
     .concatenation => |concat|      self.evalConcatenation(expr, concat),
     .conversion    => |*convert|    self.evalConversion(convert),
     .location      => |*loc|        self.evalLocation(loc),
+    .match         => |*match|      self.evalMatch(match),
     .value         => |value|       return value,
     .sequence      => |seq|         self.evalSequence(expr, seq),
     .tg_concat     => |*tgc|

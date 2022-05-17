@@ -170,6 +170,11 @@
   \end(keyword)
 
   match = \keyword:
+    subject: \Ast
+    cases: \Map(\Type, \Ast) {primary, varmap}
+  \end(keyword)
+
+  matcher = \keyword:
     cases: \Map(\Type, \Ast) {primary, varmap}
   \end(keyword)
 

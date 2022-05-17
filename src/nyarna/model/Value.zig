@@ -320,6 +320,7 @@ const HashContext = struct {
       .int     => |int| @bitCast(u64, int.content),
       .float   => |fl|  @bitCast(u64, fl.content),
       .@"enum" => |ev|  @intCast(u64, ev.index),
+      .@"type" => |tv|  model.Type.HashContext.hash(undefined, tv.t),
       else => unreachable,
     };
   }
@@ -330,6 +331,8 @@ const HashContext = struct {
       .int     => |int| int.content == b.data.int.content,
       .float   => |fl|  fl.content == b.data.float.content,
       .@"enum" => |ev|  ev.index == b.data.@"enum".index,
+      .@"type" => |tv|
+        model.Type.HashContext.eql(undefined, tv.t, b.data.@"type".t),
       else => unreachable,
     };
   }
