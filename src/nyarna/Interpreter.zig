@@ -63,9 +63,8 @@ pub const Stage = struct {
 /// directly since it is only ever imported into internal namespaces, where
 /// symbols will be looked up.
 pub const Namespace = struct {
-  pub const Mark = usize;
-
-  data: std.StringArrayHashMapUnmanaged(*model.Symbol) = .{},
+  index: ?usize,
+  data : std.StringArrayHashMapUnmanaged(*model.Symbol) = .{},
 
   pub fn tryRegister(
     self : *Namespace,
@@ -82,41 +81,26 @@ pub const Namespace = struct {
       return false;
     } else {
       res.value_ptr.* = sym;
+      if (self.index) |index| {
+        try intpr.symbols.append(intpr.allocator, .{
+          .ns    = @intCast(u15, index),
+          .sym   = sym,
+          .alive = true,
+        });
+      }
       return true;
     }
-  }
-
-  pub fn mark(self: *Namespace) Mark {
-    return self.data.count();
-  }
-
-  pub fn reset(self: *Namespace, state: Mark) void {
-    self.data.shrinkRetainingCapacity(state);
   }
 };
 
 const Interpreter = @This();
 
-/// does not need reference to actual variable; only used to shrink the
-/// variable's namespace when leaving the level where the variable was
-/// defined.
-const ActiveVariable = struct {
-  ns: u15,
-};
 pub const ActiveVarContainer = struct {
-  /// into Interpreter.variables. At this offset, the first variable (if any)
+  /// into Interpreter.symbols. At this offset, the first symbol (if any)
   /// of the container is found.
   offset: usize,
   /// unfinished. required to link newly created variables to it.
   container: *model.VariableContainer,
-  /// list of variables defined in this container. used for collision checking
-  /// against function parameters, which are established after parsing the body.
-  ///
-  /// if you think this can be merged with Interpreter.variables: no it can't.
-  /// this list operates on VariableContainer level, while Interpreter.variables
-  /// operates on ContentLevel, i.e. variables get removed at the end of their
-  /// lifetime. This list preserves variables even after their lifetime.
-  defined_variables: std.ArrayListUnmanaged(*model.Symbol.Variable) = .{},
 };
 
 /// The source that is being parsed. Must not be changed during an
@@ -159,12 +143,14 @@ allocator: std.mem.Allocator,
 syntax_registry: [2]syntaxes.SpecialSyntax,
 /// convenience object to generate nodes using the interpreter's storage.
 node_gen: model.NodeGenerator,
-/// variables declared in the source code. At any time, this list contains all
-/// variables that are currently established in a namespace. This list is used
-/// to deregister variables at the end of their lifetime.
-variables: std.ArrayListUnmanaged(ActiveVariable),
+/// symbols declared in the source code. Each symbol is initially alive,
+/// until it gets out of scope at which time it becomes dead but stays in the
+/// list. This list is used to deregister symbols at the end of their
+/// lifetime, and for giving variable containers a list of contained symbols.
+/// This list never shrinks.
+symbols: std.ArrayListUnmanaged(model.Symbol.Definition) = .{},
 /// length equals the current list of open levels whose type is FrameRoot.
-var_containers: std.ArrayListUnmanaged(ActiveVarContainer),
+var_containers: std.ArrayListUnmanaged(ActiveVarContainer) = .{},
 /// the implementation of builtin functions for this module, if any.
 builtin_provider: ?*const lib.Provider,
 /// the content of the current file, as specified by \library, \standalone or
@@ -193,15 +179,15 @@ pub fn create(
 ) !*Interpreter {
   var ret = try allocator.create(Interpreter);
   ret.* = .{
-    .input = source,
-    .ctx = ctx,
-    .allocator = allocator,
-    .syntax_registry = .{syntaxes.SymbolDefs.locations(),
-                          syntaxes.SymbolDefs.definitions()},
-    .node_gen = undefined,
+    .input           = source,
+    .ctx             = ctx,
+    .allocator       = allocator,
+    .syntax_registry = .{
+      syntaxes.SymbolDefs.locations(),
+      syntaxes.SymbolDefs.definitions(),
+    },
+    .node_gen         = undefined,
     .public_namespace = public_ns,
-    .variables = .{},
-    .var_containers = .{},
     .builtin_provider = provider,
   };
   ret.node_gen = model.NodeGenerator.init(allocator, ctx.types());
@@ -219,7 +205,7 @@ pub fn addNamespace(self: *Interpreter, character: u21) !void {
   if (index > std.math.maxInt(u15)) return nyarna.Error.too_many_namespaces;
   try self.command_characters.put(
     self.allocator, character, @intCast(u15, index));
-  try self.namespaces.append(self.allocator, .{});
+  try self.namespaces.append(self.allocator, .{.index = index});
   const ns = self.namespace(@intCast(u15, index));
   // intrinsic symbols of every namespace.
   for (self.ctx.data.generic_symbols.items) |sym| {
@@ -231,9 +217,25 @@ pub inline fn namespace(self: *Interpreter, ns: u15) *Namespace {
   return &self.namespaces.items[ns];
 }
 
+pub const Mark = usize;
+
+pub fn markSyms(self: *Interpreter) Mark {
+  return self.symbols.items.len;
+}
+
+pub fn resetSyms(self: *Interpreter, state: Mark) void {
+  for (self.symbols.items[state..]) |*ds| {
+    if (ds.alive) {
+      const ns = self.namespace(ds.ns);
+      ns.data.shrinkRetainingCapacity(ns.data.count() - 1);
+      ds.alive = false;
+    }
+  }
+}
+
 pub inline fn type_namespace(self: *Interpreter, t: model.Type) !*Namespace {
   const entry = try self.type_namespaces.getOrPutValue(
-    self.allocator, t, Namespace{});
+    self.allocator, t, Namespace{.index = null});
   return entry.value_ptr;
 }
 
@@ -254,8 +256,13 @@ pub fn importModuleSyms(
 
 pub fn removeNamespace(self: *Interpreter, character: u21) void {
   const ns_index = self.command_characters.fetchRemove(character).?;
-  std.debug.assert(ns_index.value == self.namespaces.items.len - 1);
-  _ = self.namespaces.pop();
+  _ = ns_index;
+  // namespaces are kept in self.namespaces to avoid any errors resulting from
+  // unresolved symbols being resolved after the namespace is gone.
+  // OPPORTUNITY: check if this can be avoided and then actually remove the
+  // namespace
+  //std.debug.assert(ns_index.value == self.namespaces.items.len - 1);
+  //_ = self.namespaces.pop();
 }
 
 fn tryInterpretChainEnd(
@@ -1026,9 +1033,9 @@ pub fn tryInterpretFuncParams(
   };
 
   // resolve references to arguments inside body.
+  const mark = self.markSyms();
+  defer self.resetSyms(mark);
   const ns = &self.namespaces.items[func.params_ns];
-  const mark = ns.mark();
-  defer ns.reset(mark);
   for (variables) |v| _ = try ns.tryRegister(self, v.sym());
   _ = try self.tryInterpret(func.body, .{.kind = .resolve});
   return true;
@@ -1276,6 +1283,69 @@ pub fn interpretCallToChain(
     .poison  => return try self.ctx.createValueExpr(
       try self.ctx.values.poison(uc.node().pos)),
   }
+}
+
+fn tryInterpretMatch(
+  self : *Interpreter,
+  match: *model.Node.Match,
+  stage: Stage,
+) nyarna.Error!?*model.Expression {
+  var seen_unfinished = false;
+  var seen_poison = false;
+  for (match.cases) |*case| {
+    if (
+      try self.associate(case.t, self.ctx.types().@"type"().predef(), stage)
+    ) |expr| {
+      const value = try self.ctx.evaluator().evaluate(expr);
+      expr.data = .{.value = value};
+      expr.expected_type = try self.ctx.types().valueType(value);
+      switch (value.data) {
+        .@"type" => |tv| {
+          switch (case.variable) {
+          .def => |val| {
+              const sym = try self.ctx.global().create(model.Symbol);
+              sym.* = .{
+                .defined_at = expr.pos,
+                .name       = try self.ctx.global().dupe(u8, val.name),
+                .data       = .{.variable = .{
+                  .spec       = tv.t.at(value.origin),
+                  .container  = undefined,
+                  .offset     = 0,
+                  .kind       = .given,
+                }},
+              };
+              case.variable = .{.sym = &sym.data.variable};
+              const ns = self.namespace(val.ns);
+              const mark = self.markSyms();
+              defer self.resetSyms(mark);
+              if (try ns.tryRegister(self, sym)) {
+                _ = try
+                  self.tryInterpret(case.content.root, .{.kind = .resolve});
+              }
+            },
+            .sym, .none => {},
+          }
+          if (try self.tryInterpret(case.content.root, stage)) |content_expr| {
+            case.content.root.data = .{.expression = content_expr};
+            if (content_expr.expected_type.isNamed(.poison)) seen_poison = true;
+          } else seen_unfinished = true;
+        },
+        .poison => seen_poison = true,
+        else    => unreachable,
+      }
+    } else seen_unfinished = true;
+  }
+  if (seen_poison) {
+    const expr = try self.ctx.global().create(model.Expression);
+    expr.* = .{
+      .pos = match.node().pos,
+      .data = .poison,
+      .expected_type = self.ctx.types().poison(),
+    };
+    return expr;
+  } else if (seen_unfinished) return null;
+
+  unreachable; // TODO
 }
 
 fn tryInterpretUCall(
@@ -2535,6 +2605,7 @@ pub fn tryInterpret(
       else => null,
     },
     .location          => |*lo| self.tryInterpretLoc(lo, stage),
+    .match             => |*mt| self.tryInterpretMatch(mt, stage),
     .resolved_access   => |*ra| self.tryInterpretRAccess(ra, stage),
     .resolved_symref   => |*rs| self.tryInterpretSymref(rs, stage),
     .resolved_call     => |*rc| self.tryInterpretCall(rc, stage),
@@ -2744,7 +2815,7 @@ pub fn probeType(
         node.data = .{.expression = expr};
         return expr.expected_type;
       } else return null,
-    .assign, .builtingen, .import, .funcgen, .root_def, .vt_setter => {
+    .assign, .builtingen, .import, .funcgen, .match, .root_def, .vt_setter => {
       if (try self.tryInterpret(node, stage)) |expr| {
         node.data = .{.expression = expr};
         return expr.expected_type;
@@ -3019,7 +3090,7 @@ pub fn interpretWithTargetScalar(
   });
   switch (input.data) {
     .assign, .builtingen, .capture, .definition, .funcgen, .import, .location,
-    .resolved_access, .resolved_symref, .resolved_call, .gen_concat,
+    .match, .resolved_access, .resolved_symref, .resolved_call, .gen_concat,
     .gen_enum, .gen_intersection, .gen_list, .gen_map, .gen_numeric,
     .gen_optional, .gen_sequence, .gen_prototype, .gen_record, .gen_textual,
     .gen_unique, .root_def, .unresolved_access, .unresolved_call,

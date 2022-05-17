@@ -1022,7 +1022,7 @@ pub fn map(
 ) std.mem.Allocator.Error!?model.Type {
   switch (key) {
     .named => |named| switch (named.data) {
-      .literal, .textual, .int, .float, .@"enum" => {},
+      .literal, .textual, .int, .float, .@"enum", .@"type" => {},
       else => return null,
     },
     .structural => return null,
@@ -1043,7 +1043,7 @@ pub fn map(
 pub fn registerMap(self: *Self, t: *model.Type.Map) !bool {
   switch (t.key) {
     .named => |named| switch (named.data) {
-      .literal, .textual, .int, .float, .@"enum" => {},
+      .literal, .textual, .int, .float, .@"enum", .@"type" => {},
       else => return false,
     },
     .structural => return false,

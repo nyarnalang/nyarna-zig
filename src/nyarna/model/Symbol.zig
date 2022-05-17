@@ -69,3 +69,12 @@ fn parent(it: anytype) *Symbol {
   };
   return @fieldParentPtr(Symbol, "data", @intToPtr(*Data, addr));
 }
+
+/// definition of a symbol in the currently parsed module
+pub const Definition = struct {
+  /// symbol's namespace
+  ns   : u15,
+  sym  : *model.Symbol,
+  /// true if the symbol is currently alive.
+  alive: bool,
+};

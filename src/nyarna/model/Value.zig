@@ -11,12 +11,13 @@ const offset = @import("../helpers.zig").offset;
 const Value = @This();
 
 pub const Ast = struct {
-  root        : *Node,
-  container   : ?*model.VariableContainer,
-  defined_vars: []*model.Symbol.Variable,
-  val         : ?model.BlockConfig.VarDef,
-  key         : ?model.BlockConfig.VarDef,
-  index       : ?model.BlockConfig.VarDef,
+  root      : *Node,
+  container : ?*model.VariableContainer,
+  /// slice into the interpreters' list of symbols declarations.
+  /// used for checking name collisions of variables that are introduced after
+  /// parsing, e.g. function parameters or captures.
+  inner_syms: []model.Symbol.Definition,
+  capture   : ?*Node.Capture,
 
   pub inline fn value(self: *@This()) *Value {
     return Value.parent(self);

@@ -12,8 +12,8 @@ const stringOrder = @import("../helpers.zig").stringOrder;
 
 pub const DefCollector = struct {
   count: usize = 0,
-  defs: []*model.Node.Definition = undefined,
-  dt: model.Type,
+  defs : []*model.Node.Definition = undefined,
+  dt   : model.Type,
 
   pub fn collect(self: *@This(), node: *model.Node, intpr: *Interpreter) !void {
     switch (node.data) {
@@ -255,27 +255,22 @@ const VarProc = struct {
     initial : *model.Node,
   ) !*model.Node {
     const sym = try self.ip.ctx.global().create(model.Symbol);
-    const offset =
-      @intCast(u15, self.ip.variables.items.len - self.ac.offset);
+    const offset = @intCast(u15, self.ip.symbols.items.len - self.ac.offset);
     sym.* = .{
       .defined_at = name_pos,
-      .name = name,
-      .data = .{.variable = .{
-        .spec = spec,
-        .container = self.ac.container,
-        .offset = offset,
-        .kind = .assignable,
+      .name       = name,
+      .data       = .{.variable = .{
+        .spec       = spec,
+        .container  = self.ac.container,
+        .offset     = offset,
+        .kind       = .assignable,
       }},
       .parent_type = null,
     };
     if (try self.namespace.tryRegister(self.ip, sym)) {
-      try self.ip.variables.append(
-        self.ip.allocator, .{.ns = self.ns_index});
       if (offset + 1 > self.ac.container.num_values) {
         self.ac.container.num_values = offset + 1;
       }
-      try self.ac.defined_variables.append(
-        self.ip.allocator, &sym.data.variable);
       const replacement = if (spec.t.isNamed(.every))
         // t being .every means that it depends on the initial expression,
         // and that expression can't be interpreted right now. This commonly
@@ -355,6 +350,26 @@ pub const Impl = lib.Provider.Wrapper(struct {
   // keywords
   //---------
 
+  pub fn block(
+    intpr  : *Interpreter,
+    pos    : model.Position,
+    content: *model.Node,
+  ) nyarna.Error!*model.Node {
+    _ = intpr; _ = pos;
+    return content;
+  }
+
+  pub fn builtin(
+    intpr  : *Interpreter,
+    pos    : model.Position,
+    returns: *model.Node,
+    params : ?*model.Node,
+  ) nyarna.Error!*model.Node {
+    const pnode = params orelse try intpr.node_gen.void(pos);
+    return (try intpr.node_gen.builtinGen(
+      pos, pnode, .{.node = returns})).node();
+  }
+
   pub fn declare(
     intpr  : *Interpreter,
     pos    : model.Position,
@@ -369,12 +384,59 @@ pub const Impl = lib.Provider.Wrapper(struct {
     }
     try collector.allocate(intpr.allocator);
 
-    if (public) |pnode| try collector.append(pnode, intpr, true);
+    if (public)  |pnode| try collector.append(pnode, intpr, true);
     if (private) |pnode| try collector.append(pnode, intpr, false);
     var res = try algo.DeclareResolution.create(
       intpr, collector.finish(), ns, parent);
     try res.execute();
     return intpr.node_gen.@"void"(pos);
+  }
+
+  pub fn fragment(
+    intpr  : *Interpreter,
+    pos    : model.Position,
+    root   : *model.Node,
+    options: ?*model.Node,
+    params : ?*model.Node,
+  ) nyarna.Error!*model.Node {
+    switch (intpr.specified_content) {
+      .library => |lpos|
+        intpr.ctx.logger.MultipleModuleKinds("library", pos, lpos),
+      .standalone => |*s|
+        intpr.ctx.logger.MultipleModuleKinds("standalone", pos, s.pos),
+      .fragment => |*f|
+        intpr.ctx.logger.MultipleModuleKinds("fragment", pos, f.pos),
+      .unspecified => {
+        if (options) |input| {
+          var list = std.ArrayList(model.locations.Ref).init(intpr.allocator);
+          try intpr.collectLocations(input, &list);
+          var registrar =
+            nyarna.ModuleLoader.OptionRegistrar{.ml = intpr.ctx.loader.?};
+          _ = try
+            intpr.processLocations(&list.items, .{.kind = .final}, &registrar);
+          try registrar.finalize(0);
+        }
+        return (
+          try intpr.node_gen.rootDef(pos, .fragment, root, params)
+        ).node();
+      }
+    }
+    return try intpr.node_gen.poison(pos);
+  }
+
+  pub fn func(
+    intpr    : *Interpreter,
+    pos      : model.Position,
+    ns       : u15,
+    @"return": ?*model.Node,
+    params   : ?*model.Node,
+    body     : *model.Value.Ast,
+  ) nyarna.Error!*model.Node {
+    const pnode = params orelse try intpr.node_gen.void(pos);
+    // type system ensures body.container isn't null here
+    return (try intpr.node_gen.funcgen(
+      pos, @"return", pnode, ns, body.root, body.container.?
+    )).node();
   }
 
   pub fn @"if"(
@@ -395,7 +457,7 @@ pub const Impl = lib.Provider.Wrapper(struct {
         .branches = .{
           .condition = condition,
           .cond_type = intpr.ctx.types().system.boolean,
-          .branches = nodes,
+          .branches  = nodes,
         },
       },
     };
@@ -425,21 +487,6 @@ pub const Impl = lib.Provider.Wrapper(struct {
     }
   }
 
-  pub fn func(
-    intpr    : *Interpreter,
-    pos      : model.Position,
-    ns       : u15,
-    @"return": ?*model.Node,
-    params   : ?*model.Node,
-    body     : *model.Value.Ast,
-  ) nyarna.Error!*model.Node {
-    const pnode = params orelse try intpr.node_gen.void(pos);
-    // type system ensures body.container isn't null here
-    return (try intpr.node_gen.funcgen(
-      pos, @"return", pnode, ns, body.root, body.container.?
-    )).node();
-  }
-
   pub fn keyword(
     intpr : *Interpreter,
     pos   : model.Position,
@@ -450,35 +497,6 @@ pub const Impl = lib.Provider.Wrapper(struct {
       (try intpr.ctx.values.@"type"(pos, intpr.ctx.types().ast())).value();
     return (try intpr.node_gen.builtinGen(
       pos, pnode, .{.expr = try intpr.ctx.createValueExpr(ast_val)})).node();
-  }
-
-  pub fn block(
-    intpr  : *Interpreter,
-    pos    : model.Position,
-    content: *model.Node,
-  ) nyarna.Error!*model.Node {
-    _ = intpr; _ = pos;
-    return content;
-  }
-
-  pub fn builtin(
-    intpr  : *Interpreter,
-    pos    : model.Position,
-    returns: *model.Node,
-    params : ?*model.Node,
-  ) nyarna.Error!*model.Node {
-    const pnode = params orelse try intpr.node_gen.void(pos);
-    return (try intpr.node_gen.builtinGen(
-      pos, pnode, .{.node = returns})).node();
-  }
-
-  pub fn @"var"(
-    intpr: *Interpreter,
-    pos  : model.Position,
-    ns   : u15,
-    defs : *model.Node,
-  ) nyarna.Error!*model.Node {
-    return try (try VarProc.init(intpr, ns, pos)).node(defs);
   }
 
   pub fn library(
@@ -509,6 +527,50 @@ pub const Impl = lib.Provider.Wrapper(struct {
       }
     }
     return try intpr.node_gen.poison(pos);
+  }
+
+  pub fn match(
+    intpr  : *Interpreter,
+    pos    : model.Position,
+    cases  : *model.Node.Varmap,
+  ) nyarna.Error!*model.Node {
+    const map_type = (
+      try intpr.ctx.types().map(
+        intpr.ctx.types().@"type"(), intpr.ctx.types().ast())
+    ).?;
+    var collected = try std.ArrayList(model.Node.Match.Case).initCapacity(
+      intpr.allocator, cases.content.items.len);
+    for (cases.content.items) |case| switch (case.key) {
+      .direct => {
+        const res = try intpr.interpret(case.value);
+        if (!res.expected_type.isNamed(.poison)) {
+          intpr.ctx.logger.ExpectedExprOfTypeXGotY(&.{
+            res.expected_type.at(res.pos),
+            map_type.predef(),
+          });
+        }
+      },
+      .node => |node| {
+        const ast = &case.value.data.expression.data.value.data.ast;
+        const T =
+          std.meta.fieldInfo(model.Node.Match.Case, .variable).field_type;
+        const variable: T = if (ast.capture) |capture| blk: {
+          if (capture.key) |key| {
+            intpr.ctx.logger.UnexpectedBlockVar(key.pos, "key");
+          }
+          if (capture.index) |index| {
+            intpr.ctx.logger.UnexpectedBlockVar(index.pos, "index");
+          }
+          break :blk @as(T, if (capture.val) |val| .{.def = val} else .none);
+        } else T.none;
+        try collected.append(.{
+          .t        = node,
+          .content  = ast,
+          .variable = variable,
+        });
+      },
+    };
+    return (try intpr.node_gen.match(pos, collected.items)).node();
   }
 
   pub fn standalone(
@@ -544,37 +606,18 @@ pub const Impl = lib.Provider.Wrapper(struct {
     return try intpr.node_gen.poison(pos);
   }
 
-  pub fn fragment(
-    intpr  : *Interpreter,
-    pos    : model.Position,
-    root   : *model.Node,
-    options: ?*model.Node,
-    params : ?*model.Node,
+  pub fn @"var"(
+    intpr: *Interpreter,
+    pos  : model.Position,
+    ns   : u15,
+    defs : *model.Node,
   ) nyarna.Error!*model.Node {
-    switch (intpr.specified_content) {
-      .library => |lpos|
-        intpr.ctx.logger.MultipleModuleKinds("library", pos, lpos),
-      .standalone => |*s|
-        intpr.ctx.logger.MultipleModuleKinds("standalone", pos, s.pos),
-      .fragment => |*f|
-        intpr.ctx.logger.MultipleModuleKinds("fragment", pos, f.pos),
-      .unspecified => {
-        if (options) |input| {
-          var list = std.ArrayList(model.locations.Ref).init(intpr.allocator);
-          try intpr.collectLocations(input, &list);
-          var registrar =
-            nyarna.ModuleLoader.OptionRegistrar{.ml = intpr.ctx.loader.?};
-          _ = try
-            intpr.processLocations(&list.items, .{.kind = .final}, &registrar);
-          try registrar.finalize(0);
-        }
-        return (
-          try intpr.node_gen.rootDef(pos, .fragment, root, params)
-        ).node();
-      }
-    }
-    return try intpr.node_gen.poison(pos);
+    return try (try VarProc.init(intpr, ns, pos)).node(defs);
   }
+
+  //---------------------
+  // prototype functions
+  //---------------------
 
   pub fn @"Textual::len"(
     eval: *nyarna.Evaluator,
@@ -729,39 +772,40 @@ pub const Checker = struct {
   }
 
   const ExpectedDataInst = ExpectedData(.{
-    .{"Ast", .ast},
-    .{"Bool", .@"enum", .boolean},
-    .{"Concat", .prototype},
-    .{"Definition", .definition},
-    .{"Enum", .prototype},
-    .{"Identifier", .textual, .identifier},
-    .{"Integer", .int, .integer},
-    .{"Intersection", .prototype},
-    .{"List", .prototype},
-    .{"Location", .location},
-    .{"Map", .prototype},
-    .{"Natural", .int, .natural},
-    .{"Numeric", .prototype},
-    .{"NumericImpl", .@"enum", .numeric_impl},
-    .{"Optional", .prototype},
-    .{"Positive", .int},
-    .{"Record", .prototype},
-    .{"Sequence", .prototype},
-    .{"Text", .textual, .text},
-    .{"Textual", .prototype},
-    .{"Type", .@"type"},
+    .{"Ast",             .ast},
+    .{"Bool",            .@"enum", .boolean},
+    .{"Concat",          .prototype},
+    .{"Definition",      .definition},
+    .{"Enum",            .prototype},
+    .{"Identifier",      .textual, .identifier},
+    .{"Integer",         .int, .integer},
+    .{"Intersection",    .prototype},
+    .{"List",            .prototype},
+    .{"Location",        .location},
+    .{"Map",             .prototype},
+    .{"Natural",         .int, .natural},
+    .{"Numeric",         .prototype},
+    .{"NumericImpl",     .@"enum", .numeric_impl},
+    .{"Optional",        .prototype},
+    .{"Positive",        .int},
+    .{"Record",          .prototype},
+    .{"Sequence",        .prototype},
+    .{"Text",            .textual, .text},
+    .{"Textual",         .prototype},
+    .{"Type",            .@"type"},
     .{"UnicodeCategory", .@"enum", .unicode_category},
-    .{"Void", .void},
-    .{"block", .keyword},
-    .{"builtin", .keyword},
-    .{"fragment", .keyword},
-    .{"if", .keyword},
-    .{"keyword", .keyword},
-    .{"library", .keyword},
-    .{"standalone", .keyword},
+    .{"Void",            .void},
+    .{"block",           .keyword},
+    .{"builtin",         .keyword},
+    .{"fragment",        .keyword},
+    .{"if",              .keyword},
+    .{"keyword",         .keyword},
+    .{"library",         .keyword},
+    .{"match",           .keyword},
+    .{"standalone",      .keyword},
   });
 
-  data: ExpectedDataInst.Array,
+  data  : ExpectedDataInst.Array,
   logger: *nyarna.errors.Handler,
   buffer: [256]u8 = undefined,
 
@@ -836,15 +880,15 @@ pub const Checker = struct {
   ) void {
     const pos = model.Position{
       .source = desc,
-      .start = model.Cursor.unknown(),
-      .end = model.Cursor.unknown(),
+      .start  = model.Cursor.unknown(),
+      .end    = model.Cursor.unknown(),
     };
     for (self.data) |*cur| {
       if (!cur.seen) switch (cur.kind) {
-        .@"type" => self.logger.MissingType(pos, cur.name),
+        .@"type"   => self.logger.MissingType(pos, cur.name),
         .prototype => self.logger.MissingPrototype(pos, cur.name),
-        .keyword => self.logger.MissingKeyword(pos, cur.name),
-        .builtin => self.logger.MissingBuiltin(pos, cur.name),
+        .keyword   => self.logger.MissingKeyword(pos, cur.name),
+        .builtin   => self.logger.MissingBuiltin(pos, cur.name),
       };
     }
     inline for (.{.@"enum", .numeric, .textual}) |f| {

@@ -18,7 +18,7 @@ types: *nyarna.Types,
 pub fn init(allocator: std.mem.Allocator, types: *nyarna.Types) Self {
   return .{
     .allocator = allocator,
-    .types = types,
+    .types     = types,
   };
 }
 
@@ -55,7 +55,7 @@ pub inline fn builtinGen(
   returns: std.meta.fieldInfo(Node.BuiltinGen, .returns).field_type,
 ) !*Node.BuiltinGen {
   return &(try self.node(pos, .{.builtingen = .{
-    .params = .{.unresolved = params},
+    .params  = .{.unresolved = params},
     .returns = returns,
   }})).data.builtingen;
 }
@@ -63,9 +63,9 @@ pub inline fn builtinGen(
 pub inline fn capture(
   self   : *Self,
   pos    : Position,
-  val    : ?model.BlockConfig.VarDef,
-  key    : ?model.BlockConfig.VarDef,
-  index  : ?model.BlockConfig.VarDef,
+  val    : ?Node.Capture.VarDef,
+  key    : ?Node.Capture.VarDef,
+  index  : ?Node.Capture.VarDef,
   content: *Node,
 ) !*Node.Capture {
   return &(try self.node(pos, .{.capture = .{
@@ -106,7 +106,7 @@ pub inline fn funcgen(
   variables: *model.VariableContainer,
 ) !*Node.Funcgen {
   return &(try self.node(pos, .{.funcgen = .{
-    .returns = returns, .params = .{.unresolved = params},
+    .returns   = returns, .params = .{.unresolved = params},
     .params_ns = params_ns, .body = body,
     .variables = variables, .cur_returns = self.types.every(),
   }})).data.funcgen;
@@ -142,7 +142,9 @@ pub inline fn location(
 ) !*Node.Location {
   std.debug.assert(@"type" != null or default != null);
   return &(try self.node(pos, .{.location = .{
-    .name = name, .@"type" = @"type", .default = default,
+    .name        = name,
+    .@"type"     = @"type",
+    .default     = default,
     .additionals = additionals,
   }})).data.location;
 }
@@ -179,6 +181,16 @@ pub fn locationFromValue(
   return loc_node;
 }
 
+pub inline fn match(
+  self   : *Self,
+  pos    : Position,
+  cases  : []Node.Match.Case,
+) !*Node.Match {
+  return &(try self.node(pos, .{.match = .{
+    .cases   = cases,
+  }})).data.match;
+}
+
 pub inline fn raccess(
   self         : *Self,
   pos          : Position,
@@ -188,10 +200,10 @@ pub inline fn raccess(
   ns: u15,
 ) !*Node.ResolvedAccess {
   return &(try self.node(pos, .{.resolved_access = .{
-    .base = base,
-    .path = path,
-    .last_name_pos = last_name_pos,
-    .ns = ns,
+    .base           = base,
+    .path           = path,
+    .last_name_pos  = last_name_pos,
+    .ns             = ns,
   }})).data.resolved_access;
 }
 
@@ -293,9 +305,9 @@ pub inline fn tgNumeric(
 ) !*Node.tg.Numeric {
   return &(try self.node(
     pos, .{.gen_numeric = .{
-      .backend = backend,
-      .min = min,
-      .max = max,
+      .backend  = backend,
+      .min      = min,
+      .max      = max,
       .suffixes = suffixes,
     }},
   )).data.gen_numeric;
@@ -333,9 +345,9 @@ pub inline fn tgPrototype(
 ) !*Node.tg.Prototype {
   return &(try self.node(
     pos, .{.gen_prototype = .{
-      .params = .{.unresolved = params},
+      .params      = .{.unresolved = params},
       .constructor = constructor,
-      .funcs = funcs,
+      .funcs       = funcs,
     }}
   )).data.gen_prototype;
 }
@@ -359,7 +371,7 @@ pub inline fn tgTextual(
 ) !*Node.tg.Textual {
   return &(try self.node(
     pos, .{.gen_textual = .{
-      .categories = categories,
+      .categories    = categories,
       .include_chars = include_chars,
       .exclude_chars = exclude_chars,
     }})).data.gen_textual;

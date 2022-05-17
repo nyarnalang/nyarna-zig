@@ -279,9 +279,8 @@ const AstEmitter = struct {
         const c = try self.push("CAPTURE");
         inline for (.{.val, .key, .index}) |name| {
           if (@field(cpt, @tagName(name))) |item| {
-            const char = EncodedCharacter.init(item.cmd_char);
             try self.emitLine(
-              "=VAR {s} {s}{s}", .{@tagName(name), char.repr(), item.name});
+              "=VAR {s} [{}]{s}", .{@tagName(name), item.ns, item.name});
           }
         }
         try c.pop();
@@ -339,6 +338,11 @@ const AstEmitter = struct {
           try dnode.pop();
         }
         try l.pop();
+      },
+      .match => |_| {
+        const m = try self.push("MATCH");
+        // TODO
+        try m.pop();
       },
       .seq => |s| {
         for (s.items) |i| {
@@ -530,6 +534,7 @@ const AstEmitter = struct {
             .node   => |node| {
               try self.emitLine(">KEY", .{});
               try self.process(node);
+              try self.emitLine(">VALUE", .{});
             },
             .direct => try self.emitLine(">DIRECT", .{}),
           }

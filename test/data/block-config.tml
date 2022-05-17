@@ -88,8 +88,8 @@
   -PROTO
   +PROTO name="wiz"
     +CAPTURE
-      =VAR val \v
-      =VAR index \i
+      =VAR val [0]v
+      =VAR index [0]i
     -CAPTURE
   -PROTO
   +PROTO name="raz"

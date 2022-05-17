@@ -6,10 +6,11 @@
 
 const std = @import("std");
 
-const Impl        = @import("Impl.zig");
-const Mapper      = @import("Mapper.zig");
-const nyarna      = @import("../../nyarna.zig");
-const syntaxes    = @import("syntaxes.zig");
+const EncodedCharacter = @import("../unicode.zig").EncodedCharacter;
+const Impl             = @import("Impl.zig");
+const Mapper           = @import("Mapper.zig");
+const nyarna           = @import("../../nyarna.zig");
+const syntaxes         = @import("syntaxes.zig");
 
 const Interpreter = nyarna.Interpreter;
 const model       = nyarna.model;
@@ -200,9 +201,8 @@ syntax_proc: ?*syntaxes.SpecialSyntax.Processor = null,
 /// recently parsed whitespace. might be either added to nodes to discarded
 /// depending on the following item.
 dangling_space: ?*model.Node = null,
-/// number of variables existing in intpr.variables when this level has
-/// been started.
-variable_start: usize,
+/// number of symbols existing in intpr.symbols when this level has been started
+sym_start: usize,
 semantics: enum{
   /// this level is for default content
   default,
@@ -269,6 +269,24 @@ pub fn implicitBlockConfig(self: *ContentLevel) ?*model.BlockConfig {
   };
 }
 
+fn varDef(
+  ip: *Interpreter,
+  input: ?model.BlockConfig.VarDef,
+) ?model.Node.Capture.VarDef {
+  if (input) |vd| {
+    if (ip.command_characters.get(vd.cmd_char)) |ns_index| {
+      return model.Node.Capture.VarDef{
+        .ns   = ns_index,
+        .name = vd.name,
+        .pos  = vd.pos,
+      };
+    }
+    const chr = EncodedCharacter.init(vd.cmd_char);
+    ip.ctx.logger.IsNotANamespaceCharacter(chr.repr(), vd.pos, vd.pos);
+  }
+  return null;
+}
+
 pub fn finalize(self: *ContentLevel, p: *Impl) !*model.Node {
   const ip = p.intpr();
   var capture: ?*model.Node.Capture = null;
@@ -276,16 +294,13 @@ pub fn finalize(self: *ContentLevel, p: *Impl) !*model.Node {
     if (c.val != null or c.key != null or c.index != null) {
       // position and content set later from the calculated content_node.
       capture = try ip.node_gen.capture(
-        undefined, c.val, c.key, c.index, undefined);
+        undefined, varDef(ip, c.val), varDef(ip, c.key), varDef(ip, c.index),
+        undefined);
     }
     try p.revertBlockConfig(c.*);
   }
 
-  while (ip.variables.items.len > self.variable_start) {
-    const av = ip.variables.pop();
-    const ns = ip.namespace(av.ns);
-    ns.data.shrinkRetainingCapacity(ns.data.count() - 1);
-  }
+  ip.resetSyms(self.sym_start);
 
   const alloc = p.allocator();
   const content_node = if (self.syntax_proc) |proc| (

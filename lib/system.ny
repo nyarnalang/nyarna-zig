@@ -169,6 +169,11 @@
     else: \Optional(\Ast)
   \end(keyword)
 
+  match = \keyword:
+    subject: \Ast
+    cases: \Map(\Type, \Ast) {primary, varmap}
+  \end(keyword)
+
   Bool = \Enum(false, true)
   NumericImpl = \Enum(int, float)
   Integer = \Numeric(int)

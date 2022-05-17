@@ -129,7 +129,7 @@ pub const ToSignature = struct {
         try self.intpr.ctx.global().create(model.VariableContainer);
       container.* = .{.num_values = 0};
       try self.intpr.var_containers.append(self.intpr.allocator, .{
-        .offset = self.intpr.variables.items.len,
+        .offset = self.intpr.symbols.items.len,
         .container = container,
       });
     }
@@ -342,10 +342,12 @@ pub const ToSignature = struct {
           },
           else => content,
         };
-        break :blk try self.intpr.genValueNode(
-          (try self.intpr.ctx.values.ast(
-            inner, ac.container, ac.defined_variables.items, capture)).value()
-        );
+        break :blk try self.intpr.genValueNode((
+          try self.intpr.ctx.values.ast(
+            inner, ac.container,
+            self.intpr.symbols.items[ac.offset..self.intpr.symbols.items.len],
+            capture)
+        ).value());
       },
       else => blk: {
         if (

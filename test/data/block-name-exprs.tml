@@ -33,23 +33,25 @@
 8:12[66] ws_break
 9:1[67] end_source
 --- rawast
-+UCALL
-  +TARGET
-    =SYMREF [0]match
-  -TARGET
-  +PROTO pos
++RCALL
+  =SYMREF .std.system.match
+  >ARG subject
+  +AST
     =SYMREF [0]value
-  -PROTO
-  +PROTO name_expr
+  -AST
+  >ARG cases
+  +VARMAP
     >KEY
     =SYMREF .std.system.Text
     >VALUE
-    =LIT text "lorem\n"
-  -PROTO
-  +PROTO name_expr
+    +AST
+      =LIT text "lorem\n"
+    -AST
     >KEY
     =SYMREF .std.system.Integer
     >VALUE
-    =LIT text "ipsum"
-  -PROTO
--UCALL
+    +AST
+      =LIT text "ipsum"
+    -AST
+  -VARMAP
+-RCALL

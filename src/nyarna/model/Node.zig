@@ -79,12 +79,18 @@ pub const Branches = struct {
 /// Capture nodes are generated from block configuration that defines capture
 /// variables. They wrap the actual content.
 pub const Capture = struct {
+  pub const VarDef = struct {
+    ns  : u15,
+    name: []const u8,
+    pos : model.Position,
+  };
+
   /// given name for 'val' in block config
-  val  : ?model.BlockConfig.VarDef = null,
+  val  : ?VarDef = null,
   /// given name for 'key' in block config
-  key  : ?model.BlockConfig.VarDef = null,
+  key  : ?VarDef = null,
   /// given name for 'index' in block config, if any
-  index: ?model.BlockConfig.VarDef = null,
+  index: ?VarDef = null,
   /// block's content
   content: *Node,
 
@@ -204,8 +210,19 @@ pub const Seq = struct {
 };
 
 pub const Match = struct {
-  subject: *Node,
-  cases  : []Varmap.Item,
+  pub const Case = struct {
+    t        : *Node,
+    content  : *Value.Ast,
+    /// if given, is initially def, which will transition to sym. sym will not
+    /// have its container set yet. 'none' if no val capture was given in block.
+    variable : union(enum) {
+      def: Node.Capture.VarDef,
+      sym: *model.Symbol.Variable,
+      none
+    },
+  };
+
+  cases  : []Case,
 
   pub inline fn node(self: *@This()) *Node {
     return Node.parent(self);
@@ -460,6 +477,7 @@ pub const Data = union(enum) {
   import           : Import,
   literal          : Literal,
   location         : Location,
+  match            : Match,
   resolved_access  : ResolvedAccess,
   resolved_call    : ResolvedCall,
   resolved_symref  : ResolvedSymref,
@@ -492,6 +510,7 @@ fn parent(it: anytype) *Node {
     Import           => offset(Data, "import"),
     Literal          => offset(Data, "literal"),
     Location         => offset(Data, "location"),
+    Match            => offset(Data, "match"),
     ResolvedAccess   => offset(Data, "resolved_access"),
     ResolvedCall     => offset(Data, "resolved_call"),
     ResolvedSymref   => offset(Data, "resolved_symref"),

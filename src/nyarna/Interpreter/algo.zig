@@ -419,8 +419,8 @@ pub const DeclareResolution = struct {
 
     // define symbols with which the instance type (via \This) and its arguments
     // to the prototype (via their names) can be referenced.
-    const mark = ns_data.mark();
-    defer ns_data.reset(mark);
+    const mark = self.intpr.markSyms();
+    defer self.intpr.resetSyms(mark);
     const container =
       try self.intpr.ctx.global().create(model.VariableContainer);
     container.* = .{.num_values = switch (prototype) {

@@ -125,10 +125,10 @@ fn pushLevel(self: *@This(), fullast: bool) !void {
     std.debug.assert(self.curLevel().command.info != .unknown);
   }
   try self.levels.append(self.allocator(), ContentLevel{
-    .start          = self.lexer.recent_end,
-    .command        = undefined,
-    .fullast        = fullast,
-    .variable_start = self.intpr().variables.items.len,
+    .start     = self.lexer.recent_end,
+    .command   = undefined,
+    .fullast   = fullast,
+    .sym_start = self.intpr().symbols.items.len,
   });
 }
 
