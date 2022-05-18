@@ -46,7 +46,7 @@
       =SYMREF .std.system.Text
       >VALUE
       +AST
-        =LIT text "lorem\n"
+        =LIT text "lorem"
       -AST
       >KEY
       =SYMREF .std.system.Location

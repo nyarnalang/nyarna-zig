@@ -34,7 +34,7 @@
     +CASE
       =TYPE textual .std.system.Text
     -CASE
-    =TEXT Literal "lorem\n"
+    =TEXT Literal "lorem"
     +CASE
       =TYPE record .doc.input.Bold
     -CASE

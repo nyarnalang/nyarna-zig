@@ -475,7 +475,7 @@ inline fn procTextual(self: *@This()) !void {
   }
   const lvl = self.curLevel();
   const pos = switch (self.cur) {
-    .block_end_open, .block_name_sep, .comma, .name_sep, .list_end,
+    .block_end_open, .block_name_sep, .comma, .name_sep, .list_start, .list_end,
     .list_end_missing_colon, .end_source => blk: {
       content.shrinkAndFree(self.allocator(), non_space_len);
       break :blk self.intpr().input.between(textual_start, non_space_end);
