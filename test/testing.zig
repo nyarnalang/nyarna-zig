@@ -646,7 +646,7 @@ const AstEmitter = struct {
           const c = try self.push("CASE");
           try self.processType(item.key_ptr.t);
           try c.pop();
-          try self.processExpr(item.value_ptr.*);
+          try self.processExpr(item.value_ptr.expr);
         }
         try m.pop();
       },

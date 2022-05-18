@@ -4,40 +4,20 @@
   Bold = \Record:
     content: \Text {primary}
   \end(Record)
-\end(declare)
-\var:
-  val: \Intersection(\Text, \Bold) = \Text(foo)
-\end(var)
 
-\match(\val):
-:(\Text):
-  lorem
-:(\Bold):
-  ipsum
-\end(match)
---- expr
-+SEQUENCE
-  >ITEM 2
-  =VOID
-  +ASSIGNMENT
-    =TARGET val
-    >EXPR
-    +CALL
-      =TYPE textual .std.system.Text
-      >ARG input
-      =TEXT Literal "foo"
-    -CALL
-  -ASSIGNMENT
-  >ITEM 0
-  +MATCH
-    =GETVAR val
-    +CASE
-      =TYPE textual .std.system.Text
-    -CASE
-    =TEXT Literal "lorem"
-    +CASE
-      =TYPE record .doc.input.Bold
-    -CASE
-    =TEXT Literal "ipsum"
-  -MATCH
--SEQUENCE
+  typeOf = \func:
+    input: \Intersection(\Text, \Bold)
+  :body:
+    \match(\input):
+    :(\Text):<val \v>
+      Text: \v
+    :(\Bold):<val \b>
+      Bold: \b::content
+    \end(match)
+  \end(func)
+\end(declare)
+
+\typeOf(warbl)
+\typeOf(\Bold(wirbl))
+--- document
+=TEXT Text "Text: warbl\nBold: wirbl"

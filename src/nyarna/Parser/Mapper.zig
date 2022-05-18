@@ -124,7 +124,7 @@ pub const ToSignature = struct {
   }
 
   fn checkFrameRoot(self: *@This(), t: model.Type) !void {
-    if (t.isNamed(.frame_root)) {
+    if (ArgBehavior.calc(t) == .frame_root) {
       const container =
         try self.intpr.ctx.global().create(model.VariableContainer);
       container.* = .{.num_values = 0};
@@ -149,8 +149,15 @@ pub const ToSignature = struct {
         for (self.signature.parameters) |p, i| {
           const index = @intCast(u21, i);
           if (std.mem.eql(u8, name, p.name)) {
-            if (p.capture == .varargs) self.cur_pos = index;
-            try self.checkFrameRoot(p.spec.t);
+            const t = if (p.capture == .varargs) blk: {
+              self.cur_pos = index;
+              break :blk if (input == .direct) (
+                p.spec.t
+              ) else p.spec.t.structural.list.inner;
+            } else if (self.signature.varmap == index) (
+              p.spec.t.structural.map.value
+            ) else p.spec.t;
+            try self.checkFrameRoot(t);
             return Cursor{
               .param  = .{.index = index},
               .config = flag == .block_with_config,
@@ -210,6 +217,8 @@ pub const ToSignature = struct {
       .name_expr => |node| {
         if (self.signature.varmap) |index| {
           self.last_key = node;
+          try self.checkFrameRoot(
+            self.signature.parameters[index].spec.t.structural.map.value);
           return Cursor{
             .param  = .{.index = index},
             .config = flag == .block_with_config,

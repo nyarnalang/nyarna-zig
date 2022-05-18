@@ -1286,15 +1286,56 @@ pub fn interpretCallToChain(
   }
 }
 
-fn tryInterpretMatch(
+const CheckResult = enum {
+  success, unfinished, poison,
+};
+
+/// interprets the type expressions for the cases. If capture variables are
+/// declared, creates them and resolves references to them inside the body.
+fn ensureMatchTypesPresent(
   self : *Interpreter,
   match: *model.Node.Match,
   stage: Stage,
-) nyarna.Error!?*model.Expression {
-  var seen_unfinished = false;
-  var seen_poison = false;
-  for (match.cases) |*case| {
-    if (
+) nyarna.Error!CheckResult {
+  var res: CheckResult = .success;
+  for (match.cases) |*case| switch (case.variable) {
+    .def => |val| {
+      if (
+        try self.associate(case.t, self.ctx.types().@"type"().predef(), stage)
+      ) |expr| {
+        case.t.data = .{.expression = expr};
+        const value = try self.ctx.evaluator().evaluate(expr);
+        expr.data = .{.value = value};
+        expr.expected_type = try self.ctx.types().valueType(value);
+        switch (value.data) {
+          .@"type" => |tv| {
+            const sym = try self.ctx.global().create(model.Symbol);
+            sym.* = .{
+              .defined_at = expr.pos,
+              .name       = try self.ctx.global().dupe(u8, val.name),
+              .data       = .{.variable = .{
+                .spec       = tv.t.at(value.origin),
+                .container  = case.content.container.?,
+                .offset     = case.content.container.?.num_values,
+                .kind       = .given,
+              }},
+            };
+            case.variable = .{.sym = &sym.data.variable};
+            const ns = self.namespace(val.ns);
+            const mark = self.markSyms();
+            defer self.resetSyms(mark);
+            if (try ns.tryRegister(self, sym)) {
+              _ = try
+                self.tryInterpret(case.content.root, .{.kind = .resolve});
+            }
+          },
+          .poison => res = .poison,
+          else => unreachable,
+        }
+      } else if (res != .poison) res = .unfinished;
+    },
+    .sym  => {},
+    .none => if (
       try self.associate(case.t, self.ctx.types().@"type"().predef(), stage)
     ) |expr| {
       case.t.data = .{.expression = expr};
@@ -1302,56 +1343,65 @@ fn tryInterpretMatch(
       expr.data = .{.value = value};
       expr.expected_type = try self.ctx.types().valueType(value);
       switch (value.data) {
-        .@"type" => |tv| {
-          switch (case.variable) {
-          .def => |val| {
-              const sym = try self.ctx.global().create(model.Symbol);
-              sym.* = .{
-                .defined_at = expr.pos,
-                .name       = try self.ctx.global().dupe(u8, val.name),
-                .data       = .{.variable = .{
-                  .spec       = tv.t.at(value.origin),
-                  .container  = undefined,
-                  .offset     = 0,
-                  .kind       = .given,
-                }},
-              };
-              case.variable = .{.sym = &sym.data.variable};
-              const ns = self.namespace(val.ns);
-              const mark = self.markSyms();
-              defer self.resetSyms(mark);
-              if (try ns.tryRegister(self, sym)) {
-                _ = try
-                  self.tryInterpret(case.content.root, .{.kind = .resolve});
-              }
-            },
-            .sym, .none => {},
-          }
-          if (try self.tryInterpret(case.content.root, stage)) |content_expr| {
-            case.content.root.data = .{.expression = content_expr};
-            if (content_expr.expected_type.isNamed(.poison)) seen_poison = true;
-          } else seen_unfinished = true;
-        },
-        .poison => seen_poison = true,
-        else    => unreachable,
+        .@"type" => {},
+        .poison  => res = .poison,
+        else     => unreachable,
       }
-    } else seen_unfinished = true;
+    },
+  };
+  return res;
+}
+
+fn tryInterpretMatch(
+  self : *Interpreter,
+  match: *model.Node.Match,
+  stage: Stage,
+) nyarna.Error!?*model.Expression {
+  if (stage.kind == .resolve) {
+    if (match.subject) |subject| _ = try self.tryInterpret(subject, stage);
+    for (match.cases) |case| {
+      _ = try self.tryInterpret(case.t, stage);
+      _ = try self.tryInterpret(case.content.root, stage);
+    }
+    return null;
   }
-  if (seen_poison) {
-    const expr = try self.ctx.global().create(model.Expression);
-    expr.* = .{
-      .pos = match.node().pos,
-      .data = .poison,
-      .expected_type = self.ctx.types().poison(),
-    };
-    return expr;
-  } else if (seen_unfinished) return null;
+  var res = try self.ensureMatchTypesPresent(match, stage);
+  switch (res) {
+    .unfinished => return null,
+    .poison     => {},
+    .success    => {
+      for (match.cases) |case| {
+        if (try self.tryInterpret(case.content.root, stage)) |content_expr| {
+          case.content.root.data = .{.expression = content_expr};
+          if (content_expr.expected_type.isNamed(.poison)) res = .poison;
+        } else if (res != .poison) res = .unfinished;
+      }
+    },
+  }
+
+  switch (res) {
+    .poison => {
+      const expr = try self.ctx.global().create(model.Expression);
+      expr.* = .{
+        .pos = match.node().pos,
+        .data = .poison,
+        .expected_type = self.ctx.types().poison(),
+      };
+      return expr;
+    },
+    .unfinished => return null,
+    else        => {}
+  }
 
   var builder = try MatchBuilder.init(self, match.node().pos);
   for (match.cases) |case| {
+    const has_var =
+      if (case.content.capture) |capture| capture.val != null else false;
     try builder.push(
       case.t.data.expression.data.value.data.@"type".t.at(case.t.pos),
       case.content.root.data.expression,
+      case.content.container.?,
+      has_var,
     );
   }
   if (match.subject) |subject| {
@@ -2828,7 +2878,7 @@ pub fn probeType(
         node.data = .{.expression = expr};
         return expr.expected_type;
       } else return null,
-    .assign, .builtingen, .import, .funcgen, .match, .root_def, .vt_setter => {
+    .assign, .builtingen, .import, .funcgen, .root_def, .vt_setter => {
       if (try self.tryInterpret(node, stage)) |expr| {
         node.data = .{.expression = expr};
         return expr.expected_type;
@@ -2860,6 +2910,24 @@ pub fn probeType(
       return self.ctx.types().literal();
     },
     .location => return self.ctx.types().location(),
+    .match    => |*match| {
+      switch (try self.ensureMatchTypesPresent(match, stage)) {
+        .unfinished => return null,
+        .poison     => {
+          node.data = .poison;
+          return self.ctx.types().poison();
+        },
+        .success => {
+          var ret = self.ctx.types().every();
+          for (match.cases) |case| {
+            if (try self.probeType(case.content.root, stage, sloppy)) |t| {
+              ret = try self.ctx.types().sup(ret, t);
+            } else return null;
+          }
+          return ret;
+        }
+      }
+    },
     .seq      => |*seq| {
       var builder = nyarna.Types.SequenceBuilder.init(
         self.ctx.types(), self.allocator, false);

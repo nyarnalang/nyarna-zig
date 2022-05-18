@@ -710,7 +710,7 @@ fn supWithStructure(
         .concat => model.Type{.structural = struc},
         else    => (try self.optional(struc.typedef())) orelse self.poison(),
       },
-      .space, .literal, .textual => {},
+      .space, .literal, .textual, .record => {},
       .@"type" => return switch (struc.*) {
         .callable => |*clb|
           if (clb.kind == .@"type") other else self.poison(),

@@ -282,7 +282,7 @@ pub const SpecType = struct {
   t  : Type,
   pos: Position,
 
-  /// this context ignores the position.
+  /// this content ignores the position.
   pub const HashContext = struct {
     pub fn hash(_: HashContext, st: SpecType) u64 {
       return switch (st.t) {

@@ -171,11 +171,11 @@
 
   match = \keyword:
     subject: \Ast
-    cases: \Map(\Type, \Ast) {primary, varmap}
+    cases: \Map(\Type, \FrameRoot) {primary, varmap}
   \end(keyword)
 
   matcher = \keyword:
-    cases: \Map(\Type, \Ast) {primary, varmap}
+    cases: \Map(\Type, \FrameRoot) {primary, varmap}
   \end(keyword)
 
   Bool = \Enum(false, true)

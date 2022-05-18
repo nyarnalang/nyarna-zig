@@ -270,7 +270,7 @@ pub fn implicitBlockConfig(self: *ContentLevel) ?*model.BlockConfig {
 }
 
 fn varDef(
-  ip: *Interpreter,
+  ip   : *Interpreter,
   input: ?model.BlockConfig.VarDef,
 ) ?model.Node.Capture.VarDef {
   if (input) |vd| {

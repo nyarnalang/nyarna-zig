@@ -271,7 +271,7 @@ pub const Named = struct {
     record : Record,
     // what follows are unique intrinsic types.
     @"void", prototype, schema, extension, ast, frame_root, block_header,
-    @"type", space, literal, raw, location, definition, backend, poison, every,
+    @"type", space, literal, location, definition, backend, poison, every,
   };
   /// position at which the type has been declared.
   at: Position,
@@ -386,7 +386,7 @@ pub const Type = union(enum) {
     return switch (t) {
       .structural => false,
       .named => |it| switch (it.data) {
-        .textual, .int, .float, .@"enum", .space, .literal, .raw => true,
+        .textual, .int, .float, .@"enum", .space, .literal => true,
         else => false,
       },
     };

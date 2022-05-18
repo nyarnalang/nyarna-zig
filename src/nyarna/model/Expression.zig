@@ -84,8 +84,15 @@ pub const Location = struct {
 };
 
 pub const Match = struct {
+  pub const Body = struct {
+    expr     : *Expression,
+    container: *model.VariableContainer,
+    /// true if a block capture exists.
+    has_var  : bool,
+  };
+
   pub const HashMap = std.HashMapUnmanaged(
-    model.SpecType, *Expression, model.SpecType.HashContext,
+    model.SpecType, Body, model.SpecType.HashContext,
     std.hash_map.default_max_load_percentage
   );
 

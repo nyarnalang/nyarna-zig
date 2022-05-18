@@ -29,7 +29,13 @@ inline fn types(self: *@This()) *nyarna.Types {
   return self.intpr.ctx.types();
 }
 
-pub fn push(self: *@This(), t: model.SpecType, expr: *model.Expression) !void {
+pub fn push(
+  self     : *@This(),
+  t        : model.SpecType,
+  expr     : *model.Expression,
+  container: *model.VariableContainer,
+  has_var  : bool,
+) !void {
   var iter = self.match.cases.iterator();
   while (iter.next()) |item| {
     if (
@@ -43,7 +49,11 @@ pub fn push(self: *@This(), t: model.SpecType, expr: *model.Expression) !void {
       return;
     }
   }
-  try self.match.cases.putNoClobber(self.intpr.ctx.global(), t, expr);
+  try self.match.cases.putNoClobber(self.intpr.ctx.global(), t, .{
+    .expr      = expr,
+    .container = container,
+    .has_var   = has_var,
+  });
 }
 
 pub fn finalize(self: *@This(), subject: *model.Node) !*model.Expression {
@@ -61,10 +71,10 @@ pub fn finalize(self: *@This(), subject: *model.Node) !*model.Expression {
       in_type = new_in;
     }
     const new_out =
-      try self.types().sup(out_type, item.value_ptr.*.expected_type);
+      try self.types().sup(out_type, item.value_ptr.expr.expected_type);
     if (new_out.isNamed(.poison)) {
       self.intpr.ctx.logger.IncompatibleTypes(
-        &.{item.value_ptr.*.expected_type.at(item.value_ptr.*.pos),
+        &.{item.value_ptr.expr.expected_type.at(item.value_ptr.expr.pos),
            out_type.at(self.match.expr().pos)});
       seen_poison = true;
     } else {

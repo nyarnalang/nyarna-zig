@@ -42,8 +42,6 @@ pub fn allocateStackFrame(
     return nyarna.Error.nyarna_stack_overflow;
   }
   const ret = data.stack_ptr;
-  //std.debug.print("[stack] {} frame with {} parameters\n",
-  //  .{@ptrToInt(ret), sig.parameters.len});
   data.stack_ptr += num_variables + 1;
   ret.* = .{.frame_ref = prev_frame};
   return ret;
@@ -51,12 +49,11 @@ pub fn allocateStackFrame(
 
 fn setupParameterStackFrame(
   self        : *Evaluator,
-  sig         : *const model.Signature,
+  num_values  : usize,
   ns_dependent: bool,
   prev_frame  : ?[*]model.StackItem,
 ) ![*]model.StackItem {
-  const num_params =
-    sig.parameters.len + if (ns_dependent) @as(usize, 1) else 0;
+  const num_params = num_values + if (ns_dependent) @as(usize, 1) else 0;
   return self.allocateStackFrame(num_params, prev_frame);
 }
 
@@ -66,7 +63,6 @@ pub fn resetStackFrame(
   num_variables: usize,
   ns_dependent : bool,
 ) void {
-  //std.debug.print("[stack] {} pop\n", .{@ptrToInt(frame_ptr.*.?)});
   frame_ptr.* = frame_ptr.*.?[0].frame_ref;
   self.ctx.data.stack_ptr -= num_variables + 1;
   if (ns_dependent) self.ctx.data.stack_ptr -= 1;
@@ -80,8 +76,6 @@ pub fn fillParameterStackFrame(
   var seen_poison = false;
   for (exprs) |expr, i| {
     const val = try self.evaluate(expr);
-    //std.debug.print(
-    //  "[stack] {} <- {s}\n", .{@ptrToInt(&frame[i]), @tagName(val.data)});
     frame[i] = .{.value = val};
     if (val.data == .poison) seen_poison = true;
   }
@@ -139,7 +133,7 @@ fn callConstructor(
     self.registeredFnForCtx(@TypeOf(impl_ctx), constr.impl_index);
   std.debug.assert(args.len == callable.sig.parameters.len);
   var frame: ?[*]model.StackItem = try self.setupParameterStackFrame(
-    callable.sig, false, null);
+    callable.sig.parameters.len, false, null);
   defer self.resetStackFrame(&frame, callable.sig.parameters.len, false);
   return if (
     try self.fillParameterStackFrame(args, frame.? + 1)
@@ -159,7 +153,7 @@ fn evalExtFuncCall(
     self.registeredFnForCtx(@TypeOf(impl_ctx), ef.impl_index);
   std.debug.assert(args.len == func.sig().parameters.len);
   func.variables.cur_frame = try self.setupParameterStackFrame(
-    func.sig(), ef.ns_dependent, func.variables.cur_frame);
+    func.variables.num_values, ef.ns_dependent, func.variables.cur_frame);
   var frame_ptr = func.argStart();
   var ns_val: model.Value = undefined;
   if (ef.ns_dependent) {
@@ -179,8 +173,7 @@ fn evalExtFuncCall(
     frame_ptr += 1;
   }
   defer self.resetStackFrame(
-    &func.variables.cur_frame, func.sig().parameters.len,
-    ef.ns_dependent);
+    &func.variables.cur_frame, func.variables.num_values, ef.ns_dependent);
   if (func.name) |fname| if (fname.parent_type) |ptype| {
     self.target_type = ptype;
   };
@@ -203,9 +196,9 @@ fn evalCall(
           impl_ctx, call.expr().pos, fr.func, call.ns, call.exprs),
         .ny => |*nf| {
           fr.func.variables.cur_frame = try self.setupParameterStackFrame(
-            fr.func.sig(), false, fr.func.variables.cur_frame);
+            fr.func.variables.num_values, false, fr.func.variables.cur_frame);
           defer self.resetStackFrame(
-            &fr.func.variables.cur_frame, fr.func.sig().parameters.len, false
+            &fr.func.variables.cur_frame, fr.func.variables.num_values, false
           );
           if (try self.fillParameterStackFrame(
               call.exprs, fr.func.argStart())) {
@@ -227,7 +220,7 @@ fn evalCall(
               call.exprs.len == rec.constructor.sig.parameters.len);
             var frame: ?[*]model.StackItem =
               try self.setupParameterStackFrame(
-                rec.constructor.sig, false, null);
+                rec.constructor.sig.parameters.len, false, null);
             defer self.resetStackFrame(
               &frame, rec.constructor.sig.parameters.len, false);
             if (
@@ -397,7 +390,7 @@ fn doConvert(
   }
   switch (to) {
     .named => |named| switch (named.data) {
-      .literal, .space, .raw => {
+      .literal, .space => {
         std.debug.assert(from.isNamed(.void));
         return (try self.ctx.values.textScalar(value.origin, to, "")).value();
       },
@@ -558,7 +551,20 @@ fn evalMatch(
     subject.origin = match.expr().pos;
     return subject;
   }
-  unreachable; // TODO
+  if (match.cases.get(s_type.predef())) |case| {
+    const frame = try self.setupParameterStackFrame(
+      case.container.num_values, case.has_var, case.container.cur_frame);
+    case.container.cur_frame = frame;
+    defer self.resetStackFrame(
+      &case.container.cur_frame, case.container.num_values, case.has_var);
+    if (case.has_var) {
+      (frame + 1 + case.container.num_values).* = .{.value = subject};
+    }
+    return self.evaluate(case.expr);
+  } else {
+    std.debug.panic(
+      "unexpected type for match subject: {s}", .{s_type.formatter()});
+  }
 }
 
 fn evalSequence(
@@ -858,12 +864,13 @@ fn coerce(
       .poison => return value,
       // for .literal, this can only be a coercion from .space.
       // for .textual, this could be a coercion from any scalar type.
-      .literal, .raw, .textual => {
+      .literal, .textual => {
         const content = switch (value.data) {
           .text    => |*text_val|  text_val.content,
           .int     => |*int_val|   try self.toString(int_val),
           .float   => |*float_val| try self.toString(float_val),
           .@"enum" => |ev|         ev.t.values.entries.items(.key)[ev.index],
+          .void    => "",
           // type checking ensures this never happens
           else => unreachable,
         };
