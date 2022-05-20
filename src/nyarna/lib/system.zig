@@ -345,11 +345,10 @@ const VarProc = struct {
   }
 };
 
-pub fn createMatch(
+pub fn createMatchCases(
   intpr: *Interpreter,
-  pos    : model.Position,
   cases  : *model.Node.Varmap,
-) nyarna.Error!*model.Node.Match {
+) nyarna.Error![]model.Node.Match.Case {
   const map_type = (
     try intpr.ctx.types().map(
       intpr.ctx.types().@"type"(), intpr.ctx.types().ast())
@@ -385,7 +384,7 @@ pub fn createMatch(
       });
     },
   };
-  return try intpr.node_gen.match(pos, collected.items);
+  return collected.items;
 }
 
 pub const Impl = lib.Provider.Wrapper(struct {
@@ -578,17 +577,39 @@ pub const Impl = lib.Provider.Wrapper(struct {
     subject: *model.Node,
     cases  : *model.Node.Varmap,
   ) nyarna.Error!*model.Node {
-    const ret = try createMatch(intpr, pos, cases);
-    ret.subject = subject;
-    return ret.node();
+    const content = try createMatchCases(intpr, cases);
+    return (try intpr.node_gen.match(pos, subject, content)).node();
   }
 
   pub fn matcher(
     intpr: *Interpreter,
-    pos    : model.Position,
-    cases  : *model.Node.Varmap,
+    pos  : model.Position,
+    cases: *model.Node.Varmap,
   ) nyarna.Error!*model.Node {
-    return (try createMatch(intpr, pos, cases)).node();
+    const container = try intpr.ctx.global().create(model.VariableContainer);
+    container.num_values = 1;
+    const sym = try intpr.ctx.global().create(model.Symbol);
+    sym.* = .{
+      .defined_at = pos,
+      .name       = "value",
+      .data = .{.variable = .{
+        // only set during interpretation.
+        .spec      = undefined,
+        .container = container,
+        .offset    = 0,
+        .kind      = .given,
+      }},
+    };
+    const subject = try intpr.node_gen.rsymref(pos, .{
+      .ns       = 0,
+      .sym      = sym,
+      .name_pos = pos,
+    });
+
+    const content = try match(intpr, pos, subject.node(), cases);
+
+    return (try intpr.node_gen.matcher(
+      pos, &content.data.match, container, &sym.data.variable)).node();
   }
 
   pub fn standalone(

@@ -182,14 +182,30 @@ pub fn locationFromValue(
 }
 
 pub inline fn match(
-  self : *Self,
-  pos  : Position,
-  cases: []Node.Match.Case,
+  self   : *Self,
+  pos    : Position,
+  subject: *Node,
+  cases  : []Node.Match.Case,
 ) !*Node.Match {
   return &(try self.node(pos, .{.match = .{
-    .subject = null,
+    .subject = subject,
     .cases   = cases,
   }})).data.match;
+}
+
+pub inline fn matcher(
+  self     : *Self,
+  pos      : Position,
+  body     : *Node.Match,
+  container: *model.VariableContainer,
+  variable : *Symbol.Variable,
+) !*Node.Matcher {
+  return &(try self.node(pos, .{.matcher = .{
+    .body        = body,
+    .container   = container,
+    .variable    = variable,
+    .cur_returns = undefined,
+  }})).data.matcher;
 }
 
 pub inline fn raccess(

@@ -11,14 +11,15 @@
 
 const std = @import("std");
 
-const algo         = @import("Interpreter/algo.zig");
-const chains       = @import("Interpreter/chains.zig");
-const graph        = @import("Interpreter/graph.zig");
-const MatchBuilder = @import("Interpreter/MatchBuilder.zig");
-const nyarna       = @import("../nyarna.zig");
-const Parser       = @import("Parser.zig");
-const syntaxes     = @import("Parser/syntaxes.zig");
-const unicode      = @import("unicode.zig");
+const algo                = @import("Interpreter/algo.zig");
+const chains              = @import("Interpreter/chains.zig");
+const graph               = @import("Interpreter/graph.zig");
+const IntersectionChecker = @import("Interpreter/IntersectionChecker.zig");
+const MatchBuilder        = @import("Interpreter/MatchBuilder.zig");
+const nyarna              = @import("../nyarna.zig");
+const Parser              = @import("Parser.zig");
+const syntaxes            = @import("Parser/syntaxes.zig");
+const unicode             = @import("unicode.zig");
 
 const errors = nyarna.errors;
 const lib    = nyarna.lib;
@@ -1294,11 +1295,11 @@ const CheckResult = enum {
 /// declared, creates them and resolves references to them inside the body.
 fn ensureMatchTypesPresent(
   self : *Interpreter,
-  match: *model.Node.Match,
+  cases: []model.Node.Match.Case,
   stage: Stage,
 ) nyarna.Error!CheckResult {
   var res: CheckResult = .success;
-  for (match.cases) |*case| switch (case.variable) {
+  for (cases) |*case| switch (case.variable) {
     .def => |val| {
       if (
         try self.associate(case.t, self.ctx.types().@"type"().predef(), stage)
@@ -1352,24 +1353,16 @@ fn ensureMatchTypesPresent(
   return res;
 }
 
-fn tryInterpretMatch(
+fn tryInterpretMatchCases(
   self : *Interpreter,
   match: *model.Node.Match,
   stage: Stage,
-) nyarna.Error!?*model.Expression {
-  if (stage.kind == .resolve) {
-    if (match.subject) |subject| _ = try self.tryInterpret(subject, stage);
-    for (match.cases) |case| {
-      _ = try self.tryInterpret(case.t, stage);
-      _ = try self.tryInterpret(case.content.root, stage);
-    }
-    return null;
-  }
-  var res = try self.ensureMatchTypesPresent(match, stage);
+  builder: *MatchBuilder,
+) nyarna.Error!CheckResult {
+  var res = try self.ensureMatchTypesPresent(match.cases, stage);
   switch (res) {
-    .unfinished => return null,
-    .poison     => {},
-    .success    => {
+    .unfinished, .poison => return res,
+    .success => {
       for (match.cases) |case| {
         if (try self.tryInterpret(case.content.root, stage)) |content_expr| {
           case.content.root.data = .{.expression = content_expr};
@@ -1379,7 +1372,38 @@ fn tryInterpretMatch(
     },
   }
 
-  switch (res) {
+  if (res != .success) return res;
+
+  for (match.cases) |case| {
+    const has_var =
+      if (case.content.capture) |capture| capture.val != null else false;
+    try builder.push(
+      &case.t.data.expression.data.value.data.@"type".t,
+      case.t.pos,
+      case.content.root.data.expression,
+      case.content.container.?,
+      has_var,
+    );
+  }
+  return CheckResult.success;
+}
+
+fn tryInterpretMatch(
+  self : *Interpreter,
+  match: *model.Node.Match,
+  stage: Stage,
+) nyarna.Error!?*model.Expression {
+  if (stage.kind == .resolve) {
+    _ = try self.tryInterpret(match.subject, stage);
+    for (match.cases) |case| {
+      _ = try self.tryInterpret(case.t, stage);
+      _ = try self.tryInterpret(case.content.root, stage);
+    }
+    return null;
+  }
+
+  var builder = try MatchBuilder.init(self, match.node().pos, match.cases.len);
+  switch (try self.tryInterpretMatchCases(match, stage, &builder)) {
     .poison => {
       const expr = try self.ctx.global().create(model.Expression);
       expr.* = .{
@@ -1392,23 +1416,62 @@ fn tryInterpretMatch(
     .unfinished => return null,
     else        => {}
   }
+  return try builder.finalize(match.subject);
+}
 
-  var builder = try MatchBuilder.init(self, match.node().pos);
-  for (match.cases) |case| {
-    const has_var =
-      if (case.content.capture) |capture| capture.val != null else false;
-    try builder.push(
-      case.t.data.expression.data.value.data.@"type".t.at(case.t.pos),
-      case.content.root.data.expression,
-      case.content.container.?,
-      has_var,
-    );
+fn tryInterpretMatcher(
+  self   : *Interpreter,
+  matcher: *model.Node.Matcher,
+  stage  : Stage,
+) nyarna.Error!?*model.Function {
+  if (stage.kind == .resolve) {
+    _ = try self.tryInterpretMatch(matcher.body, stage);
+    return null;
   }
-  if (match.subject) |subject| {
-    return try builder.finalize(subject);
-  } else {
-    unreachable; // TODO
-  }
+
+  var mb = try MatchBuilder.init(
+    self, matcher.body.node().pos, matcher.body.cases.len);
+  const match_expr = switch (
+    try self.tryInterpretMatchCases(matcher.body, stage, &mb)
+  ) {
+    .poison => blk: {
+      matcher.variable.spec = self.ctx.types().poison().at(matcher.node().pos);
+      const expr = try self.ctx.global().create(model.Expression);
+      expr.* = .{
+        .pos = matcher.node().pos,
+        .data = .poison,
+        .expected_type = self.ctx.types().poison(),
+      };
+      break :blk expr;
+    },
+    .unfinished => return null,
+    else        => blk: {
+      matcher.variable.spec = try mb.calcInType();
+      break :blk (
+        try mb.finalize(matcher.body.subject)
+      ) orelse return null;
+    }
+  };
+
+  var finder = Types.CallableReprFinder.init(self.ctx.types());
+  try finder.pushType(matcher.variable.spec.t);
+  const finder_res = try finder.finish(match_expr.expected_type, false);
+  var builder = try Types.SigBuilder.init(
+    self.ctx, 1, match_expr.expected_type,
+    finder_res.needs_different_repr);
+  builder.pushUnwrapped(
+    matcher.node().pos, matcher.variable.sym().name, matcher.variable.spec);
+  const builder_res = builder.finish();
+
+  const ret = try self.ctx.global().create(model.Function);
+  ret.* = .{
+    .callable   = try builder_res.createCallable(self.ctx.global(), .function),
+    .name       = null,
+    .defined_at = matcher.node().pos,
+    .data = .{.ny = .{.body = match_expr}},
+    .variables = matcher.container,
+  };
+  return ret;
 }
 
 fn tryInterpretUCall(
@@ -1727,53 +1790,6 @@ fn tryGenEnum(
   }
 }
 
-const IntersectionChecker = struct {
-  const Result = struct {
-    scalar: ?model.Type = null,
-    append: ?[]const model.Type = null,
-    failed: bool = false,
-  };
-
-  intpr  : *Interpreter,
-  builder: *Types.IntersectionBuilder,
-  scalar : ?model.SpecType = null,
-
-  fn push(self: *@This(), t: model.Type, pos: model.Position) !void {
-    const result: Result = switch (t) {
-      .structural => |strct| switch (strct.*) {
-        .intersection => |*ci| Result{
-          .scalar = ci.scalar, .append = ci.types,
-        },
-        else => Result{.failed = true},
-      },
-      .named => |named| switch (named.data) {
-        .textual, .space, .literal => Result{.scalar = t},
-        .int, .float, .@"enum" =>
-          Result{.scalar = self.intpr.ctx.types().text()},
-        .record => Result{.append = @ptrCast([*]const model.Type, &t)[0..1]},
-        else => Result{.failed = true},
-      },
-    };
-    if (result.scalar) |s| {
-      if (self.scalar) |prev| {
-        if (!s.eql(prev.t)) {
-          const t_fmt = s.formatter();
-          const repr =
-            try std.fmt.allocPrint(self.intpr.allocator, "{}", .{t_fmt});
-          defer self.intpr.allocator.free(repr);
-          self.intpr.ctx.logger.MultipleScalarTypes(&.{
-            s.at(pos), prev,
-          });
-        }
-      } else self.scalar = s.at(pos);
-    }
-    if (result.append) |append| self.builder.push(append);
-    if (result.failed) {
-      self.intpr.ctx.logger.InvalidInnerIntersectionType(&.{t.at(pos)});
-    }
-  }
-};
-
 const VarargsProcessResult = struct {
   const Kind = enum{success, failed, poison};
   kind: Kind,
@@ -1836,7 +1852,7 @@ fn tryGenIntersection(
 
   var builder = try Types.IntersectionBuilder.init(
     result.max + 1, self.allocator);
-  var checker = IntersectionChecker{.builder = &builder, .intpr = self};
+  var checker = IntersectionChecker.init(self, false);
 
   for (gi.types) |item| {
     if (item.direct) {
@@ -1844,7 +1860,8 @@ fn tryGenIntersection(
       switch (val.data) {
         .list => |*list| {
           for (list.content.items) |list_item| {
-            try checker.push(list_item.data.@"type".t, list_item.origin);
+            _ = try checker.push(
+              &builder, &list_item.data.@"type".t, list_item.origin);
           }
         },
         .poison => result.kind = .poison,
@@ -1876,7 +1893,11 @@ fn tryGenIntersection(
           continue;
         },
       };
-      try checker.push(inner, item.node.pos);
+
+      // needed because inner goes out of scope
+      const inner_alloc = try self.allocator.create(model.Type);
+      inner_alloc.* = inner;
+      _ = try checker.push(&builder, inner_alloc, item.node.pos);
     }
   }
   switch (result.kind) {
@@ -2669,6 +2690,13 @@ pub fn tryInterpret(
     },
     .location          => |*lo| self.tryInterpretLoc(lo, stage),
     .match             => |*mt| self.tryInterpretMatch(mt, stage),
+    .matcher           => |*mt| blk: {
+      const val = (
+        try self.tryInterpretMatcher(mt, stage)
+      ) orelse break :blk null;
+      break :blk try self.ctx.createValueExpr(
+        (try self.ctx.values.funcRef(input.pos, val)).value());
+    },
     .resolved_access   => |*ra| self.tryInterpretRAccess(ra, stage),
     .resolved_symref   => |*rs| self.tryInterpretSymref(rs, stage),
     .resolved_call     => |*rc| self.tryInterpretCall(rc, stage),
@@ -2878,7 +2906,8 @@ pub fn probeType(
         node.data = .{.expression = expr};
         return expr.expected_type;
       } else return null,
-    .assign, .builtingen, .import, .funcgen, .root_def, .vt_setter => {
+    .assign, .builtingen, .import, .funcgen, .matcher, .root_def,
+    .vt_setter => {
       if (try self.tryInterpret(node, stage)) |expr| {
         node.data = .{.expression = expr};
         return expr.expected_type;
@@ -2911,7 +2940,7 @@ pub fn probeType(
     },
     .location => return self.ctx.types().location(),
     .match    => |*match| {
-      switch (try self.ensureMatchTypesPresent(match, stage)) {
+      switch (try self.ensureMatchTypesPresent(match.cases, stage)) {
         .unfinished => return null,
         .poison     => {
           node.data = .poison;
@@ -3171,10 +3200,10 @@ pub fn interpretWithTargetScalar(
   });
   switch (input.data) {
     .assign, .builtingen, .capture, .definition, .funcgen, .import, .location,
-    .match, .resolved_access, .resolved_symref, .resolved_call, .gen_concat,
-    .gen_enum, .gen_intersection, .gen_list, .gen_map, .gen_numeric,
-    .gen_optional, .gen_sequence, .gen_prototype, .gen_record, .gen_textual,
-    .gen_unique, .root_def, .unresolved_access, .unresolved_call,
+    .match, .matcher, .resolved_access, .resolved_symref, .resolved_call,
+    .gen_concat, .gen_enum, .gen_intersection, .gen_list, .gen_map,
+    .gen_numeric, .gen_optional, .gen_sequence, .gen_prototype, .gen_record,
+    .gen_textual, .gen_unique, .root_def, .unresolved_access, .unresolved_call,
     .unresolved_symref, .varargs, .varmap => {
       if (try self.tryInterpret(input, stage)) |expr| {
         if (Types.containedScalar(expr.expected_type)) |scalar_type| {

@@ -205,6 +205,7 @@ fn previousOccurence(
     .DuplicateSuffix     => " is already a suffix",
     .FactorsTooFarApart  => " is too many magnitudes away",
     .DuplicateBlockVar   => " has been given previously",
+    .DuplicateMatchType  => " has been given previously",
   };
 
   const entity_name: []const u8 = switch (id) {
@@ -222,6 +223,7 @@ fn previousOccurence(
     .DuplicateSuffix     => "suffix",
     .FactorsTooFarApart  => "factor",
     .DuplicateBlockVar   => "name for variable",
+    .DuplicateMatchType  => "type",
   };
 
   const prev_kind: []const u8 = switch (id) {
@@ -238,6 +240,7 @@ fn previousOccurence(
     .DuplicateSuffix     => "suffix defined",
     .FactorsTooFarApart  => "from this factor",
     .DuplicateBlockVar   => "previous definition",
+    .DuplicateMatchType  => "here",
   };
 
   self.renderError("{s} '{s}'{s}", .{entity_name, repr, msg});
@@ -352,6 +355,9 @@ fn typeError(
       self.writer.print(
         "  {s} previous scalar type: {}\n", .{types[1].pos, prev}
       ) catch unreachable;
+    },
+    .InvalidMatchType => {
+      self.renderError("invalid match type: {}", .{main});
     },
   }
 }

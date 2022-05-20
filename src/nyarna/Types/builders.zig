@@ -46,10 +46,14 @@ pub const EnumBuilder = struct {
 /// precondition and can therefore be put in directly.
 pub const IntersectionBuilder = struct {
   const Self = @This();
+  const Source = struct {
+    pos: model.Position,
+    types: []const model.Type,
+  };
 
   fn Static(comptime size: usize) type {
     return struct {
-      sources: [size][]const model.Type,
+      sources: [size]Source,
       indexes: [size]usize,
 
       pub fn init(sources: anytype) @This() {
@@ -57,9 +61,11 @@ pub const IntersectionBuilder = struct {
         inline for (std.meta.fields(@TypeOf(sources))) |field, index| {
           const value = @field(sources, field.name);
           switch (@typeInfo(@TypeOf(value)).Pointer.size) {
-            .One =>
-              ret.sources[index] = @ptrCast([*]const model.Type, value)[0..1],
-            .Slice => ret.sources[index] = value,
+            .One => ret.sources[index] = .{
+              .pos   = undefined, // never used for static
+              .types = @ptrCast([*]const model.Type, value)[0..1],
+            },
+            .Slice => ret.sources[index] = .{.pos = undefined, .types = value},
             else => unreachable,
           }
           ret.indexes[index] = 0;
@@ -73,7 +79,7 @@ pub const IntersectionBuilder = struct {
     return Static(sources.len).init(sources);
   }
 
-  sources  : [][]const model.Type,
+  sources  : []Source,
   indexes  : []usize,
   filled   : usize,
   allocator: ?std.mem.Allocator,
@@ -83,7 +89,7 @@ pub const IntersectionBuilder = struct {
     allocator  : std.mem.Allocator,
   ) !Self {
     return Self{
-      .sources   = try allocator.alloc([]const model.Type, max_sources),
+      .sources   = try allocator.alloc(Source, max_sources),
       .indexes   = try allocator.alloc(usize, max_sources),
       .filled    = 0,
       .allocator = allocator,
@@ -107,9 +113,28 @@ pub const IntersectionBuilder = struct {
 
   pub fn push(self: *Self, item: []const model.Type) void {
     for (item) |t| std.debug.assert(t.isScalar() or t.isNamed(.record));
-    self.sources[self.filled] = item;
+    self.sources[self.filled] = .{
+      .pos   = undefined, // push used only in non-unique context
+      .types = item,
+    };
     self.indexes[self.filled] = 0;
     self.filled += 1;
+  }
+
+  /// returns position of previously given type if it already exists
+  pub fn pushUnique(
+    self: *Self,
+    t   : *const model.Type,
+    pos : model.Position,
+  ) ?model.Position {
+    for (self.sources[0..self.filled]) |prev| {
+      for (prev.types) |pt| {
+        if (t.eql(pt)) return prev.pos;
+      }
+    }
+    self.push(@ptrCast([*]const model.Type, t)[0..1]);
+    self.sources[self.filled -1].pos = pos;
+    return null;
   }
 
   pub fn finish(self: *Self, types: *Types) !model.Type {
@@ -121,7 +146,8 @@ pub const IntersectionBuilder = struct {
     var input = self.sources[0..self.filled];
     while (true) {
       var cur_type: ?model.Type = null;
-      for (input) |list, index| {
+      for (input) |item, index| {
+        const list = item.types;
         if (list.len > self.indexes[index]) {
           const next = list[self.indexes[index]];
           if (cur_type) |previous| {
@@ -130,7 +156,8 @@ pub const IntersectionBuilder = struct {
         }
       }
       if (cur_type) |next_type| {
-        for (input) |list, index| {
+        for (input) |item, index| {
+          const list = item.types;
           const list_index = self.indexes[index];
           if (list_index < list.len and list[list_index].eql(next_type)) {
             self.indexes[index] += 1;
@@ -161,7 +188,8 @@ pub const IntersectionBuilder = struct {
       for (input) |_, index| self.indexes[index] = 0;
       while (true) {
         var cur_type: ?model.Type = null;
-        for (input) |vals, index| {
+        for (input) |item, index| {
+          const vals = item.types;
           if (self.indexes[index] < vals.len) {
             const next_in_list = vals[self.indexes[index]];
             if (cur_type) |previous| {
@@ -171,7 +199,8 @@ pub const IntersectionBuilder = struct {
           }
         }
         if (cur_type) |next_type| {
-          for (self.sources) |vals, index| {
+          for (input) |item, index| {
+            const vals = item.types;
             const list_index = self.indexes[index];
             if (list_index < vals.len and vals[list_index].eql(next_type)) {
               self.indexes[index] += 1;

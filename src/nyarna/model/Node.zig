@@ -224,8 +224,22 @@ pub const Match = struct {
     },
   };
 
-  subject: ?*Node,
+  subject: *Node,
   cases  : []Case,
+
+  pub inline fn node(self: *@This()) *Node {
+    return Node.parent(self);
+  }
+};
+
+pub const Matcher = struct {
+  body: *Match,
+  /// variable used as subject in body
+  variable: *Symbol.Variable,
+  /// container in which the variable has been declared
+  container: *model.VariableContainer,
+  /// used during fixpoint iteration for type inference.
+  cur_returns: Type,
 
   pub inline fn node(self: *@This()) *Node {
     return Node.parent(self);
@@ -481,6 +495,7 @@ pub const Data = union(enum) {
   literal          : Literal,
   location         : Location,
   match            : Match,
+  matcher          : Matcher,
   resolved_access  : ResolvedAccess,
   resolved_call    : ResolvedCall,
   resolved_symref  : ResolvedSymref,

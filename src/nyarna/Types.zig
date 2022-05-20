@@ -675,14 +675,14 @@ fn supWithStructure(
       .intersection => |*inter| switch (other_struc.*) {
         .intersection => |*other_inter| {
           const scalar_type = if (inter.scalar) |inter_scalar|
-            if (other_inter.scalar) |other_scalar| try
-              self.sup(inter_scalar, other_scalar)
+            if (other_inter.scalar) |other_scalar|
+              try self.sup(inter_scalar, other_scalar)
             else inter_scalar
           else other_inter.scalar;
 
-          return if (scalar_type) |st| builders.IntersectionBuilder.calcFrom(
+          return if (scalar_type) |st| try builders.IntersectionBuilder.calcFrom(
             self, .{&st, inter.types, other_inter.types})
-          else builders.IntersectionBuilder.calcFrom(
+          else try builders.IntersectionBuilder.calcFrom(
             self, .{inter.types, other_inter.types});
         },
         else => {},

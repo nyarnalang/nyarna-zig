@@ -99,7 +99,7 @@ pub const PreviousOccurenceError = enum {
   DuplicateParameterArgument, MissingParameterArgument, DuplicateSymbolName,
   MissingEndCommand, CannotAssignToConst, DuplicateEnumValue,
   MultipleModuleKinds, DuplicateMappingKey, DuplicateSuffix,
-  FactorsTooFarApart, DuplicateBlockVar,
+  FactorsTooFarApart, DuplicateBlockVar, DuplicateMatchType,
 };
 
 pub const PositionChainError = enum {
@@ -145,6 +145,8 @@ pub const TypeError = enum {
    TypesNotDisjoint,
    /// gives two types: first the one currently given, then the previous one.
    MultipleScalarTypes,
+   /// gives one type.
+   InvalidMatchType,
 };
 
 pub const ConstructionError = enum {

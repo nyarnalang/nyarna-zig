@@ -36,6 +36,11 @@ pub const CallableReprFinder = struct {
       self.needs_different_repr = true;
   }
 
+  pub fn pushType(self: *Self, t: model.Type) !void {
+    self.count += 1;
+    try self.iter.descend(t, false);
+  }
+
   pub fn finish(self: *Self, returns: model.Type, is_type: bool) !Result {
     try self.iter.descend(returns, is_type);
     return Result{
@@ -132,6 +137,34 @@ pub const SigBuilder = struct {
       };
     }
     return ret;
+  }
+
+  pub fn pushUnwrapped(
+    self: *Self,
+    pos : model.Position,
+    name: []const u8,
+    spec: model.SpecType,
+  ) void {
+    const param = &self.val.parameters[self.next_param];
+    param.* = .{
+      .pos     = pos,
+      .name    = name,
+      .spec    = spec,
+      .capture = .default,
+      .default = null,
+      .config  = null,
+    };
+    if (self.repr) |sig| {
+      sig.parameters[self.next_param] = .{
+        .pos     = pos,
+        .name    = name,
+        .spec    = spec,
+        .capture = .default,
+        .default = null,
+        .config  = null,
+      };
+    }
+    self.next_param += 1;
   }
 
   pub fn push(self: *Self, loc: *model.Value.Location) !void {

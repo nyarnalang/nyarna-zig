@@ -2,26 +2,38 @@
 
 const std = @import("std");
 
-const nyarna = @import("../../nyarna.zig");
+const IntersectionChecker = @import("IntersectionChecker.zig");
+const nyarna              = @import("../../nyarna.zig");
 
 const model = nyarna.model;
+const Types = nyarna.Types;
 
-match: *model.Expression.Match,
-intpr: *nyarna.Interpreter,
+match  : *model.Expression.Match,
+intpr  : *nyarna.Interpreter,
+builder: Types.IntersectionBuilder,
+checker: IntersectionChecker,
+in_type: ?model.SpecType = null,
 
-pub fn init(intpr: *nyarna.Interpreter, pos: model.Position) !@This() {
+pub fn init(
+  intpr    : *nyarna.Interpreter,
+  pos      : model.Position,
+  num_cases: usize,
+) !@This() {
   const expr = try intpr.ctx.global().create(model.Expression);
   expr.* = .{
     .pos  = pos,
     .data = .{.match = .{
-      .cases = .{},
+      .cases   = .{},
       .subject = undefined,
     }},
     .expected_type = undefined,
   };
   return @This(){
-    .match = &expr.data.match,
-    .intpr = intpr,
+    .match   = &expr.data.match,
+    .intpr   = intpr,
+    .builder =
+      try Types.IntersectionBuilder.init(num_cases, intpr.ctx.global()),
+    .checker = IntersectionChecker.init(intpr, true),
   };
 }
 
@@ -31,45 +43,36 @@ inline fn types(self: *@This()) *nyarna.Types {
 
 pub fn push(
   self     : *@This(),
-  t        : model.SpecType,
+  t        : *const model.Type,
+  pos      : model.Position,
   expr     : *model.Expression,
   container: *model.VariableContainer,
   has_var  : bool,
 ) !void {
-  var iter = self.match.cases.iterator();
-  while (iter.next()) |item| {
-    if (
-      self.types().lesserEqual(t.t, item.key_ptr.t) or
-      self.types().greater(t.t, item.key_ptr.t)
-    ) {
-      self.intpr.ctx.logger.TypesNotDisjoint(&.{t, item.key_ptr.*});
-      return;
-    } else if (item.key_ptr.t.isScalar() and t.t.isScalar()) {
-      self.intpr.ctx.logger.MultipleScalarTypes(&.{t, item.key_ptr.*});
-      return;
-    }
+  if (try self.checker.push(&self.builder, t, pos)) {
+    try self.match.cases.putNoClobber(self.intpr.ctx.global(), t.at(pos), .{
+      .expr      = expr,
+      .container = container,
+      .has_var   = has_var,
+    });
   }
-  try self.match.cases.putNoClobber(self.intpr.ctx.global(), t, .{
-    .expr      = expr,
-    .container = container,
-    .has_var   = has_var,
-  });
 }
 
-pub fn finalize(self: *@This(), subject: *model.Node) !*model.Expression {
-  var in_type = self.types().every();
+pub fn calcInType(self: *@This()) !model.SpecType {
+  if (self.in_type) |t| return t;
+  if (self.checker.scalar) |*found_scalar| {
+    self.builder.push(@ptrCast([*]const model.Type, &found_scalar.t)[0..1]);
+  }
+  const res = try self.builder.finish(self.intpr.ctx.types());
+  self.in_type = res.at(self.match.expr().pos);
+  return res.at(self.match.expr().pos);
+}
+
+pub fn finalize(self: *@This(), subject: *model.Node) !?*model.Expression {
   var out_type = self.types().every();
   var iter = self.match.cases.iterator();
   var seen_poison = false;
   while (iter.next()) |item| {
-    const new_in = try self.types().sup(in_type, item.key_ptr.t);
-    if (new_in.isNamed(.poison)) {
-      self.intpr.ctx.logger.IncompatibleTypes(
-        &.{item.key_ptr.*, in_type.at(self.match.expr().pos)});
-      seen_poison = true;
-    } else {
-      in_type = new_in;
-    }
     const new_out =
       try self.types().sup(out_type, item.value_ptr.expr.expected_type);
     if (new_out.isNamed(.poison)) {
@@ -84,12 +87,10 @@ pub fn finalize(self: *@This(), subject: *model.Node) !*model.Expression {
   if (!seen_poison) {
     if (
       try self.intpr.associate(
-        subject, in_type.at(self.match.expr().pos), .{.kind = .final})
+        subject, try self.calcInType(), .{.kind = .final})
     ) |expr| {
       self.match.subject = expr;
-    } else {
-      seen_poison = true;
-    }
+    } else return null;
   }
 
   const expr = self.match.expr();

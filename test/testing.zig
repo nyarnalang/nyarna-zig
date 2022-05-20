@@ -344,6 +344,11 @@ const AstEmitter = struct {
         // TODO
         try m.pop();
       },
+      .matcher => |_| {
+        const m = try self.push("MATCHER");
+        // TODO
+        try m.pop();
+      },
       .seq => |s| {
         for (s.items) |i| {
           const para = try self.push("PARA");
