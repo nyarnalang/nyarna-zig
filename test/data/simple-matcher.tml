@@ -1,0 +1,19 @@
+=== Simple Matcher
+--- input
+\declare:
+  Bold = \Record:
+    content: \Text {primary}
+  \end(Record)
+
+  typeOf = \matcher:
+  :(\Text):<val \v>
+    Text: \v
+  :(\Bold):<val \b>
+    Bold: \b::content
+  \end(matcher)
+\end(declare)
+
+\typeOf(warbl)
+\typeOf(\Bold(wirbl))
+--- document
+=TEXT Text "Text: warbl\nBold: wirbl"
