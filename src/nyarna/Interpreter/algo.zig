@@ -197,7 +197,7 @@ const FixpointContext = struct {
     return graph.ResolutionContext.Result.failed;
   }
 
-  fn probe(fc: *FixpointContext, fgen: *model.Node.Funcgen) !bool {
+  fn probeFunc(fc: *FixpointContext, fgen: *model.Node.Funcgen) !bool {
     const new_type = if (fgen.returns) |returns| blk: {
       const expr = try fc.dres.intpr.interpret(returns);
       const val = try fc.dres.intpr.ctx.evaluator().evaluate(expr);
@@ -222,6 +222,20 @@ const FixpointContext = struct {
       return false;
     } else {
       fgen.cur_returns = new_type;
+      return true;
+    }
+  }
+
+  fn probeMatcher(fc: *FixpointContext, matcher: *model.Node.Matcher) !bool {
+    const new_type = (
+      try fc.dres.intpr.probeType(matcher.body.node(), .{
+        .kind = .intermediate, .resolve = &fc.ctx,
+      }, false)
+    ) orelse fc.dres.intpr.ctx.types().poison();
+    if (new_type.eql(matcher.cur_returns)) {
+      return false;
+    } else {
+      matcher.cur_returns = new_type;
       return true;
     }
   }
@@ -697,7 +711,7 @@ pub const DeclareResolution = struct {
             }
             continue :alloc_types;
           },
-          .funcgen, .builtingen => continue :alloc_types,
+          .funcgen, .builtingen, .matcher => continue :alloc_types,
           .poison => break,
           // anything that is an expression is already finished and can
           // immediately be established.
@@ -796,8 +810,16 @@ pub const DeclareResolution = struct {
                   const sym = try self.genSym(def.name, .poison, def.public);
                   _ = try ns_data.tryRegister(self.intpr, sym);
                   def.content.data = .poison;
-                  continue;
                 }
+              }
+            },
+            .matcher => |*mt| {
+              const res = try self.intpr.ensureMatchTypesPresent(
+                mt.body.cases, .{.kind = .final});
+              if (res != .success) {
+                const sym = try self.genSym(def.name, .poison, def.public);
+                _ = try ns_data.tryRegister(self.intpr, sym);
+                def.content.data = .poison;
               }
             },
             else => {},
@@ -829,7 +851,8 @@ pub const DeclareResolution = struct {
           changed = false;
           for (defs) |def| {
             switch (def.content.data) {
-              .funcgen => |*fgen| if (try fc.probe(fgen)) {changed = true;},
+              .funcgen => |*fgen| if (try fc.probeFunc(fgen)) {changed = true;},
+              .matcher => |*m|    if (try fc.probeMatcher(m)) {changed = true;},
               else => {},
             }
           }
@@ -837,7 +860,14 @@ pub const DeclareResolution = struct {
         // check if anything changes, which is then an error
         if (changed) for (defs) |def| {
           switch (def.content.data) {
-            .funcgen => |*fgen| if (try fc.probe(fgen)) {
+            .funcgen => |*fgen| if (try fc.probeFunc(fgen)) {
+              self.intpr.ctx.logger.FailedToCalculateReturnType(
+                def.content.pos);
+              const sym = try self.genSym(def.name, .poison, def.public);
+              _ = try ns_data.tryRegister(self.intpr, sym);
+              def.content.data = .poison;
+            },
+            .matcher => |*m| if (try fc.probeMatcher(m)) {
               self.intpr.ctx.logger.FailedToCalculateReturnType(
                 def.content.pos);
               const sym = try self.genSym(def.name, .poison, def.public);
@@ -921,12 +951,26 @@ pub const DeclareResolution = struct {
             }
           },
           .funcgen => |*fgen| blk: {
-            const func = (try self.intpr.tryPregenFunc(
-              fgen, fgen.cur_returns, .{.kind = .final})) orelse {
-                def.content.data = .poison;
-                break :blk;
-              };
-            func.callable.sig.returns = fgen.cur_returns;
+            const func = (
+              try self.intpr.tryPregenFunc(
+                fgen, fgen.cur_returns, .{.kind = .final})
+            ) orelse {
+              def.content.data = .poison;
+              break :blk;
+            };
+            const sym = try self.genSym(def.name, .{.func = func}, def.public);
+            func.name = sym;
+            _ = try ns_data.tryRegister(self.intpr, sym);
+            continue;
+          },
+          .matcher => |*m| blk: {
+            const func = (
+              try self.intpr.tryPregenMatcherFunc(
+                m, m.cur_returns, .{.kind = .final})
+            ) orelse {
+              def.content.data = .poison;
+              break :blk;
+            };
             const sym = try self.genSym(def.name, .{.func = func}, def.public);
             func.name = sym;
             _ = try ns_data.tryRegister(self.intpr, sym);
@@ -947,13 +991,25 @@ pub const DeclareResolution = struct {
           },
           .funcgen => |*fgen| {
             const func = fgen.params.pregen;
-            func.data.ny.body = (try self.intpr.tryInterpretFuncBody(
-              fgen, fgen.cur_returns.predef(), .{.kind = .final})).?;
+            func.data.ny.body = (
+              try self.intpr.tryInterpretFuncBody(
+                fgen, fgen.cur_returns.predef(), .{.kind = .final})
+            ).?;
             // so that following components can call it
             def.content.data = .{.expression =
-              try self.intpr.ctx.createValueExpr(
-                (try self.intpr.ctx.values.funcRef(def.content.pos, func)
-                ).value()),
+              try self.intpr.ctx.createValueExpr((
+                try self.intpr.ctx.values.funcRef(def.content.pos, func)
+              ).value()),
+            };
+          },
+          .matcher => |*m| {
+            const func = (
+              try self.intpr.tryInterpretMatcher(m, .{.kind = .final})
+            ).?;
+            def.content.data = .{.expression =
+              try self.intpr.ctx.createValueExpr((
+                try self.intpr.ctx.values.funcRef(def.content.pos, func)
+              ).value()),
             };
           },
           else => {}

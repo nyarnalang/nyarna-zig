@@ -1293,7 +1293,7 @@ const CheckResult = enum {
 
 /// interprets the type expressions for the cases. If capture variables are
 /// declared, creates them and resolves references to them inside the body.
-fn ensureMatchTypesPresent(
+pub fn ensureMatchTypesPresent(
   self : *Interpreter,
   cases: []model.Node.Match.Case,
   stage: Stage,
@@ -1416,10 +1416,67 @@ fn tryInterpretMatch(
     .unfinished => return null,
     else        => {}
   }
-  return try builder.finalize(match.subject);
+  if (
+    try self.associate(
+      match.subject,
+      (try builder.checker.finish(&builder.builder)).at(match.node().pos),
+      stage)
+  ) |expr| {
+    return try builder.finalize(expr);
+  } else return null;
 }
 
-fn tryInterpretMatcher(
+pub fn tryPregenMatcherFunc(
+  self    : *Interpreter,
+  matcher : *model.Node.Matcher,
+  ret_type: model.Type,
+  stage   : Stage,
+) !?*model.Function {
+  if (matcher.pregen) |pregen| return pregen;
+  if ((
+    try self.ensureMatchTypesPresent(matcher.body.cases, stage)
+  ) == .success) {
+    const input_type = blk: {
+      var builder = try Types.IntersectionBuilder.init(
+        matcher.body.cases.len, self.allocator);
+      var checker = IntersectionChecker.init(self, true);
+      var seen_failed = false;
+      for (matcher.body.cases) |case| {
+        const sym = case.variable.sym;
+        if (!(try checker.push(&builder, &sym.spec.t, sym.spec.pos))) {
+          seen_failed = true;
+        }
+      }
+      break :blk if (seen_failed) (
+        self.ctx.types().poison()
+      ) else try checker.finish(&builder);
+    };
+    matcher.variable.spec = input_type.at(matcher.node().pos);
+
+    var finder = Types.CallableReprFinder.init(self.ctx.types());
+    try finder.pushType(input_type);
+    const finder_res = try finder.finish(ret_type, false);
+    var builder = try Types.SigBuilder.init(
+      self.ctx, 1, ret_type, finder_res.needs_different_repr);
+    builder.pushUnwrapped(
+      matcher.node().pos, matcher.variable.sym().name, matcher.variable.spec);
+    const builder_res = builder.finish();
+
+    const ret = try self.ctx.global().create(model.Function);
+    ret.* = .{
+      .callable   =
+        try builder_res.createCallable(self.ctx.global(), .function),
+      .name       = null,
+      .defined_at = matcher.node().pos,
+      .data       = .{.ny = undefined},
+      .variables  = matcher.container,
+    };
+    matcher.pregen = ret;
+    return ret;
+  } else return null;
+}
+
+pub fn tryInterpretMatcher(
   self   : *Interpreter,
   matcher: *model.Node.Matcher,
   stage  : Stage,
@@ -1429,13 +1486,20 @@ fn tryInterpretMatcher(
     return null;
   }
 
+  const pregen_func = if (matcher.pregen) |pregen| pregen else (
+    if (try self.probeType(matcher.body.node(), stage, false)) |ret_type| (
+      (
+        try self.tryPregenMatcherFunc(matcher, ret_type, stage)
+      ) orelse return null
+    ) else return null
+  );
+
   var mb = try MatchBuilder.init(
     self, matcher.body.node().pos, matcher.body.cases.len);
   const match_expr = switch (
     try self.tryInterpretMatchCases(matcher.body, stage, &mb)
   ) {
     .poison => blk: {
-      matcher.variable.spec = self.ctx.types().poison().at(matcher.node().pos);
       const expr = try self.ctx.global().create(model.Expression);
       expr.* = .{
         .pos = matcher.node().pos,
@@ -1445,33 +1509,15 @@ fn tryInterpretMatcher(
       break :blk expr;
     },
     .unfinished => return null,
-    else        => blk: {
-      matcher.variable.spec = try mb.calcInType();
-      break :blk (
-        try mb.finalize(matcher.body.subject)
-      ) orelse return null;
-    }
+    else        => if (
+      try self.associate(matcher.body.subject, matcher.variable.spec, stage)
+    ) |expr| (
+      try mb.finalize(expr)
+    ) else return null,
   };
 
-  var finder = Types.CallableReprFinder.init(self.ctx.types());
-  try finder.pushType(matcher.variable.spec.t);
-  const finder_res = try finder.finish(match_expr.expected_type, false);
-  var builder = try Types.SigBuilder.init(
-    self.ctx, 1, match_expr.expected_type,
-    finder_res.needs_different_repr);
-  builder.pushUnwrapped(
-    matcher.node().pos, matcher.variable.sym().name, matcher.variable.spec);
-  const builder_res = builder.finish();
-
-  const ret = try self.ctx.global().create(model.Function);
-  ret.* = .{
-    .callable   = try builder_res.createCallable(self.ctx.global(), .function),
-    .name       = null,
-    .defined_at = matcher.node().pos,
-    .data = .{.ny = .{.body = match_expr}},
-    .variables = matcher.container,
-  };
-  return ret;
+  pregen_func.data.ny.body = match_expr;
+  return pregen_func;
 }
 
 fn tryInterpretUCall(
@@ -2901,18 +2947,17 @@ pub fn probeType(
   switch (node.data) {
     .gen_concat, .gen_enum, .gen_intersection, .gen_list, .gen_map,
     .gen_numeric, .gen_optional, .gen_sequence, .gen_record, .gen_textual,
-    .gen_unique => if (sloppy) return self.ctx.types().@"type"()
-      else if (try self.tryInterpret(node, stage)) |expr| {
-        node.data = .{.expression = expr};
-        return expr.expected_type;
-      } else return null,
+    .gen_unique => if (sloppy) (
+      return self.ctx.types().@"type"()
+    ) else if (try self.tryInterpret(node, stage)) |expr| {
+      node.data = .{.expression = expr};
+      return expr.expected_type;
+    } else return null,
     .assign, .builtingen, .import, .funcgen, .matcher, .root_def,
-    .vt_setter => {
-      if (try self.tryInterpret(node, stage)) |expr| {
-        node.data = .{.expression = expr};
-        return expr.expected_type;
-      } else return null;
-    },
+    .vt_setter => if (try self.tryInterpret(node, stage)) |expr| {
+      node.data = .{.expression = expr};
+      return expr.expected_type;
+    } else return null,
     .branches => |br|
       return try self.probeNodeList(br.branches, stage, sloppy),
     .capture => |cpt| return try self.probeType(cpt.content, stage, sloppy),

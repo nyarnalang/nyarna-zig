@@ -240,6 +240,9 @@ pub const Matcher = struct {
   container: *model.VariableContainer,
   /// used during fixpoint iteration for type inference.
   cur_returns: Type,
+  /// pregenerated function whose body has not yet been set.
+  /// used during declare resolution.
+  pregen: ?*model.Function = null,
 
   pub inline fn node(self: *@This()) *Node {
     return Node.parent(self);
@@ -529,6 +532,7 @@ fn parent(it: anytype) *Node {
     Literal          => offset(Data, "literal"),
     Location         => offset(Data, "location"),
     Match            => offset(Data, "match"),
+    Matcher          => offset(Data, "matcher"),
     ResolvedAccess   => offset(Data, "resolved_access"),
     ResolvedCall     => offset(Data, "resolved_call"),
     ResolvedSymref   => offset(Data, "resolved_symref"),

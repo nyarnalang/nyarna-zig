@@ -95,3 +95,13 @@ pub fn push(
   }
   return !result.failed;
 }
+
+pub fn finish(
+  self   : *@This(),
+  builder: *Types.IntersectionBuilder,
+) !model.Type {
+  if (self.scalar) |*found_scalar| {
+    builder.push(@ptrCast([*]const model.Type, &found_scalar.t)[0..1]);
+  }
+  return try builder.finish(self.intpr.ctx.types());
+}

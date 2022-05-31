@@ -12,7 +12,6 @@ match  : *model.Expression.Match,
 intpr  : *nyarna.Interpreter,
 builder: Types.IntersectionBuilder,
 checker: IntersectionChecker,
-in_type: ?model.SpecType = null,
 
 pub fn init(
   intpr    : *nyarna.Interpreter,
@@ -58,17 +57,10 @@ pub fn push(
   }
 }
 
-pub fn calcInType(self: *@This()) !model.SpecType {
-  if (self.in_type) |t| return t;
-  if (self.checker.scalar) |*found_scalar| {
-    self.builder.push(@ptrCast([*]const model.Type, &found_scalar.t)[0..1]);
-  }
-  const res = try self.builder.finish(self.intpr.ctx.types());
-  self.in_type = res.at(self.match.expr().pos);
-  return res.at(self.match.expr().pos);
-}
-
-pub fn finalize(self: *@This(), subject: *model.Node) !?*model.Expression {
+pub fn finalize(
+  self: *@This(),
+  subject: *model.Expression,
+) !*model.Expression {
   var out_type = self.types().every();
   var iter = self.match.cases.iterator();
   var seen_poison = false;
@@ -84,20 +76,13 @@ pub fn finalize(self: *@This(), subject: *model.Node) !?*model.Expression {
       out_type = new_out;
     }
   }
-  if (!seen_poison) {
-    if (
-      try self.intpr.associate(
-        subject, try self.calcInType(), .{.kind = .final})
-    ) |expr| {
-      self.match.subject = expr;
-    } else return null;
-  }
 
   const expr = self.match.expr();
   if (seen_poison) {
     expr.data = .poison;
     expr.expected_type = self.types().poison();
   } else {
+    self.match.subject = subject;
     expr.expected_type = out_type;
   }
   return expr;

@@ -204,7 +204,7 @@ pub inline fn matcher(
     .body        = body,
     .container   = container,
     .variable    = variable,
-    .cur_returns = undefined,
+    .cur_returns = self.types.every(),
   }})).data.matcher;
 }
 

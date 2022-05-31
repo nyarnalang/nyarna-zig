@@ -731,7 +731,8 @@ inline fn procAfterList(self: *@This()) !void {
         }
         while (self.cur == .space or self.cur == .indent) self.advance();
       }
-      self.state = if (parent.syntax_proc != null) .special else .default;
+      self.state =
+        if (self.curLevel().syntax_proc != null) .special else .default;
     }
   }
 }
