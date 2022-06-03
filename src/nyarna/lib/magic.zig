@@ -54,7 +54,7 @@ const Impl = lib.Provider.Wrapper(struct {
     var collector = system.DefCollector{.dt = intpr.ctx.types().definition()};
     try collector.collect(arg, intpr);
     try collector.allocate(intpr.allocator);
-    try collector.append(arg, intpr, false);
+    try collector.append(arg, intpr, false, intpr.node_gen);
     const decls = collector.finish();
 
     const namespace = intpr.namespace(ns);

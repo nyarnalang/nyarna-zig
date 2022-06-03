@@ -256,6 +256,7 @@ prefix_trees: struct {
 constructors: struct {
   location  : Constructor = .{},
   definition: Constructor = .{},
+  schema_def: Constructor = .{},
   void      : Constructor = .{},
 
   /// Prototype implementations that generate types.
@@ -282,6 +283,7 @@ predefined: struct {
   location    : model.Type.Named,
   poison      : model.Type.Named,
   prototype   : model.Type.Named,
+  schema_def  : model.Type.Named,
   space       : model.Type.Named,
   @"type"     : model.Type.Named,
   void        : model.Type.Named,
@@ -391,6 +393,10 @@ pub inline fn prototype(self: *Self) model.Type {
   return self.predefined.prototype.typedef();
 }
 
+pub inline fn schemaDef(self: *Self) model.Type {
+  return self.predefined.schema_def.typedef();
+}
+
 pub inline fn space(self: *Self) model.Type {
   return self.predefined.space.typedef();
 }
@@ -426,6 +432,7 @@ pub fn typeConstructor(self: *Self, t: model.Type) !Constructor {
         .impl_index = self.prototype_funcs.numeric.constructor.?.impl_index,
       },
       .location    => self.constructors.location,
+      .schema_def  => self.constructors.schema_def,
       .textual     => Constructor{
         .callable   = (try self.constructorOf(t)).?,
         .impl_index = self.prototype_funcs.textual.constructor.?.impl_index,
@@ -1108,6 +1115,7 @@ pub fn valueType(self: *Self, v: *model.Value) !model.Type {
     .prototype    => |pv|
       self.prototypeConstructor(pv.pt).callable.?.typedef(),
     .record       => |*rec|  rec.t.typedef(),
+    .schema_def   => self.schemaDef(),
     .seq          => |*seq|  seq.t.typedef(),
     .text         => |*txt|  txt.t,
     .@"type"      => |tv|    try self.typeType(tv.t),

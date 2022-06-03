@@ -55,8 +55,8 @@ pub const Context = struct {
   /// search a referenced module. can only succeed in static context, otherwise
   /// always returns null
   pub inline fn searchModule(
-    self: *const Context,
-    pos: model.Position,
+    self   : Context,
+    pos    : model.Position,
     locator: model.Locator,
   ) !?usize {
     return if (self.loader) |ml| ml.searchModule(pos, locator) else null;
@@ -66,7 +66,7 @@ pub const Context = struct {
   /// will be owned by Globals, though you are allowed (but not required)
   /// to deallocate it again using this allocator. Globals will deallocate
   /// all remaining data at the end of its lifetime.
-  pub inline fn global(self: *const Context) std.mem.Allocator {
+  pub inline fn global(self: Context) std.mem.Allocator {
     return self.data.storage.allocator();
   }
 
@@ -74,17 +74,17 @@ pub const Context = struct {
   /// with this is owned by the current ModuleLoader and will be deallocated
   /// when the module finished loading. In a runtime context, there is no module
   /// loader and thus the global allocator will be returned.
-  pub inline fn local(self: *const Context) std.mem.Allocator {
+  pub inline fn local(self: Context) std.mem.Allocator {
     return if (self.loader) |ml| ml.storage.allocator() else self.global();
   }
 
   /// Interface to the type lattice. It allows you to create and compare types.
-  pub inline fn types(self: *const Context) *Types {
+  pub inline fn types(self: Context) *Types {
     return &self.data.types;
   }
 
   pub inline fn createValueExpr(
-    self: *const Context,
+    self   : Context,
     content: *model.Value,
   ) !*model.Expression {
     const e = try self.global().create(model.Expression);
@@ -141,7 +141,7 @@ pub const Context = struct {
   }
 
   pub fn intFromText(
-    self: *const Context,
+    self: Context,
     pos : model.Position,
     text: []const u8,
     t   : *const model.Type.IntNum,
@@ -278,12 +278,12 @@ pub const Context = struct {
   }
 
   pub fn unaryTypeVal(
-    self: Context,
-    comptime name: []const u8,
-    pos: model.Position,
-    inner: model.Type,
-    inner_pos: model.Position,
-    comptime error_name: []const u8
+             self      : Context,
+    comptime name      : []const u8,
+             pos       : model.Position,
+             inner     : model.Type,
+             inner_pos : model.Position,
+    comptime error_name: []const u8,
   ) !*model.Value {
     if (try @field(self.types(), name)(inner)) |t| {
       if (t.isStruc(@field(model.Type.Structural, name))) {

@@ -828,6 +828,11 @@ const AstEmitter = struct {
       .concat => |_| {
         unreachable;
       },
+      .schema_def => |sd| {
+        const def = try self.push("SCHEMA_DEF");
+        for (sd.defs) |item| try self.process(item.node());
+        try def.pop();
+      },
       .seq => |_| {
         unreachable;
       },

@@ -80,6 +80,11 @@
     item : \Ast {primary}
   \end(unique)
 
+  SchemaDef = \unique:
+    public : \Optional(\Ast) {primary}:<syntax definitions, fullast>
+    private: \Optional(\Ast) {}:<syntax definitions, fullast>
+  \end(unique)
+
   Concat, Optional = \prototype:
     inner: \Ast {primary}
   \end(prototype)

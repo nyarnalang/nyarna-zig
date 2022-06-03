@@ -46,21 +46,6 @@ pub const Assign = struct {
   }
 };
 
-/// Node that generates builtin and keyword definitions.
-/// Must only be used in context of \declare so that the interpreter can map
-/// the builtin to a provided internal function via the builtin's name.
-pub const BuiltinGen = struct {
-  params : locations.List(void),
-  returns: union(enum) {
-    node: *Node,
-    expr: *Expression,
-  },
-
-  pub inline fn node(self: *@This()) *Node {
-    return Node.parent(self);
-  }
-};
-
 /// A branching node. Branching works on enum types; the condition is to be
 /// interpreted into an expression having an Enum type and the number of
 /// branches must match the number of values of that Enum type.
@@ -70,6 +55,21 @@ pub const Branches = struct {
   condition: *Node,
   cond_type: ?model.Type,
   branches : []*Node,
+
+  pub inline fn node(self: *@This()) *Node {
+    return Node.parent(self);
+  }
+};
+
+/// Node that generates builtin and keyword definitions.
+/// Must only be used in context of \declare so that the interpreter can map
+/// the builtin to a provided internal function via the builtin's name.
+pub const BuiltinGen = struct {
+  params : locations.List(void),
+  returns: union(enum) {
+    node: *Node,
+    expr: *Expression,
+  },
 
   pub inline fn node(self: *@This()) *Node {
     return Node.parent(self);
@@ -255,7 +255,7 @@ pub const ResolvedAccess = struct {
   base         : *Node,
   path         : []const usize,
   last_name_pos: model.Position,
-  ns: u15,
+  ns           : u15,
 
   pub inline fn node(self: *@This()) *Node {
     return Node.parent(self);

@@ -62,23 +62,33 @@ pub const DefCollector = struct {
     return true;
   }
 
+  fn asNode(
+    intpr: *Interpreter,
+    gen  : model.NodeGenerator,
+    def  : *model.Node.Definition,
+  ) !*model.Node.Definition {
+    if (gen.allocator.ptr == intpr.allocator.ptr) return def;
+    return &(try gen.copy(def.node())).data.definition;
+  }
+
   pub fn append(
     self : *@This(),
     node : *model.Node,
     intpr: *Interpreter,
     pdef : bool,
+    gen  : model.NodeGenerator,
   ) nyarna.Error!void {
     switch (node.data) {
       .void, .poison => {},
       .definition => |*def| {
         if (self.checkName(def.name.content, def.name.node().pos, intpr)) {
           if (pdef) def.public = true;
-          self.defs[self.count] = def;
+          self.defs[self.count] = try asNode(intpr, gen, def);
           self.count += 1;
         }
       },
       .concat => |*con| for (con.items) |item| {
-        try self.append(item, intpr, pdef);
+        try self.append(item, intpr, pdef, gen);
       },
       .expression => |expr| {
         for (expr.data.value.data.concat.content.items) |item| {
@@ -94,12 +104,12 @@ pub const DefCollector = struct {
               .@"type" => |t|
                 (try intpr.ctx.values.@"type"(item.origin, t)).value(),
             };
-            const def_node = try intpr.node_gen.definition(item.origin, .{
-              .name = try intpr.node_gen.literal(def.name.value().origin, .{
+            const def_node = try gen.definition(item.origin, .{
+              .name = try gen.literal(def.name.value().origin, .{
                 .kind = .text, .content = def.name.content,
               }),
               .root = def.root,
-              .content = try intpr.node_gen.expression(
+              .content = try gen.expression(
                 try intpr.ctx.createValueExpr(content_value)
               ),
               .public = pdef,
@@ -426,8 +436,12 @@ pub const Impl = lib.Provider.Wrapper(struct {
     }
     try collector.allocate(intpr.allocator);
 
-    if (public)  |pnode| try collector.append(pnode, intpr, true);
-    if (private) |pnode| try collector.append(pnode, intpr, false);
+    if (public)  |pnode| {
+      try collector.append(pnode, intpr, true, intpr.node_gen);
+    }
+    if (private) |pnode| {
+      try collector.append(pnode, intpr, false, intpr.node_gen);
+    }
     var res = try algo.DeclareResolution.create(
       intpr, collector.finish(), ns, parent);
     try res.execute();
@@ -828,6 +842,7 @@ pub const Checker = struct {
     .{"Optional",        .prototype},
     .{"Positive",        .int},
     .{"Record",          .prototype},
+    .{"SchemaDef",       .schema_def},
     .{"Sequence",        .prototype},
     .{"Text",            .textual, .text},
     .{"Textual",         .prototype},

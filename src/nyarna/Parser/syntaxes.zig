@@ -8,22 +8,24 @@ const model       = nyarna.model;
 
 pub const SpecialSyntax = struct {
   pub const Item = union(enum) {
-    literal: []const u8,
-    space: []const u8,
-    escaped: []const u8,
+    literal     : []const u8,
+    space       : []const u8,
+    escaped     : []const u8,
     special_char: u21,
-    node: *model.Node,
-    newlines: usize, // 1 for newlines, >1 for parseps.
+    node        : *model.Node,
+    newlines    : usize, // 1 for newlines, >1 for parseps.
     block_header: *model.Value.BlockHeader,
   };
 
   pub const Processor = struct {
     pub const Action = enum {none, read_block_header};
 
-    push: fn(self: *@This(), pos: model.Position, item: Item)
-      nyarna.Error!Action,
-    finish: fn(self: *@This(), pos: model.Position)
-      nyarna.Error!*model.Node,
+    push: fn(
+      self: *@This(),
+      pos : model.Position,
+      item: Item,
+    ) nyarna.Error!Action,
+    finish: fn(self: *@This(), pos: model.Position) nyarna.Error!*model.Node,
   };
 
   init: fn init(intpr: *Interpreter) std.mem.Allocator.Error!*Processor,
@@ -33,30 +35,30 @@ pub const SpecialSyntax = struct {
 pub const SymbolDefs = struct {
   const State = fn(
     self: *SymbolDefs,
-    pos: model.Position,
+    pos : model.Position,
     item: SpecialSyntax.Item,
   ) std.mem.Allocator.Error!?Processor.Action;
 
   const Variant = enum {locs, defs};
   const Processor = SpecialSyntax.Processor;
 
-  intpr: *Interpreter,
-  proc: Processor,
-  state: State,
-  produced: std.ArrayListUnmanaged(*model.Node),
-  variant: Variant,
+  intpr    : *Interpreter,
+  proc     : Processor,
+  state    : State,
+  produced : std.ArrayListUnmanaged(*model.Node),
+  variant  : Variant,
   last_item: model.Position,
   // ----- current line ------
-  start: model.Cursor,
-  names: std.ArrayListUnmanaged(*model.Node.Literal),
+  start  : model.Cursor,
+  names  : std.ArrayListUnmanaged(*model.Node.Literal),
   primary: ?model.Position,
   varargs: ?model.Position,
-  varmap: ?model.Position,
-  borrow: ?model.Position,
-  root: ?model.Position,
-  header: ?*model.Value.BlockHeader,
+  varmap : ?model.Position,
+  borrow : ?model.Position,
+  root   : ?model.Position,
+  header : ?*model.Value.BlockHeader,
   @"type": ?*model.Node,
-  expr: ?*model.Node,
+  expr   : ?*model.Node,
   surplus_flags_start: ?model.Position, // more than on {…} in line.
   // -------------------------
 
@@ -89,19 +91,19 @@ pub const SymbolDefs = struct {
   }
 
   fn init(
-    intpr: *Interpreter,
+    intpr  : *Interpreter,
     variant: Variant,
   ) std.mem.Allocator.Error!*Processor {
     const ret = try intpr.allocator.create(SymbolDefs);
     ret.intpr = intpr;
-    ret.proc = .{
-      .push = SymbolDefs.push,
-      .finish = SymbolDefs.finish,
+    ret.proc  = .{
+      .push     = SymbolDefs.push,
+      .finish   = SymbolDefs.finish,
     };
-    ret.state = initial;
-    ret.names = .{};
-    ret.produced = .{};
-    ret.variant = variant;
+    ret.state     = initial;
+    ret.names     = .{};
+    ret.produced  = .{};
+    ret.variant   = variant;
     ret.last_item = model.Position.intrinsic();
     ret.reset();
     return &ret.proc;
@@ -122,19 +124,19 @@ pub const SymbolDefs = struct {
   fn reset(l: *SymbolDefs) void {
     l.primary = null;
     l.varargs = null;
-    l.varmap = null;
-    l.borrow = null;
-    l.header = null;
-    l.root = null;
+    l.varmap  = null;
+    l.borrow  = null;
+    l.header  = null;
+    l.root    = null;
     l.@"type" = null;
-    l.expr = null;
+    l.expr    = null;
     l.surplus_flags_start = null;
     l.names.clearRetainingCapacity();
   }
 
   fn initial(
     self: *SymbolDefs,
-    pos: model.Position,
+    pos : model.Position,
     item: SpecialSyntax.Item,
   ) std.mem.Allocator.Error!?Processor.Action {
     switch (item) {
@@ -160,11 +162,11 @@ pub const SymbolDefs = struct {
 
   fn names(
     self: *SymbolDefs,
-    pos: model.Position,
+    pos : model.Position,
     item: SpecialSyntax.Item,
   ) std.mem.Allocator.Error!?Processor.Action {
     switch (item) {
-      .space => return .none,
+      .space   => return .none,
       .literal => |name| {
         try self.names.append(self.intpr.allocator,
           try self.intpr.node_gen.literal(
@@ -232,7 +234,7 @@ pub const SymbolDefs = struct {
 
   fn afterName(
     self: *SymbolDefs,
-    pos: model.Position,
+    pos : model.Position,
     item: SpecialSyntax.Item,
   ) std.mem.Allocator.Error!?Processor.Action {
     switch (item) {
@@ -296,7 +298,7 @@ pub const SymbolDefs = struct {
 
   fn ltype(
     self: *SymbolDefs,
-    pos: model.Position,
+    pos : model.Position,
     item: SpecialSyntax.Item,
   ) std.mem.Allocator.Error!?Processor.Action {
     switch (item) {
@@ -345,7 +347,7 @@ pub const SymbolDefs = struct {
 
   fn afterLtype(
     self: *SymbolDefs,
-    pos: model.Position,
+    pos : model.Position,
     item: SpecialSyntax.Item,
   ) std.mem.Allocator.Error!?Processor.Action {
     switch (item) {
@@ -400,7 +402,7 @@ pub const SymbolDefs = struct {
 
   fn flags(
     self: *SymbolDefs,
-    pos: model.Position,
+    pos : model.Position,
     item: SpecialSyntax.Item,
   ) std.mem.Allocator.Error!?Processor.Action {
     switch (item) {
@@ -410,9 +412,9 @@ pub const SymbolDefs = struct {
           const target = switch (std.hash.Adler32.hash(id)) {
             std.hash.Adler32.hash("primary") => &self.primary,
             std.hash.Adler32.hash("varargs") => &self.varargs,
-            std.hash.Adler32.hash("borrow") => &self.borrow,
-            std.hash.Adler32.hash("varmap") => &self.varmap,
-            std.hash.Adler32.hash("root") => &self.root,
+            std.hash.Adler32.hash("borrow")  => &self.borrow,
+            std.hash.Adler32.hash("varmap")  => &self.varmap,
+            std.hash.Adler32.hash("root")    => &self.root,
             else => {
               self.logger().UnknownFlag(pos, id);
               return .none;
@@ -480,7 +482,7 @@ pub const SymbolDefs = struct {
 
   fn afterFlag(
     self: *SymbolDefs,
-    pos: model.Position,
+    pos : model.Position,
     item: SpecialSyntax.Item,
   ) std.mem.Allocator.Error!?Processor.Action {
     switch (item) {
@@ -542,7 +544,7 @@ pub const SymbolDefs = struct {
 
   fn afterFlags(
     self: *SymbolDefs,
-    pos: model.Position,
+    pos : model.Position,
     item: SpecialSyntax.Item,
   ) std.mem.Allocator.Error!?Processor.Action {
     if (self.surplus_flags_start) |start| blk: {
@@ -608,7 +610,7 @@ pub const SymbolDefs = struct {
 
   fn blockHeader(
     self: *SymbolDefs,
-    pos: model.Position,
+    pos : model.Position,
     item: SpecialSyntax.Item,
   ) std.mem.Allocator.Error!?Processor.Action {
     if (self.surplus_flags_start == null) {
@@ -623,7 +625,7 @@ pub const SymbolDefs = struct {
 
   fn atExpr(
     self: *SymbolDefs,
-    pos: model.Position,
+    pos : model.Position,
     item: SpecialSyntax.Item,
   ) std.mem.Allocator.Error!?Processor.Action {
     switch (item) {
@@ -673,7 +675,7 @@ pub const SymbolDefs = struct {
 
   fn atEnd(
     self: *SymbolDefs,
-    pos: model.Position,
+    pos : model.Position,
     item: SpecialSyntax.Item,
   ) std.mem.Allocator.Error!?Processor.Action {
     switch (item) {
@@ -720,8 +722,8 @@ pub const SymbolDefs = struct {
   }
 
   fn push(
-    p: *Processor,
-    pos: model.Position,
+    p   : *Processor,
+    pos : model.Position,
     item: SpecialSyntax.Item,
   ) nyarna.Error!Processor.Action {
     const self = @fieldParentPtr(SymbolDefs, "proc", p);
@@ -740,13 +742,13 @@ pub const SymbolDefs = struct {
   }
 
   fn genLineNode(
-    self: *SymbolDefs,
-    name: *model.Node.Literal,
-    pos: model.Position,
-    comptime kind: []const u8,
-    comptime content_field: []const u8,
-    comptime additionals_field: ?[]const u8,
-    comptime optional_pos_fields: []const []const u8,
+             self: *SymbolDefs,
+             name: *model.Node.Literal,
+             pos : model.Position,
+    comptime kind                : []const u8,
+    comptime content_field       : []const u8,
+    comptime additionals_field   : ?[]const u8,
+    comptime optional_pos_fields : []const []const u8,
     comptime optional_node_fields: []const []const u8,
   ) !*model.Node {
     const ret = try self.intpr.allocator.create(model.Node);
@@ -778,7 +780,7 @@ pub const SymbolDefs = struct {
 
   fn finishLine(
     self: *SymbolDefs,
-    pos: model.Position,
+    pos : model.Position,
   ) std.mem.Allocator.Error!void {
     defer self.reset();
     if (self.names.items.len == 0) {

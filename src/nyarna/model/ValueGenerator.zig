@@ -169,6 +169,16 @@ pub inline fn map(
   })).data.map;
 }
 
+pub inline fn schemaDef(
+  self: *const Self,
+  pos : Position,
+  defs: []*model.Node.Definition,
+) !*Value.SchemaDef {
+  return &(try self.value(pos, .{
+    .schema_def = .{.defs = defs},
+  })).data.schema_def;
+}
+
 pub inline fn seq(
   self: *const Self,
   pos : Position,

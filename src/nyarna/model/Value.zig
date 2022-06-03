@@ -260,6 +260,14 @@ pub const Record = struct {
   }
 };
 
+pub const SchemaDef = struct {
+  defs: []*Node.Definition,
+
+  pub inline fn value(self: *@This()) *Value {
+    return Value.parent(self);
+  }
+};
+
 /// a Sequence value
 pub const Seq = struct {
   pub const Item = struct {
@@ -307,6 +315,7 @@ pub const Data = union(enum) {
   map         : Map,
   prototype   : PrototypeVal,
   record      : Record,
+  schema_def  : SchemaDef,
   seq         : Seq,
   text        : TextScalar,
   @"type"     : TypeVal,
@@ -357,6 +366,7 @@ fn parent(it: anytype) *Value {
     Map          => offset(Data, "map"),
     PrototypeVal => offset(Data, "prototype"),
     Record       => offset(Data, "record"),
+    SchemaDef    => offset(Data, "schema_def"),
     Seq          => offset(Data, "seq"),
     TextScalar   => offset(Data, "text"),
     TypeVal      => offset(Data, "type"),

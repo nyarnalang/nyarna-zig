@@ -192,7 +192,7 @@ pub fn create(
     .public_namespace = public_ns,
     .builtin_provider = provider,
   };
-  ret.node_gen = model.NodeGenerator.init(allocator, ctx.types());
+  ret.node_gen = model.NodeGenerator.init(allocator, ctx);
   try ret.addNamespace('\\');
   const container = try ctx.global().create(model.VariableContainer);
   container.* = .{.num_values = 0};

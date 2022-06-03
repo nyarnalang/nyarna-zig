@@ -513,7 +513,7 @@ pub const DeclareResolution = struct {
       };
       try collector.collect(funcs, self.intpr);
       try collector.allocate(self.intpr.allocator);
-      try collector.append(funcs, self.intpr, false);
+      try collector.append(funcs, self.intpr, false, self.intpr.node_gen);
       const func_defs = collector.finish();
       const def_items = try self.intpr.ctx.global().alloc(
         nyarna.Types.PrototypeFuncs.Item, func_defs.len);
@@ -688,15 +688,16 @@ pub const DeclareResolution = struct {
           .gen_unique => |*gu| {
             const types = self.intpr.ctx.types();
             gu.generated = switch (std.hash.Adler32.hash(def.name.content)) {
-              std.hash.Adler32.hash("Ast") => types.ast(),
+              std.hash.Adler32.hash("Ast")         => types.ast(),
               std.hash.Adler32.hash("BlockHeader") => types.blockHeader(),
-              std.hash.Adler32.hash("Definition") => types.definition(),
-              std.hash.Adler32.hash("FrameRoot") => types.frameRoot(),
-              std.hash.Adler32.hash("Literal") => types.literal(),
-              std.hash.Adler32.hash("Location") => types.location(),
-              std.hash.Adler32.hash("Space") => types.space(),
-              std.hash.Adler32.hash("Type") => types.@"type"(),
-              std.hash.Adler32.hash("Void") => types.@"void"(),
+              std.hash.Adler32.hash("Definition")  => types.definition(),
+              std.hash.Adler32.hash("FrameRoot")   => types.frameRoot(),
+              std.hash.Adler32.hash("Literal")     => types.literal(),
+              std.hash.Adler32.hash("Location")    => types.location(),
+              std.hash.Adler32.hash("SchemaDef")   => types.schemaDef(),
+              std.hash.Adler32.hash("Space")       => types.space(),
+              std.hash.Adler32.hash("Type")        => types.@"type"(),
+              std.hash.Adler32.hash("Void")        => types.@"void"(),
               else => {
                 self.intpr.ctx.logger.UnknownUnique(
                   def.name.node().pos, def.name.content);
@@ -785,7 +786,8 @@ pub const DeclareResolution = struct {
               const ret_type = switch (gu.generated.named.data) {
                 // location and definition types have a keyword constructor
                 // that returns an ast.
-                .location, .definition => self.intpr.ctx.types().ast(),
+                .location, .definition, .schema_def =>
+                  self.intpr.ctx.types().ast(),
                 else => gu.generated,
               };
               var locs: model.locations.List(void) = .{.unresolved = params};
@@ -798,6 +800,7 @@ pub const DeclareResolution = struct {
               switch (gu.generated.named.data) {
                 .location   => types.constructors.location   = constructor,
                 .definition => types.constructors.definition = constructor,
+                .schema_def => types.constructors.schema_def = constructor,
                 .void       => types.constructors.void       = constructor,
                 else => unreachable,
               }
