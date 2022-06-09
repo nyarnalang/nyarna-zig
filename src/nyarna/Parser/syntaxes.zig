@@ -59,7 +59,6 @@ pub const SymbolDefs = struct {
   varargs: ?model.Position = null,
   varmap : ?model.Position = null,
   borrow : ?model.Position = null,
-  root   : ?model.Position = null,
   header : ?*model.Value.BlockHeader = null,
   @"type": ?*model.Node = null,
   expr   : ?*model.Node = null,
@@ -141,7 +140,6 @@ pub const SymbolDefs = struct {
     l.varmap  = null;
     l.borrow  = null;
     l.header  = null;
-    l.root    = null;
     l.@"type" = null;
     l.expr    = null;
     l.surplus_flags_start = null;
@@ -428,7 +426,6 @@ pub const SymbolDefs = struct {
             std.hash.Adler32.hash("varargs") => &self.varargs,
             std.hash.Adler32.hash("borrow")  => &self.borrow,
             std.hash.Adler32.hash("varmap")  => &self.varmap,
-            std.hash.Adler32.hash("root")    => &self.root,
             else => {
               self.logger().UnknownFlag(pos, id);
               return .none;
@@ -816,7 +813,6 @@ pub const SymbolDefs = struct {
     for (self.names.items) |name| {
       const node = try switch (self.variant) {
         .locs => blk: {
-          if (self.root) |rpos| self.logger().NonLocationFlag(rpos);
           break :blk self.genLineNode(
             name, line_pos, "location", "default", "additionals",
             &[_][]const u8{"primary", "varargs", "varmap", "borrow", "header"},
@@ -832,7 +828,7 @@ pub const SymbolDefs = struct {
           }
           break :blk self.genLineNode(
             name, line_pos, "definition", "content", null,
-            &[_][]const u8{"root"}, &[_][]const u8{});
+            &[_][]const u8{}, &[_][]const u8{});
         },
       };
       try self.produced.append(self.intpr.allocator(), node);

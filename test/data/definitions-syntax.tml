@@ -2,7 +2,7 @@
 --- input
 \block:<syntax definitions>
   Money = \numeric(decimals = 2)
-  PostalNumber = \textual(include=0123456789); TrafficLight {root} = \enum(red, yellow, green)
+  PostalNumber = \textual(include=0123456789); TrafficLight {} = \enum(red, yellow, green)
 \end(block)
 --- rawast
 +RCALL
@@ -29,7 +29,7 @@
         -PROTO
       -UCALL
     -DEF
-    +DEF TrafficLight="root"
+    +DEF TrafficLight
       +UCALL
         +TARGET
           =SYMREF [0]enum

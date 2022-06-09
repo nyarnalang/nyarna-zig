@@ -268,6 +268,14 @@ pub fn evaluateKeywordCall(
       const constr = self.ctx.types().prototypeConstructor(pt);
       return self.callConstructor(intpr, pos, args, constr);
     },
+    .@"type" => |t| {
+      const constr = try self.ctx.types().typeConstructor(t);
+      if (constr.callable.?.sig.isKeyword()) {
+        return self.callConstructor(intpr, pos, args, constr);
+      } else {
+        std.debug.panic("type {s} is not called as keyword!", .{t.formatter()});
+      }
+    },
     else => std.debug.panic("{s} is not a keyword!", .{@tagName(target.data)})
   }
 }
@@ -396,7 +404,12 @@ fn doConvert(
       },
       .schema  => {
         std.debug.assert(from.isNamed(.schema_def));
-        unreachable; // TODO
+        var builder = try nyarna.Loader.SchemaBuilder.create(
+          &value.data.schema_def, self.ctx.data);
+        const schema = (
+          try builder.finalize(value.origin)
+        ) orelse return try self.ctx.values.poison(value.origin);
+        return schema.value();
       },
       .textual => |*txt| {
         const input = switch (value.data) {
@@ -810,11 +823,12 @@ fn coerce(
   self         : *Evaluator,
   value        : *model.Value,
   expected_type: model.Type,
-) std.mem.Allocator.Error!*model.Value {
+) nyarna.Error!*model.Value {
   const value_type = try self.ctx.types().valueType(value);
-  if (value_type.eql(expected_type) or value_type.isNamed(.poison)) {
-    return value;
-  }
+  if (
+    value_type.eql(expected_type) or value_type.isNamed(.poison) or
+    Types.containsAst(expected_type)
+  ) return value;
   switch (expected_type) {
     .structural => |strct| switch (strct.*) {
       // these are virtual types and thus can never be the expected type.

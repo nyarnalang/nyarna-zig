@@ -161,6 +161,7 @@ pub const Types = lib.Provider.Wrapper(struct {
   pub fn @"SchemaDef"(
     intpr  : *Interpreter,
     pos    : model.Position,
+    root   : *model.Node,
     public : ?*model.Node,
     private: ?*model.Node,
   ) nyarna.Error!*model.Node {
@@ -177,7 +178,7 @@ pub const Types = lib.Provider.Wrapper(struct {
     if (public)  |pnode| try collector.append(pnode, intpr, true, gen);
     if (private) |pnode| try collector.append(pnode, intpr, false, gen);
 
-    const val = try intpr.ctx.values.schemaDef(pos, collector.finish());
+    const val = try intpr.ctx.values.schemaDef(pos, collector.finish(), root);
     return try intpr.genValueNode(val.value());
   }
 

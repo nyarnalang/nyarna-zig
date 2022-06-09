@@ -575,7 +575,7 @@ pub const SequenceBuilder = struct {
           // OPPORTUNITY: sort this list here?
           for (self.list.items) |item, i| {
             if (item.typedef().eql(spec.t)) {
-              return if (self.force) PushResult{
+              return if (force_direct) PushResult{
                 .not_disjoint = item.typedef().at(self.positions.items[i])
               } else PushResult.success;
             }
@@ -694,7 +694,7 @@ pub const SequenceBuilder = struct {
             },
           }
         ) {
-          return self.errorIfForced(force_direct);
+          return self.errorIfForced(true);
         }
         const new = try self.types.sup(direct.t, spec.t);
         if (new.isNamed(.poison)) return PushResult{.not_compatible = direct.*};

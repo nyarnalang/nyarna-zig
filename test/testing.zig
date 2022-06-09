@@ -289,8 +289,7 @@ const AstEmitter = struct {
         for (c.items) |item| try self.process(item);
       },
       .definition => |d| {
-        const def = try self.pushWithKey("DEF", d.name.content,
-          if (d.root != null) @as(?[]const u8, "root") else null);
+        const def = try self.pushWithKey("DEF", d.name.content, null);
         try self.process(d.content);
         try def.pop();
       },
@@ -822,15 +821,21 @@ const AstEmitter = struct {
         try self.emitLine("=ENUM {} \"{s}\"",
           .{t_fmt, ev.t.values.entries.items(.key)[ev.index]});
       },
-      .record => |_| {
-        unreachable;
+      .record => |rec| {
+        const lvl = try self.pushWithType("RECORD", rec.t.typedef());
+        for (rec.fields) |val, index| {
+          try self.emitLine(
+            ">FIELD {s}", .{rec.t.constructor.sig.parameters[index].name});
+          try self.processValue(val);
+        }
+        try lvl.pop();
       },
       .concat => |_| {
         unreachable;
       },
       .schema => |sch| {
         const s = try self.push("SCHEMA");
-        try self.processType(sch.root);
+        try self.processType(sch.root.t);
         try s.pop();
       },
       .schema_def => |sd| {
@@ -838,8 +843,15 @@ const AstEmitter = struct {
         for (sd.defs) |item| try self.process(item.node());
         try def.pop();
       },
-      .seq => |_| {
-        unreachable;
+      .seq => |seq| {
+        const lvl = try self.push("SEQUENCE");
+        for (seq.content.items) |item, index| {
+          try self.processValue(item.content);
+          if (index < seq.content.items.len - 1) {
+            try self.emitLine("=SEP {}", .{item.lf_after});
+          }
+        }
+        try lvl.pop();
       },
       .list => |lst| {
         const l = try self.push("LIST");

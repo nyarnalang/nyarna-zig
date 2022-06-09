@@ -111,7 +111,6 @@ pub const Concat = struct {
 /// it may contain unresolved subnodes.
 pub const Definition = struct {
   name   : *Node.Literal,
-  root   : ?model.Position,
   content: *Node,
   /// initially false, may be set to true during \declare processing
   public: bool,

@@ -173,16 +173,20 @@ pub inline fn schemaDef(
   self: *const Self,
   pos : Position,
   defs: []*model.Node.Definition,
+  root : *model.Node,
 ) !*Value.SchemaDef {
   return &(try self.value(pos, .{
-    .schema_def = .{.defs = defs},
+    .schema_def = .{
+      .defs = defs,
+      .root = root,
+    },
   })).data.schema_def;
 }
 
 pub inline fn schema(
   self   : *const Self,
   pos    : Position,
-  root   : model.Type,
+  root   : model.SpecType,
   symbols: []*model.Symbol,
 ) !*Value.Schema {
   return &(try self.value(pos, .{

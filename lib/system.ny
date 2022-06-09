@@ -83,6 +83,7 @@
   Schema = \unique()
 
   SchemaDef = \unique:
+    root   : \Ast
     public : \Optional(\Ast) {primary}:<syntax definitions, fullast>
     private: \Optional(\Ast) {}:<syntax definitions, fullast>
   \end(unique)
@@ -161,7 +162,7 @@
   standalone = \keyword:
     options: \Optional(\Ast) {primary}:<syntax locations>
     params : \Optional(\Ast) {}:<syntax locations>
-    # TODO: schema
+    schema : \Optional(\Ast)
   \end(keyword)
 
   fragment = \keyword:

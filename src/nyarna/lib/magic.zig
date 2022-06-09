@@ -175,6 +175,8 @@ pub fn magicModule(ctx: Context) !*model.Module {
   module.* = .{
     .root = null,
     .symbols = try ctx.global().alloc(*model.Symbol, 9),
+    .standalone = false,
+    .schema = null,
   };
   var index: usize = 0;
 

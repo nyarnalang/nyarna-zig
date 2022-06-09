@@ -152,12 +152,12 @@ builtin_provider: ?*const lib.Provider,
 specified_content: union(enum) {
   library: model.Position,
   standalone: struct {
-    pos: model.Position,
+    pos     : model.Position,
     callable: *model.Type.Callable,
-    // TODO: schema (?)
+    schema  : ?*model.Value.Schema,
   },
   fragment: struct {
-    pos: model.Position,
+    pos     : model.Position,
     callable: *model.Type.Callable,
   },
   unspecified,
@@ -312,6 +312,7 @@ fn tryInterpretRootDef(
   if (rdef.kind == .library) {
     self.specified_content = .{.library = rdef.node().pos};
   } else {
+    var schema: ?*model.Value.Schema = null;
     const root = if (rdef.kind == .fragment) blk: {
       const expr = (
         try self.associate(
@@ -323,8 +324,21 @@ fn tryInterpretRootDef(
         else     => unreachable,
       };
     } else blk: {
-      // TODO: get root type from schema
-      break :blk self.ctx.types().text();
+      if (rdef.root) |rnode| {
+        const expr =
+          try self.interpretAs(rnode, self.ctx.types().schema().predef());
+        switch ((try self.ctx.evaluator().evaluate(expr)).data) {
+          .schema => |*sch| {
+            schema = sch;
+            for (sch.symbols) |sym| {
+              _ = try self.namespace(0).tryRegister(self, sym);
+            }
+            break :blk sch.root.t;
+          },
+          .poison => break :blk self.ctx.types().poison(),
+          else => unreachable,
+        }
+      } else break :blk self.ctx.types().text();
     };
     var finder = Types.CallableReprFinder.init(self.ctx.types());
 
@@ -354,6 +368,7 @@ fn tryInterpretRootDef(
       }},
       .standalone => .{.standalone = .{
         .pos      = rdef.node().pos,
+        .schema   = schema,
         .callable =
           try builder_res.createCallable(self.ctx.global(), .function),
       }},
@@ -730,7 +745,6 @@ fn tryInterpretDef(
 
   const def_val = try self.ctx.values.definition(
     def.node().pos, name, content, def.node().pos);
-  def_val.root = def.root;
   return try self.ctx.createValueExpr(def_val.value());
 }
 
@@ -1540,6 +1554,13 @@ fn tryInterpretVarargs(
   va   : *model.Node.Varargs,
   stage: Stage,
 ) nyarna.Error!?*model.Expression {
+  if (stage.kind == .resolve) {
+    for (va.content.items) |item| {
+      _ = try self.tryInterpret(item.node, stage);
+    }
+    return null;
+  }
+
   var seen_poison = false;
   var seen_unfinished = false;
   for (va.content.items) |item| {

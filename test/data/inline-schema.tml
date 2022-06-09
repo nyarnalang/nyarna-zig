@@ -1,12 +1,14 @@
 === Inline Schema
 --- input
-\declare:
-  Section = \record:
-    title : \Raw
-    content : \list(\Raw) {primary}:<par>
-  \end(record)
-\end(declare)
-\standalone(\schema(\concat(\Section)))
+\standalone:
+:schema:
+  \SchemaDef(\Sequence(\Section)):
+    Section = \Record:
+      title   : \Text
+      content : \Sequence(\Text) {primary}
+    \end(Record)
+  \end(SchemaDef)
+\end(standalone)
 
 \Section(First):
   Lorem ipsum
@@ -14,24 +16,26 @@
   dolor sit amet
 \end(Section)
 
-\Section(Second, \listOf(Foo))
+\Section(Second, Foo)
 --- document
-+CONCAT
-  +RECORD "Section"
-    >FIELD "title"
-    =RAW Raw "First"
-    >FIELD "content"
-    +LIST
-      =RAW Raw "Lorem ipsum"
-      =RAW Raw "dolor sit amet"
-    -LIST
++SEQUENCE
+  +RECORD Section
+    >FIELD title
+    =TEXT Text "First"
+    >FIELD content
+    +SEQUENCE
+      =TEXT Text "Lorem ipsum"
+      =SEP 2
+      =TEXT Text "dolor sit amet"
+    -SEQUENCE
   -RECORD
-  +RECORD "Section"
-    >FIELD "title"
-    =RAW Raw "Second"
-    >FIELD "content"
-    +LIST
-      =RAW Raw "Foo"
-    -LIST
+  =SEP 2
+  +RECORD Section
+    >FIELD title
+    =TEXT Text "Second"
+    >FIELD content
+    +SEQUENCE
+      =TEXT Text "Foo"
+    -SEQUENCE
   -RECORD
--CONCAT
+-SEQUENCE

@@ -203,6 +203,11 @@ pub fn finalize(self: *Module) !*model.Module {
       },
       else => unreachable,
     },
+    .standalone = self.loader.interpreter.specified_content == .standalone,
+    .schema = switch (self.loader.interpreter.specified_content) {
+      .standalone => |sa| sa.schema,
+      else => null,
+    },
   };
   if (self.loader.logger.count > 0) self.loader.data.seen_error = true;
   return ret;

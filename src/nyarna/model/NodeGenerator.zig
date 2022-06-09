@@ -87,7 +87,6 @@ pub fn copy(self: Self, node: *Node) std.mem.Allocator.Error!*Node {
     .definition => |*def| (
       try self.definition(node.pos, .{
         .name    = &(try self.copy(def.name.node())).data.literal,
-        .root    = def.root,
         .content = try self.copy(def.content),
         .public  = def.public,
       })

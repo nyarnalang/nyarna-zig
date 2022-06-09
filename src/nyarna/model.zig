@@ -403,7 +403,11 @@ pub const Module = struct {
   /// module's parameters, returns the module's content value. libraries have
   /// no root function.
   root: ?*Function,
-  // TODO: schema
+  /// true iff this module is standalone
+  standalone: bool,
+  /// only relevant if standalone == true. holds the module's schema, or null
+  /// if the output schema is used.
+  schema: ?*Value.Schema,
 
   pub fn locator(self: *Module) Locator {
     return self.root.pos.source.locator;

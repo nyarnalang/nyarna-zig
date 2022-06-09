@@ -252,7 +252,7 @@ pub const PrototypeVal = struct {
 
 /// a Record value
 pub const Record = struct {
-  t: *const Type.Record,
+  t     : *const Type.Record,
   fields: []*Value,
 
   pub inline fn value(self: *@This()) *Value {
@@ -261,8 +261,8 @@ pub const Record = struct {
 };
 
 pub const Schema = struct {
-  root   : Type,
-  symbols: *model.Symbol,
+  root   : model.SpecType,
+  symbols: []*model.Symbol,
 
   pub inline fn value(self: *@This()) *Value {
     return Value.parent(self);
@@ -271,6 +271,7 @@ pub const Schema = struct {
 
 pub const SchemaDef = struct {
   defs    : []*Node.Definition,
+  root    : *Node,
   // if this SchemaDef has already been instaniated, this is its instance.
   instance: ?*Schema = null,
 
@@ -378,7 +379,7 @@ fn parent(it: anytype) *Value {
     Map          => offset(Data, "map"),
     PrototypeVal => offset(Data, "prototype"),
     Record       => offset(Data, "record"),
-    Schema       => offset(Data, "schena"),
+    Schema       => offset(Data, "schema"),
     SchemaDef    => offset(Data, "schema_def"),
     Seq          => offset(Data, "seq"),
     TextScalar   => offset(Data, "text"),

@@ -108,7 +108,6 @@ pub const DefCollector = struct {
               .name = try gen.literal(def.name.value().origin, .{
                 .kind = .text, .content = def.name.content,
               }),
-              .root = def.root,
               .content = try gen.expression(
                 try intpr.ctx.createValueExpr(content_value)
               ),
@@ -629,6 +628,7 @@ pub const Impl = lib.Provider.Wrapper(struct {
     pos    : model.Position,
     options: ?*model.Node,
     params : ?*model.Node,
+    schema : ?*model.Node,
   ) nyarna.Error!*model.Node {
     switch (intpr.specified_content) {
       .library => |lpos|
@@ -649,8 +649,8 @@ pub const Impl = lib.Provider.Wrapper(struct {
             try registrar.finalize(0);
           }
         }
-        return ( // TODO: schema
-          try intpr.node_gen.rootDef(pos, .standalone, undefined, params)
+        return (
+          try intpr.node_gen.rootDef(pos, .standalone, schema, params)
         ).node();
       }
     }
