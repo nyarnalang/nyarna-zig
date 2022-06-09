@@ -379,9 +379,9 @@ fn convertIntoSequence(
 }
 
 fn doConvert(
-  self: *Evaluator,
+  self : *Evaluator,
   value: *model.Value,
-  to: model.Type,
+  to   : model.Type,
 ) nyarna.Error!*model.Value {
   const from = try self.ctx.types().valueType(value);
   if (from.isNamed(.poison)) return value;
@@ -393,6 +393,10 @@ fn doConvert(
       .literal, .space => {
         std.debug.assert(from.isNamed(.void));
         return (try self.ctx.values.textScalar(value.origin, to, "")).value();
+      },
+      .schema  => {
+        std.debug.assert(from.isNamed(.schema_def));
+        unreachable; // TODO
       },
       .textual => |*txt| {
         const input = switch (value.data) {

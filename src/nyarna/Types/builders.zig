@@ -224,6 +224,7 @@ pub const IntNumBuilder = struct {
   const Self = @This();
 
   ctx      : nyarna.Context,
+  private  : std.mem.Allocator,
   ret      : *model.Type.IntNum,
   pos      : model.Position,
   failed   : bool = false,
@@ -235,7 +236,11 @@ pub const IntNumBuilder = struct {
   /// this will be set as soon as units.len > 0
   smallest_factor: usize = undefined,
 
-  pub fn init(ctx: nyarna.Context, pos: model.Position) !Self {
+  pub fn init(
+    ctx    : nyarna.Context,
+    private: std.mem.Allocator,
+    pos    : model.Position,
+  ) !Self {
     const named = try ctx.global().create(model.Type.Named);
     named.* = .{
       .at   = pos,
@@ -246,7 +251,9 @@ pub const IntNumBuilder = struct {
         .suffixes = undefined,
       }},
     };
-    return Self{.ctx = ctx, .ret = &named.data.int, .pos = pos};
+    return Self{
+      .ctx = ctx, .private = private, .ret = &named.data.int, .pos = pos,
+    };
   }
 
   pub fn unit(
@@ -295,7 +302,7 @@ pub const IntNumBuilder = struct {
     }
     try self.units.append(
       self.ctx.global(), .{.suffix = suffix, .factor = actual});
-    try self.positions.append(self.ctx.local(), pos);
+    try self.positions.append(self.private, pos);
   }
 
   fn setNum(
@@ -347,7 +354,7 @@ pub const IntNumBuilder = struct {
       return null;
     }
     self.ret.suffixes = self.units.items;
-    self.positions.deinit(self.ctx.local());
+    self.positions.deinit(self.private);
     return self.ret;
   }
 
@@ -360,13 +367,18 @@ pub const FloatNumBuilder = struct {
   const Self = @This();
 
   ctx      : nyarna.Context,
+  private  : std.mem.Allocator,
   ret      : *model.Type.FloatNum,
   pos      : model.Position,
   failed   : bool = false,
   positions: std.ArrayListUnmanaged(model.Position) = .{},
   units    : std.ArrayListUnmanaged(model.Type.FloatNum.Unit) = .{},
 
-  pub fn init(ctx: nyarna.Context, pos: model.Position) !Self {
+  pub fn init(
+    ctx    : nyarna.Context,
+    private: std.mem.Allocator,
+    pos    : model.Position,
+  ) !Self {
     const named = try ctx.global().create(model.Type.Named);
     named.* = .{
       .at   = pos,
@@ -377,7 +389,9 @@ pub const FloatNumBuilder = struct {
         .suffixes = undefined,
       }},
     };
-    return Self{.ctx = ctx, .ret = &named.data.float, .pos = pos};
+    return Self{
+      .ctx = ctx, .private = private, .ret = &named.data.float, .pos = pos,
+    };
   }
 
   pub fn unit(
@@ -402,7 +416,7 @@ pub const FloatNumBuilder = struct {
       .suffix = suffix,
       .factor = @intToFloat(f64, factor.value) / divisor,
     });
-    try self.positions.append(self.ctx.local(), pos);
+    try self.positions.append(self.private, pos);
   }
 
   fn setNum(
@@ -453,7 +467,7 @@ pub const FloatNumBuilder = struct {
       return null;
     }
     self.ret.suffixes = self.units.items;
-    self.positions.deinit(self.ctx.local());
+    self.positions.deinit(self.private);
     return self.ret;
   }
 

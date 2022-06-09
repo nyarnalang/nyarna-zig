@@ -28,7 +28,10 @@ pub const SpecialSyntax = struct {
     finish: fn(self: *@This(), pos: model.Position) nyarna.Error!*model.Node,
   };
 
-  init: fn init(intpr: *Interpreter) std.mem.Allocator.Error!*Processor,
+  init: fn init(
+    intpr: *Interpreter,
+    source: *const model.Source,
+  ) std.mem.Allocator.Error!*Processor,
   comments_include_newline: bool,
 };
 
@@ -43,6 +46,7 @@ pub const SymbolDefs = struct {
   const Processor = SpecialSyntax.Processor;
 
   intpr    : *Interpreter,
+  source   : *const model.Source,
   proc     : Processor,
   state    : State,
   produced : std.ArrayListUnmanaged(*model.Node),
@@ -50,16 +54,16 @@ pub const SymbolDefs = struct {
   last_item: model.Position,
   // ----- current line ------
   start  : model.Cursor,
-  names  : std.ArrayListUnmanaged(*model.Node.Literal),
-  primary: ?model.Position,
-  varargs: ?model.Position,
-  varmap : ?model.Position,
-  borrow : ?model.Position,
-  root   : ?model.Position,
-  header : ?*model.Value.BlockHeader,
-  @"type": ?*model.Node,
-  expr   : ?*model.Node,
-  surplus_flags_start: ?model.Position, // more than on {…} in line.
+  names  : std.ArrayListUnmanaged(*model.Node.Literal) = .{},
+  primary: ?model.Position = null,
+  varargs: ?model.Position = null,
+  varmap : ?model.Position = null,
+  borrow : ?model.Position = null,
+  root   : ?model.Position = null,
+  header : ?*model.Value.BlockHeader = null,
+  @"type": ?*model.Node = null,
+  expr   : ?*model.Node = null,
+  surplus_flags_start: ?model.Position = null, // more than one {…} in line.
   // -------------------------
 
   const after_name_items_arr = [_]errors.WrongItemError.ItemDescr{
@@ -92,20 +96,24 @@ pub const SymbolDefs = struct {
 
   fn init(
     intpr  : *Interpreter,
+    source : *const model.Source,
     variant: Variant,
   ) std.mem.Allocator.Error!*Processor {
-    const ret = try intpr.allocator.create(SymbolDefs);
-    ret.intpr = intpr;
-    ret.proc  = .{
-      .push     = SymbolDefs.push,
-      .finish   = SymbolDefs.finish,
+    const ret = try intpr.allocator().create(SymbolDefs);
+    ret.* = .{
+      .intpr  = intpr,
+      .source = source,
+      .proc   = .{
+        .push   = push,
+        .finish = finish,
+      },
+      .state     = initial,
+      .names     = .{},
+      .produced  = .{},
+      .variant   = variant,
+      .last_item = model.Position.intrinsic(),
+      .start     = undefined,
     };
-    ret.state     = initial;
-    ret.names     = .{};
-    ret.produced  = .{};
-    ret.variant   = variant;
-    ret.last_item = model.Position.intrinsic();
-    ret.reset();
     return &ret.proc;
   }
 
@@ -113,12 +121,18 @@ pub const SymbolDefs = struct {
     return self.intpr.ctx.logger;
   }
 
-  fn initLocations(intpr: *Interpreter) !*Processor {
-    return init(intpr, .locs);
+  fn initLocations(
+    intpr : *Interpreter,
+    source: *const model.Source,
+  ) !*Processor {
+    return init(intpr, source, .locs);
   }
 
-  fn initDefinitions(intpr: *Interpreter) !*Processor {
-    return init(intpr, .defs);
+  fn initDefinitions(
+    intpr : *Interpreter,
+    source: *const model.Source,
+  ) !*Processor {
+    return init(intpr, source, .defs);
   }
 
   fn reset(l: *SymbolDefs) void {
@@ -168,7 +182,7 @@ pub const SymbolDefs = struct {
     switch (item) {
       .space   => return .none,
       .literal => |name| {
-        try self.names.append(self.intpr.allocator,
+        try self.names.append(self.intpr.allocator(),
           try self.intpr.node_gen.literal(
             pos, .{.kind = .text, .content = name}));
         self.state = afterName;
@@ -751,7 +765,7 @@ pub const SymbolDefs = struct {
     comptime optional_pos_fields : []const []const u8,
     comptime optional_node_fields: []const []const u8,
   ) !*model.Node {
-    const ret = try self.intpr.allocator.create(model.Node);
+    const ret = try self.intpr.allocator().create(model.Node);
     ret.pos = pos;
     ret.data = @unionInit(@TypeOf(ret.data), kind, undefined);
     const val = &@field(ret.data, kind);
@@ -798,7 +812,7 @@ pub const SymbolDefs = struct {
       }
     }
 
-    const line_pos = self.intpr.input.between(self.start, pos.end);
+    const line_pos = self.source.between(self.start, pos.end);
     for (self.names.items) |name| {
       const node = try switch (self.variant) {
         .locs => blk: {
@@ -821,7 +835,7 @@ pub const SymbolDefs = struct {
             &[_][]const u8{"root"}, &[_][]const u8{});
         },
       };
-      try self.produced.append(self.intpr.allocator, node);
+      try self.produced.append(self.intpr.allocator(), node);
     }
   }
 };

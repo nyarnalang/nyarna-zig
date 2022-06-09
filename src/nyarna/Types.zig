@@ -283,6 +283,7 @@ predefined: struct {
   location    : model.Type.Named,
   poison      : model.Type.Named,
   prototype   : model.Type.Named,
+  schema      : model.Type.Named,
   schema_def  : model.Type.Named,
   space       : model.Type.Named,
   @"type"     : model.Type.Named,
@@ -391,6 +392,10 @@ pub inline fn poison(self: *Self) model.Type {
 
 pub inline fn prototype(self: *Self) model.Type {
   return self.predefined.prototype.typedef();
+}
+
+pub inline fn schema(self: *Self) model.Type {
+  return self.predefined.schema.typedef();
 }
 
 pub inline fn schemaDef(self: *Self) model.Type {
@@ -1115,6 +1120,7 @@ pub fn valueType(self: *Self, v: *model.Value) !model.Type {
     .prototype    => |pv|
       self.prototypeConstructor(pv.pt).callable.?.typedef(),
     .record       => |*rec|  rec.t.typedef(),
+    .schema       => self.schema(),
     .schema_def   => self.schemaDef(),
     .seq          => |*seq|  seq.t.typedef(),
     .text         => |*txt|  txt.t,
@@ -1245,6 +1251,7 @@ pub fn convertible(self: *Self, from: model.Type, to: model.Type) bool {
         .literal, .space, .textual => true,
         else => false,
       } else false,
+      .schema_def => return to.isNamed(.schema),
       .space => to.isStruc(.concat) or to.isStruc(.sequence),
       .literal => to_scalar != null,
       else => false,

@@ -23,6 +23,7 @@ const unicode             = @import("unicode.zig");
 
 const errors = nyarna.errors;
 const lib    = nyarna.lib;
+const Loader = nyarna.Loader;
 const model  = nyarna.model;
 const Types  = nyarna.Types;
 
@@ -72,8 +73,8 @@ pub const Namespace = struct {
     self : *Namespace,
     intpr: *Interpreter,
     sym  : *model.Symbol,
-  ) !bool {
-    const res = try self.data.getOrPut(intpr.allocator, sym.name);
+  ) std.mem.Allocator.Error!bool {
+    const res = try self.data.getOrPut(intpr.allocator(), sym.name);
     // if the symbol exists, check if the existing symbol is intrinsic.
     // if so, the new symbol overrides a magic symbol used in system.ny which is
     // allowed.
@@ -84,7 +85,7 @@ pub const Namespace = struct {
     } else {
       res.value_ptr.* = sym;
       if (self.index) |index| {
-        try intpr.symbols.append(intpr.allocator, .{
+        try intpr.symbols.append(intpr.allocator(), .{
           .ns    = @intCast(u15, index),
           .sym   = sym,
           .alive = true,
@@ -105,11 +106,10 @@ pub const ActiveVarContainer = struct {
   container: *model.VariableContainer,
 };
 
-/// The source that is being parsed. Must not be changed during an
-/// interpreter's operation.
-input: *const model.Source,
 /// Context of the ModuleLoader that owns this interpreter.
 ctx: nyarna.Context,
+/// the loader owning this interpreter
+loader: *Loader,
 /// Maps each existing command character to the index of the namespace it
 /// references. Lexer uses this to check whether a character is a command
 /// character; the namespace mapping is relevant later for the interpreter.
@@ -132,14 +132,6 @@ namespaces: std.ArrayListUnmanaged(Namespace) = .{},
 /// references to symbols in a type's namespace in the current source file.
 type_namespaces: std.HashMapUnmanaged(model.Type, Namespace,
   model.Type.HashContext, std.hash_map.default_max_load_percentage) = .{},
-/// The public namespace of the current module, into which public symbols are
-/// published.
-public_namespace: *std.ArrayListUnmanaged(*model.Symbol),
-/// Allocator for data private to the interpreter (use ctx.global() for other
-/// data).This includes primarily the AST nodes generated from the parser.
-/// anything allocated here *must* be copied when referred by an external
-/// entity, such as a Value or an Expression.
-allocator: std.mem.Allocator,
 /// Array of alternative syntaxes known to the interpreter [7.12].
 /// TODO: make this user-extensible
 syntax_registry: [2]syntaxes.SpecialSyntax,
@@ -173,41 +165,44 @@ specified_content: union(enum) {
 
 /// creates an interpreter.
 pub fn create(
-  ctx      : nyarna.Context,
-  allocator: std.mem.Allocator,
-  source   : *model.Source,
-  public_ns: *std.ArrayListUnmanaged(*model.Symbol),
+  loader   : *nyarna.Loader,
   provider : ?*const lib.Provider,
-) !*Interpreter {
-  var ret = try allocator.create(Interpreter);
+) std.mem.Allocator.Error!*Interpreter {
+  var ret = try loader.storage.allocator().create(Interpreter);
   ret.* = .{
-    .input           = source,
-    .ctx             = ctx,
-    .allocator       = allocator,
+    .ctx             = loader.ctx(),
+    .loader          = loader,
     .syntax_registry = .{
       syntaxes.SymbolDefs.locations(),
       syntaxes.SymbolDefs.definitions(),
     },
     .node_gen         = undefined,
-    .public_namespace = public_ns,
     .builtin_provider = provider,
   };
-  ret.node_gen = model.NodeGenerator.init(allocator, ctx);
-  try ret.addNamespace('\\');
-  const container = try ctx.global().create(model.VariableContainer);
+  ret.node_gen = model.NodeGenerator.init(loader.storage.allocator(), ret.ctx);
+  ret.addNamespace('\\') catch |e| switch (e) {
+    // never happens, as only one namespace is added.
+    error.too_many_namespaces           => unreachable,
+    std.mem.Allocator.Error.OutOfMemory => |oom| return oom,
+  };
+  const container = try ret.ctx.global().create(model.VariableContainer);
   container.* = .{.num_values = 0};
-  try ret.var_containers.append(ret.allocator, .{
+  try ret.var_containers.append(loader.storage.allocator(), .{
     .offset = 0, .container = container,
   });
   return ret;
 }
 
+pub inline fn allocator(self: *Interpreter) std.mem.Allocator {
+  return self.loader.storage.allocator();
+}
+
 pub fn addNamespace(self: *Interpreter, character: u21) !void {
   const index = self.namespaces.items.len;
-  if (index > std.math.maxInt(u15)) return nyarna.Error.too_many_namespaces;
+  if (index > std.math.maxInt(u15)) return error.too_many_namespaces;
   try self.command_characters.put(
-    self.allocator, character, @intCast(u15, index));
-  try self.namespaces.append(self.allocator, .{.index = index});
+    self.allocator(), character, @intCast(u15, index));
+  try self.namespaces.append(self.allocator(), .{.index = index});
   const ns = self.namespace(@intCast(u15, index));
   // intrinsic symbols of every namespace.
   for (self.ctx.data.generic_symbols.items) |sym| {
@@ -237,7 +232,7 @@ pub fn resetSyms(self: *Interpreter, state: Mark) void {
 
 pub inline fn type_namespace(self: *Interpreter, t: model.Type) !*Namespace {
   const entry = try self.type_namespaces.getOrPutValue(
-    self.allocator, t, Namespace{.index = null});
+    self.allocator(), t, Namespace{.index = null});
   return entry.value_ptr;
 }
 
@@ -333,7 +328,7 @@ fn tryInterpretRootDef(
     };
     var finder = Types.CallableReprFinder.init(self.ctx.types());
 
-    var list = std.ArrayList(model.locations.Ref).init(self.allocator);
+    var list = std.ArrayList(model.locations.Ref).init(self.allocator());
     if (rdef.params) |params| {
       if (try self.locationsCanGenVars(params, .{.kind = .final})) {
         try self.collectLocations(params, &list);
@@ -561,7 +556,7 @@ fn tryInterpretCall(
   ) orelse return null;
 
   const cur_allocator =
-    if (is_keyword) self.allocator else self.ctx.global();
+    if (is_keyword) self.allocator() else self.ctx.global();
   var args_failed_to_interpret = false;
   const arg_stage = Stage{
     .kind = if (is_keyword) .keyword else stage.kind,
@@ -905,7 +900,7 @@ pub fn tryInterpretLocationsList(
       if (!(try self.locationsCanGenVars(uc, stage))) {
         return false;
       }
-      var locs = std.ArrayList(model.locations.Ref).init(self.allocator);
+      var locs = std.ArrayList(model.locations.Ref).init(self.allocator());
       try self.collectLocations(uc, &locs);
       list.* = .{.resolved = .{.locations = locs.items}};
     },
@@ -919,7 +914,7 @@ fn variablesFromLocations(
   locs     : []model.locations.Ref,
   container: *model.VariableContainer,
 ) ![]*model.Symbol.Variable {
-  var variables = try self.allocator.alloc(*model.Symbol.Variable, locs.len);
+  var variables = try self.allocator().alloc(*model.Symbol.Variable, locs.len);
   var next: usize = 0;
   for (locs) |*loc, index| {
     var name: *model.Value.TextScalar = undefined;
@@ -1026,7 +1021,7 @@ pub fn tryInterpretFuncParams(
   if (!(try self.locationsCanGenVars(func.params.unresolved, stage))) {
     return false;
   }
-  var locs = std.ArrayList(model.locations.Ref).init(self.allocator);
+  var locs = std.ArrayList(model.locations.Ref).init(self.allocator());
   try self.collectLocations(func.params.unresolved, &locs);
   const variables =
     try self.variablesFromLocations(locs.items, func.variables);
@@ -1438,7 +1433,7 @@ pub fn tryPregenMatcherFunc(
   ) == .success) {
     const input_type = blk: {
       var builder = try Types.IntersectionBuilder.init(
-        matcher.body.cases.len, self.allocator);
+        matcher.body.cases.len, self.allocator());
       var checker = IntersectionChecker.init(self, true);
       var seen_failed = false;
       for (matcher.body.cases) |case| {
@@ -1897,7 +1892,7 @@ fn tryGenIntersection(
     try self.tryProcessVarargs(gi.types, self.ctx.types().@"type"(), stage);
 
   var builder = try Types.IntersectionBuilder.init(
-    result.max + 1, self.allocator);
+    result.max + 1, self.allocator());
   var checker = IntersectionChecker.init(self, false);
 
   for (gi.types) |item| {
@@ -1941,7 +1936,7 @@ fn tryGenIntersection(
       };
 
       // needed because inner goes out of scope
-      const inner_alloc = try self.allocator.create(model.Type);
+      const inner_alloc = try self.allocator().create(model.Type);
       inner_alloc.* = inner;
       _ = try checker.push(&builder, inner_alloc, item.node.pos);
     }
@@ -2192,10 +2187,12 @@ fn tryGenNumeric(
   } else return null;
 
   if (is_int) {
-    var ib = try Types.IntNumBuilder.init(self.ctx, gn.node().pos);
+    var ib = try Types.IntNumBuilder.init(
+      self.ctx, self.allocator(), gn.node().pos);
     return try self.doGenNumeric(&ib, gn, stage);
   } else {
-    var fb = try Types.FloatNumBuilder.init(self.ctx, gn.node().pos);
+    var fb = try Types.FloatNumBuilder.init(
+      self.ctx, self.allocator(), gn.node().pos);
     return try self.doGenNumeric(&fb, gn, stage);
   }
 }
@@ -2305,7 +2302,7 @@ fn tryGenSequence(
   }
   if (gs.generated) |gen| {
     var builder = Types.SequenceBuilder.init(
-      self.ctx.types(), self.allocator, true);
+      self.ctx.types(), self.allocator(), true);
     if (gs.direct) |input| {
       const value = try self.ctx.evaluator().evaluate(input.data.expression);
       switch (value.data) {
@@ -2810,7 +2807,7 @@ pub fn resolveSymbol(
   name      : []const u8,
 ) !*model.Node {
   var syms = &self.namespaces.items[ns].data;
-  var ret = try self.allocator.create(model.Node);
+  var ret = try self.allocator().create(model.Node);
   ret.* = .{
     .pos  = pos,
     .data = if (syms.get(name)) |sym| .{
@@ -3004,7 +3001,7 @@ pub fn probeType(
     },
     .seq      => |*seq| {
       var builder = nyarna.Types.SequenceBuilder.init(
-        self.ctx.types(), self.allocator, false);
+        self.ctx.types(), self.allocator(), false);
       var seen_unfinished = false;
       for (seq.items) |*item| {
         if (try self.probeType(item.content, stage, sloppy)) |t| {
@@ -3456,7 +3453,7 @@ pub fn interpretWithTargetScalar(
       }
       if (seen_unfinished) return null;
       var builder = Types.SequenceBuilder.init(
-        self.ctx.types(), self.allocator, false);
+        self.ctx.types(), self.allocator(), false);
       const res = try self.ctx.global().alloc(
         model.Expression.Paragraph, seq.items.len);
       var next: usize = 0;

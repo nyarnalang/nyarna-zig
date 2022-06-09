@@ -96,11 +96,12 @@ const Command = struct {
   pub fn shift(
     self   : *Command,
     intpr  : *Interpreter,
+    source : *const model.Source,
     end    : model.Cursor,
     fullast: bool,
   ) !void {
     const newNode =
-      try self.mapper.finalize(intpr.input.between(self.start, end));
+      try self.mapper.finalize(source.between(self.start, end));
     switch (newNode.data) {
       .resolved_call => |*rcall| {
         if (rcall.sig.isKeyword()) {
@@ -223,7 +224,7 @@ pub fn append(
     std.debug.assert(res == .none);
   } else {
     if (self.dangling_space) |space_node| {
-      try self.nodes.append(intpr.allocator, space_node);
+      try self.nodes.append(intpr.allocator(), space_node);
       self.dangling_space = null;
     }
     const res = if (self.fullast) item else switch (item.data) {
@@ -238,7 +239,7 @@ pub fn append(
       .expression => |expr| if (expr.data == .void) return,
       else => {}
     }
-    try self.nodes.append(intpr.allocator, res);
+    try self.nodes.append(intpr.allocator(), res);
   }
 }
 
@@ -305,11 +306,11 @@ pub fn finalize(self: *ContentLevel, p: *Impl) !*model.Node {
   const alloc = p.allocator();
   const content_node = if (self.syntax_proc) |proc| (
     try proc.finish(
-      proc, ip.input.between(self.start, p.cur_start))
+      proc, p.lexer.walker.source.between(self.start, p.cur_start))
   ) else if (self.seq.items.len == 0) (
     (
       try self.finalizeParagraph(p.intpr())
-    ) orelse try ip.node_gen.void(p.intpr().input.at(self.start))
+    ) orelse try ip.node_gen.void(p.lexer.walker.source.at(self.start))
   ) else blk: {
     if (self.nodes.items.len > 0) {
       if (try self.finalizeParagraph(p.intpr())) |content| {
@@ -338,7 +339,7 @@ pub fn pushParagraph(
 ) !void {
   if (self.nodes.items.len > 0) {
     if (try self.finalizeParagraph(intpr)) |content| {
-      try self.seq.append(intpr.allocator, .{
+      try self.seq.append(intpr.allocator(), .{
         .content = content,
         .lf_after = lf_after
       });

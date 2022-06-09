@@ -67,7 +67,7 @@ pub const DefCollector = struct {
     gen  : model.NodeGenerator,
     def  : *model.Node.Definition,
   ) !*model.Node.Definition {
-    if (gen.allocator.ptr == intpr.allocator.ptr) return def;
+    if (gen.allocator.ptr == intpr.allocator().ptr) return def;
     return &(try gen.copy(def.node())).data.definition;
   }
 
@@ -197,7 +197,7 @@ const VarProc = struct {
       },
       .concat => |*con| {
         const items =
-          try self.ip.allocator.alloc(*model.Node, con.items.len);
+          try self.ip.allocator().alloc(*model.Node, con.items.len);
         for (con.items) |item, index| items[index] = try self.node(item);
         return (try self.ip.node_gen.concat(
           self.keyword_pos, .{.items = items})).node();
@@ -235,7 +235,7 @@ const VarProc = struct {
       .poison => return try self.empty(),
       .concat => |*con| {
         const items =
-          try self.ip.allocator.alloc(*model.Node, con.content.items.len);
+          try self.ip.allocator().alloc(*model.Node, con.content.items.len);
         for (con.content.items) |item, index| {
           const loc = &item.data.location;
           const initial = if (loc.default) |expr|
@@ -364,7 +364,7 @@ pub fn createMatchCases(
       intpr.ctx.types().@"type"(), intpr.ctx.types().ast())
   ).?;
   var collected = try std.ArrayList(model.Node.Match.Case).initCapacity(
-    intpr.allocator, cases.content.items.len);
+    intpr.allocator(), cases.content.items.len);
   for (cases.content.items) |case| switch (case.key) {
     .direct => {
       const res = try intpr.interpret(case.value);
@@ -434,7 +434,7 @@ pub const Impl = lib.Provider.Wrapper(struct {
     for ([_]?*model.Node{public, private}) |item| {
       if (item) |node| try collector.collect(node, intpr);
     }
-    try collector.allocate(intpr.allocator);
+    try collector.allocate(intpr.allocator());
 
     if (public)  |pnode| {
       try collector.append(pnode, intpr, true, intpr.node_gen);
@@ -464,10 +464,9 @@ pub const Impl = lib.Provider.Wrapper(struct {
         intpr.ctx.logger.MultipleModuleKinds("fragment", pos, f.pos),
       .unspecified => {
         if (options) |input| {
-          var list = std.ArrayList(model.locations.Ref).init(intpr.allocator);
+          var list = std.ArrayList(model.locations.Ref).init(intpr.allocator());
           try intpr.collectLocations(input, &list);
-          var registrar =
-            nyarna.ModuleLoader.OptionRegistrar{.ml = intpr.ctx.loader.?};
+          var registrar = intpr.loader.registerOptions();
           _ = try
             intpr.processLocations(&list.items, .{.kind = .final}, &registrar);
           try registrar.finalize(0);
@@ -502,11 +501,11 @@ pub const Impl = lib.Provider.Wrapper(struct {
     then     : ?*model.Node,
     @"else"  : ?*model.Node,
   ) nyarna.Error!*model.Node {
-    const nodes = try intpr.allocator.alloc(*model.Node, 2);
+    const nodes = try intpr.allocator().alloc(*model.Node, 2);
     nodes[1] = then orelse try intpr.node_gen.void(pos);
     nodes[0] = @"else" orelse try intpr.node_gen.void(pos);
 
-    const ret = try intpr.allocator.create(model.Node);
+    const ret = try intpr.allocator().create(model.Node);
     ret.* = .{
       .pos = pos,
       .data = .{
@@ -536,7 +535,7 @@ pub const Impl = lib.Provider.Wrapper(struct {
       intpr.ctx.logger.InvalidLocator(locator.pos);
       return try intpr.node_gen.poison(pos);
     };
-    if (try intpr.ctx.searchModule(locator.pos, parsed)) |index| {
+    if (try intpr.loader.searchModule(locator.pos, parsed)) |index| {
       return (try intpr.node_gen.import(pos, ns, index)).node();
     } else {
       return try intpr.node_gen.poison(pos);
@@ -569,10 +568,9 @@ pub const Impl = lib.Provider.Wrapper(struct {
         intpr.ctx.logger.MultipleModuleKinds("fragment", pos, f.pos),
       .unspecified => {
         if (options) |input| {
-          var list = std.ArrayList(model.locations.Ref).init(intpr.allocator);
+          var list = std.ArrayList(model.locations.Ref).init(intpr.allocator());
           try intpr.collectLocations(input, &list);
-          var registrar =
-            nyarna.ModuleLoader.OptionRegistrar{.ml = intpr.ctx.loader.?};
+          var registrar = intpr.loader.registerOptions();
           _ = try
             intpr.processLocations(&list.items, .{.kind = .final}, &registrar);
           try registrar.finalize(0);
@@ -642,10 +640,10 @@ pub const Impl = lib.Provider.Wrapper(struct {
       .unspecified => {
         if (options) |input| {
           if (try intpr.locationsCanGenVars(input, .{.kind = .keyword})) {
-            var list = std.ArrayList(model.locations.Ref).init(intpr.allocator);
+            var list =
+              std.ArrayList(model.locations.Ref).init(intpr.allocator());
             try intpr.collectLocations(input, &list);
-            var registrar =
-              nyarna.ModuleLoader.OptionRegistrar{.ml = intpr.ctx.loader.?};
+            var registrar = intpr.loader.registerOptions();
             _ = try intpr.processLocations(
               &list.items, .{.kind = .final}, &registrar);
             try registrar.finalize(0);
@@ -842,6 +840,7 @@ pub const Checker = struct {
     .{"Optional",        .prototype},
     .{"Positive",        .int},
     .{"Record",          .prototype},
+    .{"Schema",          .schema},
     .{"SchemaDef",       .schema_def},
     .{"Sequence",        .prototype},
     .{"Text",            .textual, .text},

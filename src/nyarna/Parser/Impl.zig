@@ -19,6 +19,7 @@ const unicode      = @import("../unicode.zig");
 
 const errors      = nyarna.errors;
 const Interpreter = nyarna.Interpreter;
+const Loader      = nyarna.Loader;
 const model       = nyarna.model;
 
 const last = @import("../helpers.zig").last;
@@ -82,13 +83,13 @@ config: ?*model.BlockConfig,
 /// other operations push either ns_mapping_failed or ns_mapping_succeeded.
 ns_mapping_stack: std.ArrayListUnmanaged(u16),
 
-lexer: Lexer,
-state: State,
-cur: model.Token,
+lexer    : Lexer,
+state    : State,
+cur      : model.Token,
 cur_start: model.Cursor,
 
 pub inline fn allocator(self: *@This()) std.mem.Allocator {
-  return self.intpr().allocator;
+  return self.intpr().allocator();
 }
 
 pub inline fn intpr(self: *@This()) *Interpreter {
@@ -97,6 +98,14 @@ pub inline fn intpr(self: *@This()) *Interpreter {
 
 pub inline fn logger(self: *@This()) *errors.Handler {
   return self.intpr().ctx.logger;
+}
+
+pub inline fn loader(self: *@This()) *Loader {
+  return self.intpr().loader;
+}
+
+pub inline fn source(self: *@This()) *const model.Source {
+  return self.lexer.walker.source;
 }
 
 pub fn parseFile(
@@ -249,13 +258,13 @@ inline fn procEndSource(self: *@This()) !void {
         const name =
           if (spos.end.byte_offset - spos.start.byte_offset > 0)
             self.lexer.walker.contentIn(spos) else "<unnamed>";
-        self.intpr().ctx.logger.MissingEndCommand(
+        self.logger().MissingEndCommand(
           name, parent.command.mapper.subject_pos,
           self.lexer.walker.posFrom(self.cur_start));
       }
     }
     try parent.command.shift(
-      self.intpr(), self.cur_start, parent.fullast);
+      self.intpr(), self.source(), self.cur_start, parent.fullast);
     try parent.append(self.intpr(), parent.command.info.unknown);
   }
 }
@@ -348,7 +357,7 @@ inline fn enterBlockNameExpr(self: *@This(), valid: bool) !void {
     .start      = self.cur_start,
     .info       = .{
       .unknown =
-        try self.intpr().node_gen.@"void"(self.intpr().input.at(start)),
+        try self.intpr().node_gen.@"void"(self.source().at(start)),
     },
     .mapper     = undefined,
     .cur_cursor = undefined,
@@ -379,7 +388,7 @@ inline fn procEndCommand(self: *@This()) !void {
       self.logger().WrongCallId(
         self.lexer.walker.posFrom(self.cur_start),
         self.lexer.recent_expected_id, self.lexer.recent_id,
-        self.intpr().input.at(cmd_start));
+        self.source().at(cmd_start));
       try self.leaveLevel();
       break :blk true;
     },
@@ -395,12 +404,13 @@ inline fn procEndCommand(self: *@This()) !void {
       self.logger().SkippingCallId(
         self.lexer.walker.posFrom(self.cur_start),
         self.lexer.recent_expected_id, self.lexer.recent_id,
-        self.intpr().input.at(cmd_start));
+        self.source().at(cmd_start));
       const num_skipped = model.Token.numSkippedEnds(self.cur);
       var i: u32 = 0; while (i < num_skipped) : (i += 1) {
         try self.leaveLevel();
         const lvl = self.curLevel();
-        try lvl.command.shift(self.intpr(), self.cur_start, lvl.fullast);
+        try lvl.command.shift(
+          self.intpr(), self.source(), self.cur_start, lvl.fullast);
         try lvl.append(self.intpr(), lvl.command.info.unknown);
       }
       try self.leaveLevel();
@@ -411,13 +421,12 @@ inline fn procEndCommand(self: *@This()) !void {
   if (self.cur == .list_end) {
     self.advance();
   } else {
-    self.logger().MissingClosingParenthesis(
-      self.intpr().input.at(self.cur_start));
+    self.logger().MissingClosingParenthesis(self.source().at(self.cur_start));
   }
   if (do_shift) {
     self.state = .command;
     try self.curLevel().command.shift(
-      self.intpr(), self.cur_start, self.curLevel().fullast);
+      self.intpr(), self.source(), self.cur_start, self.curLevel().fullast);
   }
 }
 
@@ -478,7 +487,7 @@ inline fn procTextual(self: *@This()) !void {
     .block_end_open, .block_name_sep, .comma, .name_sep, .list_start, .list_end,
     .list_end_missing_colon, .end_source => blk: {
       content.shrinkAndFree(self.allocator(), non_space_len);
-      break :blk self.intpr().input.between(textual_start, non_space_end);
+      break :blk self.source().between(textual_start, non_space_end);
     },
     else => self.lexer.walker.posFrom(textual_start),
   };
@@ -556,7 +565,7 @@ inline fn procCommand(self: *@This()) !void {
       }
     },
     .root_def => {
-      if (self.intpr().ctx.loader.?.state == .encountered_options) {
+      if (self.loader().hasEncounteredOptions()) {
         return Parser.UnwindReason.encountered_options;
       } else break;
     },
@@ -605,8 +614,7 @@ inline fn procCommand(self: *@This()) !void {
         self.advance();
         break :blk access_node.node();
       } else blk: {
-        self.intpr().ctx.logger.MissingSymbolName(
-          self.intpr().input.at(self.cur_start));
+        self.logger().MissingSymbolName(self.source().at(self.cur_start));
         break :blk try self.intpr().node_gen.poison(
           self.lexer.walker.posFrom(lvl.command.info.unknown.pos.start));
       };
@@ -626,7 +634,7 @@ inline fn procCommand(self: *@This()) !void {
         },
         else => {
           const pos = model.Position{
-            .source = self.lexer.walker.source.meta,
+            .source = self.source().meta,
             .start = lvl.command.info.unknown.pos.start,
             .end = start,
           };
@@ -695,8 +703,7 @@ inline fn procAfterList(self: *@This()) !void {
         self.advance();
       } else {
         self.state = .command;
-        try lvl.command.shift(
-          self.intpr(), end, lvl.fullast);
+        try lvl.command.shift(self.intpr(), self.source(), end, lvl.fullast);
       }
       return;
     },
@@ -704,7 +711,7 @@ inline fn procAfterList(self: *@This()) !void {
       if (self.cur == .list_end) {
         try self.skipOverBlockConfig();
       } else {
-        self.logger().MissingColon(self.intpr().input.at(end));
+        self.logger().MissingColon(self.source().at(end));
       }
       self.logger().BlockNameAtTopLevel(self.lexer.walker.posFrom(lvl.start));
       _ = self.levels.pop();
@@ -716,8 +723,7 @@ inline fn procAfterList(self: *@This()) !void {
       const node = (
         lvl.command.info.assignment.pushed
       ) orelse (
-        try self.intpr().node_gen.@"void"(
-          self.intpr().input.at(lvl.command.start))
+        try self.intpr().node_gen.@"void"(self.source().at(lvl.command.start))
       );
       _ = self.levels.pop();
       const parent = self.curLevel();
@@ -727,7 +733,7 @@ inline fn procAfterList(self: *@This()) !void {
         if (parent.command.choseAstNodeParam()) false else parent.fullast);
       if (!(try self.processBlockHeader(null))) {
         if (parent.implicitBlockConfig()) |c| {
-          try self.applyBlockConfig(self.intpr().input.at(self.cur_start), c);
+          try self.applyBlockConfig(self.source().at(self.cur_start), c);
         }
         while (self.cur == .space or self.cur == .indent) self.advance();
       }
@@ -798,14 +804,13 @@ inline fn procBlockName(self: *@This()) !void {
       }
     }
     if (self.cur == .missing_block_name_sep) {
-      self.logger().MissingBlockNameEnd(
-        self.intpr().input.at(self.cur_start));
+      self.logger().MissingBlockNameEnd(self.source().at(self.cur_start));
     }
     try parent.command.pushName(name_pos, name, false,
       if (self.cur == .diamond_open) .block_with_config else .block_no_config
     );
   } else {
-    self.logger().ExpectedXGotY(self.intpr().input.at(self.cur_start),
+    self.logger().ExpectedXGotY(self.source().at(self.cur_start),
       &[_]errors.WrongItemError.ItemDescr{.{.token = .identifier}},
       .{.token = self.cur});
     while (
@@ -820,7 +825,7 @@ inline fn procBlockName(self: *@This()) !void {
     if (parent.command.choseAstNodeParam()) false else parent.fullast);
   if (!(try self.processBlockHeader(null))) {
     if (parent.implicitBlockConfig()) |c| {
-      try self.applyBlockConfig(self.intpr().input.at(self.cur_start), c);
+      try self.applyBlockConfig(self.source().at(self.cur_start), c);
     }
     while (self.cur == .space or self.cur == .indent) self.advance();
   }
@@ -927,12 +932,12 @@ inline fn procSpecial(self: *@This()) !void {
             defer self.advance();
             break :blk self.lexer.walker.posFrom(self.cur_start);
           } else break :blk null;
-        } else self.lexer.walker.source.between(start, self.cur_start);
+        } else self.source().between(start, self.cur_start);
       if (check_swallow) |colon_pos| {
         bh.swallow_depth = self.checkSwallow(colon_pos);
       }
 
-      value.origin = self.intpr().input.between(start, self.cur_start);
+      value.origin = self.source().between(start, self.cur_start);
       _ = try proc.push(proc, value.origin, .{.block_header = bh});
     }
   }
@@ -1008,7 +1013,7 @@ fn processBlockHeader(self: *@This(), pb_exists: ?*PrimaryBlockExists) !bool {
   const check_swallow = if (self.cur == .diamond_open) blk: {
     const config = try self.allocator().create(model.BlockConfig);
     try BlockConfig.init(config, self.allocator(), self).parse();
-    const pos = self.intpr().input.at(self.cur_start);
+    const pos = self.source().at(self.cur_start);
     if (pb_exists) |ind| {
       try parent.command.pushPrimary(pos, true);
       try self.pushLevel(
@@ -1027,13 +1032,13 @@ fn processBlockHeader(self: *@This(), pb_exists: ?*PrimaryBlockExists) !bool {
       if (pb_exists) |ind| {
         if (ind.* == .unknown) {
           try parent.command.pushPrimary(
-            self.intpr().input.at(self.cur_start), false);
+            self.source().at(self.cur_start), false);
           try self.pushLevel(if (
             parent.command.choseAstNodeParam()
           ) false else parent.fullast);
           if (parent.implicitBlockConfig()) |c| {
             try self.applyBlockConfig(
-              self.intpr().input.at(self.cur_start), c);
+              self.source().at(self.cur_start), c);
           }
         }
         ind.* = .yes;
@@ -1078,7 +1083,7 @@ fn processBlockHeader(self: *@This(), pb_exists: ?*PrimaryBlockExists) !bool {
             try cur_parent.command.pushArg(
               try self.levels.items[i].finalize(self));
             try cur_parent.command.shift(
-              self.intpr(), end_cursor, cur_parent.fullast);
+              self.intpr(), self.source(), end_cursor, cur_parent.fullast);
             try cur_parent.append(
               self.intpr(), cur_parent.command.info.unknown);
           }
@@ -1113,13 +1118,12 @@ fn processBlockHeader(self: *@This(), pb_exists: ?*PrimaryBlockExists) !bool {
       return true;
     } else if (pb_exists) |ind| {
       if (ind.* == .unknown) {
-        try parent.command.pushPrimary(
-          self.intpr().input.at(self.cur_start), false);
+        try parent.command.pushPrimary(self.source().at(self.cur_start), false);
         if (parent.implicitBlockConfig()) |c| {
           ind.* = .maybe;
           try self.pushLevel(if (parent.command.choseAstNodeParam()) false
                               else parent.fullast);
-          try self.applyBlockConfig(self.intpr().input.at(self.cur_start), c);
+          try self.applyBlockConfig(self.source().at(self.cur_start), c);
         }
       }
     }
@@ -1139,7 +1143,7 @@ fn checkSwallow(self: *@This(), colon_pos: ?model.Position) ?u21 {
         self.advance();
       } else {
         self.logger().SwallowDepthWithoutDiamondClose(
-          self.lexer.walker.source.between(start, self.cur_start));
+          self.source().between(start, self.cur_start));
         return null;
       }
       return swallow_depth;
@@ -1149,7 +1153,7 @@ fn checkSwallow(self: *@This(), colon_pos: ?model.Position) ?u21 {
       return 0;
     },
     else => {
-      if (colon_pos) |pos| self.intpr().ctx.logger.IllegalColon(pos);
+      if (colon_pos) |pos| self.logger().IllegalColon(pos);
       return null;
     }
   }
@@ -1166,7 +1170,7 @@ fn applyBlockConfig(
 
   if (config.syntax) |s| {
     const syntax = self.intpr().syntax_registry[s.index];
-    lvl.syntax_proc = try syntax.init(self.intpr());
+    lvl.syntax_proc = try syntax.init(self.intpr(), self.source());
     self.lexer.enableSpecialSyntax(syntax.comments_include_newline);
   }
 

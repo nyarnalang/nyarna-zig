@@ -13,11 +13,11 @@ const nyarna = @import("../nyarna.zig");
 
 const errors = nyarna.errors;
 const lib    = nyarna.lib;
-const load   = nyarna.load;
+const Loader = nyarna.Loader;
 const model  = nyarna.model;
 const Types  = nyarna.Types;
 
-const ModuleLoader = nyarna.load.ModuleLoader;
+const ModuleLoader = Loader.Module;
 
 pub const ModuleEntry = union(enum) {
   pushed_param   : *ModuleLoader,
@@ -33,7 +33,7 @@ pub const ResolverEntry = struct {
   /// resolved otherwise.
   implicit: bool,
   /// the actual resolver
-  resolver: *load.Resolver,
+  resolver: *Loader.Resolver,
 };
 
 /// The error reporter for this loader, supplied externally.
@@ -95,7 +95,7 @@ pub fn create(
   errdefer backing_allocator.free(ret.stack);
 
   var logger = errors.Handler{.reporter = reporter};
-  var init_ctx = nyarna.Context{.data = ret, .logger = &logger, .loader = null};
+  var init_ctx = nyarna.Context{.data = ret, .logger = &logger};
   ret.types = try Types.init(init_ctx);
   errdefer ret.types.deinit();
   if (logger.count > 0) {

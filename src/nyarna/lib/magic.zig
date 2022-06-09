@@ -16,7 +16,7 @@ fn registerMagicFunc(
   sym      : *model.Symbol,
 ) !void {
   try intpr.ctx.data.generic_symbols.append(intpr.ctx.global(), sym);
-  const res = try namespace.data.getOrPut(intpr.allocator, sym.name);
+  const res = try namespace.data.getOrPut(intpr.allocator(), sym.name);
   if (res.found_existing) {
     std.debug.print("magic: overriding '{s}'\n", .{sym.name});
   }
@@ -53,7 +53,7 @@ const Impl = lib.Provider.Wrapper(struct {
   ) nyarna.Error!*model.Node {
     var collector = system.DefCollector{.dt = intpr.ctx.types().definition()};
     try collector.collect(arg, intpr);
-    try collector.allocate(intpr.allocator);
+    try collector.allocate(intpr.allocator());
     try collector.append(arg, intpr, false, intpr.node_gen);
     const decls = collector.finish();
 

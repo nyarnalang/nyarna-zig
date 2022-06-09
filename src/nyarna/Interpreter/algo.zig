@@ -114,7 +114,7 @@ const TypeResolver = struct {
       else => unreachable,
     }
     for (self.worklist.items) |wli, index| if (wli == def.content) {
-      const pos_list = try self.dres.intpr.allocator.alloc(
+      const pos_list = try self.dres.intpr.allocator().alloc(
         model.Position, self.worklist.items.len - index - 1);
       for (pos_list) |*item, pindex| {
         item.* = self.worklist.items[self.worklist.items.len - 1 - pindex].pos;
@@ -123,7 +123,7 @@ const TypeResolver = struct {
       def.content.data = .poison;
       return;
     };
-    try self.worklist.append(self.dres.intpr.allocator, def.content);
+    try self.worklist.append(self.dres.intpr.allocator(), def.content);
     defer _ = self.worklist.pop();
 
     const sym = if (try self.dres.intpr.tryInterpret(def.content,
@@ -170,8 +170,8 @@ const FixpointContext = struct {
   }
 
   fn funcReturns(
-    ctx: *graph.ResolutionContext,
-    name: []const u8,
+    ctx     : *graph.ResolutionContext,
+    name    : []const u8,
     name_pos: model.Position,
   ) nyarna.Error!graph.ResolutionContext.Result {
     const self = @fieldParentPtr(TypeResolver, "ctx", ctx);
@@ -245,30 +245,30 @@ const FixpointContext = struct {
 pub const DeclareResolution = struct {
   const Processor = graph.Processor(*DeclareResolution);
 
-  defs: []*model.Node.Definition,
-  processor: Processor,
+  defs             : []*model.Node.Definition,
+  processor        : Processor,
   dep_discovery_ctx: graph.ResolutionContext,
-  intpr: *Interpreter,
-  in: graph.ResolutionContext.Target,
+  intpr            : *Interpreter,
+  in               : graph.ResolutionContext.Target,
 
   pub fn create(
-    intpr: *Interpreter,
-    defs: []*model.Node.Definition,
-    ns: u15,
+    intpr : *Interpreter,
+    defs  : []*model.Node.Definition,
+    ns    : u15,
     parent: ?model.Type,
   ) !*DeclareResolution {
     const in: graph.ResolutionContext.Target =
       if (parent) |ptype| .{.t = ptype} else .{.ns = ns};
-    const res = try intpr.allocator.create(DeclareResolution);
+    const res = try intpr.allocator().create(DeclareResolution);
     res.* = .{
-      .defs = defs,
-      .processor = try Processor.init(intpr.allocator, res),
+      .defs              = defs,
+      .processor         = try Processor.init(intpr.allocator(), res),
       .dep_discovery_ctx = .{
         .resolveNameFn = discoverDependencies,
-        .target = in,
+        .target        = in,
       },
       .intpr = intpr,
-      .in = in,
+      .in    = in,
     };
     return res;
   }
@@ -285,16 +285,16 @@ pub const DeclareResolution = struct {
   ) !*model.Symbol {
     const sym = try self.intpr.ctx.global().create(model.Symbol);
     sym.* = .{
-      .defined_at = name.node().pos,
-      .name = try self.intpr.ctx.global().dupe(u8, name.content),
-      .data = content,
+      .defined_at  = name.node().pos,
+      .name        = try self.intpr.ctx.global().dupe(u8, name.content),
+      .data        = content,
       .parent_type = switch (self.in) {
-        .t => |t| t,
+        .t  => |t| t,
         .ns => null,
       },
     };
     if (publish) {
-      try self.intpr.public_namespace.append(self.intpr.ctx.global(), sym);
+      try self.intpr.loader.public_syms.append(self.intpr.ctx.global(), sym);
     }
     return sym;
   }
@@ -415,16 +415,16 @@ pub const DeclareResolution = struct {
     const types = self.intpr.ctx.types();
     const prototype: model.Prototype =
       switch (std.hash.Adler32.hash(def.name.content)) {
-      std.hash.Adler32.hash("Concat") => .concat,
-      std.hash.Adler32.hash("Enum") => .@"enum",
+      std.hash.Adler32.hash("Concat")       => .concat,
+      std.hash.Adler32.hash("Enum")         => .@"enum",
       std.hash.Adler32.hash("Intersection") => .intersection,
-      std.hash.Adler32.hash("List") => .list,
-      std.hash.Adler32.hash("Map") => .map,
-      std.hash.Adler32.hash("Numeric") => .numeric,
-      std.hash.Adler32.hash("Optional") => .optional,
-      std.hash.Adler32.hash("Sequence") => .sequence,
-      std.hash.Adler32.hash("Record") => .record,
-      std.hash.Adler32.hash("Textual") => .textual,
+      std.hash.Adler32.hash("List")         => .list,
+      std.hash.Adler32.hash("Map")          => .map,
+      std.hash.Adler32.hash("Numeric")      => .numeric,
+      std.hash.Adler32.hash("Optional")     => .optional,
+      std.hash.Adler32.hash("Sequence")     => .sequence,
+      std.hash.Adler32.hash("Record")       => .record,
+      std.hash.Adler32.hash("Textual")      => .textual,
       else => unreachable,
     };
     const sym =
@@ -512,7 +512,7 @@ pub const DeclareResolution = struct {
         .dt = types.definition(),
       };
       try collector.collect(funcs, self.intpr);
-      try collector.allocate(self.intpr.allocator);
+      try collector.allocate(self.intpr.allocator());
       try collector.append(funcs, self.intpr, false, self.intpr.node_gen);
       const func_defs = collector.finish();
       const def_items = try self.intpr.ctx.global().alloc(
@@ -542,7 +542,7 @@ pub const DeclareResolution = struct {
           .builtingen => |*bg| if (
             try self.intpr.tryInterpretBuiltin(bg, .{.kind = .intermediate})
           ) {
-            const impl_name = try self.intpr.allocator.alloc(
+            const impl_name = try self.intpr.allocator().alloc(
               u8, def.name.content.len + 2 + fdef.name.content.len
             );
             std.mem.copy(u8, impl_name, def.name.content);
@@ -555,7 +555,7 @@ pub const DeclareResolution = struct {
             ) orelse {
               self.intpr.ctx.logger.UnknownBuiltin(
                 fdef.name.node().pos, impl_name);
-              self.intpr.allocator.free(impl_name);
+              self.intpr.allocator().free(impl_name);
               continue;
             };
 
@@ -611,7 +611,7 @@ pub const DeclareResolution = struct {
     };
 
     try self.processor.firstStep();
-    try self.processor.secondStep(self.intpr.allocator);
+    try self.processor.secondStep(self.intpr.allocator());
     // third step: process components in reverse topological order.
 
     for (self.processor.components) |first_index, cmpt_index| {
@@ -694,6 +694,7 @@ pub const DeclareResolution = struct {
               std.hash.Adler32.hash("FrameRoot")   => types.frameRoot(),
               std.hash.Adler32.hash("Literal")     => types.literal(),
               std.hash.Adler32.hash("Location")    => types.location(),
+              std.hash.Adler32.hash("Schema")      => types.schema(),
               std.hash.Adler32.hash("SchemaDef")   => types.schemaDef(),
               std.hash.Adler32.hash("Space")       => types.space(),
               std.hash.Adler32.hash("Type")        => types.@"type"(),
@@ -920,7 +921,7 @@ pub const DeclareResolution = struct {
                       .named => |named| named.name.?.name,
                       .structural => |struc| @tagName(struc.*),
                     };
-                    const buffer = try self.intpr.allocator.alloc(
+                    const buffer = try self.intpr.allocator().alloc(
                       u8, t_name.len + 2 + def.name.content.len);
                     std.mem.copy(u8, buffer, t_name);
                     std.mem.copy(u8, buffer[t_name.len..], "::");
@@ -929,7 +930,7 @@ pub const DeclareResolution = struct {
                     break :tblk buffer;
                   }
                 };
-                defer if (self.in == .t) self.intpr.allocator.free(impl_name);
+                defer if (self.in == .t) self.intpr.allocator().free(impl_name);
 
                 const sym = try self.genSym(def.name, undefined, def.public);
                 sym.data = if (

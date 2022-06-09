@@ -260,8 +260,19 @@ pub const Record = struct {
   }
 };
 
+pub const Schema = struct {
+  root   : Type,
+  symbols: *model.Symbol,
+
+  pub inline fn value(self: *@This()) *Value {
+    return Value.parent(self);
+  }
+};
+
 pub const SchemaDef = struct {
-  defs: []*Node.Definition,
+  defs    : []*Node.Definition,
+  // if this SchemaDef has already been instaniated, this is its instance.
+  instance: ?*Schema = null,
 
   pub inline fn value(self: *@This()) *Value {
     return Value.parent(self);
@@ -315,6 +326,7 @@ pub const Data = union(enum) {
   map         : Map,
   prototype   : PrototypeVal,
   record      : Record,
+  schema      : Schema,
   schema_def  : SchemaDef,
   seq         : Seq,
   text        : TextScalar,
@@ -366,6 +378,7 @@ fn parent(it: anytype) *Value {
     Map          => offset(Data, "map"),
     PrototypeVal => offset(Data, "prototype"),
     Record       => offset(Data, "record"),
+    Schema       => offset(Data, "schena"),
     SchemaDef    => offset(Data, "schema_def"),
     Seq          => offset(Data, "seq"),
     TextScalar   => offset(Data, "text"),

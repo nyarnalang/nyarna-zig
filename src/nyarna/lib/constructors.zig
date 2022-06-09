@@ -16,7 +16,7 @@ fn nodeToVarargsItemList(
   return switch (node.data) {
     .varargs => |*va| va.content.items,
     else => blk: {
-      const arr = try intpr.allocator.alloc(model.Node.Varargs.Item, 1);
+      const arr = try intpr.allocator().alloc(model.Node.Varargs.Item, 1);
       arr[0] = .{.direct = true, .node = node};
       break :blk arr;
     }

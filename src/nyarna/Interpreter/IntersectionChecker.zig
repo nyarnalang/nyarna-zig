@@ -69,8 +69,8 @@ pub fn push(
       } else if (self.unique) {
         const t_fmt = s.formatter();
         const repr =
-          try std.fmt.allocPrint(self.intpr.allocator, "{}", .{t_fmt});
-        defer self.intpr.allocator.free(repr);
+          try std.fmt.allocPrint(self.intpr.allocator(), "{}", .{t_fmt});
+        defer self.intpr.allocator().free(repr);
         self.intpr.ctx.logger.DuplicateMatchType(repr, pos, prev.pos);
         result.failed = true;
       }
@@ -84,8 +84,8 @@ pub fn push(
       if (builder.pushUnique(&append[0], pos)) |prev| {
         const t_fmt = append[0].formatter();
         const repr =
-          try std.fmt.allocPrint(self.intpr.allocator, "{}", .{t_fmt});
-        defer self.intpr.allocator.free(repr);
+          try std.fmt.allocPrint(self.intpr.allocator(), "{}", .{t_fmt});
+        defer self.intpr.allocator().free(repr);
         self.intpr.ctx.logger.DuplicateMatchType(repr, pos, prev);
         result.failed = true;
       }

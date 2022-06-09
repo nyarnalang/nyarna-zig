@@ -110,9 +110,9 @@ pub const ToSignature = struct {
       .signature = sig,
       .intpr     = intpr,
       .ns        = ns,
-      .filled    = try intpr.allocator.alloc(bool, sig.parameters.len),
+      .filled    = try intpr.allocator().alloc(bool, sig.parameters.len),
       .args      =
-        try intpr.allocator.alloc(*model.Node, sig.parameters.len),
+        try intpr.allocator().alloc(*model.Node, sig.parameters.len),
     };
     for (res.filled) |*item| item.* = false;
     return res;
@@ -128,7 +128,7 @@ pub const ToSignature = struct {
       const container =
         try self.intpr.ctx.global().create(model.VariableContainer);
       container.* = .{.num_values = 0};
-      try self.intpr.var_containers.append(self.intpr.allocator, .{
+      try self.intpr.var_containers.append(self.intpr.allocator(), .{
         .offset = self.intpr.symbols.items.len,
         .container = container,
       });
@@ -275,7 +275,7 @@ pub const ToSignature = struct {
       break :blk varargs;
     };
     try vnode.content.append(
-      self.intpr.allocator, .{.direct = direct, .node = arg});
+      self.intpr.allocator(), .{.direct = direct, .node = arg});
     vnode.node().pos = vnode.node().pos.span(arg.pos);
   }
 
@@ -295,7 +295,7 @@ pub const ToSignature = struct {
       self.filled[index] = true;
       break :blk varmap;
     };
-    try vnode.content.append(self.intpr.allocator, .{
+    try vnode.content.append(self.intpr.allocator(), .{
       .key = if (direct) .direct else .{.node = self.last_key},
       .value = arg,
     });
@@ -478,7 +478,7 @@ pub const ToImport = struct {
   /// whether positional arguments are currently accepted.
   positional : bool = true,
   /// non-null if target module accepts options
-  loader     : ?*nyarna.ModuleLoader,
+  loader     : ?*nyarna.Loader.Module,
 
   pub fn init(
     target: *model.Node.Import,
@@ -543,7 +543,7 @@ pub const ToImport = struct {
       },
       else => {},
     }
-    try self.items.append(self.intpr.allocator, .{
+    try self.items.append(self.intpr.allocator(), .{
       .kind = at.param.kind, .content = content,
       .had_explicit_block_config = at.config,
     });
@@ -611,7 +611,7 @@ pub const Collect = struct {
 
   fn push(mapper : *Self, at: Cursor, content: *model.Node) nyarna.Error!void {
     const self = @fieldParentPtr(@This(), "mapper", mapper);
-    try self.items.append(self.intpr.allocator, .{
+    try self.items.append(self.intpr.allocator(), .{
         .kind = at.param.kind, .content = content,
         .had_explicit_block_config = at.config
       });

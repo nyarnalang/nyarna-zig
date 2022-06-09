@@ -51,7 +51,7 @@ pub fn init() @This() {
   }};
 }
 
-/// parse context.input. If it returns .referred_module_unavailable, parsing
+/// parse given source. If it returns .referred_module_unavailable, parsing
 /// may be resumed via resumeParse() after the referred source has been
 /// loaded. If it returns .encountered_options, option values must be pushed
 /// into the module loader and options must be finalized before parsing may
@@ -62,10 +62,11 @@ pub fn init() @This() {
 /// errors have occurred, check for increase of the handler's error_count.
 pub fn parseSource(
   self   : *@This(),
-  context: *Interpreter,
+  intpr  : *Interpreter,
+  source : *model.Source,
   fullast: bool,
 ) Error!*model.Node {
-  self.impl.lexer = try Lexer.init(context);
+  self.impl.lexer = try Lexer.init(intpr, source);
   self.impl.advance();
   return self.impl.doParse(fullast);
 }

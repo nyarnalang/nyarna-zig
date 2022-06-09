@@ -80,6 +80,8 @@
     item : \Ast {primary}
   \end(unique)
 
+  Schema = \unique()
+
   SchemaDef = \unique:
     public : \Optional(\Ast) {primary}:<syntax definitions, fullast>
     private: \Optional(\Ast) {}:<syntax definitions, fullast>

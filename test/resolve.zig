@@ -4,17 +4,17 @@ const nyarna = @import("nyarna");
 const tml    = @import("tml.zig");
 
 const errors   = nyarna.errors;
-const load     = nyarna.load;
+const Loader   = nyarna.Loader;
 const model    = nyarna.model;
 
 pub const TestDataResolver = struct {
   const Cursor = struct {
-    api  : load.Resolver.Cursor,
+    api  : Loader.Resolver.Cursor,
     value: *tml.Value,
   };
 
-  api   : load.Resolver,
-  stdlib: load.FileSystemResolver,
+  api   : Loader.Resolver,
+  stdlib: Loader.FileSystemResolver,
   source: tml.File,
 
   pub fn init(path: []const u8) !TestDataResolver {
@@ -26,7 +26,7 @@ pub const TestDataResolver = struct {
         .resolveFn   = resolve,
         .getSourceFn = getSource,
       },
-      .stdlib = load.FileSystemResolver.init(abs_path),
+      .stdlib = Loader.FileSystemResolver.init(abs_path),
       .source = try tml.File.loadPath(path),
     };
   }
@@ -37,12 +37,12 @@ pub const TestDataResolver = struct {
   }
 
   fn resolve(
-    res      : *load.Resolver,
+    res      : *Loader.Resolver,
     allocator: std.mem.Allocator,
     path     : []const u8,
     _        : model.Position,
     _        : *errors.Handler,
-  ) std.mem.Allocator.Error!?*load.Resolver.Cursor {
+  ) std.mem.Allocator.Error!?*Loader.Resolver.Cursor {
     const self = @fieldParentPtr(TestDataResolver, "api", res);
     const item = if (std.mem.eql(u8, "input", path)) (
       self.source.items.getPtr(path) orelse {
@@ -69,9 +69,9 @@ pub const TestDataResolver = struct {
   }
 
   fn getSource(
-    res       : *load.Resolver,
+    res       : *Loader.Resolver,
     allocator : std.mem.Allocator,
-    cursor    : *load.Resolver.Cursor,
+    cursor    : *Loader.Resolver.Cursor,
     descriptor: *const model.Source.Descriptor,
     _: *errors.Handler,
   ) std.mem.Allocator.Error!?*model.Source {

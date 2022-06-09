@@ -199,7 +199,7 @@ pub const Resolver = struct {
       .runtime_chain => |*rc| blk: {
         if (try searchAccessible(self.intpr, rc.t, uacc.id)) |sr| switch (sr) {
           .field => |field| {
-            try rc.indexes.append(self.intpr.allocator, field.index);
+            try rc.indexes.append(self.intpr.allocator(), field.index);
             rc.t = field.t;
             return res;
           },
@@ -278,7 +278,7 @@ pub const Resolver = struct {
     switch (res) {
       .function_returning => |*fr| {
         return Resolution.chain(fr.ns, ucall.target, .{}, fr.returns,
-          self.intpr.input.at(ucall.node().pos.end), true);
+          ucall.node().pos.after(), true);
       },
       .runtime_chain => |*rc| {
         if (rc.preliminary) {
@@ -287,7 +287,7 @@ pub const Resolver = struct {
               .callable => |*callable| {
                 return Resolution.chain(
                   rc.ns, ucall.node(), .{}, callable.sig.returns,
-                  self.intpr.input.at(ucall.node().pos.end), true
+                  ucall.node().pos.after(), true
                 );
               },
               else => {},
@@ -381,7 +381,7 @@ pub const Resolver = struct {
         ns = racc.ns;
         break :blk racc.last_name_pos;
       },
-      else => self.intpr.input.at(chain.pos.end),
+      else => chain.pos.after(),
     };
 
     if (try self.intpr.tryInterpret(chain, self.stage)) |expr| {

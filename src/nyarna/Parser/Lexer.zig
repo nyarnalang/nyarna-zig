@@ -254,18 +254,17 @@ levels: std.ArrayListUnmanaged(Level),
 level: Level,
 newline_count: u16,
 
-pub fn init(intpr: *Interpreter) !Lexer {
+pub fn init(intpr: *Interpreter, source: *model.Source) !Lexer {
   var ret = Lexer{
     .intpr       = intpr,
     .cur_stored  = undefined,
     .state       = .indent_capture,
-    .walker      = Walker.init(intpr.input),
+    .walker      = Walker.init(source),
     .paren_depth = 0,
     .colons_disabled_at   = null,
     .comments_disabled_at = null,
     .levels =
-      try std.ArrayListUnmanaged(Level).initCapacity(
-        intpr.allocator, 32),
+      try std.ArrayListUnmanaged(Level).initCapacity(intpr.allocator(), 32),
     .level = .{
       .indentation = 0,
       .tabs        = null,
@@ -470,7 +469,7 @@ inline fn procCheckBlockName(self: *Lexer, cur: *u21) !?Token {
 
     if (self.walker.nextInline()) |next_char| {
       if (next_char == '(') {
-        try self.levels.append(self.intpr.allocator, self.level);
+        try self.levels.append(self.intpr.allocator(), self.level);
         self.level = .{
           .indentation = undefined,
           .tabs        = null,
@@ -1351,7 +1350,7 @@ fn exprContinuation(self: *Lexer, cur: *u21, after_arglist: bool) !?Token {
 }
 
 fn pushLevel(self: *Lexer) !void {
-  try self.levels.append(self.intpr.allocator, self.level);
+  try self.levels.append(self.intpr.allocator(), self.level);
   self.level = .{
     .indentation = undefined,
     .tabs = null,

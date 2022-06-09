@@ -20,8 +20,8 @@ pub fn lexTest(data: *TestDataResolver) !void {
     &data.stdlib.api);
   defer proc.deinit();
   var loader = try proc.initMainModule(&data.api, "input", true);
-  const ml = loader.globals.known_modules.values()[1].require_module;
-  defer loader.deinit();
+  const ml = loader.loader.data.known_modules.values()[1].require_module;
+  defer loader.destroy();
   var expected_content = data.valueLines("tokens");
   var lexer = try ml.initLexer();
   defer lexer.deinit();
@@ -828,6 +828,11 @@ const AstEmitter = struct {
       .concat => |_| {
         unreachable;
       },
+      .schema => |sch| {
+        const s = try self.push("SCHEMA");
+        try self.processType(sch.root);
+        try s.pop();
+      },
       .schema_def => |sd| {
         const def = try self.push("SCHEMA_DEF");
         for (sd.defs) |item| try self.process(item.node());
@@ -1223,13 +1228,13 @@ pub fn parseTest(data: *TestDataResolver) !void {
     &data.stdlib.api);
   defer proc.deinit();
   var loader = try proc.initMainModule(&checker.data.api, "input", true);
-  const ml = loader.globals.known_modules.values()[1].require_module;
-  defer loader.deinit();
-  var emitter = AstEmitter.init(loader.globals, &checker);
+  const ml = loader.loader.data.known_modules.values()[1].require_module;
+  defer loader.destroy();
+  var emitter = AstEmitter.init(loader.loader.data, &checker);
   while (!try ml.work()) {}
-  try emitter.process(ml.finalizeNode());
+  try emitter.process(try ml.finalizeNode());
   try checker.finish();
-  try std.testing.expectEqual(@as(usize, 0), ml.logger.count);
+  try std.testing.expectEqual(@as(usize, 0), ml.loader.logger.count);
 }
 
 pub fn parseErrorTest(data: *TestDataResolver) !void {
@@ -1241,8 +1246,8 @@ pub fn parseErrorTest(data: *TestDataResolver) !void {
     &data.stdlib.api);
   defer proc.deinit();
   var loader = try proc.initMainModule(&checker.data.api, "input", true);
-  const ml = loader.globals.known_modules.values()[1].require_module;
-  defer loader.deinit();
+  const ml = loader.loader.data.known_modules.values()[1].require_module;
+  defer loader.destroy();
   while (!try ml.work()) {}
   try checker.finish();
 }
@@ -1256,10 +1261,10 @@ pub fn interpretTest(data: *TestDataResolver) !void {
     &data.stdlib.api);
   defer proc.deinit();
   var loader = try proc.startLoading(&data.api, "input");
-  defer loader.deinit();
+  defer loader.destroy();
   const module = try loader.finishMainModule();
-  try std.testing.expect(!loader.globals.seen_error);
-  var emitter = AstEmitter.init(loader.globals, &checker);
+  try std.testing.expect(!loader.loader.data.seen_error);
+  var emitter = AstEmitter.init(loader.loader.data, &checker);
   try emitter.processModule(module);
   try checker.finish();
 }
@@ -1311,9 +1316,9 @@ pub fn loadErrorTest(data: *TestDataResolver) !void {
   defer proc.deinit();
   var loader = try proc.startLoading(&data.api, "input");
   {
-    errdefer loader.deinit();
+    errdefer loader.destroy();
     _ = try loader.finishMainModule();
-    if (loader.globals.seen_error) {
+    if (loader.loader.data.seen_error) {
       try checker.finish();
       return error.TestUnexpectedResult;
     }

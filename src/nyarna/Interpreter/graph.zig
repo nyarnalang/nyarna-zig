@@ -100,7 +100,7 @@ pub const ResolutionContext = struct {
     name : []const u8,
   ) !StrippedResult {
     const res = try ctx.resolveNameFn(ctx, name, model.Position.intrinsic());
-    return try ctx.strip(intpr.allocator, res);
+    return try ctx.strip(intpr.allocator(), res);
   }
 
   /// try to resolve an unresolved symbol reference in the context.
@@ -112,7 +112,7 @@ pub const ResolutionContext = struct {
     switch (ctx.target) {
       .ns => |ns| if (ns == item.ns) {
         const res = try ctx.resolveNameFn(ctx, item.name, item.node().pos);
-        return try ctx.strip(intpr.allocator, res);
+        return try ctx.strip(intpr.allocator(), res);
       },
       .t => {},
     }
@@ -132,7 +132,7 @@ pub const ResolutionContext = struct {
         switch (item.subject.data) {
           .resolved_symref => |*rsym| switch (rsym.sym.data) {
             .@"type" => |st| if (t.eql(st)) return AccessData{
-              .result = try ctx.strip(intpr.allocator,
+              .result = try ctx.strip(intpr.allocator(),
                 try ctx.resolveNameFn(ctx, item.id, item.id_pos)),
               .is_prefix = false,
             },
@@ -148,13 +148,13 @@ pub const ResolutionContext = struct {
           // This will overreach but we accept that for now.
           // we ignore the result and return .unknown to avoid linking to a
           // possibly wrong function.
-          _ = try ctx.strip(
-            intpr.allocator, try ctx.resolveNameFn(ctx, item.id, item.id_pos));
+          _ = try ctx.strip(intpr.allocator(),
+            try ctx.resolveNameFn(ctx, item.id, item.id_pos));
           return AccessData{.result = .unknown, .is_prefix = true};
         };
         if (t.eql(pt)) return AccessData{
-          .result = try ctx.strip(
-            intpr.allocator, try ctx.resolveNameFn(ctx, item.id, item.id_pos)),
+          .result = try ctx.strip(intpr.allocator(),
+            try ctx.resolveNameFn(ctx, item.id, item.id_pos)),
           .is_prefix = true,
         };
       }

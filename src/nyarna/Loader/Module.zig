@@ -19,6 +19,7 @@ const std = @import("std");
 
 const Globals     = @import("../Globals.zig");
 const Lexer       = @import("../Parser/Lexer.zig");
+const Loader      = @import("../Loader.zig");
 const magic       = @import("../lib/magic.zig");
 const nyarna      = @import("../../nyarna.zig");
 const Parser      = @import("../Parser.zig");
@@ -30,24 +31,16 @@ const Interpreter = nyarna.Interpreter;
 const lib         = nyarna.lib;
 const model       = nyarna.model;
 
-const ModuleLoader = @This();
+const Module = @This();
 
 const Option = struct {
   param: model.Signature.Parameter,
   given: bool,
 };
 
-data  : *Globals,
+source: *model.Source,
+loader: Loader,
 parser: Parser,
-/// for data local to the module loading process. will go out of scope when
-/// the module has finished loading.
-storage: std.heap.ArenaAllocator,
-interpreter: *Interpreter,
-/// The error handler which is used to report any recoverable errors that
-/// are encountered. If one or more errors are encountered during loading,
-/// the input is considered to be invalid.
-logger: errors.Handler,
-public_syms: std.ArrayListUnmanaged(*model.Symbol) = .{},
 state: union(enum) {
   initial,
   /// encountered an option specification
@@ -71,45 +64,40 @@ pub fn create(
   location: model.Locator,
   fullast : bool,
   provider: ?*const lib.Provider,
-) !*ModuleLoader {
-  var ret = try data.storage.allocator().create(ModuleLoader);
+) std.mem.Allocator.Error!*Module {
+  var ret = try data.storage.allocator().create(Module);
   ret.* = .{
-    .data        = data,
-    .logger      = .{.reporter = data.reporter},
-    .fullast     = fullast,
-    .state       = .initial,
-    .interpreter = undefined,
-    .parser      = Parser.init(),
-    .storage     = std.heap.ArenaAllocator.init(data.backing_allocator),
+    .fullast = fullast,
+    .state   = undefined,
+    .parser  = Parser.init(),
+    .loader  = undefined,
+    .source  = undefined,
   };
   errdefer data.storage.allocator().destroy(ret);
-  const source = (
+  try ret.loader.init(
+    data, provider, searchModule, registerOptions, enounteredOptions);
+  if (
     try resolver.getSource(
-      ret.storage.allocator(), data.storage.allocator(), input, location,
-      &ret.logger)
-  ) orelse blk: {
+      ret.loader.storage.allocator(), data.storage.allocator(),
+      input, location, &ret.loader.logger)
+  ) |source| {
+    ret.state = .initial;
+    ret.source = source;
+  } else {
     ret.state = .poison;
-    // it is safe to leave the source undefined here, as a poisoned
-    // ModuleLoader will never call its interpreter.
-    break :blk undefined;
-  };
-  ret.interpreter = try Interpreter.create(
-    ret.ctx(), ret.storage.allocator(), source, &ret.public_syms, provider);
+    // source stays undefined as it's never accessed in poison state
+  }
   return ret;
 }
 
-inline fn ctx(self: *ModuleLoader) Context {
-  return Context{.data = self.data, .logger = &self.logger, .loader = self};
-}
-
 /// deallocates the loader and its owned data.
-pub fn destroy(self: *ModuleLoader) void {
-  const allocator = self.data.storage.allocator();
-  self.storage.deinit();
+pub fn destroy(self: *Module) void {
+  const allocator = self.loader.data.storage.allocator();
+  self.loader.deinit();
   allocator.destroy(self);
 }
 
-fn handleError(self: *ModuleLoader, e: Parser.Error) nyarna.Error!bool {
+fn handleError(self: *Module, e: Parser.Error) nyarna.Error!bool {
   switch (e) {
     Parser.UnwindReason.referred_module_unavailable =>
       if (self.state == .initial or self.state == .encountered_options) {
@@ -122,28 +110,30 @@ fn handleError(self: *ModuleLoader, e: Parser.Error) nyarna.Error!bool {
   return false;
 }
 
-fn ensureSpecifiedContent(self: *ModuleLoader, pos: model.Position) !void {
-  if (self.interpreter.specified_content == .unspecified) {
-    const root_def = try self.interpreter.node_gen.rootDef(
+fn ensureSpecifiedContent(self: *Module, pos: model.Position) !void {
+  if (self.loader.interpreter.specified_content == .unspecified) {
+    const root_def = try self.loader.interpreter.node_gen.rootDef(
       pos.before(), .standalone, null, null);
-    _ = try self.interpreter.interpret(root_def.node());
+    _ = try self.loader.interpreter.interpret(root_def.node());
   }
 }
 
 /// return true if finished
-pub fn work(self: *ModuleLoader) !bool {
+pub fn work(self: *Module) !bool {
   while (true) switch (self.state) {
     .initial => {
-      const implicit_module = if (self.data.known_modules.count() == 0)
+      const implicit_module = if (self.loader.data.known_modules.count() == 0) (
         // only happens if we're loading system.ny.
         // in that case, we're loading the magic module that help
         // bootstrapping system.ny and provides keyword exclusive to it.
-        try magic.magicModule(self.interpreter.ctx)
-      else self.data.known_modules.values()[0].loaded;
-      try self.interpreter.importModuleSyms(implicit_module, 0);
+        try magic.magicModule(self.loader.interpreter.ctx)
+      ) else self.loader.data.known_modules.values()[0].loaded;
+      try self.loader.interpreter.importModuleSyms(implicit_module, 0);
 
-      const node = self.parser.parseSource(self.interpreter, self.fullast)
-        catch |e| return self.handleError(e);
+      const node = (
+        self.parser.parseSource(
+          self.loader.interpreter, self.source, self.fullast)
+      ) catch |e| return self.handleError(e);
       try self.ensureSpecifiedContent(node.pos);
       self.state = .{.interpreting = node};
     },
@@ -156,12 +146,12 @@ pub fn work(self: *ModuleLoader) !bool {
     },
     .interpreting => |node| {
       if (self.fullast) return true;
-      const callable = switch (self.interpreter.specified_content) {
+      const callable = switch (self.loader.interpreter.specified_content) {
         .unspecified => unreachable,
         .standalone  => |*s| s.callable,
         .library     => {
-          const root = self.interpreter.interpretAs(
-            node, self.data.types.@"void"().predef()
+          const root = self.loader.interpreter.interpretAs(
+            node, self.loader.data.types.@"void"().predef()
           ) catch |e| return self.handleError(e);
           // TODO: in case of library, ensure that content contains no statements
           // other than void literals.
@@ -172,18 +162,19 @@ pub fn work(self: *ModuleLoader) !bool {
         .fragment    => |*f| f.callable,
       };
 
-      const root = self.interpreter.interpretAs(
+      const root = self.loader.interpreter.interpretAs(
         node, callable.sig.returns.predef()
       ) catch |e| return self.handleError(e);
       // TODO: in case of library, ensure that content contains no statements
       // other than void literals.
-      const func = try self.data.storage.allocator().create(model.Function);
+      const func =
+        try self.loader.data.storage.allocator().create(model.Function);
       func.* = .{
         .callable   = callable,
         .name       = null,
         .data       = .{.ny = .{.body = root}},
         .defined_at = root.pos,
-        .variables  = self.interpreter.var_containers.items[0].container,
+        .variables  = self.loader.interpreter.var_containers.items[0].container,
       };
       self.state = .{.finished = func};
       return true;
@@ -197,16 +188,23 @@ pub fn work(self: *ModuleLoader) !bool {
 ///
 ///  * self.work() must have returned true
 ///  * create() must have been called with fullast == false
-pub fn finalize(self: *ModuleLoader) !*model.Module {
+pub fn finalize(self: *Module) !*model.Module {
   std.debug.assert(!self.fullast);
   defer self.destroy();
-  std.debug.assert(self.interpreter.var_containers.items.len == 1);
-  const ret = try self.ctx().global().create(model.Module);
+  std.debug.assert(self.loader.interpreter.var_containers.items.len == 1);
+  const ret = try self.loader.ctx().global().create(model.Module);
   ret.* = .{
-    .symbols   = self.public_syms.items,
-    .root      = self.state.finished,
+    .symbols   = self.loader.public_syms.items,
+    .root      = switch (self.state) {
+      .finished => |f| f,
+      .poison => blk: {
+        self.loader.data.seen_error = true;
+        break :blk null;
+      },
+      else => unreachable,
+    },
   };
-  if (self.logger.count > 0) self.data.seen_error = true;
+  if (self.loader.logger.count > 0) self.loader.data.seen_error = true;
   return ret;
 }
 
@@ -216,16 +214,21 @@ pub fn finalize(self: *ModuleLoader) !*model.Module {
 ///
 ///  * self.work() must have returned true
 ///  * create() must have been called with fullast == true
-pub fn finalizeNode(self: *ModuleLoader) *model.Node {
+pub fn finalizeNode(self: *Module) !*model.Node {
   std.debug.assert(self.fullast);
-  return self.state.interpreting;
+  return switch (self.state) {
+    .interpreting => |n| n,
+    .poison =>
+      self.loader.interpreter.node_gen.poison(model.Position.intrinsic()),
+    else => unreachable,
+  };
 }
 
 /// this function mainly exists for testing the lexer. as far as the public
 /// API is concerned, the lexer is an implementation detail.
-pub fn initLexer(self: *ModuleLoader) !Lexer {
+pub fn initLexer(self: *Module) !Lexer {
   std.debug.assert(self.state == .initial);
-  return Lexer.init(self.interpreter);
+  return Lexer.init(self.loader.interpreter, self.source);
 }
 
 /// tries to resolve the given locator to a module.
@@ -237,45 +240,46 @@ pub fn initLexer(self: *ModuleLoader) !Lexer {
 /// referencing the module would create a cyclic dependency. If null is
 /// returned, an error message has been logged.
 pub fn searchModule(
-  self   : *ModuleLoader,
+  loader : *Loader,
   pos    : model.Position,
   locator: model.Locator,
-) !?usize {
+) std.mem.Allocator.Error!?usize {
+  const self = @fieldParentPtr(Module, "loader", loader);
   var resolver: *Resolver = undefined;
   var abs_locator: []const u8 = undefined;
+  const data = self.loader.data;
   const descriptor = if (locator.resolver) |name| blk: {
-    if (self.data.known_modules.getIndex(locator.path)) |index| return index;
-    for (self.data.resolvers) |*re| {
+    if (data.known_modules.getIndex(locator.path)) |index| return index;
+    for (data.resolvers) |*re| {
       if (std.mem.eql(u8, re.name, name)) {
         if (
           try re.resolver.resolve(
-            self.data.storage.allocator(), locator.path, pos, &self.logger)
+            data.storage.allocator(), locator.path, pos, &self.loader.logger)
         ) |desc| {
           resolver = re.resolver;
-          abs_locator =
-            try self.data.storage.allocator().dupe(u8, locator.repr);
+          abs_locator = try data.storage.allocator().dupe(u8, locator.repr);
           break :blk desc;
         }
-        self.logger.CannotResolveLocator(pos);
+        self.loader.logger.CannotResolveLocator(pos);
         return null;
       }
     }
-    self.logger.UnknownResolver(pos, name);
+    self.loader.logger.UnknownResolver(pos, name);
     return null;
   } else blk: {
     // try to resolve the locator relative to the current module.
-    var fullpath = try self.data.storage.allocator().alloc(
-      u8, self.interpreter.input.locator_ctx.len + locator.path.len);
-    std.mem.copy(u8, fullpath, self.interpreter.input.locator_ctx);
+    var fullpath = try data.storage.allocator().alloc(
+      u8, self.source.locator_ctx.len + locator.path.len);
+    std.mem.copy(u8, fullpath, self.source.locator_ctx);
     std.mem.copy(
-      u8, (fullpath.ptr + self.interpreter.input.locator_ctx.len)[
+      u8, (fullpath.ptr + self.source.locator_ctx.len)[
         0..locator.path.len], locator.path);
     const rel_loc = model.Locator.parse(fullpath) catch unreachable;
     const rel_name = rel_loc.resolver.?;
-    for (self.data.resolvers) |*re| if (std.mem.eql(u8, rel_name, re.name)) {
+    for (data.resolvers) |*re| if (std.mem.eql(u8, rel_name, re.name)) {
       if (
         try re.resolver.resolve(
-          self.data.storage.allocator(), rel_loc.path, pos, &self.logger)
+          data.storage.allocator(), rel_loc.path, pos, &self.loader.logger)
       ) |desc| {
         resolver = re.resolver;
         abs_locator = fullpath;
@@ -284,12 +288,12 @@ pub fn searchModule(
       break;
     };
     // try with each resolver that is set to implicitly resolve paths.
-    for (self.data.resolvers) |*re| if (re.implicit) {
+    for (data.resolvers) |*re| if (re.implicit) {
       if (
         try re.resolver.resolve(
-          self.data.storage.allocator(), locator.path, pos, &self.logger)
+          data.storage.allocator(), locator.path, pos, &self.loader.logger)
       ) |desc| {
-        fullpath = try self.data.storage.allocator().realloc(
+        fullpath = try data.storage.allocator().realloc(
           fullpath, 2 + re.name.len + locator.path.len);
         fullpath[0] = '.';
         std.mem.copy(u8, fullpath[1..], re.name);
@@ -300,39 +304,48 @@ pub fn searchModule(
         break :blk desc;
       }
     };
-    self.data.storage.allocator().free(fullpath);
-    self.logger.CannotResolveLocator(pos);
+    data.storage.allocator().free(fullpath);
+    self.loader.logger.CannotResolveLocator(pos);
     return null;
   };
   // TODO: builtin provider
-  const loader = try create(
-    self.data, descriptor, resolver,
+  const module_loader = try create(
+    data, descriptor, resolver,
     model.Locator.parse(abs_locator) catch unreachable, false, null);
-  const res = try self.data.known_modules.getOrPut(
-    self.data.storage.allocator(), abs_locator);
+  const res = try data.known_modules.getOrPut(
+    data.storage.allocator(), abs_locator);
   std.debug.assert(!res.found_existing);
-  res.value_ptr.* = .{.require_options = loader};
+  res.value_ptr.* = .{.require_options = module_loader};
   return res.index;
 }
 
+pub fn registerOptions(loader: *Loader) OptionRegistrar {
+  return .{.ml = @fieldParentPtr(Module, "loader", loader)};
+}
+
+pub fn enounteredOptions(loader: *Loader) bool {
+  return
+    @fieldParentPtr(Module, "loader", loader).state == .encountered_options;
+}
+
 pub const OptionSetter = struct {
-  ml   : *ModuleLoader,
+  ml   : *Module,
   index: usize,
 
   pub fn set(self: OptionSetter, node: *model.Node) !void {
     const item = &self.ml.options[self.index];
     const slot = &self.ml.option_container.cur_frame.?[1 + self.index];
     if (item.given) {
-      self.ml.logger.DuplicateParameterArgument(
+      self.ml.loader.logger.DuplicateParameterArgument(
         item.param.name, node.pos, slot.value.origin);
       return;
     }
     const value = blk: {
+      const intpr = self.ml.loader.interpreter;
       const expr = (
-        try self.ml.interpreter.associate(
-          node, item.param.spec, .{.kind = .final})
-      ) orelse break :blk try self.ml.interpreter.ctx.values.poison(node.pos);
-      break :blk try self.ml.interpreter.ctx.evaluator().evaluate(expr);
+        try intpr.associate(node, item.param.spec, .{.kind = .final})
+      ) orelse break :blk try intpr.ctx.values.poison(node.pos);
+      break :blk try intpr.ctx.evaluator().evaluate(expr);
     };
     slot.* = .{.value = value};
     item.given = true;
@@ -340,7 +353,7 @@ pub const OptionSetter = struct {
 };
 
 pub fn getOption(
-  self: *ModuleLoader,
+  self: *Module,
   name: []const u8,
 ) ?OptionSetter {
   for (self.options) |*item, index| {
@@ -354,7 +367,7 @@ pub fn getOption(
 /// try to push a named parameter as option. Returns true iff an option of that
 /// name exists and thus the node has been consumed.
 pub fn tryPushOption(
-  self: *ModuleLoader,
+  self: *Module,
   name: []const u8,
   node: *model.Node,
 ) !bool {
@@ -364,14 +377,14 @@ pub fn tryPushOption(
   } else return false;
 }
 
-pub fn finalizeOptions(self: *ModuleLoader, pos: model.Position) !void {
+pub fn finalizeOptions(self: *Module, pos: model.Position) !void {
   std.debug.assert(self.state == .encountered_options);
   for (self.options) |item, index| {
     const slot = &self.option_container.cur_frame.?[1 + index];
     if (!item.given) {
-      self.logger.MissingParameterArgument(
+      self.loader.logger.MissingParameterArgument(
         item.param.name, pos, item.param.pos);
-      slot.* = .{.value = try self.interpreter.ctx.values.poison(pos)};
+      slot.* = .{.value = try self.loader.interpreter.ctx.values.poison(pos)};
     }
   }
   self.state = .parsing;
@@ -383,24 +396,24 @@ pub const OptionRegistrar = struct {
     name_pos: model.Position,
   };
 
-  ml  : *ModuleLoader,
+  ml  : *Module,
   data: std.ArrayListUnmanaged(Item) = .{},
 
   pub fn push(self: *OptionRegistrar, loc: *model.Value.Location) !void {
     if (loc.header) |header| {
-      self.ml.logger.NotAllowedForOption(header.value().origin);
+      self.ml.loader.logger.NotAllowedForOption(header.value().origin);
     }
     for ([_]?model.Position{loc.primary, loc.varargs, loc.varmap}) |item| {
-      if (item) |pos| self.ml.logger.NotAllowedForOption(pos);
+      if (item) |pos| self.ml.loader.logger.NotAllowedForOption(pos);
     }
     for (self.ml.options) |item| {
       if (std.mem.eql(u8, item.param.name, loc.name.content)) {
-        self.ml.logger.DuplicateSymbolName(
+        self.ml.loader.logger.DuplicateSymbolName(
           item.param.name, loc.name.value().origin, item.param.pos);
         return;
       }
     }
-    try self.data.append(self.ml.storage.allocator(), .{
+    try self.data.append(self.ml.loader.storage.allocator(), .{
       .param = .{
         .pos     = loc.value().origin,
         .name    = loc.name.content,
@@ -414,16 +427,17 @@ pub const OptionRegistrar = struct {
   }
 
   pub fn finalize(self: *OptionRegistrar, ns: u15) !void {
-    const option_stack = try self.ml.storage.allocator().alloc(
+    const option_stack = try self.ml.loader.storage.allocator().alloc(
       model.StackItem, self.data.items.len + 1);
     option_stack[0] = .{.frame_ref = null};
     const option_arr =
-      try self.ml.storage.allocator().alloc(Option, self.data.items.len);
+      try self.ml.loader.storage.allocator().alloc(Option, self.data.items.len);
     self.ml.option_container.num_values = @intCast(u15, self.data.items.len);
     self.ml.option_container.cur_frame = option_stack.ptr;
     for (self.data.items) |item, index| {
       option_arr[index] = .{.param = item.param, .given = false};
-      const varsym = try self.ml.storage.allocator().create(model.Symbol);
+      const varsym =
+        try self.ml.loader.storage.allocator().create(model.Symbol);
       varsym.* = .{
         .defined_at = item.name_pos,
         .name       = item.param.name,
@@ -434,8 +448,8 @@ pub const OptionRegistrar = struct {
           .kind       = .static,
         }},
       };
-      _ = try self.ml.interpreter.namespace(ns).tryRegister(
-        self.ml.interpreter, varsym);
+      _ = try self.ml.loader.interpreter.namespace(ns).tryRegister(
+        self.ml.loader.interpreter, varsym);
     }
     self.ml.options = option_arr;
     self.ml.state = .encountered_options;

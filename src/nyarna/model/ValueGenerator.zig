@@ -179,6 +179,20 @@ pub inline fn schemaDef(
   })).data.schema_def;
 }
 
+pub inline fn schema(
+  self   : *const Self,
+  pos    : Position,
+  root   : model.Type,
+  symbols: []*model.Symbol,
+) !*Value.Schema {
+  return &(try self.value(pos, .{
+    .schema = .{
+      .root    = root,
+      .symbols = symbols,
+    },
+  })).data.schema;
+}
+
 pub inline fn seq(
   self: *const Self,
   pos : Position,
