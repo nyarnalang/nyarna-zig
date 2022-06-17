@@ -151,6 +151,7 @@ fn scalarError(
     .MustHaveDefinedSuffix =>
       "must have one of the defined suffixes (given: no or unknown suffix)",
     .UnexpectedBlockVar    => "block capture variable not allowed here",
+    .UnknownBackend        => "unknown backend",
   };
   self.renderError("{s}: '{s}'", .{entity, repr});
 }

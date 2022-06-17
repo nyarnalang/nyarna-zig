@@ -256,6 +256,22 @@ const AstEmitter = struct {
         try self.process(a.replacement);
         try ass.pop();
       },
+      .backend => |back| {
+        const b = try self.push("BACKEND");
+        if (back.vars) |vars| {
+          try self.emitLine(">VARS", .{});
+          try self.process(vars);
+        }
+        if (back.funcs.len > 0) {
+          try self.emitLine(">FUNCS", .{});
+          for (back.funcs) |func| try self.process(func.node());
+        }
+        if (back.body) |body| {
+          try self.emitLine(">BODY", .{});
+          try self.process(body.root);
+        }
+        try b.pop();
+      },
       .branches => |b| {
         const branches = try self.push("BRANCHES");
         try self.process(b.condition);
@@ -347,6 +363,18 @@ const AstEmitter = struct {
         const m = try self.push("MATCHER");
         // TODO
         try m.pop();
+      },
+      .output => |out| {
+        const o = try self.push("OUTPUT");
+        try self.emitLine(">NAME", .{});
+        try self.process(out.name);
+        if (out.schema) |schema| {
+          try self.emitLine(">SCHEMA", .{});
+          try self.process(schema);
+        }
+        try self.emitLine(">BODY", .{});
+        try self.process(out.body);
+        try o.pop();
       },
       .seq => |s| {
         for (s.items) |i| {
@@ -803,63 +831,48 @@ const AstEmitter = struct {
 
   fn processValue(self: *Self, v: *const model.Value) anyerror!void {
     switch (v.data) {
-      .text => |txt| {
-        const t_fmt = txt.t.formatter();
-        try self.emitLine("=TEXT {} \"{}\"",
-          .{t_fmt, std.zig.fmtEscapes(txt.content)});
+      .ast => |a| {
+        const ast = try self.push("AST");
+        try self.process(a.root);
+        try ast.pop();
       },
-      .int => |int| {
-        const t_fmt = int.t.typedef().formatter();
-        try self.emitLine("=INT {} {}", .{t_fmt, int.formatter()});
+      .block_header => |*h| {
+        const hf =
+          (HeaderWithGlobal{.header = h, .data = self.data}).formatter();
+        try self.emitLine("=HEADER {}", .{hf});
       },
-      .float => |fl| {
-        const t_fmt = fl.t.typedef().formatter();
-        try self.emitLine("=FLOAT {} {}", .{t_fmt, fl.formatter()});
+      .concat => |_| {
+        unreachable;
+      },
+      .definition => |def| {
+        const wrap = try self.pushWithKey("DEF", def.name.content,
+          if (def.root != null) @as([]const u8, "{root}") else null);
+        switch (def.content) {
+          .func => try self.emitLine("=FUNC", .{}),
+          .@"type" => |t| try self.processType(t),
+        }
+        try wrap.pop();
       },
       .@"enum" => |ev| {
         const t_fmt = ev.t.typedef().formatter();
         try self.emitLine("=ENUM {} \"{s}\"",
           .{t_fmt, ev.t.values.entries.items(.key)[ev.index]});
       },
-      .record => |rec| {
-        const lvl = try self.pushWithType("RECORD", rec.t.typedef());
-        for (rec.fields) |val, index| {
-          try self.emitLine(
-            ">FIELD {s}", .{rec.t.constructor.sig.parameters[index].name});
-          try self.processValue(val);
-        }
-        try lvl.pop();
+      .float => |fl| {
+        const t_fmt = fl.t.typedef().formatter();
+        try self.emitLine("=FLOAT {} {}", .{t_fmt, fl.formatter()});
       },
-      .concat => |_| {
-        unreachable;
-      },
-      .schema => |sch| {
-        const s = try self.push("SCHEMA");
-        try self.processType(sch.root.t);
-        try s.pop();
-      },
-      .schema_def => |sd| {
-        const def = try self.push("SCHEMA_DEF");
-        for (sd.defs) |item| try self.process(item.node());
-        try def.pop();
-      },
-      .seq => |seq| {
-        const lvl = try self.push("SEQUENCE");
-        for (seq.content.items) |item, index| {
-          try self.processValue(item.content);
-          if (index < seq.content.items.len - 1) {
-            try self.emitLine("=SEP {}", .{item.lf_after});
-          }
-        }
-        try lvl.pop();
+      .funcref => |fr| try self.emitLine("=FUNCREF {s}.{s}",
+        .{fr.func.defined_at.source.locator.repr, if (fr.func.name) |sym|
+          sym.name else "<anonymous>"}),
+      .int => |int| {
+        const t_fmt = int.t.typedef().formatter();
+        try self.emitLine("=INT {} {}", .{t_fmt, int.formatter()});
       },
       .list => |lst| {
         const l = try self.push("LIST");
         for (lst.content.items) |item| try self.processValue(item);
         try l.pop();
-      },
-      .map => |_| {
-        unreachable;
       },
       .location => |loc| {
         const wrap = try self.pushWithKey("LOC", loc.name.content, null);
@@ -881,32 +894,53 @@ const AstEmitter = struct {
         }
         try wrap.pop();
       },
-      .definition => |def| {
-        const wrap = try self.pushWithKey("DEF", def.name.content,
-          if (def.root != null) @as([]const u8, "{root}") else null);
-        switch (def.content) {
-          .func => try self.emitLine("=FUNC", .{}),
-          .@"type" => |t| try self.processType(t),
-        }
-        try wrap.pop();
+      .map => |_| {
+        unreachable;
       },
-      .ast => |a| {
-        const ast = try self.push("AST");
-        try self.process(a.root);
-        try ast.pop();
+      .output => |out| {
+        const o = try self.pushWithKey("OUTPUT", out.name.content, null);
+        if (out.schema) |schema| try self.processValue(schema.value());
+        try self.processExpr(out.body);
+        try o.pop();
       },
-      .@"type"   => |tv| try self.processType(tv.t),
       .prototype => |pv| try self.emitLine("=PROTO {s}", .{@tagName(pv.pt)}),
-      .funcref   => |fr| try self.emitLine("=FUNCREF {s}.{s}",
-        .{fr.func.defined_at.source.locator.repr, if (fr.func.name) |sym|
-          sym.name else "<anonymous>"}),
-      .poison       => try self.emitLine("=POISON", .{}),
-      .void         => try self.emitLine("=VOID", .{}),
-      .block_header => |*h| {
-        const hf =
-          (HeaderWithGlobal{.header = h, .data = self.data}).formatter();
-        try self.emitLine("=HEADER {}", .{hf});
+      .record => |rec| {
+        const lvl = try self.pushWithType("RECORD", rec.t.typedef());
+        for (rec.fields) |val, index| {
+          try self.emitLine(
+            ">FIELD {s}", .{rec.t.constructor.sig.parameters[index].name});
+          try self.processValue(val);
+        }
+        try lvl.pop();
       },
+      .schema => |sch| {
+        const s = try self.push("SCHEMA");
+        try self.processType(sch.root.t);
+        try s.pop();
+      },
+      .schema_def => |sd| {
+        const def = try self.push("SCHEMA_DEF");
+        for (sd.defs) |item| try self.process(item.node());
+        try def.pop();
+      },
+      .seq => |seq| {
+        const lvl = try self.push("SEQUENCE");
+        for (seq.content.items) |item, index| {
+          try self.processValue(item.content);
+          if (index < seq.content.items.len - 1) {
+            try self.emitLine("=SEP {}", .{item.lf_after});
+          }
+        }
+        try lvl.pop();
+      },
+      .text => |txt| {
+        const t_fmt = txt.t.formatter();
+        try self.emitLine("=TEXT {} \"{}\"",
+          .{t_fmt, std.zig.fmtEscapes(txt.content)});
+      },
+      .@"type" => |tv| try self.processType(tv.t),
+      .void    => try self.emitLine("=VOID", .{}),
+      .poison  => try self.emitLine("=POISON", .{}),
     }
   }
 

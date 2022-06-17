@@ -78,7 +78,7 @@ const InnerIntend = enum {
       .named => |ins| switch (ins.data) {
         .textual, .space, .literal, .void, .poison =>
           InnerIntend.collapse,
-        .record, .@"type", .location, .definition, .backend, .every =>
+        .record, .@"type", .location, .definition, .every, .output =>
           InnerIntend.allowed,
         else => InnerIntend.forbidden,
       },
@@ -256,6 +256,7 @@ prefix_trees: struct {
 constructors: struct {
   location  : Constructor = .{},
   definition: Constructor = .{},
+  output    : Constructor = .{},
   schema_def: Constructor = .{},
   void      : Constructor = .{},
 
@@ -281,6 +282,7 @@ predefined: struct {
   frame_root  : model.Type.Named,
   literal     : model.Type.Named,
   location    : model.Type.Named,
+  output      : model.Type.Named,
   poison      : model.Type.Named,
   prototype   : model.Type.Named,
   schema      : model.Type.Named,
@@ -296,6 +298,7 @@ system: struct {
   identifier      : model.Type,
   integer         : model.Type,
   natural         : model.Type,
+  output_name     : model.Type,
   text            : model.Type,
   unicode_category: model.Type,
   numeric_impl    : model.Type,
@@ -386,6 +389,10 @@ pub inline fn location(self: *Self) model.Type {
   return self.predefined.location.typedef();
 }
 
+pub inline fn output(self: *Self) model.Type {
+  return self.predefined.output.typedef();
+}
+
 pub inline fn poison(self: *Self) model.Type {
   return self.predefined.poison.typedef();
 }
@@ -437,6 +444,7 @@ pub fn typeConstructor(self: *Self, t: model.Type) !Constructor {
         .impl_index = self.prototype_funcs.numeric.constructor.?.impl_index,
       },
       .location    => self.constructors.location,
+      .output      => self.constructors.output,
       .schema_def  => self.constructors.schema_def,
       .textual     => Constructor{
         .callable   = (try self.constructorOf(t)).?,
@@ -1093,7 +1101,7 @@ pub fn typeType(self: *Self, t: model.Type) !model.Type {
         return constructor.typedef();
       },
       .record  => |*rec| rec.constructor.typedef(),
-      .location, .definition, .schema_def, .void =>
+      .location, .definition, .schema_def, .void, .output =>
         // callable may be null if currently processing system.ny. In that
         // case, the type is not callable.
         if ((try self.typeConstructor(t)).callable) |c| c.typedef()
@@ -1117,6 +1125,7 @@ pub fn valueType(self: *Self, v: *model.Value) !model.Type {
     .list         => |*list| list.t.typedef(),
     .location     =>         self.location(),
     .map          => |*map|  map.t.typedef(),
+    .output       =>         self.output(),
     .prototype    => |pv|
       self.prototypeConstructor(pv.pt).callable.?.typedef(),
     .record       => |*rec|  rec.t.typedef(),

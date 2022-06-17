@@ -127,8 +127,7 @@ pub const DefCollector = struct {
   }
 };
 
-///
-const VarProc = struct {
+pub const VarProc = struct {
   ip         : *Interpreter,
   keyword_pos: model.Position,
   concat_loc : model.Type,
@@ -136,7 +135,7 @@ const VarProc = struct {
   namespace  : *Interpreter.Namespace,
   ns_index   : u15,
 
-  fn init(
+  pub fn init(
     ip         : *Interpreter,
     index      : u15,
     keyword_pos: model.Position,
@@ -152,11 +151,11 @@ const VarProc = struct {
     };
   }
 
-  inline fn empty(self: *@This()) !*model.Node {
+  inline fn empty(self: @This()) !*model.Node {
     return try self.ip.node_gen.void(self.keyword_pos);
   }
 
-  fn node(self: *@This(), n: *model.Node) nyarna.Error!*model.Node {
+  pub fn node(self: @This(), n: *model.Node) nyarna.Error!*model.Node {
     switch (n.data) {
       .location => |*loc| {
         const name_expr = (
@@ -212,8 +211,8 @@ const VarProc = struct {
     }
   }
 
-  fn expression(
-    self: *@This(),
+  pub fn expression(
+    self: @This(),
     expr: *model.Expression,
   ) nyarna.Error!*model.Node {
     if (expr.data == .poison) return try self.empty();
@@ -229,7 +228,7 @@ const VarProc = struct {
     return try self.value(val);
   }
 
-  fn value(self: *@This(), val: *model.Value) !*model.Node {
+  pub fn value(self: @This(), val: *model.Value) !*model.Node {
     switch (val.data) {
       .poison => return try self.empty(),
       .concat => |*con| {
@@ -257,7 +256,7 @@ const VarProc = struct {
   }
 
   fn variable(
-    self    : *@This(),
+    self    : @This(),
     name_pos: model.Position,
     spec    : model.SpecType,
     name    : []const u8,
@@ -305,7 +304,7 @@ const VarProc = struct {
   }
 
   fn defaultValue(
-    self: *@This(),
+    self: @This(),
     t   : model.Type,
     vpos: model.Position,
   ) !?*model.Node {
@@ -400,6 +399,24 @@ pub const Impl = lib.Provider.Wrapper(struct {
   //---------
   // keywords
   //---------
+
+  pub fn backend(
+    intpr: *Interpreter,
+    pos  : model.Position,
+    vars : ?*model.Node,
+    funcs: ?*model.Node,
+    body : ?*model.Value.Ast,
+  ) nyarna.Error!*model.Node {
+    const func_defs: []*model.Node.Definition = if (funcs) |items| blk: {
+      var collector = DefCollector{.dt = intpr.ctx.types().definition()};
+      try collector.collect(items, intpr);
+      try collector.allocate(intpr.allocator());
+      try collector.append(items, intpr, false, intpr.node_gen);
+      break :blk collector.finish();
+    } else &.{};
+
+    return (try intpr.node_gen.backend(pos, vars, func_defs, body)).node();
+  }
 
   pub fn block(
     intpr  : *Interpreter,
@@ -838,6 +855,8 @@ pub const Checker = struct {
     .{"Numeric",         .prototype},
     .{"NumericImpl",     .@"enum", .numeric_impl},
     .{"Optional",        .prototype},
+    .{"Output",          .output},
+    .{"OutputName",      .textual, .output_name},
     .{"Positive",        .int},
     .{"Record",          .prototype},
     .{"Schema",          .schema},
@@ -848,6 +867,7 @@ pub const Checker = struct {
     .{"Type",            .@"type"},
     .{"UnicodeCategory", .@"enum", .unicode_category},
     .{"Void",            .void},
+    .{"backend",         .keyword},
     .{"block",           .keyword},
     .{"builtin",         .keyword},
     .{"fragment",        .keyword},

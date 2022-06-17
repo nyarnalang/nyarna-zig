@@ -83,9 +83,22 @@
   Schema = \unique()
 
   SchemaDef = \unique:
-    root   : \Ast
-    public : \Optional(\Ast) {primary}:<syntax definitions, fullast>
-    private: \Optional(\Ast) {}:<syntax definitions, fullast>
+    root    : \Ast
+    public  : \Optional(\Ast) {primary}:<syntax definitions, fullast>
+    private : \Optional(\Ast) {}:<syntax definitions, fullast>
+    backends: \Optional(\Ast) {}:<syntax definitions, fullast>
+  \end(unique)
+
+  backend = \keyword:
+    vars    : \Optional(\Ast) {primary}:<syntax locations>
+    funcs   : \Optional(\Ast) {}:<syntax definitions>
+    body    : \Optional(\FrameRoot)
+  \end(keyword)
+
+  Output = \unique:
+    name  : \Ast
+    schema: \Optional(\Ast)
+    body  : \Ast {primary}
   \end(unique)
 
   Concat, Optional = \prototype:
@@ -198,6 +211,7 @@
   )
   Text = \Textual()
   Identifier = \Textual(cats = L, Nd, include = _)
+  OutputName = \Textual(cats = L, Nd, include = \ /-_.!~*'\(\))
 
   block = \keyword:
     content: \Ast {primary}

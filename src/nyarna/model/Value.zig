@@ -242,6 +242,16 @@ pub const Map = struct {
   }
 };
 
+pub const Output = struct {
+  name  : *TextScalar,
+  schema: ?*Schema,
+  body  : *Expression,
+
+  pub inline fn value(self: *@This()) *Value {
+    return Value.parent(self);
+  }
+};
+
 pub const PrototypeVal = struct {
   pt: model.Prototype,
 
@@ -263,6 +273,13 @@ pub const Record = struct {
 pub const Schema = struct {
   root   : model.SpecType,
   symbols: []*model.Symbol,
+  /// The backend, if it exists, is a function that takes a value of type `root`
+  /// as argument and returns a concatenation of \Output.
+  ///
+  /// Even if the SchemaDef had multiple backends, the Schema has at most one,
+  /// this being the one that was selected during compilation of the SchemaDef.
+  /// No more than one backend will be compiled into a schema.
+  backend: ?*model.Function,
 
   pub inline fn value(self: *@This()) *Value {
     return Value.parent(self);
@@ -272,7 +289,10 @@ pub const Schema = struct {
 pub const SchemaDef = struct {
   defs    : []*Node.Definition,
   root    : *Node,
-  // if this SchemaDef has already been instaniated, this is its instance.
+  backends: []*Node.Definition,
+  /// This is the `val` capture on the backends block, if any.
+  doc_var : ?Node.Capture.VarDef,
+  /// if this SchemaDef has already been instaniated, this is its instance.
   instance: ?*Schema = null,
 
   pub inline fn value(self: *@This()) *Value {
@@ -325,6 +345,7 @@ pub const Data = union(enum) {
   list        : List,
   location    : Location,
   map         : Map,
+  output      : Output,
   prototype   : PrototypeVal,
   record      : Record,
   schema      : Schema,
@@ -377,6 +398,7 @@ fn parent(it: anytype) *Value {
     List         => offset(Data, "list"),
     Location     => offset(Data, "location"),
     Map          => offset(Data, "map"),
+    Output       => offset(Data, "output"),
     PrototypeVal => offset(Data, "prototype"),
     Record       => offset(Data, "record"),
     Schema       => offset(Data, "schema"),

@@ -694,6 +694,7 @@ pub const DeclareResolution = struct {
               std.hash.Adler32.hash("FrameRoot")   => types.frameRoot(),
               std.hash.Adler32.hash("Literal")     => types.literal(),
               std.hash.Adler32.hash("Location")    => types.location(),
+              std.hash.Adler32.hash("Output")      => types.output(),
               std.hash.Adler32.hash("Schema")      => types.schema(),
               std.hash.Adler32.hash("SchemaDef")   => types.schemaDef(),
               std.hash.Adler32.hash("Space")       => types.space(),
@@ -785,9 +786,8 @@ pub const DeclareResolution = struct {
             },
             .gen_unique => |*gu| if (gu.constr_params) |params| {
               const ret_type = switch (gu.generated.named.data) {
-                // location and definition types have a keyword constructor
-                // that returns an ast.
-                .location, .definition, .schema_def =>
+                // these types have a keyword constructor that returns an ast.
+                .location, .definition, .output, .schema_def =>
                   self.intpr.ctx.types().ast(),
                 else => gu.generated,
               };
@@ -801,6 +801,7 @@ pub const DeclareResolution = struct {
               switch (gu.generated.named.data) {
                 .location   => types.constructors.location   = constructor,
                 .definition => types.constructors.definition = constructor,
+                .output     => types.constructors.output     = constructor,
                 .schema_def => types.constructors.schema_def = constructor,
                 .void       => types.constructors.void       = constructor,
                 else => unreachable,

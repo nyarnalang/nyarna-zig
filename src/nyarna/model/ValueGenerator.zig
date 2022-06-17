@@ -161,24 +161,44 @@ pub inline fn location(
 
 pub inline fn map(
   self: *const Self,
-  pos: Position,
-  t: *const Type.Map,
+  pos : Position,
+  t   : *const Type.Map,
 ) !*Value.Map {
   return &(try self.value(pos, .{
     .map = .{.t = t, .items = Value.Map.Items.init(self.allocator())},
   })).data.map;
 }
 
+pub inline fn output(
+  self  : *const Self,
+  pos   : Position,
+  name  : *Value.TextScalar,
+  sch   : ?*Value.Schema,
+  body  : *model.Expression,
+) !*Value.Output {
+  return &(try self.value(pos, .{
+    .output = .{
+      .name   = name,
+      .schema = sch,
+      .body   = body,
+    }
+  })).data.output;
+}
+
 pub inline fn schemaDef(
-  self: *const Self,
-  pos : Position,
-  defs: []*model.Node.Definition,
-  root : *model.Node,
+  self    : *const Self,
+  pos     : Position,
+  defs    : []*Node.Definition,
+  root    : *Node,
+  backends: []*Node.Definition,
+  doc_var : ?Node.Capture.VarDef,
 ) !*Value.SchemaDef {
   return &(try self.value(pos, .{
     .schema_def = .{
-      .defs = defs,
-      .root = root,
+      .defs     = defs,
+      .root     = root,
+      .backends = backends,
+      .doc_var  = doc_var,
     },
   })).data.schema_def;
 }
@@ -188,11 +208,13 @@ pub inline fn schema(
   pos    : Position,
   root   : model.SpecType,
   symbols: []*model.Symbol,
+  backend: ?*model.Function,
 ) !*Value.Schema {
   return &(try self.value(pos, .{
     .schema = .{
       .root    = root,
       .symbols = symbols,
+      .backend = backend,
     },
   })).data.schema;
 }

@@ -243,7 +243,10 @@ pub fn append(
   }
 }
 
-fn finalizeParagraph(
+/// finalizes current paragraph into node. normally part of finalize() but can
+/// be called externally in scenarios without parser (i.e. when building the
+/// backend in SchemaBuilder).
+pub fn finalizeParagraph(
   self : *ContentLevel,
   intpr: *Interpreter,
 ) !?*model.Node {
@@ -315,7 +318,7 @@ pub fn finalize(self: *ContentLevel, p: *Impl) !*model.Node {
     if (self.nodes.items.len > 0) {
       if (try self.finalizeParagraph(p.intpr())) |content| {
         try self.seq.append(alloc, .{
-          .content = content,
+          .content  = content,
           .lf_after = 0,
         });
       }

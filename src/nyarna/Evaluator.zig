@@ -405,7 +405,7 @@ fn doConvert(
       .schema  => {
         std.debug.assert(from.isNamed(.schema_def));
         var builder = try nyarna.Loader.SchemaBuilder.create(
-          &value.data.schema_def, self.ctx.data);
+          &value.data.schema_def, self.ctx.data, null);
         const schema = (
           try builder.finalize(value.origin)
         ) orelse return try self.ctx.values.poison(value.origin);

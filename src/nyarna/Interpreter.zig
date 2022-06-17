@@ -816,6 +816,53 @@ fn ensureResolved(
   }
 }
 
+fn tryInterpretOutput(
+  self : *Interpreter,
+  out  : *model.Node.Output,
+  stage: Stage,
+) nyarna.Error!?*model.Expression {
+  const schema = if (out.schema) |schema_node| blk: {
+    const sexpr = (
+      try self.associate(
+        schema_node, self.ctx.types().schema().predef(), stage)
+    ) orelse return null;
+    switch ((try self.ctx.evaluator().evaluate(sexpr)).data) {
+      .schema => |*sch| {
+        sexpr.data = .{.value = sch.value()};
+        schema_node.data = .{.expression = sexpr};
+        break :blk sch;
+      },
+      .poison => {
+        out.node().data = .poison;
+        return null;
+      },
+      else => unreachable,
+    }
+  } else null;
+  const root_type =
+    if (schema) |schval| schval.root else self.ctx.types().text().predef();
+  const expr = (
+    try self.associate(out.body, root_type, stage)
+  ) orelse return null;
+  out.body.data = .{.expression = expr};
+  const name_expr = (
+    try self.associate(
+      out.name, self.ctx.types().system.output_name.predef(), stage)
+  ) orelse return null;
+  switch ((try self.ctx.evaluator().evaluate(name_expr)).data) {
+    .text => |*txt| {
+      return try self.ctx.createValueExpr((
+        try self.ctx.values.output(out.node().pos, txt, schema, expr)
+      ).value());
+    },
+    .poison => {
+      out.node().data = .poison;
+      return null;
+    },
+    else => unreachable,
+  }
+}
+
 fn tryInterpretRAccess(
   self : *Interpreter,
   racc : *model.Node.ResolvedAccess,
@@ -2704,6 +2751,16 @@ pub fn tryInterpret(
 ) nyarna.Error!?*model.Expression {
   return switch (input.data) {
     .assign   => |*ass| self.tryInterpretAss(ass, stage),
+    .backend  => {
+      self.ctx.logger.BackendOutsideSchemaDef(input.pos);
+      const expr = try self.ctx.global().create(model.Expression);
+      expr.* = .{
+        .pos = input.pos,
+        .data = .poison,
+        .expected_type = self.ctx.types().poison(),
+      };
+      return expr;
+    },
     .branches => |*branches| if (stage.kind == .resolve) {
       _ = try self.tryInterpret(branches.condition, stage);
       for (branches.branches) |branch| {
@@ -2761,6 +2818,7 @@ pub fn tryInterpret(
       break :blk try self.ctx.createValueExpr(
         (try self.ctx.values.funcRef(input.pos, val)).value());
     },
+    .output            => |*ou| self.tryInterpretOutput(ou, stage),
     .resolved_access   => |*ra| self.tryInterpretRAccess(ra, stage),
     .resolved_symref   => |*rs| self.tryInterpretSymref(rs, stage),
     .resolved_call     => |*rc| self.tryInterpretCall(rc, stage),
@@ -2976,6 +3034,7 @@ pub fn probeType(
       node.data = .{.expression = expr};
       return expr.expected_type;
     } else return null,
+    .backend => return null,
     .branches => |br|
       return try self.probeNodeList(br.branches, stage, sloppy),
     .capture => |cpt| return try self.probeType(cpt.content, stage, sloppy),
@@ -3020,23 +3079,7 @@ pub fn probeType(
         }
       }
     },
-    .seq      => |*seq| {
-      var builder = nyarna.Types.SequenceBuilder.init(
-        self.ctx.types(), self.allocator(), false);
-      var seen_unfinished = false;
-      for (seq.items) |*item| {
-        if (try self.probeType(item.content, stage, sloppy)) |t| {
-          const st = t.at(item.content.pos);
-          const res = try builder.push(st, false);
-          if (res != .success) {
-            item.content.data = .poison;
-            res.report(st, self.ctx.logger);
-          }
-        } else seen_unfinished = true;
-      }
-      return
-        if (seen_unfinished) null else (try builder.finish(null, null)).t;
-    },
+    .output          => return self.ctx.types().output(),
     .resolved_access => |*ra| {
       var t = (try self.probeType(ra.base, stage, sloppy)).?;
       for (ra.path) |index| t = Types.descend(t, index);
@@ -3058,6 +3101,23 @@ pub fn probeType(
       } else return rc.sig.returns;
     },
     .resolved_symref => |*ref| return try self.typeFromSymbol(ref.sym),
+    .seq             => |*seq| {
+      var builder = nyarna.Types.SequenceBuilder.init(
+        self.ctx.types(), self.allocator(), false);
+      var seen_unfinished = false;
+      for (seq.items) |*item| {
+        if (try self.probeType(item.content, stage, sloppy)) |t| {
+          const st = t.at(item.content.pos);
+          const res = try builder.push(st, false);
+          if (res != .success) {
+            item.content.data = .poison;
+            res.report(st, self.ctx.logger);
+          }
+        } else seen_unfinished = true;
+      }
+      return
+        if (seen_unfinished) null else (try builder.finish(null, null)).t;
+    },
     .unresolved_access, .unresolved_call, .unresolved_symref => {
       return switch (try chains.Resolver.init(self, stage).resolve(node)) {
         .runtime_chain => |*rc| rc.t,
@@ -3262,12 +3322,12 @@ pub fn interpretWithTargetScalar(
     },
   });
   switch (input.data) {
-    .assign, .builtingen, .capture, .definition, .funcgen, .import, .location,
-    .match, .matcher, .resolved_access, .resolved_symref, .resolved_call,
-    .gen_concat, .gen_enum, .gen_intersection, .gen_list, .gen_map,
-    .gen_numeric, .gen_optional, .gen_sequence, .gen_prototype, .gen_record,
-    .gen_textual, .gen_unique, .root_def, .unresolved_access, .unresolved_call,
-    .unresolved_symref, .varargs, .varmap => {
+    .assign, .backend, .builtingen, .capture, .definition, .funcgen, .import,
+    .location, .match, .matcher, .output, .resolved_access, .resolved_symref,
+    .resolved_call, .gen_concat, .gen_enum, .gen_intersection, .gen_list,
+    .gen_map, .gen_numeric, .gen_optional, .gen_sequence, .gen_prototype,
+    .gen_record, .gen_textual, .gen_unique, .root_def, .unresolved_access,
+    .unresolved_call, .unresolved_symref, .varargs, .varmap => {
       if (try self.tryInterpret(input, stage)) |expr| {
         if (Types.containedScalar(expr.expected_type)) |scalar_type| {
           if (self.ctx.types().lesserEqual(scalar_type, spec.t)) return expr;

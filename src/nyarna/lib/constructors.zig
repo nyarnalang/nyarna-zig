@@ -150,20 +150,23 @@ pub const Types = lib.Provider.Wrapper(struct {
     };
   }
 
-  pub fn @"Raw"(
-    _    : *Evaluator,
-    _    : model.Position,
-    input: *model.Value.TextScalar,
-  ) nyarna.Error!*model.Value {
-    return input.value();
+  pub fn @"Output"(
+    intpr : *Interpreter,
+    pos   : model.Position,
+    name  : *model.Node,
+    schema: ?*model.Node,
+    body  : *model.Node,
+  ) nyarna.Error!*model.Node {
+    return (try intpr.node_gen.output(pos, name, schema, body)).node();
   }
 
   pub fn @"SchemaDef"(
-    intpr  : *Interpreter,
-    pos    : model.Position,
-    root   : *model.Node,
-    public : ?*model.Node,
-    private: ?*model.Node,
+    intpr   : *Interpreter,
+    pos     : model.Position,
+    root    : *model.Node,
+    public  : ?*model.Node,
+    private : ?*model.Node,
+    backends: ?*model.Node,
   ) nyarna.Error!*model.Node {
     // we generate the nodes into the global storage so that they survive the
     // finalization of current module's interpreter.
@@ -174,11 +177,38 @@ pub const Types = lib.Provider.Wrapper(struct {
       if (item) |node| try collector.collect(node, intpr);
     }
     try collector.allocate(intpr.ctx.global());
-
     if (public)  |pnode| try collector.append(pnode, intpr, true, gen);
     if (private) |pnode| try collector.append(pnode, intpr, false, gen);
+    var defs = collector.finish();
 
-    const val = try intpr.ctx.values.schemaDef(pos, collector.finish(), root);
+    var doc_var: ?model.Node.Capture.VarDef = null;
+    var backend_defs: []*model.Node.Definition = if (backends) |bnode| blk: {
+      var content = switch (bnode.data) {
+        .capture => |*cap| cblk: {
+          if (cap.val) |val| {
+            doc_var = model.Node.Capture.VarDef{
+              .ns   = val.ns,
+              .name = try intpr.ctx.global().dupe(u8, val.name),
+              .pos  = val.pos,
+            };
+          }
+          inline for (.{.key, .index}) |f| if (@field(cap, @tagName(f))) |v| {
+            intpr.ctx.logger.UnexpectedBlockVar(v.pos, @tagName(f));
+          };
+          break :cblk cap.content;
+        },
+        else => bnode,
+      };
+
+      collector = system.DefCollector{.dt = intpr.ctx.types().definition()};
+      try collector.collect(content, intpr);
+      try collector.allocate(intpr.ctx.global());
+      try collector.append(content, intpr, false, gen);
+      break :blk collector.finish();
+    } else &.{};
+
+    const val = try intpr.ctx.values.schemaDef(
+      pos, defs, try gen.copy(root), backend_defs, doc_var);
     return try intpr.genValueNode(val.value());
   }
 

@@ -40,6 +40,19 @@ fn copyVarDef(self: Self, def: ?Node.Capture.VarDef) !?Node.Capture.VarDef {
   } else return null;
 }
 
+fn copyArr(
+           self: Self,
+  comptime T   : type,
+  comptime fld : []const u8,
+           arr : []*T,
+) ![]*T {
+  const items = try self.allocator.alloc(*T, arr.len);
+  for (arr) |item, index| {
+    items[index] = &@field((try self.copy(item.node())).data, fld);
+  }
+  return items;
+}
+
 pub fn copy(self: Self, node: *Node) std.mem.Allocator.Error!*Node {
   return switch (node.data) {
     .assign => |*ass| (
@@ -55,6 +68,16 @@ pub fn copy(self: Self, node: *Node) std.mem.Allocator.Error!*Node {
         },
         .replacement = try self.copy(ass.replacement),
       })
+    ).node(),
+    .backend => |*ba| (
+      try self.backend(node.pos,
+      if (ba.vars) |vars| try self.copy(vars) else null,
+        try self.copyArr(Node.Definition, "definition", ba.funcs),
+        if (ba.body) |body| (
+          try self.ctx.values.ast(
+            try self.copy(body.root), body.container, &.{}, null)
+        ) else null,
+      )
     ).node(),
     .branches => |*br| (
       try self.branches(node.pos, .{
@@ -154,6 +177,11 @@ pub fn copy(self: Self, node: *Node) std.mem.Allocator.Error!*Node {
     .matcher => |*mtr| (
       try self.matcher(node.pos, &(try self.copy(mtr.body.node())).data.match,
         mtr.container, mtr.variable)
+    ).node(),
+    .output => |*out| (
+      try self.output(node.pos, try self.copy(out.name),
+        if (out.schema) |schema| try self.copy(schema) else null,
+        try self.copy(out.body))
     ).node(),
     .resolved_access => |*ra| (
       try self.raccess(node.pos, try self.copy(ra.base),
@@ -337,6 +365,18 @@ pub inline fn assign(
   return &(try self.newNode(pos, .{.assign = content})).data.assign;
 }
 
+pub inline fn backend(
+  self : Self,
+  pos  : Position,
+  vars : ?*model.Node,
+  funcs: []*model.Node.Definition,
+  body : ?*model.Value.Ast,
+) !*Node.Backend {
+  return &(try self.newNode(pos, .{.backend = .{
+    .vars = vars, .funcs = funcs, .body = body,
+  }})).data.backend;
+}
+
 pub inline fn branches(
   self   : Self,
   pos    : Position,
@@ -505,6 +545,18 @@ pub inline fn matcher(
   }})).data.matcher;
 }
 
+pub inline fn output(
+  self  : Self,
+  pos   : Position,
+  name  : *Node,
+  schema: ?*Node,
+  body  : *Node,
+) !*Node.Output {
+  return &(try self.newNode(pos, .{.output = .{
+    .name = name, .schema = schema, .body = body,
+  }})).data.output;
+}
+
 pub inline fn raccess(
   self         : Self,
   pos          : Position,
@@ -612,14 +664,14 @@ pub inline fn tgMap(
 pub inline fn tgNumeric(
   self    : Self,
   pos     : Position,
-  backend : *Node,
+  nbackend: *Node,
   min     : ?*Node,
   max     : ?*Node,
   suffixes: *Value.Map,
 ) !*Node.tg.Numeric {
   return &(try self.newNode(
     pos, .{.gen_numeric = .{
-      .backend  = backend,
+      .backend  = nbackend,
       .min      = min,
       .max      = max,
       .suffixes = suffixes,

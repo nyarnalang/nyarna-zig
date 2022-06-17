@@ -270,9 +270,9 @@ pub const Named = struct {
     int    : IntNum,
     record : Record,
     // what follows are unique intrinsic types.
-    @"void", prototype, schema, schema_def, extension, ast, frame_root,
-    block_header, @"type", space, literal, location, definition, backend,
-    poison, every,
+    ast, block_header, definition, every, extension, frame_root, literal,
+    location, output, poison, prototype, schema, schema_def, space, @"type",
+    @"void",
   };
   /// position at which the type has been declared.
   at: Position,
@@ -284,7 +284,7 @@ pub const Named = struct {
   fn parent(it: anytype) *Named {
     const t = @typeInfo(@TypeOf(it)).Pointer.child;
     const addr = @ptrToInt(it) - switch (t) {
-      Textual  =>  offset(Data, "textual"),
+      Textual  => offset(Data, "textual"),
       Enum     => offset(Data, "enum"),
       FloatNum => offset(Data, "float"),
       IntNum   => offset(Data, "int"),
