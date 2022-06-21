@@ -93,6 +93,25 @@ const Command = struct {
     } else .failed;
   }
 
+  /// returns the swallow depth if implicit swallowing occurs.
+  pub fn checkAutoSwallow(self: *Command) ?u21 {
+    switch (self.info) {
+      .resolved_call => |*tosig| if (tosig.signature.auto_swallow) |as| {
+        if (!tosig.filled[as.param_index]) {
+          self.swallow_depth = as.depth;
+          self.cur_cursor = .{.mapped = .{
+            .param  = .{.index = as.param_index},
+            .config = false,
+            .direct = false,
+          }};
+          return as.depth;
+        }
+      },
+      else => {}
+    }
+    return null;
+  }
+
   pub fn shift(
     self   : *Command,
     intpr  : *Interpreter,

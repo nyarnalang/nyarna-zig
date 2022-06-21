@@ -1,23 +1,24 @@
 === Swallows Depth
 --- input
-\declare:
-  Chapter = \record:
-    title: \Raw
-    content: \concat(\Section) {}:1>
-  \end(record)
+\standalone:
+:schema:
+  \SchemaDef(root=\Concat(\Chapter)):
+    Chapter = \Record:
+      title: \Text
+      content: \Concat(\Section) {}:1>
+    \end(Record)
 
-  Section = \record:
-    title: \Raw
-    content: \concat(\Subsection) {}:<nocolon>:2>
-  \end(record)
+    Section = \Record:
+      title: \Text
+      content: \Concat(\Subsection) {}:<off :>:2>
+    \end(Record)
 
-  Subsection = \record:
-    title: \Raw
-    content: \Raw {}:3>
-  \end(record)
-\end(declare)
-
-\standalone(schema=\schema(\concat(\Chapter)))
+    Subsection = \Record:
+      title: \Text
+      content: \Text {}:3>
+    \end(Record)
+  \end(SchemaDef)
+\end(standalone)
 
 \Chapter(Introduction)
 
@@ -46,70 +47,70 @@ dolor
 \Section(Baked Beans)
 
 --- document
-+CONCAT
-  +RECORD "Chapter"
-    >FIELD "title"
-    =RAW Raw "Introduction"
-    >FIELD "content"
-    +CONCAT
-      +RECORD "Section"
-        >FIELD "title"
-        =RAW Raw "Overview"
-        >FIELD "content"
-        +CONCAT
-          +RECORD "Subsection"
-            >FIELD "title"
-            =RAW Raw "How to read this document"
-            >FIELD "content"
-            =RAW Raw ":Lorem"
++CONCAT Concat<Chapter>
+  +RECORD Chapter
+    >FIELD title
+    =TEXT Text "Introduction"
+    >FIELD content
+    +CONCAT Concat<Section>
+      +RECORD Section
+        >FIELD title
+        =TEXT Text "Overview"
+        >FIELD content
+        +CONCAT Concat<Subsection>
+          +RECORD Subsection
+            >FIELD title
+            =TEXT Text "How to read this document"
+            >FIELD content
+            =TEXT Text ":Lorem"
           -RECORD
         -CONCAT
       -RECORD
-      +RECORD "Section"
-        >FIELD "title"
-        =RAW Raw "Scope"
-        >FIELD "content"
-        +CONCAT
-        -CONCAT
-      -RECORD
-    -CONCAT
-  -RECORD
-  +RECORD "Chapter"
-    >FIELD "title"
-    =RAW Raw "Content"
-    >FIELD "content"
-    +CONCAT
-      +RECORD "Section"
-        >FIELD "title"
-        =RAW Raw "Spam"
-        >FIELD "content"
-        +CONCAT
-          +RECORD "Subsection"
-            >FIELD "title"
-            =RAW Raw "Egg"
-            >FIELD "content"
-            =RAW Raw "ipsum"
-          -RECORD
-          +RECORD "Subsection"
-            >FIELD "title"
-            =RAW Raw "Sausage"
-            >FIELD "content"
-            =RAW Raw "dolor"
-          -RECORD
+      +RECORD Section
+        >FIELD title
+        =TEXT Text "Scope"
+        >FIELD content
+        +CONCAT Concat<Subsection>
         -CONCAT
       -RECORD
     -CONCAT
   -RECORD
-  +RECORD "Chapter"
-    >FIELD "title"
-    =RAW Raw "Spam"
-    >FIELD "content"
-    +CONCAT
-      +RECORD "Section"
-        >FIELD "title"
-        =RAW Raw "Baked Beans"
-        >FIELD "content"
-        +CONCAT
+  +RECORD Chapter
+    >FIELD title
+    =TEXT Text "Content"
+    >FIELD content
+    +CONCAT Concat<Section>
+      +RECORD Section
+        >FIELD title
+        =TEXT Text "Spam"
+        >FIELD content
+        +CONCAT Concat<Subsection>
+          +RECORD Subsection
+            >FIELD title
+            =TEXT Text "Egg"
+            >FIELD content
+            =TEXT Text "ipsum"
+          -RECORD
+          +RECORD Subsection
+            >FIELD title
+            =TEXT Text "Sausage"
+            >FIELD content
+            =TEXT Text "dolor"
+          -RECORD
+        -CONCAT
+      -RECORD
+    -CONCAT
+  -RECORD
+  +RECORD Chapter
+    >FIELD title
+    =TEXT Text "Spam"
+    >FIELD content
+    +CONCAT Concat<Section>
+      +RECORD Section
+        >FIELD title
+        =TEXT Text "Baked Beans"
+        >FIELD content
+        +CONCAT Concat<Subsection>
         -CONCAT
       -RECORD
     -CONCAT

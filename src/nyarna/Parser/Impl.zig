@@ -702,8 +702,22 @@ inline fn procAfterList(self: *@This()) !void {
         self.state = .after_blocks_start;
         self.advance();
       } else {
-        self.state = .command;
-        try lvl.command.shift(self.intpr(), self.source(), end, lvl.fullast);
+        if (lvl.command.checkAutoSwallow()) |swallow_depth| {
+          try self.pushLevel(if (
+            lvl.command.choseAstNodeParam()
+          ) false else lvl.fullast);
+          if (lvl.implicitBlockConfig()) |config| {
+            try self.applyBlockConfig(self.source().at(end), config);
+          }
+          try self.closeSwallowing(swallow_depth);
+          while (
+            self.cur == .space or self.cur == .indent or self.cur == .ws_break
+          ) self.advance();
+          self.state = .default;
+        } else {
+          try lvl.command.shift(self.intpr(), self.source(), end, lvl.fullast);
+          self.state = .command;
+        }
       }
       return;
     },
@@ -1044,77 +1058,11 @@ fn processBlockHeader(self: *@This(), pb_exists: ?*PrimaryBlockExists) !bool {
         ind.* = .yes;
       }
       parent.command.swallow_depth = swallow_depth;
-      if (swallow_depth != 0) {
-        // now close all commands that have a swallow depth equal or greater
-        // than the current one, excluding 0. To do this, we first determine
-        // the actual level in which the current command is to be placed in
-        // (we'll skip the innermost level which we just pushed). target_level
-        // is the level into which the current command should be pushed.
-        // cur_depth is the level we're checking. Since we may need to look
-        // beyond levels with swallow depth 0, we need to keep these values in
-        // separate vars.
-        var target_level: usize = self.levels.items.len - 2;
-        var cur_depth: usize = target_level;
-        while (cur_depth > 0) : (cur_depth = cur_depth - 1) {
-          if (self.levels.items[cur_depth - 1].command.swallow_depth)
-              |level_depth| {
-            if (level_depth != 0) {
-              if (level_depth < swallow_depth) break;
-              target_level = cur_depth - 1;
-            }
-            // if level_depth is 0, we don't set target_level but still look
-            // if it has parents that have a depth greater 0 and are ended by
-            // the current swallow.
-          } else break;
-        }
-        if (target_level < self.levels.items.len - 2) {
-          // one or more levels need closing. calculate the end of the most
-          // recent node, which will be the end cursor for all levels that
-          // will now be closed. this cursor is not necesserily the start of
-          // the current swallowing command, since whitespace before that
-          // command is dumped.
-          const end_cursor = if (parent.nodes.items.len == 0) (
-            last(parent.seq.items).content.pos.end
-          ) else last(parent.nodes.items).*.pos.end;
+      try self.closeSwallowing(swallow_depth);
 
-          var i = self.levels.items.len - 2;
-          while (i > target_level) : (i -= 1) {
-            const cur_parent = &self.levels.items[i - 1];
-            try cur_parent.command.pushArg(
-              try self.levels.items[i].finalize(self));
-            try cur_parent.command.shift(
-              self.intpr(), self.source(), end_cursor, cur_parent.fullast);
-            try cur_parent.append(
-              self.intpr(), cur_parent.command.info.unknown);
-          }
-          // target_level's command has now been closed. therefore it is safe
-          // to assign it to the previous parent's command
-          // (which has not been touched).
-          const tl = &self.levels.items[target_level];
-          tl.command = parent.command;
-          tl.command.mapper = switch (tl.command.info) {
-            .assignment      => |*as| &as.mapper,
-            .import_call     => |*ic| &ic.mapper,
-            .resolved_call   => |*sm| &sm.mapper,
-            .unknown         => unreachable,
-            .unresolved_call => |*uc| &uc.mapper,
-          };
-          // finally, shift the new level on top of the target_level
-          self.levels.items[target_level + 1] = last(self.levels.items).*;
-          const ll = &self.levels.items[target_level + 1];
-          ll.command.mapper = switch (ll.command.info) {
-            .assignment      => |*as| &as.mapper,
-            .import_call     => |*ic| &ic.mapper,
-            .resolved_call   => |*sm| &sm.mapper,
-            .unknown         => unreachable,
-            .unresolved_call => |*uc| &uc.mapper,
-          };
-          try self.levels.resize(self.allocator(), target_level + 2);
-        }
-      }
-
-      while (self.cur == .space or self.cur == .indent or
-              self.cur == .ws_break) self.advance();
+      while (
+        self.cur == .space or self.cur == .indent or self.cur == .ws_break
+      ) self.advance();
       return true;
     } else if (pb_exists) |ind| {
       if (ind.* == .unknown) {
@@ -1129,6 +1077,83 @@ fn processBlockHeader(self: *@This(), pb_exists: ?*PrimaryBlockExists) !bool {
     }
   }
   return false;
+}
+
+/// Close other swallowing levels when swallowing is encountered. `target_depth`
+/// is to be the depth at which the new swallowing occurs. The level that will
+/// contain the newly swallowed content must have been pushed prior to calling
+/// this function.
+///
+/// Closes all commands that have a swallow depth equal or greater than
+/// `target_depth`, excluding 0. To do this, we first determine the actual
+/// level in which the current command is to be placed in (we'll skip the
+/// innermost level which must have been pushed to contain the swallowed).
+fn closeSwallowing(self: *@This(), target_depth: usize) !void {
+  if (target_depth == 0) return;
+  // calculate the level into which the current command should be pushed.
+  var target_level: usize = self.levels.items.len - 2;
+  const parent = &self.levels.items[target_level];
+  // the level we're currently checking. Since we may need to look
+  // beyond levels with swallow depth 0, we need to keep this in a variable
+  // separate from `target_level`.
+  var cur_depth: usize = target_level;
+  while (cur_depth > 0) : (cur_depth = cur_depth - 1) {
+    if (self.levels.items[cur_depth - 1].command.swallow_depth) |level_depth| {
+      if (level_depth != 0) {
+        if (level_depth < target_depth) break;
+        target_level = cur_depth - 1;
+      }
+      // if level_depth is 0, we don't set target_level but still look
+      // if it has parents that have a depth greater 0 and are ended by
+      // the current swallow.
+    } else break;
+  }
+  if (target_level < self.levels.items.len - 2) {
+    // one or more levels need closing. calculate the end of the most
+    // recent node, which will be the end cursor for all levels that
+    // will now be closed. this cursor is not necesserily the start of
+    // the current swallowing command, since whitespace before that
+    // command is dumped.
+    const end_cursor = if (parent.nodes.items.len == 0) (
+      if (parent.seq.items.len == 0) (
+        parent.start
+      ) else last(parent.seq.items).content.pos.end
+    ) else last(parent.nodes.items).*.pos.end;
+
+    var i = self.levels.items.len - 2;
+    while (i > target_level) : (i -= 1) {
+      const cur_parent = &self.levels.items[i - 1];
+      try cur_parent.command.pushArg(
+        try self.levels.items[i].finalize(self));
+      try cur_parent.command.shift(
+        self.intpr(), self.source(), end_cursor, cur_parent.fullast);
+      try cur_parent.append(
+        self.intpr(), cur_parent.command.info.unknown);
+    }
+    // target_level's command has now been closed. therefore it is safe
+    // to assign it to the previous parent's command
+    // (which has not been touched).
+    const tl = &self.levels.items[target_level];
+    tl.command = parent.command;
+    tl.command.mapper = switch (tl.command.info) {
+      .assignment      => |*as| &as.mapper,
+      .import_call     => |*ic| &ic.mapper,
+      .resolved_call   => |*sm| &sm.mapper,
+      .unknown         => unreachable,
+      .unresolved_call => |*uc| &uc.mapper,
+    };
+    // finally, shift the new level on top of the target_level
+    self.levels.items[target_level + 1] = last(self.levels.items).*;
+    const ll = &self.levels.items[target_level + 1];
+    ll.command.mapper = switch (ll.command.info) {
+      .assignment      => |*as| &as.mapper,
+      .import_call     => |*ic| &ic.mapper,
+      .resolved_call   => |*sm| &sm.mapper,
+      .unknown         => unreachable,
+      .unresolved_call => |*uc| &uc.mapper,
+    };
+    try self.levels.resize(self.allocator(), target_level + 2);
+  }
 }
 
 /// if colon_pos is given, assumes that swallowing *must* occur and issues an

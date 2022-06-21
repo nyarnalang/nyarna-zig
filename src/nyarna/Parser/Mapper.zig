@@ -25,6 +25,8 @@ const Type        = model.Type;
 
 const Self = @This();
 
+const ArgKind = model.Node.UnresolvedCall.ArgKind;
+
 pub const Cursor = struct {
   param: union(enum) {
     index : u21,
@@ -39,7 +41,6 @@ pub const Cursor = struct {
 pub const ProtoArgFlag = enum {
   flow, block_no_config, block_with_config
 };
-const ArgKind = model.Node.UnresolvedCall.ArgKind;
 
 mapFn: fn(
   self : *Self,

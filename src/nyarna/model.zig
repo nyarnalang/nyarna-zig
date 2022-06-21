@@ -371,8 +371,8 @@ pub const Signature = struct {
   primary     : ?u21,
   varmap      : ?u21,
   auto_swallow: ?struct{
-    param_index: usize,
-    depth      : usize,
+    param_index: u21,
+    depth      : u21,
   },
   returns: Type,
 
