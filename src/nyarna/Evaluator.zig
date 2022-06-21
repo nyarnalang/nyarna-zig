@@ -343,7 +343,11 @@ fn convertIntoConcat(
       for (vcon.content.items) |item| try self.convertIntoConcat(item, into);
     },
     .text, .int, .float, .@"enum", .record, .void => {
-      try into.push(try self.doConvert(value, into.scalar_type));
+      if (into.scalar_type) |stype| {
+        try into.push(try self.doConvert(value, stype));
+      } else {
+        std.debug.assert(value.data.text.t.isNamed(.space));
+      }
     },
     .seq => |*seq| {
       for (seq.content.items) |p, index| {
@@ -835,9 +839,15 @@ fn coerce(
       .optional, .intersection => unreachable,
       .concat => |*concat| {
         var cv = try self.ctx.values.concat(value.origin, concat);
-        if (!value_type.isNamed(.void)) {
-          const inner_value = try self.coerce(value, concat.inner);
-          try cv.content.append(inner_value);
+        switch (value.data) {
+          .void   => {},
+          .concat => |*con| for (con.content.items) |item| {
+            try cv.content.append(try self.coerce(item, concat.inner));
+          },
+          .text, .record => {
+            try cv.content.append(try self.coerce(value, concat.inner));
+          },
+          else => unreachable,
         }
         return cv.value();
       },
@@ -938,7 +948,7 @@ const ConcatBuilder = struct {
   pos          : model.Position,
   inner_type   : model.Type,
   expected_type: model.Type,
-  scalar_type  : model.Type,
+  scalar_type  : ?model.Type,
   state: union(enum) {
     initial,
     first_text: *model.Value,
@@ -955,8 +965,7 @@ const ConcatBuilder = struct {
       .pos           = pos,
       .inner_type    = ctx.types().every(),
       .expected_type = expected_type,
-      .scalar_type   =
-        nyarna.Types.containedScalar(expected_type) orelse undefined,
+      .scalar_type   = nyarna.Types.containedScalar(expected_type) orelse null,
       .state = .initial,
     };
   }
@@ -989,8 +998,13 @@ const ConcatBuilder = struct {
       try self.initList(first_val);
       self.cur = null;
     }
-    self.inner_type = try self.ctx.types().sup(
-      self.inner_type, try self.ctx.types().valueType(item));
+    const vt = try self.ctx.types().valueType(item);
+    const new_type = try self.ctx.types().sup(self.inner_type, vt);
+    if (!self.inner_type.isNamed(.poison) and new_type.isNamed(.poison)) {
+      std.debug.print("poison: from {}, {}\n", .{
+        self.inner_type.formatter(), vt.formatter()});
+    }
+    self.inner_type = new_type;
 
     if (self.cur_items) |*content| try content.append(item)
     else self.cur = item;
@@ -998,15 +1012,21 @@ const ConcatBuilder = struct {
 
   fn finishText(self: *ConcatBuilder, more: *const MoreText) !void {
     const scalar_val = try self.ctx.values.textScalar(
-      more.pos, self.scalar_type, more.content.items);
+      more.pos, self.scalar_type.?, more.content.items);
     try self.enqueue(scalar_val.value());
   }
 
   pub fn push(self: *ConcatBuilder, item: *model.Value) !void {
     if (item.data == .void) return;
     const value = switch (item.data) {
-      .text, .int, .float, .@"enum" =>
-        try self.ctx.evaluator().coerce(item, self.scalar_type),
+      .text => |*txt| if (self.scalar_type) |stype| (
+        try self.ctx.evaluator().coerce(item, stype)
+      ) else {
+        std.debug.assert(txt.t.isNamed(.space));
+        return;
+      },
+      .int, .float, .@"enum" =>
+        try self.ctx.evaluator().coerce(item, self.scalar_type.?),
       else => item,
     };
     switch (self.state) {
@@ -1044,6 +1064,7 @@ const ConcatBuilder = struct {
   }
 
   pub fn pushSpace(self: *ConcatBuilder, lf_count: usize) !void {
+    if (self.scalar_type == null) return;
     switch (self.state) {
       .initial => {
         const content = try self.ctx.evaluator().lineFeeds(lf_count);
@@ -1100,12 +1121,9 @@ const ConcatBuilder = struct {
           self.pos, &self.expected_type.structural.concat)
       ).value() else if (self.expected_type.isNamed(.void)) (
         try self.ctx.values.void(self.pos)
-      ) else blk: {
-        std.debug.assert(
-          nyarna.Types.containedScalar(self.expected_type) != null);
-        break :blk (try self.ctx.values.textScalar(
-          self.pos, self.scalar_type, "")).value();
-      };
+      ) else (
+        try self.ctx.values.textScalar(self.pos, self.scalar_type.?, "")
+      ).value();
     }
   }
 };

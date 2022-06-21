@@ -841,8 +841,10 @@ const AstEmitter = struct {
           (HeaderWithGlobal{.header = h, .data = self.data}).formatter();
         try self.emitLine("=HEADER {}", .{hf});
       },
-      .concat => |_| {
-        unreachable;
+      .concat => |*con| {
+        const lvl = try self.pushWithType("CONCAT", con.t.typedef());
+        for (con.content.items) |item| try self.processValue(item);
+        try lvl.pop();
       },
       .definition => |def| {
         const wrap = try self.pushWithKey("DEF", def.name.content,

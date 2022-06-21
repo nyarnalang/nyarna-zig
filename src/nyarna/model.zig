@@ -315,7 +315,7 @@ pub const Function = struct {
   };
 
   pub const Data = union(enum) {
-    ny: Nyarna,
+    ny : Nyarna,
     ext: External,
   };
 

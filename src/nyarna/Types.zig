@@ -920,7 +920,11 @@ fn supWithIntrinsic(
       .structural => unreachable, // case is handled in supWithStructural.
       .named => |named| switch (named.data) {
         .textual, .int, .float, .@"enum" => self.text(),
-        .record  => self.poison(),
+        .record  => {
+          const t1 = intr.typedef();
+          return try
+            builders.IntersectionBuilder.calcFrom(self, .{&t1, &other});
+        },
         .every   => intr.typedef(),
         .void    => (try self.optional(intr.typedef())).?,
         .space   => intr.typedef(),

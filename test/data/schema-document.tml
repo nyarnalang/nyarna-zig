@@ -1,27 +1,25 @@
 === Schema document
 --- input:Document
-\standalone(Schema)
+\fragment(\SchemaDef)
 
-\declare:
-  Author = \record:
-    surname: \Raw
-    familyName: \Raw
-  \end(record)
+\SchemaDef(root=\Document):
+  Author = \Record:
+    surname:    \Text
+    familyName: \Text
+  \end(Record)
 
-  Chapter = \record:
-    title: \Raw
-    content: \list(\Raw) {primary}:<par>
-  \end(record)
+  Chapter = \Record:
+    title:   \Text
+    content: \Sequence(\Text) {primary}
+  \end(Record)
 
-  Document = \record:
+  Document = \Record:
     author: \Author
-    chapters: \concat(\Chapter) {primary}
-  \end(record)
-\end(declare)
-
-\schema(root=\Document)
+    chapters: \Concat(\Chapter) {primary}
+  \end(Record)
+\end(SchemaDef)
 --- input
-\standalone(Document)
+\standalone(schema=\import(Document))
 
 \Document(\Author(Karl, Koch)):>
 
@@ -35,32 +33,33 @@
   Dolor sit amet
 \end(Chapter)
 --- document
-+RECORD "Document"
-  >FIELD "author"
-  +RECORD "Author"
-    >FIELD "surname"
-    =RAW Raw "Karl"
-    >FIELD "familyName"
-    =RAW Raw "Koch"
++RECORD Document
+  >FIELD author
+  +RECORD Author
+    >FIELD surname
+    =TEXT Text "Karl"
+    >FIELD familyName
+    =TEXT Text "Koch"
   -RECORD
-  >FIELD "chapters"
-  +CONCAT
-    +RECORD "Chapter"
-      >FIELD "title"
-      =RAW Raw "First"
-      >FIELD "content"
-      +LIST
-        =RAW Raw "Lorem"
-        =RAW Raw "ipsum"
-      -LIST
+  >FIELD chapters
+  +CONCAT Concat<Chapter>
+    +RECORD Chapter
+      >FIELD title
+      =TEXT Text "First"
+      >FIELD content
+      +SEQUENCE
+        =TEXT Text "Lorem"
+        =SEP 2
+        =TEXT Text "ipsum"
+      -SEQUENCE
     -RECORD
-    +RECORD "Chapter"
-      >FIELD "title"
-      =RAW Raw "Second"
-      >FIELD "content"
-      +LIST
-        =RAW Raw "Dolor sit amet"
-      -LIST
+    +RECORD Chapter
+      >FIELD title
+      =TEXT Text "Second"
+      >FIELD content
+      +SEQUENCE
+        =TEXT Text "Dolor sit amet"
+      -SEQUENCE
     -RECORD
   -CONCAT
 -RECORD

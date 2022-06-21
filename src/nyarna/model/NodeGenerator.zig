@@ -114,7 +114,27 @@ pub fn copy(self: Self, node: *Node) std.mem.Allocator.Error!*Node {
         .public  = def.public,
       })
     ).node(),
-    .expression => |expr| try self.expression(expr),
+    .expression => |expr| blk: {
+      switch (expr.data) {
+        .value => |value| switch (value.data) {
+          .ast => |*ast| {
+            const syms = try self.allocator.alloc(
+              model.Symbol.Definition, ast.inner_syms.len);
+            for (ast.inner_syms) |sym, index| syms[index] = sym;
+            const cap = if (ast.capture) |orig| (
+              &(try self.copy(orig.node())).data.capture
+            ) else null;
+            const copied_ast = try self.ctx.values.ast(
+              try self.copy(ast.root), ast.container, syms, cap);
+            const cexpr = try self.ctx.createValueExpr(copied_ast.value());
+            break :blk try self.expression(cexpr);
+          },
+          else => {},
+        },
+        else => {}
+      }
+      break :blk try self.expression(expr);
+    },
     .root_def   => unreachable, // never copied
     .funcgen    => |*fg| (
       try self.funcgen(node.pos,

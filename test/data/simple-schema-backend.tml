@@ -1,47 +1,42 @@
 === Simple Schema Backend
 --- input:Document
-\standalone(Schema)
+\standalone(\SchemaDef)
 
-\declare:
-  Section = \record:
-    title: \Raw
-    content: \concat(\Subsection) {primary}:1>
-  \end(record)
+\SchemaDef(root=\Sequence(\Section)):
+  Section = \Record:
+    title: \Text
+    content: \Concat(\Subsection) {primary}:1>
+  \end(Record)
 
-  Subsection = \record:
-    title: \Raw
-    content: \Raw {primary}:2>
-  \end(record)
-\end(declare)
+  Subsection = \Record:
+    title: \Text
+    content: \Text {primary}:2>
+  \end(Record)
+:backends:<val \doc>
+  markdown = \backend:
+  :funcs:
+    content = \matcher:
+    :(\Text):<val \content>
+      \content
+    :(\Section):<val \sec>
+      \# \sec::title
 
-\schema(root=\concat(\Section)):
-  \backend(Markdown):
-    \template(\Raw):
-      # in a real backend, this would do escaping.
-      \this
-    \end(template)
-
-    \template(\Subsection):
-      \#\# \this::title
-
-      \process(\this::content)
+      \content(\sec::content)
       \
-    \end(template)
+    :(\Subsection):<val \sub>
+      \#\# \sub::title
 
-    \template(\Section):
-      \# \this::title
-
-      \process(\this::content)
+      \content(\sub::content)
       \
-    \end(template)
-  :actions:
-    \return(\subject::input::name:,.md):
-      \process(\subject::root)
-    \end(return)
+    \end(matcher)
+  :body:
+    \Output(\doc::name.md):
+      \content(\doc::root)
+    \end(Output)
   \end(backend)
-\end(schema)
+\end(SchemaDef)
 --- input
-\standalone(Document)
+\standalone(schema=\import(Document))
 
 \Section(First Section)
 
