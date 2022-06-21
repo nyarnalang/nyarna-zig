@@ -286,7 +286,7 @@ pub const Prototypes = lib.Provider.Wrapper(struct {
       try intpr.node_gen.tgList(pos, inner)).node();
   }
 
-  pub fn @"Map"(
+  pub fn @"HashMap"(
     intpr: *Interpreter,
     pos  : model.Position,
     key  : *model.Node,
@@ -311,7 +311,7 @@ pub const Prototypes = lib.Provider.Wrapper(struct {
       else => {}
     }
     return if (invalid) intpr.node_gen.poison(pos)
-    else (try intpr.node_gen.tgMap(pos, key,value)).node();
+    else (try intpr.node_gen.tgHashMap(pos, key,value)).node();
   }
 
   pub fn @"Numeric"(
@@ -325,7 +325,7 @@ pub const Prototypes = lib.Provider.Wrapper(struct {
     const expr = try intpr.interpret(suffixes);
     const value = try intpr.ctx.evaluator().evaluate(expr);
     switch (value.data) {
-      .map => |*m| {
+      .hashmap => |*m| {
         return (
           try intpr.node_gen.tgNumeric(pos, backend, min, max, m)
         ).node();

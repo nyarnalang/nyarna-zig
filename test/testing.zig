@@ -424,7 +424,7 @@ const AstEmitter = struct {
         try gen.pop();
       },
       .gen_map => |gm| {
-        const gen = try self.pushWithKey("TGEN", "Map", null);
+        const gen = try self.pushWithKey("TGEN", "HashMap", null);
         try self.process(gm.key);
         try self.process(gm.value);
         try gen.pop();
@@ -770,6 +770,12 @@ const AstEmitter = struct {
           try self.processType(con.inner);
           try c.pop();
         },
+        .hashmap => |*map| {
+          const m = try self.pushWithKey("TYPE", "HashMap", null);
+          try self.processType(map.key);
+          try self.processType(map.value);
+          try m.pop();
+        },
         .intersection => |*inter| {
           const i = try self.pushWithKey("TYPE", "Intersection", null);
           if (inter.scalar) |scalar| try self.processType(scalar);
@@ -780,12 +786,6 @@ const AstEmitter = struct {
           const l = try self.pushWithKey("TYPE", "List", null);
           try self.processType(lst.inner);
           try l.pop();
-        },
-        .map => |*map| {
-          const m = try self.pushWithKey("TYPE", "Map", null);
-          try self.processType(map.key);
-          try self.processType(map.value);
-          try m.pop();
         },
         .optional => |*opt| {
           const o = try self.pushWithKey("TYPE", "Optional", null);
@@ -896,7 +896,7 @@ const AstEmitter = struct {
         }
         try wrap.pop();
       },
-      .map => |_| {
+      .hashmap => |_| {
         unreachable;
       },
       .output => |out| {

@@ -151,8 +151,8 @@ pub const List = struct {
   }
 };
 
-/// Map type with a key and a value type.
-pub const Map = struct {
+/// HashMap type with a key and a value type.
+pub const HashMap = struct {
   key  : model.Type,
   value: model.Type,
 
@@ -314,20 +314,20 @@ pub const Structural = union(enum) {
   concat      : Concat,
   intersection: Intersection,
   list        : List,
-  map         : Map,
+  hashmap     : HashMap,
   optional    : Optional,
   sequence    : Sequence,
 
   fn parent(it: anytype) *Structural {
     const t = @typeInfo(@TypeOf(it)).Pointer.child;
     const addr = @ptrToInt(it) - switch (t) {
-      Optional     => offset(Structural, "optional"),
-      Concat       => offset(Structural, "concat"),
-      Sequence     => offset(Structural, "sequence"),
-      List         => offset(Structural, "list"),
-      Map          => offset(Structural, "map"),
       Callable     => offset(Structural, "callable"),
+      Concat       => offset(Structural, "concat"),
+      HashMap      => offset(Structural, "hashmap"),
       Intersection => offset(Structural, "intersection"),
+      List         => offset(Structural, "list"),
+      Optional     => offset(Structural, "optional"),
+      Sequence     => offset(Structural, "sequence"),
       else => unreachable
     };
     return @intToPtr(*Structural, addr);
@@ -351,11 +351,11 @@ pub const Structural = union(enum) {
 pub const Type = union(enum) {
   pub const Callable     = local.Callable;
   pub const Concat       = local.Concat;
+  pub const HashMap      = local.HashMap;
   pub const Intersection = local.Intersection;
-  pub const Map          = local.Map;
+  pub const List         = local.List;
   pub const Optional     = local.Optional;
   pub const Sequence     = local.Sequence;
-  pub const List         = local.List;
   pub const Structural   = local.Structural;
 
   pub const Enum     = local.Enum;
@@ -477,8 +477,8 @@ pub const Type = union(enum) {
           fmt, opt, "Sequence", .{seq.direct, seq.inner}, writer),
         .list => |list| formatParameterized(
           fmt, opt, "List", list.inner, writer),
-        .map => |map| formatParameterized(
-          fmt, opt, "Optional", .{map.key, map.value}, writer),
+        .hashmap => |map| formatParameterized(
+          fmt, opt, "HashMap", .{map.key, map.value}, writer),
         .callable => |clb| {
           try writer.writeAll(switch (clb.kind) {
             .function => @as([]const u8, "[function] "),

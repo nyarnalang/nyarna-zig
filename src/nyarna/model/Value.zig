@@ -129,6 +129,17 @@ pub const FuncRef = struct {
   }
 };
 
+pub const HashMap = struct {
+  pub const Items = std.HashMap(*Value, *Value, Value.HashContext, 50);
+
+  t: *const Type.HashMap,
+  items: Items,
+
+  pub inline fn value(self: *@This()) *Value {
+    return Value.parent(self);
+  }
+};
+
 /// an integer Numeric value
 pub const IntNum = struct {
   t: *const Type.IntNum,
@@ -227,18 +238,6 @@ pub const Location = struct {
     std.debug.assert(self.varargs == null);
     self.varargs = v;
     return self;
-  }
-};
-
-/// a Map value
-pub const Map = struct {
-  pub const Items = std.HashMap(*Value, *Value, Value.HashContext, 50);
-
-  t: *const Type.Map,
-  items: Items,
-
-  pub inline fn value(self: *@This()) *Value {
-    return Value.parent(self);
   }
 };
 
@@ -341,10 +340,10 @@ pub const Data = union(enum) {
   @"enum"     : Enum,
   float       : FloatNum,
   funcref     : FuncRef,
+  hashmap     : HashMap,
   int         : IntNum,
   list        : List,
   location    : Location,
-  map         : Map,
   output      : Output,
   prototype   : PrototypeVal,
   record      : Record,
@@ -394,10 +393,10 @@ fn parent(it: anytype) *Value {
     Enum         => offset(Data, "enum"),
     FloatNum     => offset(Data, "float"),
     FuncRef      => offset(Data, "funcref"),
+    HashMap      => offset(Data, "hashmap"),
     IntNum       => offset(Data, "int"),
     List         => offset(Data, "list"),
     Location     => offset(Data, "location"),
-    Map          => offset(Data, "map"),
     Output       => offset(Data, "output"),
     PrototypeVal => offset(Data, "prototype"),
     Record       => offset(Data, "record"),

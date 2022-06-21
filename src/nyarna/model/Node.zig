@@ -387,7 +387,7 @@ pub const Varmap = struct {
 
   /// position at which the type for this varmap node has been specified.
   spec_pos: model.Position,
-  t       : *Type.Map,
+  t       : *Type.HashMap,
   content : std.ArrayListUnmanaged(Item) = .{},
 
   pub inline fn node(self: *@This()) *Node {
@@ -432,6 +432,12 @@ pub const tg = struct {
     values: []Node.Varargs.Item,
     pub inline fn node(self: *@This()) *Node {return Node.parent(self);}
   };
+  pub const HashMap = struct {
+    key      : *Node,
+    value    : *Node,
+    generated: ?*Type.Structural = null,
+    pub inline fn node(self: *@This()) *Node {return Node.parent(self);}
+  };
   pub const Intersection = struct {
     types    : []Varargs.Item,
     generated: ?*Type.Structural = null,
@@ -442,17 +448,11 @@ pub const tg = struct {
     generated: ?*Type.Structural = null,
     pub inline fn node(self: *@This()) *Node {return Node.parent(self);}
   };
-  pub const Map = struct {
-    key      : *Node,
-    value    : *Node,
-    generated: ?*Type.Structural = null,
-    pub inline fn node(self: *@This()) *Node {return Node.parent(self);}
-  };
   pub const Numeric = struct {
     backend : *Node,
     min     : ?*Node,
     max     : ?*Node,
-    suffixes: *Value.Map,
+    suffixes: *Value.HashMap,
     pub inline fn node(self: *@This()) *Node {return Node.parent(self);}
   };
   pub const Optional = struct {
@@ -508,7 +508,7 @@ pub const Data = union(enum) {
   gen_enum         : tg.Enum,
   gen_intersection : tg.Intersection,
   gen_list         : tg.List,
-  gen_map          : tg.Map,
+  gen_map          : tg.HashMap,
   gen_numeric      : tg.Numeric,
   gen_optional     : tg.Optional,
   gen_sequence     : tg.Sequence,
@@ -567,7 +567,7 @@ fn parent(it: anytype) *Node {
     tg.Enum          => offset(Data, "gen_enum"),
     tg.Intersection  => offset(Data, "gen_intersection"),
     tg.List          => offset(Data, "gen_list"),
-    tg.Map           => offset(Data, "gen_map"),
+    tg.HashMap       => offset(Data, "gen_map"),
     tg.Numeric       => offset(Data, "gen_numeric"),
     tg.Optional      => offset(Data, "gen_optional"),
     tg.Sequence      => offset(Data, "gen_sequence"),

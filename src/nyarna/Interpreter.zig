@@ -2035,7 +2035,7 @@ fn tryGenList(
 
 fn tryGenMap(
   self : *Interpreter,
-  gm   : *model.Node.tg.Map,
+  gm   : *model.Node.tg.HashMap,
   stage: Stage,
 ) nyarna.Error!?*model.Expression {
   var inner_t: [2]model.SpecType = undefined;
@@ -2097,11 +2097,11 @@ fn tryGenMap(
   }
 
   const ret = if (gm.generated) |target| blk: {
-    target.* = .{.map = .{
+    target.* = .{.hashmap = .{
       .key   = inner_t[0].t,
       .value = inner_t[1].t,
     }};
-    if (try self.ctx.types().registerMap(&target.map)) {
+    if (try self.ctx.types().registerHashMap(&target.hashmap)) {
       break :blk (
         try self.ctx.values.@"type"(gm.node().pos, target.typedef())
       ).value();
@@ -2109,7 +2109,7 @@ fn tryGenMap(
       self.ctx.logger.InvalidMappingKeyType(inner_t[0..1]);
       break :blk try self.ctx.values.poison(gm.node().pos);
     }
-  } else if (try self.ctx.types().map(inner_t[0].t, inner_t[1].t)) |t|
+  } else if (try self.ctx.types().hashMap(inner_t[0].t, inner_t[1].t)) |t|
     (try self.ctx.values.@"type"(gm.node().pos, t)).value()
   else blk: {
     self.ctx.logger.InvalidMappingKeyType(inner_t[0..1]);
@@ -3165,7 +3165,7 @@ fn createTextLiteral(
           &.{lt.at(l.node().pos), spec});
         break :blk self.ctx.values.poison(l.node().pos);
       },
-      .list, .map, .callable => blk: {
+      .list, .hashmap, .callable => blk: {
         const lt = self.ctx.types().litType(l);
         self.ctx.logger.ExpectedExprOfTypeXGotY(
           &.{lt.at(l.node().pos), spec});

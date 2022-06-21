@@ -116,6 +116,16 @@ pub inline fn funcRef(
     pos, .{.funcref = .{.func = func}})).data.funcref;
 }
 
+pub inline fn hashMap(
+  self: *const Self,
+  pos : Position,
+  t   : *const Type.HashMap,
+) !*Value.HashMap {
+  return &(try self.value(pos, .{
+    .hashmap = .{.t = t, .items = Value.HashMap.Items.init(self.allocator())},
+  })).data.hashmap;
+}
+
 pub inline fn int(
   self   : *const Self,
   pos    : Position,
@@ -157,16 +167,6 @@ pub inline fn location(
 ) !*Value.Location {
   return &(try self.value(
     pos, .{.location = .{.name = name, .spec = spec}})).data.location;
-}
-
-pub inline fn map(
-  self: *const Self,
-  pos : Position,
-  t   : *const Type.Map,
-) !*Value.Map {
-  return &(try self.value(pos, .{
-    .map = .{.t = t, .items = Value.Map.Items.init(self.allocator())},
-  })).data.map;
 }
 
 pub inline fn output(

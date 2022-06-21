@@ -387,7 +387,7 @@ pub const Signature = struct {
 
 
 pub const Prototype = enum {
-  textual, numeric, @"enum", optional, concat, list, sequence, map, record,
+  textual, numeric, @"enum", optional, concat, list, sequence, hashmap, record,
   intersection,
 };
 

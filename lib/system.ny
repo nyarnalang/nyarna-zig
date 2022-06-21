@@ -124,7 +124,7 @@
     direct, auto: \Optional(\Ast)
   \end(prototype)
 
-  Map = \prototype:
+  HashMap = \prototype:
     key, value: \Ast
   \end(prototype)
 
@@ -150,7 +150,7 @@
   Numeric = \prototype:
     backend : \Ast
     min, max: \Optional(\Ast)
-    suffixes: \Map(\Literal, \Ast) {varmap}
+    suffixes: \HashMap(\Literal, \Ast) {varmap}
   :constructor:
     input: \Literal {primary}
   :funcs:
@@ -192,11 +192,11 @@
 
   match = \keyword:
     subject: \Ast
-    cases: \Map(\Type, \FrameRoot) {primary, varmap}
+    cases: \HashMap(\Type, \FrameRoot) {primary, varmap}
   \end(keyword)
 
   matcher = \keyword:
-    cases: \Map(\Type, \FrameRoot) {primary, varmap}
+    cases: \HashMap(\Type, \FrameRoot) {primary, varmap}
   \end(keyword)
 
   Bool = \Enum(false, true)

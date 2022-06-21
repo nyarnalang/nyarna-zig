@@ -616,7 +616,7 @@ pub const SequenceBuilder = struct {
           if (res != .success) return res;
           return try self.mergeType(opt.inner.at(spec.pos), force_direct);
         },
-        .callable, .list, .map => {
+        .callable, .list, .hashmap => {
           const res = self.errorIfForced(force_direct);
           if (res == .success) {
             self.non_voids += 1;

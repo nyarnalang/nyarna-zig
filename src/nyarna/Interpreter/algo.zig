@@ -419,7 +419,7 @@ pub const DeclareResolution = struct {
       std.hash.Adler32.hash("Enum")         => .@"enum",
       std.hash.Adler32.hash("Intersection") => .intersection,
       std.hash.Adler32.hash("List")         => .list,
-      std.hash.Adler32.hash("Map")          => .map,
+      std.hash.Adler32.hash("HashMap")      => .hashmap,
       std.hash.Adler32.hash("Numeric")      => .numeric,
       std.hash.Adler32.hash("Optional")     => .optional,
       std.hash.Adler32.hash("Sequence")     => .sequence,
@@ -440,13 +440,13 @@ pub const DeclareResolution = struct {
     container.* = .{.num_values = switch (prototype) {
       .@"enum", .intersection, .numeric, .sequence, .record, .textual => 1,
       .concat, .list, .optional => 2,
-      .map => 3,
+      .hashmap => 3,
     }};
     const var_names: []const []const u8 = switch (prototype) {
       .@"enum", .intersection, .numeric, .sequence, .record, .textual =>
         &.{"This"},
       .concat, .list, .optional => &.{"This", "Inner"},
-      .map => &.{"This", "Key", "Value"},
+      .hashmap => &.{"This", "Key", "Value"},
     };
     for (var_names) |var_name, i| {
       const vsym = try self.intpr.ctx.global().create(model.Symbol);
@@ -473,6 +473,10 @@ pub const DeclareResolution = struct {
         types.constructors.prototypes.@"enum"      = constructor;
         break :blk &types.prototype_funcs.@"enum";
       },
+      .hashmap  => blk: {
+        types.constructors.prototypes.hashmap      = constructor;
+        break :blk &types.prototype_funcs.hashmap;
+      },
       .intersection => blk: {
         types.constructors.prototypes.intersection = constructor;
         break :blk &types.prototype_funcs.intersection;
@@ -480,10 +484,6 @@ pub const DeclareResolution = struct {
       .list     => blk: {
         types.constructors.prototypes.list         = constructor;
         break :blk &types.prototype_funcs.list;
-      },
-      .map      => blk: {
-        types.constructors.prototypes.map          = constructor;
-        break :blk &types.prototype_funcs.map;
       },
       .numeric  => blk: {
         types.constructors.prototypes.numeric      = constructor;

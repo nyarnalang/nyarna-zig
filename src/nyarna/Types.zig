@@ -194,7 +194,7 @@ allocator: std.mem.Allocator,
 optionals: StructuralHashMap = .{},
 concats  : StructuralHashMap = .{},
 lists    : StructuralHashMap = .{},
-maps     : EntryHashMap = .{},
+hashmaps : EntryHashMap      = .{},
 /// this is the list type that contains itself. This is a special case and the
 /// only pure structural self-referential type structure (i.e. the only
 /// recursive type that is composed of nothing but structural types).
@@ -266,7 +266,7 @@ constructors: struct {
     @"enum"     : Constructor = .{},
     intersection: Constructor = .{},
     list        : Constructor = .{},
-    map         : Constructor = .{},
+    hashmap     : Constructor = .{},
     numeric     : Constructor = .{},
     optional    : Constructor = .{},
     sequence    : Constructor = .{},
@@ -309,7 +309,7 @@ prototype_funcs: struct {
   @"enum"     : funcs.PrototypeFuncs = .{},
   intersection: funcs.PrototypeFuncs = .{},
   list        : funcs.PrototypeFuncs = .{},
-  map         : funcs.PrototypeFuncs = .{},
+  hashmap     : funcs.PrototypeFuncs = .{},
   numeric     : funcs.PrototypeFuncs = .{},
   optional    : funcs.PrototypeFuncs = .{},
   sequence    : funcs.PrototypeFuncs = .{},
@@ -468,16 +468,16 @@ pub fn prototypeConstructor(
   pt  : model.Prototype,
 ) Constructor {
   return switch (pt) {
-    .optional     => self.constructors.prototypes.optional,
     .concat       => self.constructors.prototypes.concat,
-    .list         => self.constructors.prototypes.list,
-    .sequence     => self.constructors.prototypes.sequence,
-    .map          => self.constructors.prototypes.map,
-    .record       => self.constructors.prototypes.record,
-    .intersection => self.constructors.prototypes.intersection,
-    .textual      => self.constructors.prototypes.textual,
-    .numeric      => self.constructors.prototypes.numeric,
     .@"enum"      => self.constructors.prototypes.@"enum",
+    .hashmap      => self.constructors.prototypes.hashmap,
+    .intersection => self.constructors.prototypes.intersection,
+    .list         => self.constructors.prototypes.list,
+    .numeric      => self.constructors.prototypes.numeric,
+    .optional     => self.constructors.prototypes.optional,
+    .record       => self.constructors.prototypes.record,
+    .sequence     => self.constructors.prototypes.sequence,
+    .textual      => self.constructors.prototypes.textual,
   };
 }
 
@@ -740,10 +740,46 @@ fn supWithStructure(
     },
   }
   return switch (struc.*) {
-    .optional => |*o|
-      (try self.optional(try self.sup(o.inner, other))) orelse self.poison(),
+    .callable => |*c| {
+      switch (other) {
+        .structural => |os| switch (os.*) {
+          .callable => |*oc| {
+            if (oc == c) return c.typedef();
+            if (oc.repr == c.repr) return c.repr.typedef();
+          },
+          else => {},
+        },
+        else => {},
+      }
+      return self.poison();
+    },
     .concat => |*c|
       (try self.concat(try self.sup(c.inner, other))) orelse self.poison(),
+    .hashmap => {
+      unreachable; // TODO
+    },
+    .intersection => |*inter| blk: {
+      if (other.isScalar()) {
+        const scalar_type = if (inter.scalar) |inter_scalar|
+          try self.sup(other, inter_scalar) else other;
+        break :blk try builders.IntersectionBuilder.calcFrom(
+          self, .{&scalar_type, inter.types});
+      } else switch (other) {
+        .named => |other_inst| if (other_inst.data == .record) {
+          break :blk try if (inter.scalar) |inter_scalar|
+            builders.IntersectionBuilder.calcFrom(
+              self, .{&inter_scalar, &other, inter.types})
+          else builders.IntersectionBuilder.calcFrom(
+            self, .{&other, inter.types});
+        },
+        else => {},
+      }
+      break :blk self.poison();
+    },
+    .list => |*l|
+      (try self.list(try self.sup(l.inner, other))) orelse self.poison(),
+    .optional => |*o|
+      (try self.optional(try self.sup(o.inner, other))) orelse self.poison(),
     .sequence => |*s| switch (other) {
       .structural => |other_struc| switch (other_struc.*) {
         .sequence => |*other_s| {
@@ -868,42 +904,6 @@ fn supWithStructure(
         else => return self.poison(),
       }
     },
-    .list => |*l|
-      (try self.list(try self.sup(l.inner, other))) orelse self.poison(),
-    .map => {
-      unreachable; // TODO
-    },
-    .callable => |*c| {
-      switch (other) {
-        .structural => |os| switch (os.*) {
-          .callable => |*oc| {
-            if (oc == c) return c.typedef();
-            if (oc.repr == c.repr) return c.repr.typedef();
-          },
-          else => {},
-        },
-        else => {},
-      }
-      return self.poison();
-    },
-    .intersection => |*inter| blk: {
-      if (other.isScalar()) {
-        const scalar_type = if (inter.scalar) |inter_scalar|
-          try self.sup(other, inter_scalar) else other;
-        break :blk try builders.IntersectionBuilder.calcFrom(
-          self, .{&scalar_type, inter.types});
-      } else switch (other) {
-        .named => |other_inst| if (other_inst.data == .record) {
-          break :blk try if (inter.scalar) |inter_scalar|
-            builders.IntersectionBuilder.calcFrom(
-              self, .{&inter_scalar, &other, inter.types})
-          else builders.IntersectionBuilder.calcFrom(
-            self, .{&other, inter.types});
-        },
-        else => {},
-      }
-      break :blk self.poison();
-    }
   };
 }
 
@@ -1039,7 +1039,7 @@ pub fn list(self: *Self, t: model.Type) std.mem.Allocator.Error!?model.Type {
   return res.value_ptr.*.typedef();
 }
 
-pub fn map(
+pub fn hashMap(
   self : *Self,
   key  : model.Type,
   value: model.Type,
@@ -1052,10 +1052,10 @@ pub fn map(
     .structural => return null,
   }
   const e = Entry{.key = key, .value = value};
-  const res = try self.maps.getOrPut(self.allocator, e);
+  const res = try self.hashmaps.getOrPut(self.allocator, e);
   if (!res.found_existing) {
     const struc = try self.allocator.create(model.Type.Structural);
-    struc.* = .{.map = .{
+    struc.* = .{.hashmap = .{
       .key   = key,
       .value = value,
     }};
@@ -1064,7 +1064,7 @@ pub fn map(
   return res.value_ptr.*.typedef();
 }
 
-pub fn registerMap(self: *Self, t: *model.Type.Map) !bool {
+pub fn registerHashMap(self: *Self, t: *model.Type.HashMap) !bool {
   switch (t.key) {
     .named => |named| switch (named.data) {
       .literal, .textual, .int, .float, .@"enum", .@"type" => {},
@@ -1072,7 +1072,7 @@ pub fn registerMap(self: *Self, t: *model.Type.Map) !bool {
     },
     .structural => return false,
   }
-  const res = try self.maps.getOrPut(
+  const res = try self.hashmaps.getOrPut(
     self.allocator, Entry{.key = t.key, .value = t.value});
   std.debug.assert(!res.found_existing);
   res.value_ptr.* = t.typedef().structural;
@@ -1083,13 +1083,13 @@ pub fn registerMap(self: *Self, t: *model.Type.Map) !bool {
 pub fn typeType(self: *Self, t: model.Type) !model.Type {
   return switch (t) {
     .structural => |struc| switch (struc.*) {
-      .list => blk: {
+      .hashmap => blk: {
         const constructor = (
           try self.constructorOf(t)
         ) orelse break :blk self.@"type"(); // workaround for system.ny
         break :blk constructor.typedef();
       },
-      .map => blk: {
+      .list => blk: {
         const constructor = (
           try self.constructorOf(t)
         ) orelse break :blk self.@"type"(); // workaround for system.ny
@@ -1125,10 +1125,10 @@ pub fn valueType(self: *Self, v: *model.Value) !model.Type {
     .@"enum"      => |*en|   en.t.typedef(),
     .float        => |*fl|   fl.t.typedef(),
     .funcref      => |*fr|   fr.func.callable.typedef(),
+    .hashmap      => |*map|  map.t.typedef(),
     .int          => |*int|  int.t.typedef(),
     .list         => |*list| list.t.typedef(),
     .location     =>         self.location(),
-    .map          => |*map|  map.t.typedef(),
     .output       =>         self.output(),
     .prototype    => |pv|
       self.prototypeConstructor(pv.pt).callable.?.typedef(),
@@ -1169,9 +1169,9 @@ fn instanceArgs(self: Self, t: model.Type) ![]*model.Value.TypeVal {
     .structural => |struc| switch (struc.*) {
       .callable     => self.typeArr(&.{t}),
       .concat       => |*con| self.typeArr(&.{t, con.inner}),
+      .hashmap      => |*map| self.typeArr(&.{t, map.key, map.value}),
       .intersection => self.typeArr(&.{t}),
       .list         => |*lst| self.typeArr(&.{t, lst.inner}),
-      .map          => |*map| self.typeArr(&.{t, map.key, map.value}),
       .optional     => |*opt| self.typeArr(&.{t, opt.inner}),
       .sequence     => self.typeArr(&.{t}), // TODO
     },
@@ -1185,9 +1185,9 @@ pub fn instanceFuncsOf(self: *Self, t: model.Type) !?*funcs.InstanceFuncs {
     .structural => |struc| switch (struc.*) {
       .callable     => return null,
       .concat       => &self.prototype_funcs.concat,
+      .hashmap      => &self.prototype_funcs.hashmap,
       .intersection => &self.prototype_funcs.intersection,
       .list         => &self.prototype_funcs.list,
-      .map          => &self.prototype_funcs.map,
       .optional     => &self.prototype_funcs.optional,
       .sequence     => &self.prototype_funcs.sequence,
     },
@@ -1236,7 +1236,7 @@ pub fn expectedType(
       .optional => |*opt|
         if (actual.isNamed(.void) or actual.isNamed(.every)) actual
         else self.expectedType(actual, opt.inner),
-      .concat, .sequence, .list, .map => target,
+      .concat, .sequence, .list, .hashmap => target,
       .callable     => unreachable, // TODO
       .intersection => |*inter| blk: {
         if (inter.scalar) |scalar_type|

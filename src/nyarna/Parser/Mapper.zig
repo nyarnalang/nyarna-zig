@@ -156,7 +156,7 @@ pub const ToSignature = struct {
                 p.spec.t
               ) else p.spec.t.structural.list.inner;
             } else if (self.signature.varmap == index) (
-              p.spec.t.structural.map.value
+              p.spec.t.structural.hashmap.value
             ) else p.spec.t;
             try self.checkFrameRoot(t);
             return Cursor{
@@ -219,7 +219,7 @@ pub const ToSignature = struct {
         if (self.signature.varmap) |index| {
           self.last_key = node;
           try self.checkFrameRoot(
-            self.signature.parameters[index].spec.t.structural.map.value);
+            self.signature.parameters[index].spec.t.structural.hashmap.value);
           return Cursor{
             .param  = .{.index = index},
             .config = flag == .block_with_config,
@@ -249,7 +249,7 @@ pub const ToSignature = struct {
         const p = &self.signature.parameters[index];
         if (!at.direct) {
           if (index == self.signature.varmap) {
-            return p.spec.t.structural.map.value;
+            return p.spec.t.structural.hashmap.value;
           }
           if (p.capture == .varargs) return p.spec.t.structural.list.inner;
         }
@@ -291,7 +291,7 @@ pub const ToSignature = struct {
       &self.args[index].data.varmap
     ) else blk: {
       const varmap = try self.intpr.node_gen.varmap(
-        arg.pos, param.spec.pos, &param.spec.t.structural.map);
+        arg.pos, param.spec.pos, &param.spec.t.structural.hashmap);
       self.args[index] = varmap.node();
       self.filled[index] = true;
       break :blk varmap;
@@ -331,7 +331,7 @@ pub const ToSignature = struct {
     const target_spec =
       if (at.direct) param.spec
       else if (self.varmapAt(at.param.index)) model.SpecType{
-        .t = param.spec.t.structural.map.value, .pos = param.spec.pos,
+        .t = param.spec.t.structural.hashmap.value, .pos = param.spec.pos,
       } else switch (param.capture) {
       .varargs => model.SpecType{
         .t = param.spec.t.structural.list.inner, .pos = param.spec.pos,
@@ -398,16 +398,16 @@ pub const ToSignature = struct {
           try self.intpr.node_gen.expression(dexpr)
         else switch (param.spec.t) {
           .structural => |strct| switch (strct.*) {
-            .optional, .concat, .sequence =>
+            .concat, .optional, .sequence =>
               try self.intpr.node_gen.@"void"(pos),
+            .hashmap => if (self.signature.varmap) |vi| if (vi == i) (
+              try self.intpr.node_gen.varmap(
+                pos, param.spec.pos, &param.spec.t.structural.hashmap)
+            ).node() else null else null,
             .list => if (param.capture == .varargs) (
               try self.intpr.node_gen.varargs(
                 pos, param.spec.pos, &param.spec.t.structural.list)
             ).node() else null,
-            .map => if (self.signature.varmap) |vi| if (vi == i) (
-              try self.intpr.node_gen.varmap(
-                pos, param.spec.pos, &param.spec.t.structural.map)
-            ).node() else null else null,
             else => null,
           },
           .named => |named| switch (named.data) {
@@ -448,12 +448,13 @@ pub const ToSignature = struct {
       } else if (self.signature.varmap) |varmap| if (varmap == i) {
         switch (param.spec.t) {
           .structural => |strct| switch (strct.*) {
-            .map => |*m_type| if (ArgBehavior.calc(m_type.value) != .normal) {
-              const content = self.args[i];
-              self.args[i] = try self.intpr.genValueNode((
-                try self.intpr.ctx.values.ast(content, null, &.{}, null)
-              ).value());
-            },
+            .hashmap => |*m_type|
+              if (ArgBehavior.calc(m_type.value) != .normal) {
+                const content = self.args[i];
+                self.args[i] = try self.intpr.genValueNode((
+                  try self.intpr.ctx.values.ast(content, null, &.{}, null)
+                ).value());
+              },
             else => {},
           },
           else => {},

@@ -311,11 +311,11 @@ pub const VarProc = struct {
     return switch (t) {
       .structural => |strct| switch (strct.*) {
         .concat, .optional, .sequence => try self.ip.node_gen.void(vpos),
+        .hashmap => |*hm| try self.ip.genValueNode(
+          (try self.ip.ctx.values.hashMap(vpos, hm)).value()
+        ),
         .list => |*lst| try self.ip.genValueNode(
           (try self.ip.ctx.values.list(vpos, lst)).value()
-        ),
-        .map => |*map| try self.ip.genValueNode(
-          (try self.ip.ctx.values.map(vpos, map)).value()
         ),
         .callable, .intersection => null,
       },
@@ -358,7 +358,7 @@ pub fn createMatchCases(
   cases  : *model.Node.Varmap,
 ) nyarna.Error![]model.Node.Match.Case {
   const map_type = (
-    try intpr.ctx.types().map(
+    try intpr.ctx.types().hashMap(
       intpr.ctx.types().@"type"(), intpr.ctx.types().ast())
   ).?;
   var collected = try std.ArrayList(model.Node.Match.Case).initCapacity(
@@ -845,12 +845,12 @@ pub const Checker = struct {
     .{"Concat",          .prototype},
     .{"Definition",      .definition},
     .{"Enum",            .prototype},
+    .{"HashMap",         .prototype},
     .{"Identifier",      .textual, .identifier},
     .{"Integer",         .int, .integer},
     .{"Intersection",    .prototype},
     .{"List",            .prototype},
     .{"Location",        .location},
-    .{"Map",             .prototype},
     .{"Natural",         .int, .natural},
     .{"Numeric",         .prototype},
     .{"NumericImpl",     .@"enum", .numeric_impl},

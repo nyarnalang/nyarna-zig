@@ -454,22 +454,22 @@ fn doConvert(
         try self.convertIntoConcat(value, &builder);
         return try builder.finish();
       },
-      .intersection => unreachable,
-      .list         => |*lst| {
-        const ret = try self.ctx.values.list(value.origin, lst);
-        for (value.data.list.content.items) |item| {
-          try ret.content.append(try self.doConvert(item, lst.inner));
-        }
-        return ret.value();
-      },
-      .map => |*map| {
-        const ret = try self.ctx.values.map(value.origin, map);
-        var iter = value.data.map.items.iterator();
+      .hashmap => |*map| {
+        const ret = try self.ctx.values.hashMap(value.origin, map);
+        var iter = value.data.hashmap.items.iterator();
         while (iter.next()) |entry| {
           const res = try ret.items.getOrPut(
             try self.doConvert(entry.key_ptr.*, map.key));
           std.debug.assert(!res.found_existing);
           res.value_ptr.* = try self.doConvert(entry.value_ptr.*, map.value);
+        }
+        return ret.value();
+      },
+      .intersection => unreachable,
+      .list         => |*lst| {
+        const ret = try self.ctx.values.list(value.origin, lst);
+        for (value.data.list.content.items) |item| {
+          try ret.content.append(try self.doConvert(item, lst.inner));
         }
         return ret.value();
       },
@@ -522,7 +522,7 @@ fn evalLocation(
       add.borrow = null;
     };
     if (!spec.t.isNamed(.poison)) {
-      if (add.varmap != null) if (!spec.t.isStruc(.map)) {
+      if (add.varmap != null) if (!spec.t.isStruc(.hashmap)) {
         self.ctx.logger.VarmapRequiresMap(&[_]model.SpecType{spec});
         add.varmap = null;
       };
@@ -650,7 +650,7 @@ fn evalVarargs(
 
 fn pushIntoMap(
   self : *Evaluator,
-  map  : *model.Value.Map,
+  map  : *model.Value.HashMap,
   key  : *model.Value,
   value: *model.Value,
 ) !void {
@@ -681,14 +681,14 @@ fn evalVarmap(
   self  : *Evaluator,
   varmap: *model.Expression.Varmap,
 ) nyarna.Error!*model.Value {
-  const map = try self.ctx.values.map(
-    varmap.expr().pos, &varmap.expr().expected_type.structural.map);
+  const map = try self.ctx.values.hashMap(
+    varmap.expr().pos, &varmap.expr().expected_type.structural.hashmap);
   for (varmap.items) |item| {
     const val = try self.evaluate(item.value);
     if (val.data == .poison) continue;
     switch (item.key) {
       .direct => {
-        var iter = val.data.map.items.iterator();
+        var iter = val.data.hashmap.items.iterator();
         while (iter.next()) |entry| {
           try self.pushIntoMap(map, entry.key_ptr.*, entry.value_ptr.*);
         }
@@ -717,7 +717,7 @@ fn evalGenUnary(
 
 fn evalGenMap(
   self : *Evaluator,
-  input: *model.Expression.tg.Map,
+  input: *model.Expression.tg.HashMap,
 ) nyarna.Error!*model.Value {
   var t: [2]model.Type = undefined;
   var seen_poison = false;
@@ -728,7 +728,7 @@ fn evalGenMap(
       else => unreachable,
     }
   }
-  if (!seen_poison) if (try self.ctx.types().map(t[0], t[1])) |mt| {
+  if (!seen_poison) if (try self.ctx.types().hashMap(t[0], t[1])) |mt| {
     return (try self.ctx.values.@"type"(input.expr().pos, mt)).value();
   } else {
     self.ctx.logger.InvalidMappingKeyType(&.{t[0].at(input.key.pos)});
@@ -835,8 +835,7 @@ fn coerce(
   ) return value;
   switch (expected_type) {
     .structural => |strct| switch (strct.*) {
-      // these are virtual types and thus can never be the expected type.
-      .optional, .intersection => unreachable,
+      .callable => unreachable, // TODO: implement callable wrapper.
       .concat => |*concat| {
         var cv = try self.ctx.values.concat(value.origin, concat);
         switch (value.data) {
@@ -850,6 +849,25 @@ fn coerce(
           else => unreachable,
         }
         return cv.value();
+      },
+      .hashmap => |*map| {
+        const coerced = try self.ctx.values.hashMap(value.origin, map);
+        var iter = value.data.hashmap.items.iterator();
+        while (iter.next()) |entry| {
+          const key = try self.coerce(entry.key_ptr.*, map.key);
+          const val = try self.coerce(entry.value_ptr.*, map.value);
+          try coerced.items.put(key, val);
+        }
+        return coerced.value();
+      },
+      // these are virtual types and thus can never be the expected type.
+      .intersection, .optional => unreachable,
+      .list => |*list| {
+        const coerced = try self.ctx.values.list(value.origin, list);
+        for (value.data.list.content.items) |item| {
+          try coerced.content.append(try self.coerce(item, list.inner));
+        }
+        return coerced.value();
       },
       .sequence => |*seq| {
         var lv = try self.ctx.values.seq(value.origin, seq);
@@ -869,24 +887,6 @@ fn coerce(
         }
         return lv.value();
       },
-      .list => |*list| {
-        const coerced = try self.ctx.values.list(value.origin, list);
-        for (value.data.list.content.items) |item| {
-          try coerced.content.append(try self.coerce(item, list.inner));
-        }
-        return coerced.value();
-      },
-      .map => |*map| {
-        const coerced = try self.ctx.values.map(value.origin, map);
-        var iter = value.data.map.items.iterator();
-        while (iter.next()) |entry| {
-          const key = try self.coerce(entry.key_ptr.*, map.key);
-          const val = try self.coerce(entry.value_ptr.*, map.value);
-          try coerced.items.put(key, val);
-        }
-        return coerced.value();
-      },
-      .callable => unreachable, // TODO: implement callable wrapper.
     },
     .named => |named| switch (named.data) {
       .poison => return value,
@@ -1000,10 +1000,6 @@ const ConcatBuilder = struct {
     }
     const vt = try self.ctx.types().valueType(item);
     const new_type = try self.ctx.types().sup(self.inner_type, vt);
-    if (!self.inner_type.isNamed(.poison) and new_type.isNamed(.poison)) {
-      std.debug.print("poison: from {}, {}\n", .{
-        self.inner_type.formatter(), vt.formatter()});
-    }
     self.inner_type = new_type;
 
     if (self.cur_items) |*content| try content.append(item)

@@ -165,17 +165,17 @@ pub const tg = struct {
     }
   };
 
-  pub const List = struct {
-    inner: *Expression,
+  pub const HashMap = struct {
+    key  : *Expression,
+    value: *Expression,
 
     pub inline fn expr(self: *@This()) *Expression {
       return Expression.parent(self);
     }
   };
 
-  pub const Map = struct {
-    key: *Expression,
-    value: *Expression,
+  pub const List = struct {
+    inner: *Expression,
 
     pub inline fn expr(self: *@This()) *Expression {
       return Expression.parent(self);
@@ -213,7 +213,7 @@ pub const Data = union(enum) {
   sequence     : Sequence,
   tg_concat    : tg.Concat,
   tg_list      : tg.List,
-  tg_map       : tg.Map,
+  tg_map       : tg.HashMap,
   tg_optional  : tg.Optional,
   tg_sequence  : tg.Sequence,
   var_retrieval: VarRetrieval,
@@ -241,8 +241,8 @@ fn parent(it: anytype) *Expression {
     Match         => offset(Data, "match"),
     Sequence      => offset(Data, "sequence"),
     tg.Concat     => offset(Data, "tg_concat"),
+    tg.HashMap    => offset(Data, "tg_map"),
     tg.List       => offset(Data, "tg_list"),
-    tg.Map        => offset(Data, "tg_map"),
     tg.Optional   => offset(Data, "tg_optional"),
     tg.Sequence   => offset(Data, "sequence"),
     VarRetrieval  => offset(Data, "var_retrieval"),

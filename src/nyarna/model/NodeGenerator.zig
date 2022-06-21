@@ -328,7 +328,8 @@ pub fn copy(self: Self, node: *Node) std.mem.Allocator.Error!*Node {
       try self.tgList(node.pos, try self.copy(tgl.inner))
     ).node(),
     .gen_map => |*tgm| (
-      try self.tgMap(node.pos, try self.copy(tgm.key), try self.copy(tgm.value))
+      try self.tgHashMap(
+        node.pos, try self.copy(tgm.key), try self.copy(tgm.value))
     ).node(),
     .gen_numeric => |*tgn| (
       try self.tgNumeric(node.pos, try self.copy(tgn.backend),
@@ -653,6 +654,16 @@ pub inline fn tgEnum(
     pos, .{.gen_enum = .{.values = values}})).data.gen_enum;
 }
 
+pub inline fn tgHashMap(
+  self : Self,
+  pos  : Position,
+  key  : *Node,
+  value: *Node,
+) !*Node.tg.HashMap {
+  return &(try self.newNode(
+    pos, .{.gen_map = .{.key = key, .value = value}})).data.gen_map;
+}
+
 pub inline fn tgIntersection(
   self : Self,
   pos  : Position,
@@ -671,23 +682,13 @@ pub inline fn tgList(
     pos, .{.gen_list = .{.inner = inner}})).data.gen_list;
 }
 
-pub inline fn tgMap(
-  self : Self,
-  pos  : Position,
-  key  : *Node,
-  value: *Node,
-) !*Node.tg.Map {
-  return &(try self.newNode(
-    pos, .{.gen_map = .{.key = key, .value = value}})).data.gen_map;
-}
-
 pub inline fn tgNumeric(
   self    : Self,
   pos     : Position,
   nbackend: *Node,
   min     : ?*Node,
   max     : ?*Node,
-  suffixes: *Value.Map,
+  suffixes: *Value.HashMap,
 ) !*Node.tg.Numeric {
   return &(try self.newNode(
     pos, .{.gen_numeric = .{
@@ -813,7 +814,7 @@ pub inline fn varmap(
   self    : Self,
   pos     : Position,
   spec_pos: Position,
-  t       : *Type.Map,
+  t       : *Type.HashMap,
 ) !*Node.Varmap {
   return &(try self.newNode(
     pos, .{.varmap = .{.t = t, .spec_pos = spec_pos}})).data.varmap;
