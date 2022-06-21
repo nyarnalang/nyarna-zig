@@ -1,7 +1,7 @@
 const std = @import("std");
 
-const algo      = @import("../Interpreter/algo.zig");
-const nyarna    = @import("../../nyarna.zig");
+const CycleResolution = @import("../Interpreter/CycleResolution.zig");
+const nyarna          = @import("../../nyarna.zig");
 
 const errors      = nyarna.errors;
 const Interpreter = nyarna.Interpreter;
@@ -458,7 +458,7 @@ pub const Impl = lib.Provider.Wrapper(struct {
     if (private) |pnode| {
       try collector.append(pnode, intpr, false, intpr.node_gen);
     }
-    var res = try algo.DeclareResolution.create(
+    var res = try CycleResolution.create(
       intpr, collector.finish(), ns, parent);
     try res.execute();
     return intpr.node_gen.@"void"(pos);

@@ -11,7 +11,7 @@
 
 const std = @import("std");
 
-const algo                = @import("Interpreter/algo.zig");
+const CycleResolution   = @import("Interpreter/CycleResolution.zig");
 const chains              = @import("Interpreter/chains.zig");
 const graph               = @import("Interpreter/graph.zig");
 const IntersectionChecker = @import("Interpreter/IntersectionChecker.zig");

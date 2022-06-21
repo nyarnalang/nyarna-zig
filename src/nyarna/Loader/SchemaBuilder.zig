@@ -1,9 +1,9 @@
 const std = @import("std");
 
-const algo         = @import("../Interpreter/algo.zig");
-const ContentLevel = @import("../Parser/ContentLevel.zig");
-const nyarna       = @import("../../nyarna.zig");
-const Globals      = @import("../Globals.zig");
+const CycleResolution = @import("../Interpreter/CycleResolution.zig");
+const ContentLevel    = @import("../Parser/ContentLevel.zig");
+const nyarna          = @import("../../nyarna.zig");
+const Globals         = @import("../Globals.zig");
 
 const Interpreter = nyarna.Interpreter;
 const model       = nyarna.model;
@@ -214,11 +214,11 @@ fn procBackend(
 
   // instantiate the functions so that they may be referred to in the output
   // expressions.
-  var dres = try algo.DeclareResolution.create(
+  var dres = try CycleResolution.create(
     self.loader.interpreter, builder.funcs.items, 0, null);
   try dres.execute();
 
-  // ensure that DeclareResolution doesn't put additional variables in here,
+  // ensure that CycleResolution doesn't put additional variables in here,
   // which it shouldn't
   if (self.loader.logger.count == 0) {
     std.debug.assert(container.num_values == var_locs.items.len + 1);
@@ -290,7 +290,7 @@ pub fn finalize(
   defer if (self.loader.logger.count > 0) {
     self.loader.data.seen_error = true;
   };
-  var dres = try algo.DeclareResolution.create(
+  var dres = try CycleResolution.create(
     self.loader.interpreter, self.defs.items, 0, null);
   try dres.execute();
   const expr = try self.loader.interpreter.interpretAs(

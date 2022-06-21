@@ -1,8 +1,8 @@
 const std = @import("std");
 
-const algo        = @import("Interpreter/algo.zig");
-const nyarna      = @import("../nyarna.zig");
-const unicode     = @import("unicode.zig");
+const CycleResolution = @import("Interpreter/CycleResolution.zig");
+const nyarna            = @import("../nyarna.zig");
+const unicode           = @import("unicode.zig");
 
 const Context     = nyarna.Context;
 const Evaluator   = nyarna.Evaluator;
