@@ -26,7 +26,7 @@ pub const GenericParserError = enum {
   ConstructorUnavailable, NoBuiltinProvider, IllegalContentInPrototypeFuncs,
   BlockNameAtTopLevel, KeywordMustBeCalled, NotAllowedForOption,
   CannotCallLibraryImport, UnexpectedBlockNameExpr, NotABackend, EmptyBackend,
-  BackendOutsideSchemaDef,
+  BackendOutsideSchemaDef, InvalidCollector,
 };
 
 pub const WrongItemError = enum {
@@ -148,6 +148,12 @@ pub const TypeError = enum {
    MultipleScalarTypes,
    /// gives one type.
    InvalidMatchType,
+   /// gives one type.
+   NotCallable,
+   /// gives one type.
+   MustTakeSingleArgument,
+   /// gives one type.
+   NotIterable,
 };
 
 pub const ConstructionError = enum {

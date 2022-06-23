@@ -712,6 +712,180 @@ fn tryInterpretLoc(
   return ret;
 }
 
+fn tryInterpretMap(
+  self : *Interpreter,
+  map  : *model.Node.Map,
+  stage: Stage,
+) nyarna.Error!?*model.Expression {
+  if (stage.kind == .resolve) {
+    _ = try self.tryInterpret(map.input, stage);
+    if (map.func) |func| _ = try self.tryInterpret(func, stage);
+    if (map.collector) |collector| _ = try self.tryInterpret(collector, stage);
+    return null;
+  }
+  var seen_unfinished = false;
+  var seen_poison = false;
+
+  var ret_inner_type: model.SpecType = undefined;
+  // we need the type of the func to properly interpret scalars inside of the
+  // input.
+  const func_input_type = if (map.func) |func| blk: {
+    if (try self.tryInterpret(func, stage)) |expr| {
+      func.data = .{.expression = expr};
+      switch (expr.expected_type) {
+        .structural => |strct| switch (strct.*) {
+          .callable => |*call| {
+            ret_inner_type = call.sig.returns.at(func.pos);
+            if (call.sig.parameters.len == 1) {
+              break :blk call.sig.parameters[0].spec.t;
+            } else {
+              self.ctx.logger.MustTakeSingleArgument(
+                &.{expr.expected_type.at(expr.pos)});
+            }
+          },
+          else => {
+            self.ctx.logger.NotCallable(&.{expr.expected_type.at(func.pos)});
+          },
+        },
+        .named => |named| {
+          if (named.data != .poison) self.ctx.logger.NotCallable(&.{
+            expr.expected_type.at(func.pos)
+          });
+        },
+      }
+      seen_poison = true;
+    } else seen_unfinished = true;
+    break :blk null;
+  } else null;
+
+  var given_kind: enum {concat, list, sequence} = undefined;
+  if (!seen_unfinished) input_blk: {
+    const scalar = if (func_input_type) |t| Types.containedScalar(t) else null;
+    if (
+      if (scalar) |st| (
+        try self.interpretWithTargetScalar(
+          map.input, st.at(map.func.?.pos), stage)
+      ) else try self.tryInterpret(map.input, stage)
+    ) |expr| {
+      map.input.data = .{.expression = expr};
+      const input_item_type = switch (expr.expected_type) {
+        .structural => |strct| switch (strct.*) {
+          .concat   => |*con| blk: {
+            given_kind = .concat;
+            break :blk con.inner;
+          },
+          .list     => |*lst| blk: {
+            given_kind = .list;
+            break :blk lst.inner;
+          },
+          .sequence => |*seq| blk: {
+            var builder = try Types.IntersectionBuilder.init(
+              seq.inner.len + if (seq.direct == null) @as(usize, 0) else 1,
+              self.allocator());
+            for (seq.inner) |item| builder.push(&.{item.typedef()});
+            if (seq.direct) |dt| builder.push(&.{dt});
+            const items_type = try builder.finish(self.ctx.types());
+            given_kind = .sequence;
+            break :blk items_type;
+          },
+          else      => {
+            self.ctx.logger.NotIterable(&.{expr.expected_type.at(expr.pos)});
+            expr.data = .poison;
+            break :input_blk;
+          },
+        },
+        .named => |named| {
+          if (named.data != .poison) {
+            self.ctx.logger.NotIterable(&.{expr.expected_type.at(expr.pos)});
+          }
+          expr.data = .poison;
+          break :input_blk;
+        },
+      };
+      if (func_input_type) |it| {
+        if (!(self.ctx.types().lesserEqual(input_item_type, it))) {
+          self.ctx.logger.ExpectedExprOfTypeXGotY(
+            &.{input_item_type.at(map.input.pos), it.at(map.func.?.pos)});
+          expr.data = .poison;
+          seen_poison = true;
+        }
+      } else ret_inner_type = input_item_type.at(expr.pos);
+    } else seen_unfinished = true;
+  }
+
+  if (seen_poison) {
+    map.node().data = .poison;
+    return null;
+  } else if (seen_unfinished) return null;
+
+  const ret_type = if (map.collector) |coll| blk: {
+    if (try self.tryInterpret(coll, stage)) |expr| {
+      const value = try self.ctx.evaluator().evaluate(expr);
+      expr.data = .{.value = value};
+      coll.data = .{.expression = expr};
+      switch (value.data) {
+        .poison    => seen_poison = true,
+        .prototype => |*pv| switch (pv.pt) {
+          .concat => break :blk (
+            try self.ctx.types().concat(ret_inner_type.t)
+          ) orelse {
+            self.ctx.logger.InvalidInnerConcatType(&.{ret_inner_type});
+            seen_poison = true;
+            value.data = .poison;
+            break :blk undefined;
+          },
+          .list => break :blk (
+            try self.ctx.types().list(ret_inner_type.t)
+          ) orelse {
+            self.ctx.logger.InvalidInnerListType(&.{ret_inner_type});
+            seen_poison = true;
+            value.data = .poison;
+            break :blk undefined;
+          },
+          .sequence => unreachable, // TODO
+          else => {},
+        },
+        else => {}
+      }
+      self.ctx.logger.InvalidCollector(coll.pos);
+      seen_poison = true;
+      value.data = .poison;
+    } else seen_unfinished = true;
+    break :blk undefined;
+  } else switch (given_kind) {
+    .concat => (
+      try self.ctx.types().concat(ret_inner_type.t)
+    ) orelse blk: {
+      self.ctx.logger.InvalidInnerConcatType(&.{ret_inner_type});
+      seen_poison = true;
+      break :blk undefined;
+    },
+    .list => (
+      try self.ctx.types().list(ret_inner_type.t)
+    ) orelse blk: {
+      self.ctx.logger.InvalidInnerListType(&.{ret_inner_type});
+      seen_poison = true;
+      break :blk undefined;
+    },
+    .sequence => unreachable, // TODO
+  };
+  if (seen_poison) {
+    map.node().data = .poison;
+    return null;
+  } else if (seen_unfinished) return null;
+
+  const ret = try self.ctx.global().create(model.Expression);
+  ret.* = .{
+    .pos = map.node().pos,
+    .data = .{.map = .{
+      .input = map.input.data.expression,
+      .func  = if (map.func) |f| f.data.expression else null,
+    }},
+    .expected_type = ret_type,
+  };
+  return ret;
+}
+
 fn tryInterpretDef(
   self : *Interpreter,
   def  : *model.Node.Definition,
@@ -821,6 +995,13 @@ fn tryInterpretOutput(
   out  : *model.Node.Output,
   stage: Stage,
 ) nyarna.Error!?*model.Expression {
+  if (stage.kind == .resolve) {
+    _ = try self.tryInterpret(out.name, stage);
+    _ = try self.tryInterpret(out.body, stage);
+    if (out.schema) |schema| _ = try self.tryInterpret(schema, stage);
+    return null;
+  }
+
   const schema = if (out.schema) |schema_node| blk: {
     const sexpr = (
       try self.associate(
@@ -2752,14 +2933,16 @@ pub fn tryInterpret(
   return switch (input.data) {
     .assign   => |*ass| self.tryInterpretAss(ass, stage),
     .backend  => {
-      self.ctx.logger.BackendOutsideSchemaDef(input.pos);
-      const expr = try self.ctx.global().create(model.Expression);
-      expr.* = .{
-        .pos = input.pos,
-        .data = .poison,
-        .expected_type = self.ctx.types().poison(),
-      };
-      return expr;
+      if (stage.kind == .keyword or stage.kind == .final) {
+        self.ctx.logger.BackendOutsideSchemaDef(input.pos);
+        const expr = try self.ctx.global().create(model.Expression);
+        expr.* = .{
+          .pos = input.pos,
+          .data = .poison,
+          .expected_type = self.ctx.types().poison(),
+        };
+        return expr;
+      } else return null;
     },
     .branches => |*branches| if (stage.kind == .resolve) {
       _ = try self.tryInterpret(branches.condition, stage);
@@ -2810,6 +2993,7 @@ pub fn tryInterpret(
       else => null,
     },
     .location          => |*lo| self.tryInterpretLoc(lo, stage),
+    .map               => |*mp| self.tryInterpretMap(mp, stage),
     .match             => |*mt| self.tryInterpretMatch(mt, stage),
     .matcher           => |*mt| blk: {
       const val = (
@@ -3061,6 +3245,104 @@ pub fn probeType(
       return self.ctx.types().literal();
     },
     .location => return self.ctx.types().location(),
+    .map      => |*map| {
+      // will be calculated when we need it first.
+      var input_type: ?model.Type = null;
+      var calc_inner_type = if (map.func) |func| (
+        switch (try chains.Resolver.init(self, stage).resolve(func)) {
+          .runtime_chain => |rc| switch (rc.t) {
+            .structural => |strct| switch (strct.*) {
+              .callable => |*call| call.sig.returns,
+              else => null,
+            },
+            .named => null,
+          },
+          .sym_ref => |sr| switch (sr.sym.data) {
+            .func     => |sf| sf.callable.sig.returns,
+            .variable => |v| switch (v.spec.t) {
+              .structural => |strct| switch (strct.*) {
+                .callable => |*call| call.sig.returns,
+                else => null,
+              },
+              .named => null,
+            },
+            .@"type" => |t| switch (try self.ctx.types().typeType(t)) {
+              .structural => |strct| switch (strct.*) {
+                .callable => |*call| call.sig.returns,
+                else => null,
+              },
+              .named => null,
+            },
+            else => null,
+          },
+          .function_returning => |fr| fr.returns,
+          .failed => return null,
+          .poison => null,
+        }
+      ) else blk: {
+        input_type = (
+          try self.probeType(map.input, stage, sloppy)
+        ) orelse return null;
+        switch (input_type.?) {
+          .structural => |strct| switch (strct.*) {
+            .concat   => |*con| break :blk con.inner,
+            .list     => |*lst| break :blk lst.inner,
+            .sequence => unreachable, // TODO
+            else => break :blk null,
+          },
+          .named => break :blk null,
+        }
+      };
+      var inner_type = calc_inner_type orelse {
+        // something's not right. call interpret to log errors.
+        _ = try self.tryInterpret(node, stage);
+        return self.ctx.types().poison();
+      };
+      if (map.collector) |coll| {
+        if (try self.tryInterpret(coll, stage)) |expr| {
+          const value = try self.ctx.evaluator().evaluate(expr);
+          expr.data = .{.value = value};
+          coll.data = .{.expression = expr};
+          switch (value.data) {
+            .poison    => return self.ctx.types().poison(),
+            .prototype => |pv| switch (pv.pt) {
+              .list => if (try self.ctx.types().list(inner_type)) |lt| (
+                return lt
+              ),
+              .concat => if (try self.ctx.types().concat(inner_type)) |ct| (
+                return ct
+              ),
+              .sequence => unreachable, // TODO
+              else => {},
+            },
+            else => {},
+          }
+          // collector is not right, log errors
+          _ = try self.tryInterpret(node, stage);
+          return self.ctx.types().poison();
+        } else return null;
+      } else {
+        const it = input_type orelse (
+          try self.probeType(map.input, stage, sloppy)
+        ) orelse return null;
+        switch (it) {
+          .structural => |strct| switch (strct.*) {
+            .list => if (try self.ctx.types().list(inner_type)) |lt| (
+              return lt
+            ),
+            .concat => if (try self.ctx.types().concat(inner_type)) |ct| (
+              return ct
+            ),
+            .sequence => unreachable, // TODO
+            else => {},
+          },
+          else => {},
+        }
+        // input has invalid type, log errors
+        _ = try self.tryInterpret(node, stage);
+        return self.ctx.types().poison();
+      }
+    },
     .match    => |*match| {
       switch (try self.ensureMatchTypesPresent(match.cases, stage)) {
         .unfinished => return null,
@@ -3323,11 +3605,12 @@ pub fn interpretWithTargetScalar(
   });
   switch (input.data) {
     .assign, .backend, .builtingen, .capture, .definition, .funcgen, .import,
-    .location, .match, .matcher, .output, .resolved_access, .resolved_symref,
-    .resolved_call, .gen_concat, .gen_enum, .gen_intersection, .gen_list,
-    .gen_map, .gen_numeric, .gen_optional, .gen_sequence, .gen_prototype,
-    .gen_record, .gen_textual, .gen_unique, .root_def, .unresolved_access,
-    .unresolved_call, .unresolved_symref, .varargs, .varmap => {
+    .location, .map, .match, .matcher, .output, .resolved_access,
+    .resolved_symref, .resolved_call, .gen_concat, .gen_enum, .gen_intersection,
+    .gen_list, .gen_map, .gen_numeric, .gen_optional, .gen_sequence,
+    .gen_prototype, .gen_record, .gen_textual, .gen_unique, .root_def,
+    .unresolved_access, .unresolved_call, .unresolved_symref, .varargs,
+    .varmap => {
       if (try self.tryInterpret(input, stage)) |expr| {
         if (Types.containedScalar(expr.expected_type)) |scalar_type| {
           if (self.ctx.types().lesserEqual(scalar_type, spec.t)) return expr;

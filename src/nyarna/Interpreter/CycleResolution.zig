@@ -186,10 +186,11 @@ const FixpointContext = struct {
           .gen_record => |*gr| return graph.ResolutionContext.Result{
             .unfinished_function = .{.named = gr.generated.?},
           },
-          .funcgen => |*fgen| {
-            return graph.ResolutionContext.Result{
-              .unfinished_function = fgen.cur_returns,
-            };
+          .funcgen => |*fgen| return graph.ResolutionContext.Result{
+            .unfinished_function = fgen.cur_returns,
+          },
+          .matcher => |*matcher| return graph.ResolutionContext.Result{
+            .unfinished_function = matcher.cur_returns,
           },
           // types other than gen_record are guaranteed to have been
           // constructed at this point since they can't contain default

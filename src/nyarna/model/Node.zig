@@ -220,6 +220,17 @@ pub const Seq = struct {
   }
 };
 
+/// Call to \map. Not related to HashMaps.
+pub const Map = struct {
+  input    : *Node,
+  func     : ?*Node,
+  collector: ?*Node,
+
+  pub inline fn node(self: *@This()) *Node {
+    return Node.parent(self);
+  }
+};
+
 /// this node if both for \match and \matcher, subject being null for the
 /// latter.
 pub const Match = struct {
@@ -519,6 +530,7 @@ pub const Data = union(enum) {
   import           : Import,
   literal          : Literal,
   location         : Location,
+  map              : Map,
   match            : Match,
   matcher          : Matcher,
   output           : Output,
@@ -555,6 +567,7 @@ fn parent(it: anytype) *Node {
     Import           => offset(Data, "import"),
     Literal          => offset(Data, "literal"),
     Location         => offset(Data, "location"),
+    Map              => offset(Data, "map"),
     Match            => offset(Data, "match"),
     Matcher          => offset(Data, "matcher"),
     Output           => offset(Data, "output"),

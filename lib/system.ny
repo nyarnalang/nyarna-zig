@@ -86,7 +86,7 @@
     root    : \Ast
     public  : \Optional(\Ast) {primary}:<syntax definitions, fullast>
     private : \Optional(\Ast) {}:<syntax definitions, fullast>
-    backends: \Optional(\Ast) {}:<syntax definitions, fullast>
+    backends: \Optional(\Ast) {}:<syntax definitions>
   \end(unique)
 
   backend = \keyword:
@@ -188,6 +188,12 @@
     condition: \Ast
     then: \Optional(\Ast) {primary}
     else: \Optional(\Ast)
+  \end(keyword)
+
+  map = \keyword:
+    input    : \Ast
+    func     : \Optional(\Ast)
+    collector: \Optional(\Ast)
   \end(keyword)
 
   match = \keyword:

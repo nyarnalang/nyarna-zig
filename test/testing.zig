@@ -354,6 +354,19 @@ const AstEmitter = struct {
         }
         try l.pop();
       },
+      .map => |map| {
+        const lvl = try self.push("MAP");
+        try self.process(map.input);
+        if (map.func) |func| {
+          try self.emitLine(">FUNC", .{});
+          try self.process(func);
+        }
+        if (map.collector) |coll| {
+          try self.emitLine(">COLLECTOR", .{});
+          try self.process(coll);
+        }
+        try lvl.pop();
+      },
       .match => |_| {
         const m = try self.push("MATCH");
         // TODO
@@ -669,6 +682,15 @@ const AstEmitter = struct {
           try self.processExpr(d);
         }
         try l.pop();
+      },
+      .map => |map| {
+        const lvl = try self.pushWithType("MAP", e.expected_type);
+        try self.processExpr(map.input);
+        if (map.func) |func| {
+          try self.emitLine(">FUNC", .{});
+          try self.processExpr(func);
+        }
+        try lvl.pop();
       },
       .match => |match| {
         const m = try self.push("MATCH");
@@ -1363,14 +1385,6 @@ pub fn loadErrorTest(data: *TestDataResolver) !void {
     &data.stdlib.api);
   defer proc.deinit();
   var loader = try proc.startLoading(&data.api, "input");
-  {
-    errdefer loader.destroy();
-    _ = try loader.finishMainModule();
-    if (loader.loader.data.seen_error) {
-      try checker.finish();
-      return error.TestUnexpectedResult;
-    }
-  }
   if (try loader.finalize()) |document| {
     document.destroy();
     return error.TestUnexpectedResult;

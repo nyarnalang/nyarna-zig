@@ -83,6 +83,17 @@ pub const Location = struct {
   }
 };
 
+/// A call to \map
+pub const Map = struct {
+  input: *Expression,
+  func : ?*Expression,
+  // expected_type defines whether to collect into List, Concat or Seq.
+
+  pub fn expr(self: *@This()) *Expression {
+    return Expression.parent(self);
+  }
+};
+
 pub const Match = struct {
   pub const Body = struct {
     expr     : *Expression,
@@ -209,6 +220,7 @@ pub const Data = union(enum) {
   concatenation: Concatenation,
   conversion   : Conversion,
   location     : Location,
+  map          : Map,
   match        : Match,
   sequence     : Sequence,
   tg_concat    : tg.Concat,
@@ -238,6 +250,7 @@ fn parent(it: anytype) *Expression {
     Call          => offset(Data, "call"),
     Concatenation => offset(Data, "concatenation"),
     Location      => offset(Data, "location"),
+    Map           => offset(Data, "map"),
     Match         => offset(Data, "match"),
     Sequence      => offset(Data, "sequence"),
     tg.Concat     => offset(Data, "tg_concat"),

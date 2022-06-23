@@ -734,6 +734,17 @@ fn supWithStructure(
       .@"type" => return switch (struc.*) {
         .callable => |*clb|
           if (clb.kind == .@"type") other else self.poison(),
+        .concat => |*con|
+          if (con.inner.eql(other)) struc.typedef() else self.poison(),
+        .list => |*lst|
+          if (lst.inner.eql(other)) struc.typedef() else self.poison(),
+        else => self.poison(),
+      },
+      .location, .definition, .output => return switch (struc.*) {
+        .concat => |*con|
+          if (con.inner.eql(other)) struc.typedef() else self.poison(),
+        .list => |*lst|
+          if (lst.inner.eql(other)) struc.typedef() else self.poison(),
         else => self.poison(),
       },
       else => return self.poison(),

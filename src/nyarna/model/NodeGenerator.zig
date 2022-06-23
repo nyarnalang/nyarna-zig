@@ -167,6 +167,11 @@ pub fn copy(self: Self, node: *Node) std.mem.Allocator.Error!*Node {
           if (loc.default) |d| try self.copy(d) else null, additionals)
       ).node();
     },
+    .map => |*mn| return (
+      try self.map(node.pos, try self.copy(mn.input),
+        if (mn.func) |func| try self.copy(func) else null,
+        if (mn.collector) |coll| try self.copy(coll) else null)
+    ).node(),
     .match => |*mat| {
       const cases = try self.allocator.alloc(Node.Match.Case, mat.cases.len);
       for (mat.cases) |case, index| {
@@ -182,13 +187,35 @@ pub fn copy(self: Self, node: *Node) std.mem.Allocator.Error!*Node {
         const cpt = if (case.content.capture) |cap| (
           &(try self.copy(cap.node())).data.capture
         ) else null;
-        cases[index] = .{
-          .t       = try self.copy(case.t),
-          .content = try self.ctx.values.ast(
-            try self.copy(case.content.root), case.content.container,
-            inner_syms, cpt),
-          .variable = .{.def = (try self.copyVarDef(case.variable.def)).?},
-        };
+        switch (case.variable) {
+          .def => |def| {
+            cases[index] = .{
+              .t       = try self.copy(case.t),
+              .content = try self.ctx.values.ast(
+                try self.copy(case.content.root), case.content.container,
+                inner_syms, cpt),
+              .variable = .{.def = (try self.copyVarDef(def)).?},
+            };
+          },
+          .sym => |sym| {
+            cases[index] = .{
+              .t       = try self.copy(case.t),
+              .content = try self.ctx.values.ast(
+                try self.copy(case.content.root), case.content.container,
+                inner_syms, cpt),
+              .variable = .{.sym = sym},
+            };
+          },
+          .none => {
+            cases[index] = .{
+              .t       = try self.copy(case.t),
+              .content = try self.ctx.values.ast(
+                try self.copy(case.content.root), case.content.container,
+                inner_syms, cpt),
+              .variable = .none,
+            };
+          },
+        }
       }
       return (
         try self.match(node.pos, try self.copy(mat.subject), cases)
@@ -537,6 +564,18 @@ pub fn locationFromValue(
     loc_node.additionals = add;
   }
   return loc_node;
+}
+
+pub inline fn map(
+  self     : Self,
+  pos      : Position,
+  input    : *Node,
+  func     : ?*Node,
+  collector: ?*Node,
+) !*Node.Map {
+  return &(try self.newNode(pos, .{.map = .{
+    .input = input, .func = func, .collector = collector,
+  }})).data.map;
 }
 
 pub inline fn match(

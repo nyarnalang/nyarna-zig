@@ -50,11 +50,11 @@ pub const DefCollector = struct {
     self    : *@This(),
     name    : []const u8,
     name_pos: model.Position,
-    intpr   : *Interpreter,
+    ctx     : nyarna.Context,
   ) bool {
     var i: usize = 0; while (i < self.count) : (i += 1) {
       if (std.mem.eql(u8, self.defs[i].name.content, name)) {
-        intpr.ctx.logger.DuplicateSymbolName(
+        ctx.logger.DuplicateSymbolName(
           name, name_pos, self.defs[i].name.node().pos);
         return false;
       }
@@ -71,6 +71,51 @@ pub const DefCollector = struct {
     return &(try gen.copy(def.node())).data.definition;
   }
 
+  fn appendValue(
+    self : *@This(),
+    value: *model.Value,
+    ctx  : nyarna.Context,
+    pdef : bool,
+    gen  : model.NodeGenerator,
+  ) nyarna.Error!void {
+    switch (value.data) {
+      .concat => |*con| for (con.content.items) |item| {
+        try self.appendValue(item, ctx, pdef, gen);
+      },
+      .definition => |*def| {
+        if (
+          self.checkName(
+            def.name.content, def.name.value().origin, ctx)
+        ) {
+          const content_value = switch (def.content) {
+            .func => |f|
+              (try ctx.values.funcRef(def.value().origin, f)).value(),
+            .@"type" => |t|
+              (try ctx.values.@"type"(def.value().origin, t)).value(),
+          };
+          const def_node = try gen.definition(def.value().origin, .{
+            .name = try gen.literal(def.name.value().origin, .{
+              .kind = .text, .content = def.name.content,
+            }),
+            .content = try gen.expression(
+              try ctx.createValueExpr(content_value)
+            ),
+            .public = pdef,
+          });
+          self.defs[self.count] = def_node;
+          self.count += 1;
+        }
+      },
+      .poison => {},
+      else => {
+        ctx.logger.ExpectedExprOfTypeXGotY(&.{
+          try ctx.types().valueSpecType(value),
+          ctx.types().definition().predef(),
+        });
+      },
+    }
+  }
+
   pub fn append(
     self : *@This(),
     node : *model.Node,
@@ -81,7 +126,7 @@ pub const DefCollector = struct {
     switch (node.data) {
       .void, .poison => {},
       .definition => |*def| {
-        if (self.checkName(def.name.content, def.name.node().pos, intpr)) {
+        if (self.checkName(def.name.content, def.name.node().pos, intpr.ctx)) {
           if (pdef) def.public = true;
           self.defs[self.count] = try asNode(intpr, gen, def);
           self.count += 1;
@@ -91,34 +136,15 @@ pub const DefCollector = struct {
         try self.append(item, intpr, pdef, gen);
       },
       .expression => |expr| {
-        for (expr.data.value.data.concat.content.items) |item| {
-          const def = &item.data.definition;
-          if (self.checkName(
-            def.name.content,
-            def.name.value().origin,
-            intpr)
-          ) {
-            const content_value = switch (def.content) {
-              .func => |f|
-                (try intpr.ctx.values.funcRef(item.origin, f)).value(),
-              .@"type" => |t|
-                (try intpr.ctx.values.@"type"(item.origin, t)).value(),
-            };
-            const def_node = try gen.definition(item.origin, .{
-              .name = try gen.literal(def.name.value().origin, .{
-                .kind = .text, .content = def.name.content,
-              }),
-              .content = try gen.expression(
-                try intpr.ctx.createValueExpr(content_value)
-              ),
-              .public = pdef,
-            });
-            self.defs[self.count] = def_node;
-            self.count += 1;
-          }
-        }
+        const value = try intpr.ctx.evaluator().evaluate(expr);
+        try self.appendValue(value, intpr.ctx, pdef, gen);
       },
-      else => unreachable,
+      else => {
+        const expr = try intpr.interpret(node);
+        node.data = .{.expression = expr};
+        try self.appendValue(
+          try intpr.ctx.evaluator().evaluate(expr), intpr.ctx, pdef, gen);
+      },
     }
   }
 
@@ -599,8 +625,18 @@ pub const Impl = lib.Provider.Wrapper(struct {
     return try intpr.node_gen.poison(pos);
   }
 
+  pub fn map(
+    intpr    : *Interpreter,
+    pos      : model.Position,
+    input    : *model.Node,
+    proc_func: ?*model.Node,
+    collector: ?*model.Node,
+  ) nyarna.Error!*model.Node {
+    return (try intpr.node_gen.map(pos, input, proc_func, collector)).node();
+  }
+
   pub fn match(
-    intpr: *Interpreter,
+    intpr  : *Interpreter,
     pos    : model.Position,
     subject: *model.Node,
     cases  : *model.Node.Varmap,
@@ -874,6 +910,7 @@ pub const Checker = struct {
     .{"if",              .keyword},
     .{"keyword",         .keyword},
     .{"library",         .keyword},
+    .{"map",             .keyword},
     .{"match",           .keyword},
     .{"matcher",         .keyword},
     .{"standalone",      .keyword},

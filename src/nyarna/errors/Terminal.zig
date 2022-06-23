@@ -360,6 +360,16 @@ fn typeError(
     .InvalidMatchType => {
       self.renderError("invalid match type: {}", .{main});
     },
+    .NotCallable => {
+      self.renderError("expression of type {} is not callable", .{main});
+    },
+    .MustTakeSingleArgument => {
+      self.renderError(
+        "expected callable that takes a single argument, got {}", .{main});
+    },
+    .NotIterable => {
+      self.renderError("expression of type {} is not iterable", .{main});
+    }
   }
 }
 

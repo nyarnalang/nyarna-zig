@@ -1,22 +1,29 @@
 === Missing template
---- input:Numbers
-\standalone(Schema)
+--- input:Bikes
+\fragment(\SchemaDef)
 
-\schema(root=\list(\Integer)):
-  \backend(sum):
-    \template(\Integer):
-      \process(\Raw(\this))
-    \end(template)
-  :actions:
-    \return:
-      \process(\subject::root)
-    \end(return)
+\SchemaDef(root=\List(\Bike)):
+  Bike = \Record:
+    name: \Text
+  \end(Record)
+:backends:<val \doc, syntax definitions>
+  sum = \backend:
+  :funcs:
+    process = \matcher:
+    :(\Bike):<val \bike>
+      \process(\bike::name)
+    \end(matcher)
+  :body:
+    \Output(name=):
+      \map(\doc::root, \process, \Concat)
+    \end(Output)
   \end(backend)
-\end(schema)
+\end(SchemaDef)
 --- input
-\standalone(Numbers)
+\standalone(schema=\import(Bikes))
 
-\listOf(1, 2, 3)
+\List(\Bike)(\Bike(Binky), \Bike(Gaspode), \Bike(Maurice))
 --- errors:document
-8:15 - 8:28 NoTemplateForType
-  type is `Raw`
+14:16 - 14:27 ExpectedExprOfTypeXGotY
+  main = Text
+  other = Bikes(12:15) {Bike}

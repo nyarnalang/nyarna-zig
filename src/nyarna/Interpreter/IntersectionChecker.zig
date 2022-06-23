@@ -18,9 +18,7 @@ intpr  : *Interpreter,
 scalar : ?model.SpecType = null,
 unique : bool,
 
-pub fn init(
-  intpr  : *Interpreter,
-  unique : bool) IntersectionChecker {
+pub fn init(intpr  : *Interpreter, unique : bool) IntersectionChecker {
   return .{
     .intpr   = intpr,
     .unique  = unique,

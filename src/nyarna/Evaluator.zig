@@ -408,8 +408,14 @@ fn doConvert(
       },
       .schema  => {
         std.debug.assert(from.isNamed(.schema_def));
+        const sd = &value.data.schema_def;
+        const backend_name = if (sd.backends.len == 1) (
+          try self.ctx.values.textScalar(
+            model.Position.intrinsic(), self.ctx.types().text(),
+            sd.backends[0].name.content)
+        ) else null;
         var builder = try nyarna.Loader.SchemaBuilder.create(
-          &value.data.schema_def, self.ctx.data, null);
+          &value.data.schema_def, self.ctx.data, backend_name);
         const schema = (
           try builder.finalize(value.origin)
         ) orelse return try self.ctx.values.poison(value.origin);
@@ -560,6 +566,148 @@ fn evalLocation(
   loc_val.borrow  = if (loc.additionals) |add| add.borrow  else null;
   loc_val.header  = if (loc.additionals) |add| add.header  else null;
   return loc_val.value();
+}
+
+// helper for calling a given target multiple times with one arg
+const Caller = struct {
+  call_expr: ?*model.Expression.Call,
+  eval     : *Evaluator,
+  tmp_expr : ?*model.Expression = null,
+
+  fn init(
+    eval    : *Evaluator,
+    func    : ?*model.Expression,
+    pos     : model.Position,
+    ret_type: model.Type,
+  ) !?Caller {
+    if (func) |target| {
+      const t_val_expr = if (target.data == .value) target else blk: {
+        const value = try eval.evaluate(target);
+        break :blk try eval.ctx.createValueExpr(value);
+      };
+      if (t_val_expr.expected_type.isNamed(.poison)) return null;
+
+      const expr = try eval.ctx.global().create(model.Expression);
+      expr.* = .{
+        .pos  = pos,
+        .data = .{.call = .{
+          .ns     = undefined,
+          .target = t_val_expr,
+          .exprs  = undefined,
+        }},
+        .expected_type = ret_type,
+      };
+      return Caller{
+        .eval      = eval,
+        .call_expr = &expr.data.call,
+      };
+    } else return Caller{
+      .eval = eval,
+      .call_expr = null,
+    };
+  }
+
+  fn call(self: @This(), input: *model.Expression) !*model.Value {
+    if (self.call_expr) |expr| {
+      expr.exprs = &.{input};
+      return try self.eval.evalCall(self.eval, expr);
+    } else return try self.eval.evaluate(input);
+  }
+
+  fn map(
+             self  : *@This(),
+             input : *model.Value,
+             target: anytype,
+    comptime pusher: anytype,
+  ) !void {
+    const expr = if (self.tmp_expr) |existing| existing else blk: {
+      const new = try self.eval.ctx.global().create(model.Expression);
+      self.tmp_expr = new;
+      break :blk new;
+    };
+    expr.* = .{
+      .pos = input.origin,
+      .data = .{.value = input},
+      .expected_type = try self.eval.ctx.types().valueType(input),
+    };
+    try pusher(target, try self.call(expr));
+  }
+
+  fn mapEach(
+             self  : *@This(),
+             input : *model.Value,
+             target: anytype,
+    comptime pusher: anytype,
+  ) !void {
+    // when mapping a concat, the input may be a single value already (?).
+    switch (input.data) {
+      .concat => |*con| {
+        for (con.content.items) |item| try self.map(item, target, pusher);
+      },
+      .list => |*lst| {
+        for (lst.content.items) |item| try self.map(item, target, pusher);
+      },
+      .poison => {},
+      .seq => |*seq| {
+        for (seq.content.items) |item| {
+          try self.map(item.content, target, pusher);
+        }
+      },
+      else => try self.map(input, target, pusher),
+    }
+  }
+};
+
+fn evalMap(
+  self: *Evaluator,
+  map : *model.Expression.Map,
+) nyarna.Error!*model.Value {
+  const input = try self.evaluate(map.input);
+  if (input.data == .poison) {
+    return try self.ctx.values.poison(map.expr().pos);
+  }
+  var ret_inner_type: model.Type = undefined;
+  var gen: enum{concat, list, sequence} = undefined;
+  switch (map.expr().expected_type) {
+    .structural => |strct| switch (strct.*) {
+      .concat   => |con| {
+        ret_inner_type = con.inner;
+        gen = .concat;
+      },
+      .list     => |lst| {
+        ret_inner_type = lst.inner;
+        gen = .list;
+      },
+      .sequence => unreachable, // TODO
+      else      => {
+        ret_inner_type = map.expr().expected_type;
+        gen = .concat;
+      },
+    },
+    .named => {
+      ret_inner_type = map.expr().expected_type;
+      gen = .concat;
+    }
+  }
+  var caller = (
+    try Caller.init(self, map.func, map.expr().pos, ret_inner_type)
+  ) orelse return try self.ctx.values.poison(map.expr().pos);
+  switch (gen) {
+    .concat => {
+      var builder =
+        ConcatBuilder.init(self.ctx, map.expr().pos, map.expr().expected_type);
+      try caller.mapEach(input, &builder, ConcatBuilder.push);
+      return try builder.finish();
+    },
+    .list => {
+      const target = try self.ctx.values.list(
+        map.expr().pos, &map.expr().expected_type.structural.list);
+      try caller.mapEach(
+        input, &target.content, std.ArrayList(*model.Value).append);
+      return target.value();
+    },
+    .sequence => unreachable,
+  }
 }
 
 fn evalMatch(
@@ -799,6 +947,7 @@ fn doEvaluate(
     .concatenation => |concat|      self.evalConcatenation(expr, concat),
     .conversion    => |*convert|    self.evalConversion(convert),
     .location      => |*loc|        self.evalLocation(loc),
+    .map           => |*map|        self.evalMap(map),
     .match         => |*match|      self.evalMatch(match),
     .value         => |value|       return value,
     .sequence      => |seq|         self.evalSequence(expr, seq),

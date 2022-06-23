@@ -749,8 +749,10 @@ inline fn procAfterList(self: *@This()) !void {
         if (parent.implicitBlockConfig()) |c| {
           try self.applyBlockConfig(self.source().at(self.cur_start), c);
         }
-        while (self.cur == .space or self.cur == .indent) self.advance();
       }
+      while (
+        self.cur == .space or self.cur == .indent or self.cur == .ws_break
+      ) self.advance();
       self.state =
         if (self.curLevel().syntax_proc != null) .special else .default;
     }
@@ -841,8 +843,10 @@ inline fn procBlockName(self: *@This()) !void {
     if (parent.implicitBlockConfig()) |c| {
       try self.applyBlockConfig(self.source().at(self.cur_start), c);
     }
-    while (self.cur == .space or self.cur == .indent) self.advance();
   }
+  while (
+    self.cur == .space or self.cur == .indent or self.cur == .ws_break
+  ) self.advance();
   self.state = if (
     self.curLevel().syntax_proc != null
   ) .special else .default;
@@ -1000,7 +1004,7 @@ pub fn doParse(
 const PrimaryBlockExists = enum {unknown, maybe, yes};
 
 /// processes the content after a `:` that either started blocks or ended a
-/// block name. returns true iff swallowing has ocurred.
+/// block name.
 /// pb_exists shall be non-null iff the ':' starts block parameters (i.e. we
 /// are not after a block name). its initial value shall be .unknown.
 /// the out value of pb_exists indicates the following:
@@ -1018,6 +1022,11 @@ const PrimaryBlockExists = enum {unknown, maybe, yes};
 ///   .yes =>
 ///     level has been pushed and command entered its primary param due to
 ///     explicit block config.
+///
+/// this func's return value must be interpreted depending on pb_exists:
+/// if pb_exists is null, returns true iff explicit block config has been
+/// encountered. if pb_exists is non-null, returns true iff swallowing has
+/// occurred.
 fn processBlockHeader(self: *@This(), pb_exists: ?*PrimaryBlockExists) !bool {
   // on named blocks, the new level has already been pushed
   const parent = &self.levels.items[
@@ -1063,7 +1072,9 @@ fn processBlockHeader(self: *@This(), pb_exists: ?*PrimaryBlockExists) !bool {
       while (
         self.cur == .space or self.cur == .indent or self.cur == .ws_break
       ) self.advance();
-      return true;
+      return if (pb_exists == null) (
+        self.curLevel().block_config != null
+      ) else true;
     } else if (pb_exists) |ind| {
       if (ind.* == .unknown) {
         try parent.command.pushPrimary(self.source().at(self.cur_start), false);
@@ -1076,7 +1087,7 @@ fn processBlockHeader(self: *@This(), pb_exists: ?*PrimaryBlockExists) !bool {
       }
     }
   }
-  return false;
+  return if (pb_exists == null) self.curLevel().block_config != null else false;
 }
 
 /// Close other swallowing levels when swallowing is encountered. `target_depth`

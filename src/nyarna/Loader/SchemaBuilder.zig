@@ -19,7 +19,7 @@ const BackendDef = struct {
 const BackendBuilder = struct {
   container: *model.VariableContainer,
   intpr    : *nyarna.Interpreter,
-  doc_type : model.SpecType,
+  doc_type : *model.Type.Record,
 
   funcs : std.ArrayListUnmanaged(*model.Node.Definition) = .{},
   output: std.ArrayListUnmanaged(*model.Value.Ast) = .{},
@@ -45,7 +45,7 @@ const BackendBuilder = struct {
         .name = v.name,
         .data = .{.variable = .{
           .kind      = .given,
-          .spec      = self.doc_type,
+          .spec      = self.doc_type.typedef().predef(),
           .container = self.container,
           .offset    = var_offset,
         }},
@@ -78,7 +78,7 @@ root      : *model.Node,
 /// set if a backend name has been given. used to identify relevant backend
 /// definitions.
 b_name    : ?[]const u8,
-backends  : std.ArrayListUnmanaged(BackendDef) = .{},
+backends  : std.ArrayListUnmanaged(BackendDef),
 
 pub fn create(
   base   : *model.Value.SchemaDef,
@@ -88,14 +88,16 @@ pub fn create(
   const ret = try data.backing_allocator.create(SchemaBuilder);
   try ret.loader.init(data, null, null, null, null);
   ret.defs = .{};
+  ret.backends = .{};
   try ret.defs.appendSlice(ret.loader.interpreter.allocator(), base.defs);
   ret.root = base.root;
   ret.b_name = null;
   if (backend) |nv| {
     for (base.backends) |b| {
       if (std.mem.eql(u8, b.name.content, nv.content)) {
-        ret.b_name = nv.content;
-        try ret.pushBackend(b.content, base.doc_var);
+        if (try ret.pushBackend(b.content, base.doc_var)) {
+          ret.b_name = nv.content;
+        }
         break;
       }
     } else {
@@ -115,18 +117,20 @@ fn pushBackend(
   self: *SchemaBuilder,
   node: *model.Node,
   val : ?model.Node.Capture.VarDef,
-) !void {
+) !bool {
   switch (node.data) {
     .backend => |*b| try self.backends.append(
       self.loader.storage.allocator(), .{
         .backend = b,
         .doc_var = val,
       }),
-    .poison => {},
+    .poison => return false,
     else => {
       self.loader.logger.NotABackend(node.pos);
+      return false;
     }
   }
+  return true;
 }
 
 fn procBackend(
@@ -136,12 +140,6 @@ fn procBackend(
   if (self.b_name == null) return null;
   const ctx = self.loader.ctx();
   const ret_type = (try ctx.types().concat(ctx.types().output())).?;
-
-  // build the signature of the backend function
-  var sig_builder = try Types.SigBuilder.init(ctx, 1, ret_type, true);
-  sig_builder.pushUnwrapped(model.Position.intrinsic(), "doc", root);
-  const callable =
-    try sig_builder.finish().createCallable(ctx.global(), .function);
 
   // we will generate a concat expression that contains
   // * initial assignments to all variables
@@ -172,11 +170,42 @@ fn procBackend(
       .container = container,
     });
 
+  // the document type contains the root value and meta information.
+  const doc_type = blk: {
+    const name_type = self.loader.data.types.text().predef();
+
+    var finder = Types.CallableReprFinder.init(&self.loader.data.types);
+    // input name
+    try finder.pushType(name_type.t);
+    // document root
+    try finder.pushType(root.t);
+
+    const named =
+      try self.loader.data.storage.allocator().create(model.Type.Named);
+    named.* = .{
+      .at   = root.pos,
+      .name = null,
+      .data = .{.record = .{.constructor = undefined}},
+    };
+    const target_type = model.Type{.named = named};
+
+    const finder_res = try finder.finish(target_type, true);
+
+    var sb = try Types.SigBuilder.init(
+      self.loader.ctx(), 2, target_type, finder_res.needs_different_repr);
+    sb.pushUnwrapped(model.Position.intrinsic(), "name", name_type);
+    sb.pushUnwrapped(model.Position.intrinsic(), "root", root);
+    const sb_res = sb.finish();
+    named.data.record.constructor = try sb_res.createCallable(
+      self.loader.data.storage.allocator(), .@"type");
+    break :blk &named.data.record;
+  };
+
   // merge the content of all given backends.
   var builder = BackendBuilder{
     .container = container,
     .intpr     = self.loader.interpreter,
-    .doc_type  = root,
+    .doc_type  = doc_type,
   };
   for (self.backends.items) |bd| {
     try builder.merge(
@@ -226,7 +255,7 @@ fn procBackend(
 
   // create a function for each output, append a call to that function to the
   // level.
-  sig_builder =
+  var sig_builder =
     try Types.SigBuilder.init(ctx, 0, ret_type, true);
   const output_callable = try sig_builder.finish().createCallable(
     ctx.global(), .function);
@@ -265,6 +294,13 @@ fn procBackend(
     self.loader.logger.EmptyBackend(self.backends.items[0].backend.node().pos);
     return null;
   };
+
+  // build the signature of the backend function
+  sig_builder = try Types.SigBuilder.init(ctx, 1, ret_type, true);
+  sig_builder.pushUnwrapped(
+    model.Position.intrinsic(), "doc", doc_type.typedef().predef());
+  const callable =
+    try sig_builder.finish().createCallable(ctx.global(), .function);
 
   const func = try self.loader.ctx().global().create(model.Function);
   func.* = .{
