@@ -414,12 +414,22 @@ pub const Module = struct {
   }
 };
 
-/// A document is the final result of loading a main module.
-pub const Document = struct {
-  root   : *Value,
+/// A DocumentContainer is created by loading a main module.
+/// Initially, it holds the single document generated from the main module.
+/// Processing Schema backends can extend the number of documents.
+pub const DocumentContainer = struct {
+  pub const Document = struct {
+    name  : []const u8,
+    root  : *Value,
+    schema: ?*Value.Schema,
+  };
+  /// all documents are allocated within the globals' storage.
+  /// after processing with backends, all documents that either do not have a
+  /// schema or whose schema does not have a backend are considered outputs.
+  documents : std.ArrayListUnmanaged(Document),
   globals: *Globals,
 
-  pub fn destroy(self: *Document) void {
+  pub fn destroy(self: DocumentContainer) void {
     self.globals.destroy();
   }
 };

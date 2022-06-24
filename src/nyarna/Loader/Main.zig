@@ -16,6 +16,7 @@ const model       = nyarna.model;
 const Main = @This();
 
 loader: Loader,
+name  : []const u8,
 
 const callsite_pos = model.Position{
   .source = &callsite_desc,
@@ -30,10 +31,11 @@ const callsite_desc = model.Source.Descriptor{
 };
 
 /// internal nyarna API. external code shall use nyarna.Processor.startLoading.
-pub fn create(data: *Globals) !*Main {
+pub fn create(data: *Globals, name: []const u8) !*Main {
   const ret = try data.backing_allocator.create(Main);
   errdefer data.backing_allocator.destroy(ret);
   try ret.loader.init(data, null, null, null, null);
+  ret.name = try data.storage.allocator().dupe(u8, name);
   return ret;
 }
 
@@ -46,8 +48,8 @@ pub fn destroy(self: *Main) void {
   globals.destroy();
 }
 
-/// finish loading the document. Invalidates and destroys the given Main loader.
-pub fn finalize(self: *Main) !?*model.Document {
+/// finish loading the module. Invalidates and destroys the given Main loader.
+pub fn finalize(self: *Main) !?*model.DocumentContainer {
   errdefer self.destroy();
   const module = try self.finishMainModule();
   if (self.loader.data.seen_error) {
@@ -93,14 +95,20 @@ pub fn finalize(self: *Main) !?*model.Document {
     self.destroy();
     return null;
   }
-  const doc = try self.loader.data.storage.allocator().create(model.Document);
-  doc.* = .{
-    .root    = result,
-    .globals = self.loader.data,
+  const ret =
+    try self.loader.data.storage.allocator().create(model.DocumentContainer);
+  ret.* = .{
+    .documents = .{},
+    .globals   = self.loader.data,
   };
+  try ret.documents.append(ret.globals.storage.allocator(), .{
+    .name    = self.name,
+    .root    = result,
+    .schema  = module.schema,
+  });
   self.loader.deinit();
   self.loader.data.backing_allocator.destroy(self);
-  return doc;
+  return ret;
 }
 
 fn mainModule(self: *Main) *Globals.ModuleEntry {

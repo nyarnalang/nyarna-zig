@@ -347,7 +347,8 @@ pub const Processor = struct {
     self.resolvers.items[0].resolver = doc_resolver;
     var ret = try Loader.Main.create(
       try Globals.create(
-        self.allocator, self.reporter, self.stack_size, self.resolvers.items)
+        self.allocator, self.reporter, self.stack_size, self.resolvers.items),
+      main_module,
     );
     errdefer ret.destroy();
     const globals = ret.loader.data;

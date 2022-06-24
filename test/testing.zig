@@ -1368,10 +1368,10 @@ pub fn loadTest(data: *TestDataResolver) !void {
   while (iter.next()) |item| {
     try loader.pushArg(item.key_ptr.*, item.value_ptr.content.items);
   }
-  if (try loader.finalize()) |document| {
-    defer document.destroy();
-    var emitter = AstEmitter.init(document.globals, &checker);
-    try emitter.processValue(document.root);
+  if (try loader.finalize()) |container| {
+    defer container.destroy();
+    var emitter = AstEmitter.init(container.globals, &checker);
+    try emitter.processValue(container.documents.items[0].root);
     try checker.finish();
   } else return error.TestUnexpectedResult;
 }
@@ -1385,9 +1385,31 @@ pub fn loadErrorTest(data: *TestDataResolver) !void {
     &data.stdlib.api);
   defer proc.deinit();
   var loader = try proc.startLoading(&data.api, "input");
-  if (try loader.finalize()) |document| {
-    document.destroy();
+  if (try loader.finalize()) |container| {
+    container.destroy();
     return error.TestUnexpectedResult;
   }
   try checker.finish();
+}
+
+pub fn outputTest(data: *TestDataResolver) !void {
+  var checker = Checker.init(data, "output");
+  defer checker.deinit();
+  var r = errors.Terminal.init(std.io.getStdOut());
+  var proc = try nyarna.Processor.init(
+    std.testing.allocator, nyarna.default_stack_size, &r.reporter,
+    &data.stdlib.api);
+  defer proc.deinit();
+  var loader = try proc.startLoading(&data.api, "input");
+  var iter = data.source.params.@"inline".iterator();
+  while (iter.next()) |item| {
+    try loader.pushArg(item.key_ptr.*, item.value_ptr.content.items);
+  }
+  if (try loader.finalize()) |container| {
+    defer container.destroy();
+
+    // TODO: process backends, emit outputs
+
+    try checker.finish();
+  } else return error.TestUnexpectedResult;
 }
