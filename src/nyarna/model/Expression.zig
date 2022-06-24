@@ -83,6 +83,16 @@ pub const Location = struct {
   }
 };
 
+pub const Output = struct {
+  name  : *Value.TextScalar,
+  schema: ?*Value.Schema,
+  body  : *Expression,
+
+  pub fn expr(self: *@This()) *Expression {
+    return Expression.parent(self);
+  }
+};
+
 /// A call to \map
 pub const Map = struct {
   input: *Expression,
@@ -222,6 +232,7 @@ pub const Data = union(enum) {
   location     : Location,
   map          : Map,
   match        : Match,
+  output       : Output,
   sequence     : Sequence,
   tg_concat    : tg.Concat,
   tg_list      : tg.List,
@@ -252,6 +263,7 @@ fn parent(it: anytype) *Expression {
     Location      => offset(Data, "location"),
     Map           => offset(Data, "map"),
     Match         => offset(Data, "match"),
+    Output        => offset(Data, "output"),
     Sequence      => offset(Data, "sequence"),
     tg.Concat     => offset(Data, "tg_concat"),
     tg.HashMap    => offset(Data, "tg_map"),

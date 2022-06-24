@@ -44,20 +44,11 @@ pub const TestDataResolver = struct {
     _        : *errors.Handler,
   ) std.mem.Allocator.Error!?*Loader.Resolver.Cursor {
     const self = @fieldParentPtr(TestDataResolver, "api", res);
-    const item = if (std.mem.eql(u8, "input", path)) (
-      self.source.items.getPtr(path) orelse {
-        std.debug.print("failed to fetch '{s}'\nexisting items:\n", .{path});
-        var iter = self.source.items.keyIterator();
-        while (iter.next()) |key| std.debug.print("{s}\n", .{key.*});
-        std.debug.print("existing inputs:\n", .{});
-        iter = self.source.params.input.keyIterator();
-        while (iter.next()) |key| std.debug.print("{s}\n", .{key.*});
-        unreachable;
-      }
-    ) else self.source.params.input.getPtr(path) orelse {
+    const name = if (std.mem.eql(u8, "input", path)) "" else path;
+    const item = self.source.params.input.getPtr(name) orelse {
       std.debug.print("failed to fetch '{s}'\nexisting inputs:\n", .{path});
       var iter = self.source.params.input.keyIterator();
-      while (iter.next()) |key| std.debug.print("{s}\n", .{key.*});
+      while (iter.next()) |key| std.debug.print("  \"{s}\"\n", .{key.*});
       return null;
     };
     const ret = try allocator.create(Cursor);

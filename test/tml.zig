@@ -177,7 +177,16 @@ pub const File = struct {
         }
       }
       var found = false;
-      if (name_end != null) {
+      if (name_end == null) {
+        inline for (.{"inline", "file", "input", "output", "errors"}) |field| {
+          if (std.mem.eql(u8, field, item_name)) {
+            try @field(ret.params, field).put("", .{
+              .line_offset = start, .content = content,
+            });
+            found = true;
+          }
+        }
+      } else {
         if (sub_name.len == 0) return failWith(
           name, "subname must follow after ':'", .{});
         inline for (.{"inline", "file", "input", "output", "errors"}) |field| {
@@ -191,7 +200,8 @@ pub const File = struct {
         if (!found) {
           return failWith(name, "unknown selector: `{s}`", .{item_name});
         }
-      } else try ret.items.put(
+      }
+      if (!found) try ret.items.put(
         item_name, .{.line_offset = start, .content = content});
     }
     return ret;

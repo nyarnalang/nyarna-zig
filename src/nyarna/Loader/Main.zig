@@ -49,7 +49,7 @@ pub fn destroy(self: *Main) void {
 }
 
 /// finish loading the module. Invalidates and destroys the given Main loader.
-pub fn finalize(self: *Main) !?*model.DocumentContainer {
+pub fn finalize(self: *Main) !?*nyarna.DocumentContainer {
   errdefer self.destroy();
   const module = try self.finishMainModule();
   if (self.loader.data.seen_error) {
@@ -96,16 +96,19 @@ pub fn finalize(self: *Main) !?*model.DocumentContainer {
     return null;
   }
   const ret =
-    try self.loader.data.storage.allocator().create(model.DocumentContainer);
+    try self.loader.data.storage.allocator().create(nyarna.DocumentContainer);
   ret.* = .{
     .documents = .{},
     .globals   = self.loader.data,
   };
-  try ret.documents.append(ret.globals.storage.allocator(), .{
-    .name    = self.name,
-    .root    = result,
-    .schema  = module.schema,
-  });
+  try ret.documents.append(ret.globals.storage.allocator(),
+    try intpr.ctx.values.output(
+      module.root.?.defined_at, try intpr.ctx.values.textScalar(
+        callsite_pos, intpr.ctx.types().text(),
+        if (module.schema == null) "" else self.name),
+      module.schema, result,
+    ),
+  );
   self.loader.deinit();
   self.loader.data.backing_allocator.destroy(self);
   return ret;

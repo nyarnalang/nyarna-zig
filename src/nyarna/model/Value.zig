@@ -244,7 +244,7 @@ pub const Location = struct {
 pub const Output = struct {
   name  : *TextScalar,
   schema: ?*Schema,
-  body  : *Expression,
+  body  : *Value,
 
   pub inline fn value(self: *@This()) *Value {
     return Value.parent(self);

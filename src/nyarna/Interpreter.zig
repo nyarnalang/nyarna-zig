@@ -1056,9 +1056,17 @@ fn tryInterpretOutput(
   ) orelse return null;
   switch ((try self.ctx.evaluator().evaluate(name_expr)).data) {
     .text => |*txt| {
-      return try self.ctx.createValueExpr((
-        try self.ctx.values.output(out.node().pos, txt, schema, expr)
-      ).value());
+      const out_expr = try self.ctx.global().create(model.Expression);
+      out_expr.* = .{
+        .pos = out.node().pos,
+        .data = .{.output = .{
+          .name   = txt,
+          .schema = schema,
+          .body   = expr,
+        }},
+        .expected_type = self.ctx.types().output(),
+      };
+      return out_expr;
     },
     .poison => {
       out.node().data = .poison;

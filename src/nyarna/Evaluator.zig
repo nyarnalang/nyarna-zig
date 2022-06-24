@@ -754,8 +754,19 @@ fn evalMatch(
   }
 }
 
+fn evalOutput(
+  self: *Evaluator,
+  out : *model.Expression.Output,
+) nyarna.Error!*model.Value {
+  const value = try self.evaluate(out.body);
+  if (value.data == .poison) return try self.ctx.values.poison(out.expr().pos);
+  return (
+    try self.ctx.values.output(out.expr().pos, out.name, out.schema, value)
+  ).value();
+}
+
 fn evalSequence(
-  self  : *Evaluator,
+  self : *Evaluator,
   expr : *model.Expression,
   paras: model.Expression.Sequence,
 ) nyarna.Error!*model.Value {
@@ -967,7 +978,7 @@ fn doEvaluate(
     .location      => |*loc|        self.evalLocation(loc),
     .map           => |*map|        self.evalMap(map),
     .match         => |*match|      self.evalMatch(match),
-    .value         => |value|       return value,
+    .output        => |*output|     self.evalOutput(output),
     .sequence      => |seq|         self.evalSequence(expr, seq),
     .tg_concat     => |*tgc|
       self.evalGenUnary("concat", tgc, "InvalidInnerConcatType"),
@@ -977,11 +988,12 @@ fn doEvaluate(
     .tg_optional   => |*tgo|
       self.evalGenUnary("optional", tgo, "InvalidInnerOptionalType"),
     .tg_sequence   => |*tsq|        self.evalGenSequence(tsq),
+    .value         => |value|       return value,
     .varargs       => |*varargs|    self.evalVarargs(varargs),
     .varmap        => |*varmap|     self.evalVarmap(varmap),
     .var_retrieval => |*var_retr|   var_retr.variable.curPtr().*,
-    .poison        =>               return self.ctx.values.poison(expr.pos),
     .void          =>               return self.ctx.values.void(expr.pos),
+    .poison        =>               return self.ctx.values.poison(expr.pos),
   };
 }
 
@@ -1101,6 +1113,48 @@ pub fn evaluate(
   const expected_type = self.ctx.types().expectedType(
     try self.ctx.types().valueType(res), expr.expected_type);
   return try self.coerce(res, expected_type);
+}
+
+pub fn processBackends(
+  self     : *Evaluator,
+  container: *nyarna.DocumentContainer,
+) !void {
+  const call_expr = try self.ctx.global().create(model.Expression);
+  call_expr.* = .{
+    .pos = model.Position.intrinsic(),
+    .data = .{.call = .{
+      .ns = 0,
+      .target = undefined,
+      .exprs = undefined,
+    }},
+    .expected_type = undefined,
+  };
+  const call = &call_expr.data.call;
+  var i: usize = 0;
+  while (i < container.documents.items.len) : (i += 1) {
+    const doc = container.documents.items[i];
+    if (doc.schema) |schema| if (schema.backend) |backend| {
+      // generate the record value holding the input document's content and
+      // metadata.
+      const doc_val = try self.ctx.values.record(model.Position.intrinsic(),
+        &backend.callable.sig.parameters[0].spec.t.named.data.record);
+      doc_val.fields[0] = doc.name.value();
+      doc_val.fields[1] = doc.body;
+
+      // now, call the backend
+      call.target = try self.ctx.createValueExpr((
+        try self.ctx.values.funcRef(model.Position.intrinsic(), backend)
+      ).value());
+      call.exprs = &.{try self.ctx.createValueExpr(doc_val.value())};
+      call_expr.expected_type = backend.callable.sig.returns;
+      const outputs = try self.evalCall(self, call);
+
+      // always returns a concatenation of Output.
+      for (outputs.data.concat.content.items) |item| {
+        try container.documents.append(self.ctx.global(), &item.data.output);
+      }
+    };
+  }
 }
 
 const ConcatBuilder = struct {

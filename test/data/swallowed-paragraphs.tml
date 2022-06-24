@@ -1,10 +1,10 @@
 === Swallowed Paragraphs
 --- input
 \func:
-  items : \list(\Raw) {primary}
+  items : \Sequence(\Text) {primary}
 :body:
   \items::item(2)
-\end(func):<par>:>
+\end(func):>
 
 Lorem ipsum
 

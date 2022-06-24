@@ -174,7 +174,7 @@ pub inline fn output(
   pos   : Position,
   name  : *Value.TextScalar,
   sch   : ?*Value.Schema,
-  body  : *model.Expression,
+  body  : *Value,
 ) !*Value.Output {
   return &(try self.value(pos, .{
     .output = .{

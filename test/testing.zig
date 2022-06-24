@@ -704,6 +704,15 @@ const AstEmitter = struct {
         }
         try m.pop();
       },
+      .output => |output| {
+        const lvl = try self.pushWithKey("OUTPUT", output.name.content, null);
+        try self.processExpr(output.body);
+        if (output.schema) |schema| {
+          try self.emitLine(">SCHEMA", .{});
+          try self.processValue(schema.value());
+        }
+        try lvl.pop();
+      },
       .tg_concat => |tgc| {
         const c = try self.push("TG_CONCAT");
         try self.processExpr(tgc.inner);
@@ -924,7 +933,7 @@ const AstEmitter = struct {
       .output => |out| {
         const o = try self.pushWithKey("OUTPUT", out.name.content, null);
         if (out.schema) |schema| try self.processValue(schema.value());
-        try self.processExpr(out.body);
+        try self.processValue(out.body);
         try o.pop();
       },
       .prototype => |pv| try self.emitLine("=PROTO {s}", .{@tagName(pv.pt)}),
@@ -1371,7 +1380,7 @@ pub fn loadTest(data: *TestDataResolver) !void {
   if (try loader.finalize()) |container| {
     defer container.destroy();
     var emitter = AstEmitter.init(container.globals, &checker);
-    try emitter.processValue(container.documents.items[0].root);
+    try emitter.processValue(container.documents.items[0].body);
     try checker.finish();
   } else return error.TestUnexpectedResult;
 }
@@ -1393,8 +1402,6 @@ pub fn loadErrorTest(data: *TestDataResolver) !void {
 }
 
 pub fn outputTest(data: *TestDataResolver) !void {
-  var checker = Checker.init(data, "output");
-  defer checker.deinit();
   var r = errors.Terminal.init(std.io.getStdOut());
   var proc = try nyarna.Processor.init(
     std.testing.allocator, nyarna.default_stack_size, &r.reporter,
@@ -1407,9 +1414,31 @@ pub fn outputTest(data: *TestDataResolver) !void {
   }
   if (try loader.finalize()) |container| {
     defer container.destroy();
+    try std.testing.expect(try container.process());
 
-    // TODO: process backends, emit outputs
-
-    try checker.finish();
+    for (container.documents.items) |output| {
+      if (
+        if (output.schema) |schema| schema.backend == null else true
+      ) {
+        const expected = (
+          data.source.params.output.get(output.name.content)
+        ) orelse {
+          std.log.err("unexpected output: \"{s}\"", .{output.name.content});
+          return error.TestUnexpectedResult;
+        };
+        switch (output.body.data) {
+          .text => |*txt| try std.testing.expectEqualStrings(
+            // ignore final line break
+            expected.content.items[0..expected.content.items.len - 1],
+            txt.content,
+          ),
+          else => {
+            std.log.err(
+              "unsupported non-text output: {s}", .{@tagName(output.body.data)});
+            return error.TestUnexpectedResult;
+          }
+        }
+      }
+    }
   } else return error.TestUnexpectedResult;
 }

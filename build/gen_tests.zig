@@ -38,7 +38,11 @@ fn genTests(dir: *std.fs.Dir, sets: []TestSet) !void {
     var content = try tml.File.loadFile(dir, entry.name, &file);
     defer content.deinit();
     for (sets) |*set| {
-      if (content.items.get(set.tml_item) != null) {
+      const is_output = std.mem.eql(u8, "output", set.tml_item);
+      if (
+        (is_output and content.params.output.count() > 0) or
+        content.items.get(set.tml_item) != null
+      ) {
         try set.file.writeAll("test \"");
         try set.file.writeAll(content.name);
         try set.file.writeAll(\\" {
@@ -103,7 +107,13 @@ pub fn main() !void {
       .tml_item = "document",
       .func_name = "loadTest",
       .err_func_name = "loadErrorTest",
-    }
+    },
+    .{
+      .file = undefined,
+      .tml_item = "output",
+      .func_name = "outputTest",
+      .err_func_name = "outputErrorTest",
+    },
   };
   sets[0].file = try std.fs.cwd().createFile("lex_test.zig", .{});
   defer sets[0].file.close();
@@ -113,5 +123,7 @@ pub fn main() !void {
   defer sets[2].file.close();
   sets[3].file = try std.fs.cwd().createFile("load_test.zig", .{});
   defer sets[3].file.close();
+  sets[4].file = try std.fs.cwd().createFile("output_test.zig", .{});
+  defer sets[4].file.close();
   try genTests(&datadir, &sets);
 }

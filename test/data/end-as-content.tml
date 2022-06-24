@@ -1,6 +1,6 @@
 === End as Content
 --- input
-\block:<nocommand>
+\block:<off>
   \end(flock)
 \end(block)
 --- output

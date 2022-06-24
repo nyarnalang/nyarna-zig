@@ -2,3 +2,4 @@ lex_test.zig
 parse_test.zig
 interpret_test.zig
 load_test.zig
+output_test.zig

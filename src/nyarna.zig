@@ -410,3 +410,29 @@ pub const Processor = struct {
     return try loader.loadAsNode(true);
   }
 };
+
+/// A DocumentContainer is created by loading a main module.
+/// Initially, it holds the single document generated from the main module.
+/// Processing Schema backends can extend the number of documents.
+pub const DocumentContainer = struct {
+  /// all documents are allocated within the globals' storage.
+  /// after processing with backends, all documents that either do not have a
+  /// schema or whose schema does not have a backend are considered outputs.
+  documents: std.ArrayListUnmanaged(*model.Value.Output),
+  globals  : *Globals,
+  result   : ?bool = null,
+
+  /// returns true if processing did not generate any errors.
+  pub fn process(self: *DocumentContainer) !bool {
+    if (self.result) |res| return res;
+    var logger = errors.Handler{.reporter = self.globals.reporter};
+    var ctx = Context{.data = self.globals, .logger = &logger};
+    try ctx.evaluator().processBackends(self);
+    self.result = logger.count == 0;
+    return logger.count == 0;
+  }
+
+  pub fn destroy(self: DocumentContainer) void {
+    self.globals.destroy();
+  }
+};
