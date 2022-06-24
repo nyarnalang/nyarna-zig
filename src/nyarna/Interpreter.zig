@@ -3276,30 +3276,30 @@ pub fn probeType(
         switch (try chains.Resolver.init(self, stage).resolve(func)) {
           .runtime_chain => |rc| switch (rc.t) {
             .structural => |strct| switch (strct.*) {
-              .callable => |*call| call.sig.returns,
+              .callable => |*call| call.sig.returns.at(func.pos),
               else => null,
             },
             .named => null,
           },
           .sym_ref => |sr| switch (sr.sym.data) {
-            .func     => |sf| sf.callable.sig.returns,
+            .func     => |sf| sf.callable.sig.returns.at(func.pos),
             .variable => |v| switch (v.spec.t) {
               .structural => |strct| switch (strct.*) {
-                .callable => |*call| call.sig.returns,
+                .callable => |*call| call.sig.returns.at(func.pos),
                 else => null,
               },
               .named => null,
             },
             .@"type" => |t| switch (try self.ctx.types().typeType(t)) {
               .structural => |strct| switch (strct.*) {
-                .callable => |*call| call.sig.returns,
+                .callable => |*call| call.sig.returns.at(func.pos),
                 else => null,
               },
               .named => null,
             },
             else => null,
           },
-          .function_returning => |fr| fr.returns,
+          .function_returning => |fr| fr.returns.at(func.pos),
           .failed => return null,
           .poison => null,
         }
@@ -3309,9 +3309,18 @@ pub fn probeType(
         ) orelse return null;
         switch (input_type.?) {
           .structural => |strct| switch (strct.*) {
-            .concat   => |*con| break :blk con.inner,
-            .list     => |*lst| break :blk lst.inner,
-            .sequence => unreachable, // TODO
+            .concat   => |*con| break :blk con.inner.at(map.input.pos),
+            .list     => |*lst| break :blk lst.inner.at(map.input.pos),
+            .sequence => |*seq| {
+              var ret = self.ctx.types().every();
+              for (seq.inner) |rec| {
+                ret = try self.ctx.types().sup(ret, rec.typedef());
+              }
+              if (seq.direct) |dt| {
+                ret = try self.ctx.types().sup(ret, dt);
+              }
+              break :blk ret.at(map.input.pos);
+            },
             else => break :blk null,
           },
           .named => break :blk null,
@@ -3330,13 +3339,19 @@ pub fn probeType(
           switch (value.data) {
             .poison    => return self.ctx.types().poison(),
             .prototype => |pv| switch (pv.pt) {
-              .list => if (try self.ctx.types().list(inner_type)) |lt| (
+              .list => if (try self.ctx.types().list(inner_type.t)) |lt| (
                 return lt
               ),
-              .concat => if (try self.ctx.types().concat(inner_type)) |ct| (
+              .concat => if (try self.ctx.types().concat(inner_type.t)) |ct| (
                 return ct
               ),
-              .sequence => unreachable, // TODO
+              .sequence => {
+                var builder = Types.SequenceBuilder.init(
+                  self.ctx.types(), self.allocator(), true);
+                const res = try builder.push(inner_type, true);
+                res.report(inner_type, self.ctx.logger);
+                if (res == .success) return (try builder.finish(null, null)).t;
+              },
               else => {},
             },
             else => {},
@@ -3351,13 +3366,19 @@ pub fn probeType(
         ) orelse return null;
         switch (it) {
           .structural => |strct| switch (strct.*) {
-            .list => if (try self.ctx.types().list(inner_type)) |lt| (
+            .list => if (try self.ctx.types().list(inner_type.t)) |lt| (
               return lt
             ),
-            .concat => if (try self.ctx.types().concat(inner_type)) |ct| (
+            .concat => if (try self.ctx.types().concat(inner_type.t)) |ct| (
               return ct
             ),
-            .sequence => unreachable, // TODO
+            .sequence => {
+              var builder = Types.SequenceBuilder.init(
+                self.ctx.types(), self.allocator(), true);
+              const res = try builder.push(inner_type, true);
+              res.report(inner_type, self.ctx.logger);
+              if (res == .success) return (try builder.finish(null, null)).t;
+            },
             else => {},
           },
           else => {},
