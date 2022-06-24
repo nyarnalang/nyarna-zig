@@ -658,6 +658,13 @@ const Caller = struct {
   }
 };
 
+fn pushIntoSeq(
+  arr : *std.ArrayList(model.Value.Seq.Item),
+  item: *model.Value,
+) std.mem.Allocator.Error!void {
+  return arr.append(.{.content = item, .lf_after = 2});
+}
+
 fn evalMap(
   self: *Evaluator,
   map : *model.Expression.Map,
@@ -678,7 +685,12 @@ fn evalMap(
         ret_inner_type = lst.inner;
         gen = .list;
       },
-      .sequence => unreachable, // TODO
+      .sequence => |seq| {
+        // map always generates a sequence with only a direct type.
+        std.debug.assert(seq.inner.len == 0);
+        ret_inner_type = seq.direct.?;
+        gen = .sequence;
+      },
       else      => {
         ret_inner_type = map.expr().expected_type;
         gen = .concat;
@@ -706,7 +718,13 @@ fn evalMap(
         input, &target.content, std.ArrayList(*model.Value).append);
       return target.value();
     },
-    .sequence => unreachable,
+    .sequence => {
+      const target = try self.ctx.values.seq(
+        map.expr().pos, &map.expr().expected_type.structural.sequence);
+      try caller.mapEach(
+        input, &target.content, pushIntoSeq);
+      return target.value();
+    },
   }
 }
 

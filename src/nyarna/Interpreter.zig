@@ -779,14 +779,15 @@ fn tryInterpretMap(
             break :blk lst.inner;
           },
           .sequence => |*seq| blk: {
-            var builder = try Types.IntersectionBuilder.init(
-              seq.inner.len + if (seq.direct == null) @as(usize, 0) else 1,
-              self.allocator());
-            for (seq.inner) |item| builder.push(&.{item.typedef()});
-            if (seq.direct) |dt| builder.push(&.{dt});
-            const items_type = try builder.finish(self.ctx.types());
+            var inner = self.ctx.types().every();
+            for (seq.inner) |item| {
+              inner = try self.ctx.types().sup(inner, item.typedef());
+            }
+            if (seq.direct) |dt| {
+              inner = try self.ctx.types().sup(inner, dt);
+            }
             given_kind = .sequence;
-            break :blk items_type;
+            break :blk inner;
           },
           else      => {
             self.ctx.logger.NotIterable(&.{expr.expected_type.at(expr.pos)});
@@ -842,7 +843,19 @@ fn tryInterpretMap(
             value.data = .poison;
             break :blk undefined;
           },
-          .sequence => unreachable, // TODO
+          .sequence => {
+            var builder = Types.SequenceBuilder.init(
+              self.ctx.types(), self.allocator(), true);
+            const res = try builder.push(ret_inner_type, true);
+            res.report(ret_inner_type, self.ctx.logger);
+            if (res != .success) {
+              seen_poison = true;
+              value.data = .poison;
+              break :blk undefined;
+            } else {
+              break :blk (try builder.finish(null, null)).t;
+            }
+          },
           else => {},
         },
         else => {}
@@ -867,7 +880,18 @@ fn tryInterpretMap(
       seen_poison = true;
       break :blk undefined;
     },
-    .sequence => unreachable, // TODO
+    .sequence => blk: {
+      var builder = Types.SequenceBuilder.init(
+        self.ctx.types(), self.allocator(), true);
+      const res = try builder.push(ret_inner_type, true);
+      res.report(ret_inner_type, self.ctx.logger);
+      if (res != .success) {
+        seen_poison = true;
+        break :blk undefined;
+      } else {
+        break :blk (try builder.finish(null, null)).t;
+      }
+    },
   };
   if (seen_poison) {
     map.node().data = .poison;

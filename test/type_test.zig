@@ -1,9 +1,12 @@
+//! TODO: this test currently isn't functional. Needs to be reworked to read in
+//! system.ny so that all types are properly initialized.
+
 const std = @import("std");
 const nyarna = @import("nyarna");
 const Type = nyarna.model.Type;
 
 const Test = struct {
-  types: nyarna.types.Lattice,
+  types: nyarna.Types,
   alloc: std.heap.ArenaAllocator,
 
   fn create() !*Test {
@@ -13,7 +16,7 @@ const Test = struct {
       .types = undefined,
       .alloc = std.heap.ArenaAllocator.init(std.testing.allocator),
     };
-    ret.types = try nyarna.types.Lattice.init(&ret.alloc);
+    ret.types = try nyarna.Types.init(&ret.alloc);
     return ret;
   }
 
@@ -40,10 +43,10 @@ const Test = struct {
 test "void <-> optional" {
   var ctx = try Test.create();
   defer ctx.destroy();
-  const void_type = Typ.void;
+  const void_type = ctx.types.@"void"();
 
   const optional_nctype =
-    (try ctx.types.optional(Typ.@"type")).?;
+    (try ctx.types.optional(ctx.types.@"type"())).?;
   try ctx.testIsLesser(void_type, optional_nctype);
   try ctx.testIsGreater(optional_nctype, void_type);
 }
