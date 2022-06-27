@@ -379,6 +379,46 @@ pub const VarProc = struct {
   }
 };
 
+const Comparer = union(enum) {
+  floats: struct {left: f64, right: f64},
+  ints  : struct {left: i64, right: i64},
+
+  fn init(left: *model.Value, right: *model.Value) Comparer {
+    switch (left.data) {
+      .float => |lf| switch (right.data) {
+        .float => |rf|
+          return .{.floats = .{.left = lf.content, .right = rf.content}},
+        .int => |ri|
+          return .{.floats = .{
+            .left  = lf.content,
+            .right = @intToFloat(f64, ri.content) /
+                     @intToFloat(f64, ri.t.suffixes[ri.cur_unit].factor),
+          }},
+        else => unreachable,
+      },
+      .int => |li| switch (right.data) {
+        .float => |rf|
+          return .{.floats = .{
+            .left  = @intToFloat(f64, li.content) /
+                     @intToFloat(f64, li.t.suffixes[li.cur_unit].factor),
+            .right = rf.content,
+          }},
+        .int => |ri|
+          return .{.ints = .{.left = li.content, .right = ri.content}},
+        else => unreachable,
+      },
+      else => unreachable,
+    }
+  }
+
+  fn compare(self: Comparer, op: std.math.CompareOperator) bool {
+    return switch (self) {
+      .ints   => |ints|   std.math.compare(ints.left, op, ints.right),
+      .floats => |floats| std.math.compare(floats.left, op, floats.right),
+    };
+  }
+};
+
 pub fn createMatchCases(
   intpr: *Interpreter,
   cases  : *model.Node.Varmap,
@@ -788,6 +828,90 @@ pub const Impl = lib.Provider.Wrapper(struct {
       },
       else => unreachable,
     }
+  }
+
+  pub fn @"Numeric::lt"(
+    eval : *nyarna.Evaluator,
+    pos  : model.Position,
+    left : *model.Value,
+    right: *model.Value,
+  ) nyarna.Error!*model.Value {
+    const comp = Comparer.init(left, right);
+    return (
+      try eval.ctx.values.@"enum"(
+        pos, &eval.ctx.types().system.boolean.named.data.@"enum",
+        if (comp.compare(.lt)) 0 else 1)
+    ).value();
+  }
+
+  pub fn @"Numeric::lte"(
+    eval : *nyarna.Evaluator,
+    pos  : model.Position,
+    left : *model.Value,
+    right: *model.Value,
+  ) nyarna.Error!*model.Value {
+    const comp = Comparer.init(left, right);
+    return (
+      try eval.ctx.values.@"enum"(
+        pos, &eval.ctx.types().system.boolean.named.data.@"enum",
+        if (comp.compare(.lte)) 1 else 0)
+    ).value();
+  }
+
+  pub fn @"Numeric::eq"(
+    eval : *nyarna.Evaluator,
+    pos  : model.Position,
+    left : *model.Value,
+    right: *model.Value,
+  ) nyarna.Error!*model.Value {
+    const comp = Comparer.init(left, right);
+    return (
+      try eval.ctx.values.@"enum"(
+        pos, &eval.ctx.types().system.boolean.named.data.@"enum",
+        if (comp.compare(.eq)) 0 else 1)
+    ).value();
+  }
+
+  pub fn @"Numeric::gt"(
+    eval : *nyarna.Evaluator,
+    pos  : model.Position,
+    left : *model.Value,
+    right: *model.Value,
+  ) nyarna.Error!*model.Value {
+    const comp = Comparer.init(left, right);
+    return (
+      try eval.ctx.values.@"enum"(
+        pos, &eval.ctx.types().system.boolean.named.data.@"enum",
+        if (comp.compare(.gt)) 0 else 1)
+    ).value();
+  }
+
+  pub fn @"Numeric::gte"(
+    eval : *nyarna.Evaluator,
+    pos  : model.Position,
+    left : *model.Value,
+    right: *model.Value,
+  ) nyarna.Error!*model.Value {
+    const comp = Comparer.init(left, right);
+    return (
+      try eval.ctx.values.@"enum"(
+        pos, &eval.ctx.types().system.boolean.named.data.@"enum",
+        if (comp.compare(.gte)) 0 else 1)
+    ).value();
+  }
+
+  pub fn @"Numeric::neq"(
+    eval : *nyarna.Evaluator,
+    pos  : model.Position,
+    left : *model.Value,
+    right: *model.Value,
+  ) nyarna.Error!*model.Value {
+    const comp = Comparer.init(left, right);
+    return (
+      try eval.ctx.values.@"enum"(
+        pos, &eval.ctx.types().system.boolean.named.data.@"enum",
+        if (comp.compare(.neq)) 0 else 1)
+    ).value();
   }
 
   pub fn @"List::len"(

@@ -152,9 +152,9 @@ fn evalExtFuncCall(
   const target_impl =
     self.registeredFnForCtx(@TypeOf(impl_ctx), ef.impl_index);
   std.debug.assert(args.len == func.sig().parameters.len);
-  func.variables.cur_frame = try self.setupParameterStackFrame(
+  const target_frame = try self.setupParameterStackFrame(
     func.variables.num_values, ef.ns_dependent, func.variables.cur_frame);
-  var frame_ptr = func.argStart();
+  var frame_ptr = func.argStart(target_frame);
   var ns_val: model.Value = undefined;
   if (ef.ns_dependent) {
     ns_val = .{
@@ -177,10 +177,16 @@ fn evalExtFuncCall(
   if (func.name) |fname| if (fname.parent_type) |ptype| {
     self.target_type = ptype;
   };
-  return if (
+  if (
     try self.fillParameterStackFrame(args, frame_ptr)
-  ) target_impl(impl_ctx, pos, func.argStart())
-  else poison(impl_ctx, pos);
+  ) {
+    func.variables.cur_frame = target_frame;
+    return target_impl(impl_ctx, pos, func.argStart(target_frame));
+  } else {
+    // required for resetStackFrame to work properly
+    func.variables.cur_frame = target_frame;
+    return poison(impl_ctx, pos);
+  }
 }
 
 fn evalCall(
@@ -195,20 +201,25 @@ fn evalCall(
         .ext => return self.evalExtFuncCall(
           impl_ctx, call.expr().pos, fr.func, call.ns, call.exprs),
         .ny => |*nf| {
-          fr.func.variables.cur_frame = try self.setupParameterStackFrame(
+          const target_frame = try self.setupParameterStackFrame(
             fr.func.variables.num_values, false, fr.func.variables.cur_frame);
           defer self.resetStackFrame(
             &fr.func.variables.cur_frame, fr.func.variables.num_values, false
           );
           if (try self.fillParameterStackFrame(
-              call.exprs, fr.func.argStart())) {
+              call.exprs, fr.func.argStart(target_frame))) {
+            fr.func.variables.cur_frame = target_frame;
             const val = try self.evaluate(nf.body);
             return switch (@TypeOf(impl_ctx)) {
               *Evaluator => val,
               *Interpreter => val.data.ast.root,
               else => unreachable,
             };
-          } else return poison(impl_ctx, call.expr().pos);
+          } else {
+            // required for resetStackFrame to work correctly
+            fr.func.variables.cur_frame = target_frame;
+            return poison(impl_ctx, call.expr().pos);
+          }
         },
       }
     },
@@ -878,6 +889,48 @@ fn evalVarmap(
   return map.value();
 }
 
+fn evalVarRetr(
+  self: *Evaluator,
+  retr: *model.Expression.VarRetrieval,
+) nyarna.Error!*model.Value {
+  const ret = retr.variable.curPtr().*;
+  if (
+    !self.ctx.types().lesserEqual(
+      try self.ctx.types().valueType(ret), retr.variable.spec.t)
+  ) {
+    std.debug.print("corrupted stack! stack contents:\n", .{});
+    const stack_len = (
+      @ptrToInt(self.ctx.data.stack_ptr) - @ptrToInt(self.ctx.data.stack.ptr)
+    ) / @sizeOf(model.StackItem);
+    for (self.ctx.data.stack[0..stack_len]) |item, index| {
+      std.debug.print("{}: ", .{index});
+      if (
+        if (item.frame_ref) |ptr| (
+          @ptrToInt(ptr) >= @ptrToInt(self.ctx.data.stack.ptr) and
+          @ptrToInt(ptr) < @ptrToInt(self.ctx.data.stack_ptr)
+        ) else true
+      ) {
+        if (item.frame_ref) |ptr| {
+          std.debug.print("[ header -> {} ]\n", .{
+            @divExact(
+              @ptrToInt(ptr) - @ptrToInt(self.ctx.data.stack.ptr),
+              @sizeOf(model.StackItem)
+            )
+          });
+        } else {
+          std.debug.print("[ header -> null ]\n", .{});
+        }
+      } else {
+        const pos = item.value.origin.formatter();
+        const fmt = (try self.ctx.types().valueType(item.value)).formatter();
+        std.debug.print("[ {}: {} ]\n", .{pos, fmt});
+      }
+    }
+    std.debug.panic("aborting due to stack corruption", .{});
+  }
+  return ret;
+}
+
 fn evalGenUnary(
            self      : *Evaluator,
   comptime name      : []const u8,
@@ -991,7 +1044,7 @@ fn doEvaluate(
     .value         => |value|       return value,
     .varargs       => |*varargs|    self.evalVarargs(varargs),
     .varmap        => |*varmap|     self.evalVarmap(varmap),
-    .var_retrieval => |*var_retr|   var_retr.variable.curPtr().*,
+    .var_retrieval => |*var_retr|   self.evalVarRetr(var_retr),
     .void          =>               return self.ctx.values.void(expr.pos),
     .poison        =>               return self.ctx.values.poison(expr.pos),
   };

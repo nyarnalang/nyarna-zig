@@ -350,9 +350,9 @@ pub const Resolver = struct {
   pub fn resolve(self: Resolver, chain: *model.Node) nyarna.Error!Resolution {
     var ns: u15 = undefined;
     const last_name_pos = switch (chain.data) {
-      .resolved_symref => |*rs| return self.resolveSymref(rs),
+      .resolved_symref   => |*rs| return self.resolveSymref(rs),
       .unresolved_access => |*uacc| return try self.resolveUAccess(uacc),
-      .unresolved_call => |*ucall| return try self.resolveUCall(ucall),
+      .unresolved_call   => |*ucall| return try self.resolveUCall(ucall),
       .unresolved_symref => |*usym| {
         const namespace = self.intpr.namespace(usym.ns);
         const name_pos = usym.namePos();

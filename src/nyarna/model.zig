@@ -14,7 +14,7 @@ const Globals = @import("Globals.zig");
 pub usingnamespace lexing;
 
 /// an item on the call stack.
-pub const StackItem = union {
+pub const StackItem = extern union {
   /// a value on the stack
   value: *Value,
   /// reference to a stackframe. this is the header of a stackframe, where
@@ -334,14 +334,16 @@ pub const Function = struct {
     return self.callable.sig;
   }
 
-  /// returns the pointer to the first argument in the function's current stack
-  /// frame. precondition: function has a stack frame.
-  pub fn argStart(self: *const Function) [*]StackItem {
+  /// returns the pointer to the first argument in the given stack frame.
+  /// the stack frame will usually be `self.variables.cur_frame.?`. The frame
+  /// must be given so that this function can also be used on a new stack frame
+  /// that is currently being filled and is not yet the current stack frame.
+  pub fn argStart(self: *const Function, frame: [*]StackItem) [*]StackItem {
     // arguments are at the *end* of the function's frame
     // (because their variables are generated after those inside the
     // function's body).
-    return self.variables.cur_frame.? + 1 + self.variables.num_values -
-      self.callable.sig.parameters.len;
+    return
+      frame + 1 + self.variables.num_values - self.callable.sig.parameters.len;
   }
 };
 

@@ -160,6 +160,24 @@
     sub = \builtin(return=\This):
       minuend, subtrahend: \This
     \end(builtin)
+    lt = \builtin(return=\Bool):
+      left, right: \This
+    \end(builtin)
+    gt = \builtin(return=\Bool):
+      left, right: \This
+    \end(builtin)
+    lte = \builtin(return=\Bool):
+      left, right: \This
+    \end(builtin)
+    gte = \builtin(return=\Bool):
+      left, right: \This
+    \end(builtin)
+    eq = \builtin(return=\Bool):
+      left, right: \This
+    \end(builtin)
+    neq = \builtin(return=\Bool):
+      left, right: \This
+    \end(builtin)
   \end(prototype)
 
   Enum = \prototype:

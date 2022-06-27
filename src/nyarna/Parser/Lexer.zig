@@ -1312,16 +1312,19 @@ fn exprContinuation(self: *Lexer, cur: *u21, after_arglist: bool) !?Token {
       };
       switch (cur.*) {
         ':' => {
+          if (after_arglist) self.level = self.levels.pop();
           self.cur_stored = self.walker.nextInline();
           self.state = .after_access_colons;
           return .access;
         },
         ',' => {
+          if (after_arglist) self.level = self.levels.pop();
           self.cur_stored = self.walker.nextInline();
           self.state = self.curBaseState();
           return .closer;
         },
         '=' => {
+          if (after_arglist) self.level = self.levels.pop();
           self.cur_stored = self.walker.nextInline();
           self.state = .after_assign;
           return .assign;

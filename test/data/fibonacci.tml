@@ -4,9 +4,12 @@
   fibonacci = \func:
     index : \Natural
   :body:
-    \if(\index::le(1), \index):
+    \if(\index::lte(1), \index):
     :else:
-      \fibonacci(\index::sub(1))::add(\fibonacci(\index::sub(2)))
+      \Natural::add(
+        \fibonacci(\index::sub(1)),
+        \fibonacci(\index::sub(2))
+      )
     \end(if)
   \end(func)
 \end(declare)

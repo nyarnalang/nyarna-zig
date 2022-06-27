@@ -27,7 +27,7 @@ pub const Ast = struct {
 /// This value type is used to read in block headers within SpecialSyntax,
 /// e.g. the default block configuration of function parameters.
 pub const BlockHeader = struct {
-  config: ?model.BlockConfig = null,
+  config       : ?model.BlockConfig = null,
   swallow_depth: ?u21 = null,
 
   pub inline fn value(self: *@This()) *Value {
@@ -37,7 +37,7 @@ pub const BlockHeader = struct {
 
 /// a Concat value
 pub const Concat = struct {
-  t: *const Type.Concat,
+  t      : *const Type.Concat,
   content: std.ArrayList(*Value),
 
   pub inline fn value(self: *@This()) *Value {
@@ -46,9 +46,9 @@ pub const Concat = struct {
 };
 
 pub const Definition = struct {
-  name: *Value.TextScalar,
+  name       : *Value.TextScalar,
   content_pos: model.Position,
-  content: union(enum) {
+  content    : union(enum) {
     /// might be a keyword function, which is why content is not simply a Value.
     func: *model.Function,
     @"type": model.Type,
@@ -62,7 +62,7 @@ pub const Definition = struct {
 
 /// an Enum value
 pub const Enum = struct {
-  t: *const Type.Enum,
+  t    : *const Type.Enum,
   index: usize,
 
   pub inline fn value(self: *@This()) *Value {
@@ -72,8 +72,8 @@ pub const Enum = struct {
 
 /// a float Numeric value
 pub const FloatNum = struct {
-  t: *const Type.FloatNum,
-  content: f64,
+  t       : *const Type.FloatNum,
+  content : f64,
   cur_unit: usize,
 
   pub inline fn value(self: *@This()) *Value {
@@ -142,8 +142,8 @@ pub const HashMap = struct {
 
 /// an integer Numeric value
 pub const IntNum = struct {
-  t: *const Type.IntNum,
-  content: i64,
+  t       : *const Type.IntNum,
+  content : i64,
   cur_unit: usize,
 
   pub inline fn value(self: *@This()) *Value {
@@ -151,11 +151,11 @@ pub const IntNum = struct {
   }
 
   pub fn formatWithUnit(
-    self: *const @This(),
-    unit_index: usize,
+    self        : *const @This(),
+    unit_index  : usize,
     max_decimals: usize,
-    decimal_sep: u8,
-    writer: anytype,
+    decimal_sep : u8,
+    writer      : anytype,
   ) @TypeOf(writer).Error!void {
     const unit = self.t.suffixes[unit_index];
     var trunc = @divTrunc(self.content, unit.factor);
@@ -175,10 +175,10 @@ pub const IntNum = struct {
   }
 
   fn format(
-    self      : *const @This(),
-    comptime _: []const u8,
-    _         : std.fmt.FormatOptions,
-    writer    : anytype,
+             self  : *const @This(),
+    comptime _     : []const u8,
+             _     : std.fmt.FormatOptions,
+             writer: anytype,
   ) @TypeOf(writer).Error!void {
     if (self.t.suffixes.len > 0) {
       try self.formatWithUnit(self.cur_unit, 2, '.', writer);
@@ -302,10 +302,10 @@ pub const SchemaDef = struct {
 /// a Sequence value
 pub const Seq = struct {
   pub const Item = struct {
-    content: *Value,
+    content : *Value,
     lf_after: usize,
   };
-  t: *const Type.Sequence,
+  t      : *const Type.Sequence,
   content: std.ArrayList(Item),
 
   pub inline fn value(self: *@This()) *Value {
@@ -316,7 +316,7 @@ pub const Seq = struct {
 
 /// a Space, Literal, Raw or Textual value
 pub const TextScalar = struct {
-  t: Type,
+  t      : Type,
   content: []const u8,
 
   pub inline fn value(self: *@This()) *Value {
@@ -371,8 +371,8 @@ const HashContext = struct {
     return switch (a.data) {
       .text    => |ts|  std.hash_map.eqlString(ts.content, b.data.text.content),
       .int     => |int| int.content == b.data.int.content,
-      .float   => |fl|  fl.content == b.data.float.content,
-      .@"enum" => |ev|  ev.index == b.data.@"enum".index,
+      .float   => |fl|  fl.content  == b.data.float.content,
+      .@"enum" => |ev|  ev.index    == b.data.@"enum".index,
       .@"type" => |tv|
         model.Type.HashContext.eql(undefined, tv.t, b.data.@"type".t),
       else => unreachable,

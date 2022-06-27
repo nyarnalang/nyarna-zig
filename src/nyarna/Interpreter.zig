@@ -1206,13 +1206,15 @@ fn variablesFromLocations(
           },
           else => unreachable,
         }
-        if (nl.@"type") |lt| (
-          switch (lt.data.expression.data.value.data) {
+        if (nl.@"type") |lt| {
+          switch (
+            (try self.ctx.evaluator().evaluate(lt.data.expression)).data
+          ) {
             .@"type" => |vt| loc_type = vt.t.at(lt.pos),
             .poison  => loc_type = self.ctx.types().poison().predef(),
             else     => unreachable,
           }
-        ) else {
+        } else {
           const probed = (
             try self.probeType(nl.default.?, .{.kind = .final}, false)
           ).?;
@@ -3146,21 +3148,18 @@ fn probeNodeList(
     const new = try self.ctx.types().sup(sup, t);
     if (new.isNamed(.poison)) {
       already_poison = true;
-      var found = false;
-      for (nodes[0..i]) |prev| {
-        const prev_t = (try self.probeType(node, stage, sloppy)) orelse {
-          seen_unfinished = true;
-          continue;
-        };
+      const found = for (nodes[0..i]) |prev| {
+        const prev_t = (
+          try self.probeType(prev, stage, sloppy)
+        ) orelse continue;
         if (prev_t.isNamed(.poison)) continue;
         if ((try self.ctx.types().sup(t, prev_t)).isNamed(.poison)) {
-          found = true;
           self.ctx.logger.IncompatibleTypes(&.{
             t.at(node.pos), prev_t.at(prev.pos),
           });
-          break;
+          break true;
         }
-      }
+      } else false;
       if (!found) {
         const pos = nodes[0].pos.span(nodes[i - 1].pos);
         self.ctx.logger.IncompatibleTypes(&.{t.at(node.pos), sup.at(pos)});
@@ -3196,7 +3195,8 @@ fn probeForScalarType(
 ) !?model.Type {
   std.debug.assert(stage.kind != .resolve);
   const t = (try self.probeType(input, stage, true)) orelse return null;
-  return Types.containedScalar(t) orelse self.ctx.types().every();
+  if (t.isNamed(.poison)) return self.ctx.types().poison();
+  return Types.containedScalar(t) orelse return self.ctx.types().@"void"();
 }
 
 fn typeFromSymbol(self: *Interpreter, sym: *model.Symbol) !model.Type {
@@ -3640,7 +3640,8 @@ fn mixIfCompatible(
 
 /// Same as tryInterpret, but takes a target type that may be used to generate
 /// typed literal values from text literals. The target type *must* be a
-/// scalar type or .void, in which case .space literals will be removed.
+/// scalar type, .void (in which case .space literals will be removed), or
+/// .poison (in which case no scalar checking occurs);
 pub fn interpretWithTargetScalar(
   self : *Interpreter,
   input: *model.Node,
@@ -3651,8 +3652,8 @@ pub fn interpretWithTargetScalar(
   std.debug.assert(switch (spec.t) {
     .structural => false,
     .named => |named| switch (named.data) {
-      .textual, .int, .float, .@"enum", .literal, .space, .every, .void =>
-        true,
+      .textual, .int, .float, .@"enum", .literal, .space, .every, .void,
+      .poison => true,
       else => false,
     },
   });
@@ -3856,6 +3857,8 @@ pub fn interpretWithTargetScalar(
     .literal => |*l| {
       if (spec.t.isNamed(.void)) return try self.ctx.createValueExpr(
         try self.ctx.values.void(input.pos));
+      if (spec.t.isNamed(.poison)) return try self.ctx.createValueExpr(
+        try self.ctx.values.poison(input.pos));
       const expr = try self.ctx.global().create(model.Expression);
       expr.pos = input.pos;
       expr.data = .{.value = try self.createTextLiteral(l, spec)};

@@ -17,3 +17,5 @@
 -CALL
 --- document
 =TEXT Text "Hello, World!"
+--- output
+Hello, World!

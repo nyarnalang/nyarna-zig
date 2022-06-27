@@ -220,7 +220,8 @@ const FixpointContext = struct {
         // body. These are errors since everything resolvable has been
         // resolved at this point. we call interpret solely for issuing error
         // messages.
-        _ = try fc.dres.intpr.interpret(fgen.body);
+        _ = try fc.dres.intpr.tryInterpret(
+          fgen.body, .{.kind = .final, .resolve = &fc.ctx});
         fgen.body.data = .poison;
         break :blk fc.dres.intpr.ctx.types().poison();
       };

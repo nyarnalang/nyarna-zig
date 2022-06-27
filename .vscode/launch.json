@@ -5,6 +5,19 @@
   "version": "0.2.0",
   "configurations": [
     {
+      "name": "(lldb) output_test",
+      "type": "lldb",
+      "request": "launch",
+      "program": "${workspaceFolder}/output_test",
+      "args": ["/Users/flyx/.nix-profile/bin/zig"],
+      "stopAtEntry": false,
+      "cwd": "${workspaceFolder}",
+      "environment": [],
+      "externalConsole": false,
+      "MIMode": "lldb",
+      "targetArchitecture": "aarch64"
+    },
+    {
       "name": "(lldb) load_test",
       "type": "lldb",
       "request": "launch",
