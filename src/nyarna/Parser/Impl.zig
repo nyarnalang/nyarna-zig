@@ -873,7 +873,6 @@ inline fn procAfterId(self: *@This()) !void {
     },
     .list_end, .list_end_missing_colon => {
       self.state = .after_list;
-      self.advance();
       _ = self.levels.pop();
     },
     .end_source => self.state = .default,

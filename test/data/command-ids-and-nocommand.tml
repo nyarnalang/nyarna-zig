@@ -1,6 +1,6 @@
-=== Command IDs and nocommand
+=== Command IDs and off
 --- input
-\block(=hurr):<nocommand>
+\block(=hurr):<off>
 \end(block)
 \end(hurr)
 --- output
