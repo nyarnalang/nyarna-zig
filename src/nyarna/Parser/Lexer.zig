@@ -8,6 +8,8 @@ const Interpreter      = nyarna.Interpreter;
 const model            = nyarna.model;
 const Token            = model.Token;
 
+const last = @import("../helpers.zig").last;
+
 /// Walks a source and returns Unicode code points.
 pub const Walker = struct {
   /// The source.
@@ -206,10 +208,18 @@ const State = enum(i8) {
 
 const Level = struct {
   indentation: u16,
-  tabs: ?bool,
-  id: []const u8,
-  end_char: u21,
-  special: enum{disabled, standard_comments, comments_without_newline},
+  tabs       : ?bool = null,
+  id         : []const u8,
+  end_char   : u21,
+  special    : enum{disabled, standard_comments, comments_without_newline},
+  /// amount of open swallowing commands at this level
+  num_swallow: u8 = 0,
+};
+
+/// describes where a modification was imposed
+const ModStart = struct {
+  level_index  : usize,
+  swallow_count: u8,
 };
 
 pub const Lexer = @This();
@@ -221,8 +231,8 @@ cur_stored: (@typeInfo(@TypeOf(Walker.next)).Fn.return_type.?),
 state: State,
 walker: Walker,
 paren_depth: u16,
-colons_disabled_at: ?usize,
-comments_disabled_at: ?usize,
+colons_disabled_at: ?ModStart,
+comments_disabled_at: ?ModStart,
 
 /// the end of the recently emitted token
 /// (the start equals the end of the previously emitted token)
@@ -267,7 +277,6 @@ pub fn init(intpr: *Interpreter, source: *model.Source) !Lexer {
       try std.ArrayListUnmanaged(Level).initCapacity(intpr.allocator(), 32),
     .level = .{
       .indentation = 0,
-      .tabs        = null,
       .id          = undefined,
       .end_char    = undefined,
       .special     = .disabled,
@@ -481,8 +490,10 @@ inline fn procCheckBlockName(self: *Lexer, cur: *u21) !?Token {
     // if previous block disabled comments, re-enable them. this needs
     // not be done for disabled colons, because if colons are disabled,
     // we would never end up here.
-    if (self.comments_disabled_at) |depth| {
-      if (depth == self.levels.items.len) self.comments_disabled_at = null;
+    if (self.comments_disabled_at) |ms| {
+      if (ms.level_index == self.levels.items.len) {
+        self.comments_disabled_at = null;
+      }
     }
     // if previous block had special syntax, disable it.
     self.level.special = .disabled;
@@ -492,7 +503,6 @@ inline fn procCheckBlockName(self: *Lexer, cur: *u21) !?Token {
         try self.levels.append(self.intpr.allocator(), self.level);
         self.level = .{
           .indentation = undefined,
-          .tabs        = null,
           .id          = undefined,
           .end_char    = ':',
           .special     = .disabled,
@@ -641,8 +651,12 @@ inline fn procAfterBlocksColon(self: *Lexer, cur: *u21) ?Token {
       return .diamond_open;
     },
     '>' => {
-      self.state =
-        if (self.level.special == .disabled) .at_header else .special_syntax;
+      if (self.level.special == .disabled) {
+        self.state = .at_header;
+        self.enterSwallow();
+      } else {
+        self.state = .special_syntax;
+      }
       self.cur_stored = self.walker.nextInline();
       self.recent_end = self.walker.before;
       return .diamond_close;
@@ -732,12 +746,35 @@ inline fn procAfterConfig(self: *Lexer, cur: *u21) ?Token {
   }
 }
 
+inline fn mods(self: *Lexer) [2]*?ModStart {
+  return [2]*?ModStart{&self.colons_disabled_at, &self.comments_disabled_at};
+}
+
+fn enterSwallow(self: *Lexer) void {
+  // swallowing gives us a semantic level, but no syntactic level.
+  // therefore, do away with the syntactic level of this command.
+  if (self.paren_depth == 0) {
+    // if mods have been enabled in the block config directly preceding this
+    // swallow indicator, they apply to the current level. Modify them
+    // accordingly.
+    for (self.mods()) |mod| if (mod.*) |*ms| {
+      if (ms.level_index == self.levels.items.len) {
+        ms.level_index -= 1;
+        ms.swallow_count = last(self.levels.items).num_swallow + 1;
+      }
+    };
+    self.level = self.levels.pop();
+    self.level.num_swallow += 1;
+  }
+}
+
 inline fn procAfterDepth(self: *Lexer, cur: *u21) ?Token {
   self.state =
     if (self.level.special == .disabled) .at_header else .special_syntax;
   if (cur.* == '>') {
     self.cur_stored = self.walker.nextInline();
     self.recent_end = self.walker.before;
+    if (self.level.special == .disabled) self.enterSwallow();
     return .diamond_close;
   } else return null;
 }
@@ -757,16 +794,9 @@ inline fn procBeforeEndId(self: *Lexer) Token {
       }
     }
   }
-  if (self.comments_disabled_at) |depth| {
-    if (self.levels.items.len < depth) {
-      self.comments_disabled_at = null;
-    }
-  }
-  if (self.colons_disabled_at) |depth| {
-    if (self.levels.items.len < depth) {
-      self.colons_disabled_at = null;
-    }
-  }
+  for (self.mods()) |mod| if (mod.*) |ms| {
+    if (self.levels.items.len < ms.level_index) mod.* = null;
+  };
   self.state = .after_end_id;
   self.recent_end = self.walker.before;
   return res;
@@ -1306,7 +1336,6 @@ fn exprContinuation(self: *Lexer, cur: *u21, after_arglist: bool) !?Token {
       if (after_arglist) {
         self.level = .{
           .indentation = undefined,
-          .tabs = null,
           .id = "",
           .end_char = self.level.end_char,
           .special = .disabled,
@@ -1393,13 +1422,19 @@ inline fn curBaseState(self: *Lexer) State {
 
 pub fn disableColons(self: *Lexer) void {
   if (self.colons_disabled_at == null) {
-    self.colons_disabled_at = self.levels.items.len;
+    self.colons_disabled_at = ModStart{
+      .level_index   = self.levels.items.len,
+      .swallow_count = self.level.num_swallow,
+    };
   }
 }
 
 pub fn disableComments(self: *Lexer) void {
   if (self.comments_disabled_at == null) {
-    self.comments_disabled_at = self.levels.items.len;
+    self.comments_disabled_at = ModStart{
+      .level_index   = self.levels.items.len,
+      .swallow_count = self.level.num_swallow,
+    };
   }
 }
 
@@ -1426,4 +1461,34 @@ pub fn abortBlockHeader(self: *Lexer) void {
   self.state = if (self.level.special == .disabled) (
     .at_header
   ) else .special_syntax;
+}
+
+/// must be called when a structure imposes implicit swallowing.
+pub fn implicitSwallowOccurred(self: *Lexer) void {
+  self.level.num_swallow += 1;
+}
+
+/// must be called when a level ends implicitly via swallowing.
+/// tells the lexer it must check whether it needs to revert disabled
+/// comments or colons.
+pub fn swallowEndOccurred(self: *Lexer) void {
+  self.level.num_swallow -= 1;
+  for (self.mods()) |mod| {
+    if (mod.*) |*ms| {
+      if (self.levels.items.len == ms.level_index) {
+        // this is only called right after another swallow occurred, which ends
+        // a previous swallow. any *new* config pushed will have its swallow_count
+        // above the current level's swallow and we need to preserve those, but
+        // and all configs on the current level since they belong to a previous
+        // swallow that has now ended.
+        if (self.level.num_swallow == ms.swallow_count) {
+          mod.* = null;
+        } else if (self.level.num_swallow < ms.swallow_count) {
+          // puts the swallow config of the new level on the current level, so
+          // that it later can properly end.
+          ms.swallow_count -= 1;
+        }
+      }
+    }
+  }
 }

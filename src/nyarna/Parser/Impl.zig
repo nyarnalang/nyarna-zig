@@ -703,12 +703,14 @@ inline fn procAfterList(self: *@This()) !void {
         self.advance();
       } else {
         if (lvl.command.checkAutoSwallow()) |swallow_depth| {
+          self.lexer.implicitSwallowOccurred();
           try self.pushLevel(if (
             lvl.command.choseAstNodeParam()
           ) false else lvl.fullast);
           if (lvl.implicitBlockConfig()) |config| {
             try self.applyBlockConfig(self.source().at(end), config);
           }
+          lvl.command.swallow_depth = swallow_depth;
           try self.closeSwallowing(swallow_depth);
           while (
             self.cur == .space or self.cur == .indent or self.cur == .ws_break
@@ -1135,6 +1137,7 @@ fn closeSwallowing(self: *@This(), target_depth: usize) !void {
       const cur_parent = &self.levels.items[i - 1];
       try cur_parent.command.pushArg(
         try self.levels.items[i].finalize(self));
+      self.lexer.swallowEndOccurred();
       try cur_parent.command.shift(
         self.intpr(), self.source(), end_cursor, cur_parent.fullast);
       try cur_parent.append(
@@ -1381,5 +1384,7 @@ pub fn revertBlockConfig(self  : *@This(), config: model.BlockConfig) !void {
   }
 
   // off_colon, off_comment, and special syntax are reversed automatically by
-  // the lexer. full_ast is automatically reversed by leaving the level.
+  // the lexer, except if the level is closed implicitly due to swallowing.
+  // in that case, caller must tell lexer swallowEndOccurred.
+  // full_ast is automatically reversed by leaving the level.
 }
