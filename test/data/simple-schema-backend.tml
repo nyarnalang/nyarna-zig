@@ -1,18 +1,18 @@
 === Simple Schema Backend
 --- input:Document
-\standalone(\SchemaDef)
+\fragment(\SchemaDef)
 
 \SchemaDef(root=\Sequence(\Section)):
   Section = \Record:
     title: \Text
-    content: \Concat(\Subsection) {primary}:1>
+    content: \Sequence(\Subsection) {primary}:1>
   \end(Record)
 
   Subsection = \Record:
     title: \Text
-    content: \Text {primary}:2>
+    content: \Sequence(\Text) {primary}:2>
   \end(Record)
-:backends:<val \doc>
+:backends:<val \doc, syntax definitions>
   markdown = \backend:
   :funcs:
     content = \matcher:
@@ -20,18 +20,18 @@
       \content
     :(\Section):<val \sec>
       \# \sec::title
-
-      \content(\sec::content)
+      \
+      \map(\sec::content, \content, \Concat)
       \
     :(\Subsection):<val \sub>
       \#\# \sub::title
-
-      \content(\sub::content)
+      \
+      \map(\sub::content, \content, \Concat)
       \
     \end(matcher)
   :body:
     \Output(\doc::name.md):
-      \content(\doc::root)
+      \map(\doc::root, \content, \Concat)
     \end(Output)
   \end(backend)
 \end(SchemaDef)

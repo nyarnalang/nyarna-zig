@@ -428,7 +428,7 @@ fn tryInterpretAss(
               ass.target = .{.resolved = .{
                 .target = v,
                 .path   = rc.indexes.items,
-                .spec   = v.spec,
+                .spec   = rc.t.at(node.pos),
                 .pos    = node.pos,
               }};
               break :innerblk &ass.target.resolved;
