@@ -127,6 +127,7 @@ fn callConstructor(
   pos     : model.Position,
   args    : []*model.Expression,
   constr  : Types.Constructor,
+  t       : model.Type,
 ) nyarna.Error!RetTypeForCtx(@TypeOf(impl_ctx)) {
   const callable = constr.callable.?;
   const target_impl =
@@ -135,9 +136,12 @@ fn callConstructor(
   var frame: ?[*]model.StackItem = try self.setupParameterStackFrame(
     callable.sig.parameters.len, false, null);
   defer self.resetStackFrame(&frame, callable.sig.parameters.len, false);
-  return if (
-    try self.fillParameterStackFrame(args, frame.? + 1)
-  ) target_impl(impl_ctx, pos, frame.? + 1) else poison(impl_ctx, pos);
+  if (try self.fillParameterStackFrame(args, frame.? + 1)) {
+    self.target_type = t;
+    return target_impl(impl_ctx, pos, frame.? + 1);
+   } else {
+    return poison(impl_ctx, pos);
+   }
 }
 
 fn evalExtFuncCall(
@@ -249,10 +253,9 @@ fn evalCall(
         },
         else => {},
       } else unreachable;
-      const constr = try self.ctx.types().typeConstructor(tv.t);
-      self.target_type = tv.t;
       return self.callConstructor(
-        impl_ctx, call.expr().pos, call.exprs, constr);
+        impl_ctx, call.expr().pos, call.exprs,
+        try self.ctx.types().typeConstructor(tv.t), tv.t);
     },
     .poison => return switch (@TypeOf(impl_ctx)) {
       *Evaluator => self.ctx.values.poison(call.expr().pos),
@@ -276,13 +279,14 @@ pub fn evaluateKeywordCall(
       return self.evalExtFuncCall(intpr, pos, func, ns, args);
     },
     .prototype => |pt| {
-      const constr = self.ctx.types().prototypeConstructor(pt);
-      return self.callConstructor(intpr, pos, args, constr);
+      return self.callConstructor(
+        intpr, pos, args, self.ctx.types().prototypeConstructor(pt),
+        undefined); // self.target_type unused for prototype constructors
     },
     .@"type" => |t| {
       const constr = try self.ctx.types().typeConstructor(t);
       if (constr.callable.?.sig.isKeyword()) {
-        return self.callConstructor(intpr, pos, args, constr);
+        return self.callConstructor(intpr, pos, args, constr, t);
       } else {
         std.debug.panic("type {s} is not called as keyword!", .{t.formatter()});
       }
@@ -1147,10 +1151,11 @@ fn coerce(
       },
       // other coercions can never happen.
       else => {
+        const p = value.origin.formatter();
         const v = value_type.formatter();
         const e = expected_type.formatter();
-        std.debug.panic("coercion from {} to {} requested, which is illegal",
-          .{v, e});
+        std.debug.panic("{}: coercion from {} to {} requested, which is illegal",
+          .{p, v, e});
       }
     },
   }

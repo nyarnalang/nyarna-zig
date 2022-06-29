@@ -830,6 +830,35 @@ pub const Impl = lib.Provider.Wrapper(struct {
     }
   }
 
+  pub fn @"Numeric::mult"(
+    eval: *nyarna.Evaluator,
+    pos : model.Position,
+    list: *model.Value.List,
+  ) nyarna.Error!*model.Value {
+    switch (eval.target_type.named.data) {
+      .int => |*int| {
+        var ret: i64 = 0;
+        for (list.content.items) |item| {
+          if (@mulWithOverflow(i64, ret, item.data.int.content, &ret)) {
+            eval.ctx.logger.OutOfRange(pos, eval.target_type, "<overflow>");
+            return try eval.ctx.values.poison(pos);
+          }
+        }
+        const unit = if (list.content.items.len == 0) 0
+        else list.content.items[0].data.int.cur_unit;
+        return try eval.ctx.intAsValue(pos, ret, unit, int);
+      },
+      .float => |*fl| {
+        var ret: f64 = 0;
+        for (list.content.items) |item| ret *= item.data.float.content;
+        const unit = if (list.content.items.len == 0) 0
+        else list.content.items[0].data.float.cur_unit;
+        return try eval.ctx.floatAsValue(pos, ret, unit, fl);
+      },
+      else => unreachable,
+    }
+  }
+
   pub fn @"Numeric::lt"(
     eval : *nyarna.Evaluator,
     pos  : model.Position,
@@ -840,7 +869,7 @@ pub const Impl = lib.Provider.Wrapper(struct {
     return (
       try eval.ctx.values.@"enum"(
         pos, &eval.ctx.types().system.boolean.named.data.@"enum",
-        if (comp.compare(.lt)) 0 else 1)
+        if (comp.compare(.lt)) 1 else 0)
     ).value();
   }
 
@@ -868,7 +897,7 @@ pub const Impl = lib.Provider.Wrapper(struct {
     return (
       try eval.ctx.values.@"enum"(
         pos, &eval.ctx.types().system.boolean.named.data.@"enum",
-        if (comp.compare(.eq)) 0 else 1)
+        if (comp.compare(.eq)) 1 else 0)
     ).value();
   }
 
@@ -882,7 +911,7 @@ pub const Impl = lib.Provider.Wrapper(struct {
     return (
       try eval.ctx.values.@"enum"(
         pos, &eval.ctx.types().system.boolean.named.data.@"enum",
-        if (comp.compare(.gt)) 0 else 1)
+        if (comp.compare(.gt)) 1 else 0)
     ).value();
   }
 
@@ -896,7 +925,7 @@ pub const Impl = lib.Provider.Wrapper(struct {
     return (
       try eval.ctx.values.@"enum"(
         pos, &eval.ctx.types().system.boolean.named.data.@"enum",
-        if (comp.compare(.gte)) 0 else 1)
+        if (comp.compare(.gte)) 1 else 0)
     ).value();
   }
 
@@ -910,7 +939,7 @@ pub const Impl = lib.Provider.Wrapper(struct {
     return (
       try eval.ctx.values.@"enum"(
         pos, &eval.ctx.types().system.boolean.named.data.@"enum",
-        if (comp.compare(.neq)) 0 else 1)
+        if (comp.compare(.neq)) 1 else 0)
     ).value();
   }
 

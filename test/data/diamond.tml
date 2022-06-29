@@ -1,22 +1,23 @@
 === Diamond dependency
 --- input:comparer
-\library:>
+\library()
+
 \declare:
-  CompareResult = \integer(first=-1, last=1)
+  CompareResult = \Numeric(backend=int, min=-1, max=1)
   spaceship = \func:
     left, right: \Integer
   :body:
     \CompareResult:
-      \if(\left::greater(\right)):
+      \if(\left::gt(\right)):
         1
       :else:
-        \if(\left::equals(\right), 0, -1)
+        \if(\left::eq(\right), 0, -1)
       \end(if)
     \end(CompareResult)
   \end(func)
 \end(declare)
 --- input:printer
-\library:>
+\library()
 \import(comparer)
 
 \declare:
@@ -25,11 +26,12 @@
   :body:
     \var:
       res = \spaceship(\left, \right)
-    :scope:>
-    \if(\res::equals(-1)):
+    \end(var)
+
+    \if(\res::eq(-1)):
       \left is smaller than \right
     :else:
-      \if(\res::equals(0)):
+      \if(\res::eq(0)):
         \left is equal to \right
       :else:
         \left is greater than \right

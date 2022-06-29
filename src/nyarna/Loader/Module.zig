@@ -313,14 +313,15 @@ pub fn searchModule(
     self.loader.logger.CannotResolveLocator(pos);
     return null;
   };
-  // TODO: builtin provider
-  const module_loader = try create(
-    data, descriptor, resolver,
-    model.Locator.parse(abs_locator) catch unreachable, false, null);
+
   const res = try data.known_modules.getOrPut(
     data.storage.allocator(), abs_locator);
-  std.debug.assert(!res.found_existing);
-  res.value_ptr.* = .{.require_options = module_loader};
+  if (!res.found_existing) {
+    const module_loader = try create(
+      data, descriptor, resolver,
+      model.Locator.parse(abs_locator) catch unreachable, false, null);
+    res.value_ptr.* = .{.require_options = module_loader};
+  }
   return res.index;
 }
 

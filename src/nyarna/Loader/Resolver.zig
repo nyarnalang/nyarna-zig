@@ -11,11 +11,6 @@ pub const Cursor = struct {
   name: []const u8,
 };
 
-/// try to resolve the locator path given in `path`, which must be relative
-/// (i.e. without a resolve name in front). Returns a Cursor if a source can
-/// be found for the given path. Resolver implementations can return a pointer
-/// into a larger struct to carry additional information. The Cursor's name is
-/// to be allocated via `allocator`.
 resolveFn: fn(
   self     : *@This(),
   allocator: std.mem.Allocator,
@@ -24,10 +19,6 @@ resolveFn: fn(
   logger   : *errors.Handler,
 ) std.mem.Allocator.Error!?*Cursor,
 
-/// Given `cursor` must have been returned by `resolve` of same Resolver.
-/// Calling getSourceFn on another cursor is undefined behavior.
-/// Returns the source belonging to that descriptor. The source is allocated
-/// with the given allocator and is assigned the given descriptor.
 getSourceFn: fn(
   self      : *@This(),
   allocator : std.mem.Allocator,
@@ -36,6 +27,11 @@ getSourceFn: fn(
   logger    : *errors.Handler,
 ) std.mem.Allocator.Error!?*model.Source,
 
+/// try to resolve the locator path given in `path`, which must be relative
+/// (i.e. without a resolve name in front). Returns a Cursor if a source can
+/// be found for the given path. Resolver implementations can return a pointer
+/// into a larger struct to carry additional information. The Cursor's name is
+/// to be allocated via `allocator`.
 pub inline fn resolve(
   self     : *@This(),
   allocator: std.mem.Allocator,
@@ -46,6 +42,10 @@ pub inline fn resolve(
   return self.resolveFn(self, allocator, path, pos, logger);
 }
 
+/// Given `cursor` must have been returned by `resolve` of same Resolver.
+/// Calling getSourceFn on another cursor is undefined behavior.
+/// Returns the source belonging to that descriptor. The source is allocated
+/// with the given allocator and is assigned the given descriptor.
 pub inline fn getSource(
   self                : *@This(),
   source_allocator    : std.mem.Allocator,

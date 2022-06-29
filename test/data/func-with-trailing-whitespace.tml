@@ -2,7 +2,7 @@
 --- input
 \declare:
   ws = \func:
-    where: \Raw
+    where: \Text
   :body:
     I'm in \where
 
@@ -13,5 +13,6 @@
 \ws(space)!
 --- output
 I'm in space
+
 
 !

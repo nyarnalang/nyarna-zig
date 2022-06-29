@@ -1,15 +1,15 @@
 === Field Assignment
 --- input
 \declare:
-  Person = \record:
+  Person = \Record:
     name: \Text
-    age: \Integer
-  \end(record)
+    age : \Integer
+  \end(Record)
 \end(declare)
 
 \var:
   p = \Person(name=Karl Koch, age=23)
-:scope:>
+\end(var)
 
 \p::name:=(Radical Edward)
 

@@ -1,8 +1,8 @@
 === Whitespace around assignment
 --- input
 \var:
-  foo : \Raw
-:scope:>
+  foo : \Text
+\end(var)
 
 one
 
@@ -10,4 +10,6 @@ one
 \foo
 --- output
 one
+
+
 two

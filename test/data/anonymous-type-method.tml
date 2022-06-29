@@ -1,5 +1,5 @@
 === Anonymous Type Method
 --- input
-\integer(0, 1000)::mult(7, 7)
+\Numeric(backend=int, min=0, max=1000)::mult(7, 7)
 --- output
 49

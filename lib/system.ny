@@ -160,6 +160,9 @@
     sub = \builtin(return=\This):
       minuend, subtrahend: \This
     \end(builtin)
+    mult = \builtin(return=\This):
+      values: \List(\This) {varargs}
+    \end(builtin)
     lt = \builtin(return=\Bool):
       left, right: \This
     \end(builtin)

@@ -347,12 +347,22 @@ inline fn emptyLines(self: *Lexer, cur: *u21) u16 {
   var newlines_seen: u16 = 0;
   self.line_start = self.walker.before;
   while (true) {
+    if (
+      self.walker.before.byte_offset - self.line_start.byte_offset ==
+      self.level.indentation
+    ) self.walker.mark();
     switch (cur.*) {
       '\t' => {
-        self.indent_char_seen.tab = true;
+        if (
+          self.walker.before.byte_offset - self.line_start.byte_offset <
+          self.level.indentation
+        ) self.indent_char_seen.tab = true;
       },
       ' '  => {
-        self.indent_char_seen.space = true;
+        if (
+          self.walker.before.byte_offset - self.line_start.byte_offset <
+          self.level.indentation
+        ) self.indent_char_seen.space = true;
       },
       '\r' => {
         newlines_seen += 1;
@@ -367,7 +377,6 @@ inline fn emptyLines(self: *Lexer, cur: *u21) u16 {
       },
       '\n' => {
         newlines_seen += 1;
-
         self.indent_char_seen = .{.space = false, .tab = false};
         cur.* = self.walker.nextAfterLF() catch |e| {
           self.cur_stored = e;
@@ -377,7 +386,16 @@ inline fn emptyLines(self: *Lexer, cur: *u21) u16 {
         self.line_start = self.walker.before;
         continue;
       },
-      else => break,
+      else => {
+        if (
+          self.walker.before.byte_offset - self.line_start.byte_offset >
+          self.level.indentation
+        ) {
+          self.walker.resetToMark();
+          cur.* = (self.walker.cur - 1)[0];
+        }
+        break;
+      },
     }
     cur.* = self.walker.nextInline() catch |e| {
       self.cur_stored = e;
@@ -413,7 +431,11 @@ inline fn procIndentCapture(self: *Lexer, cur: *u21) ?Token {
       return .comment;
     },
     else => {
+      // tell emptyLines() not to stop at some indentation level.
+      self.level.indentation = std.math.maxInt(u16);
       self.newline_count += self.emptyLines(cur);
+      self.level.indentation = @intCast(
+          u16, self.walker.before.byte_offset - self.line_start.byte_offset);
       self.transition(.indent_capture, .check_indent);
       if (self.newline_count > 0) {
         self.recent_end = self.line_start;
@@ -429,8 +451,6 @@ inline fn procCheckIndent(self: *Lexer, cur: *u21) ?Token {
     .check_indent, if (self.colons_disabled_at == null)
       State.check_block_name else .in_block);
   if (self.recent_end.byte_offset != self.walker.before.byte_offset) {
-    self.level.indentation = @intCast(
-      u16, self.recent_end.byte_offset - self.line_start.byte_offset);
     self.recent_end = self.walker.before;
     if (self.indent_char_seen.tab and self.indent_char_seen.space) {
       return .mixed_indentation;

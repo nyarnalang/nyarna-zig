@@ -198,7 +198,7 @@ fn previousOccurence(
     .MissingParameterArgument =>
       " has not been given an argument",
     .DuplicateSymbolName => " hides existing symbol",
-    .MissingEndCommand   => " is missing and explict end",
+    .MissingEndCommand   => " is missing an explicit end",
     .CannotAssignToConst => " is constant and cannot be assigned to",
     .DuplicateEnumValue  => " occurs multiple times",
     .MultipleModuleKinds => " has already been set",

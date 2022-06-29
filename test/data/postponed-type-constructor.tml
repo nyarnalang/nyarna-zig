@@ -1,19 +1,20 @@
 === Postponed Type Constructor
 --- input
 \declare:
-  MyType = \record:
+  MyType = \Record:
     foo: \Natural
     bar: \Text
-  \end(record)
+  \end(Record)
   sized = \func:
     text: \Text
   :body:
-    \MyType(\text::length(), \text)
+    \MyType(\text::len(), \text)
   \end(func)
 \end(declare)
 
 \declare(\MyType):
   render = \func:
+    this: \MyType
   :body:
     [\this::foo]\this::bar
   \end(func)
