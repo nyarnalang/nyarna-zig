@@ -154,7 +154,7 @@ fn procBackend(
   // generate a variable container for the backend's variables, calculate
   // its final size, and append it to the interpreter.
   const container =
-    try self.loader.storage.allocator().create(model.VariableContainer);
+    try self.loader.data.storage.allocator().create(model.VariableContainer);
   container.* = .{.num_values = 0};
 
   var var_locs =

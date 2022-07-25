@@ -705,7 +705,9 @@ const AstEmitter = struct {
         try m.pop();
       },
       .output => |output| {
-        const lvl = try self.pushWithKey("OUTPUT", output.name.content, null);
+        const lvl = try self.push("OUTPUT");
+        try self.processExpr(output.name);
+        try self.emitLine(">BODY", .{});
         try self.processExpr(output.body);
         if (output.schema) |schema| {
           try self.emitLine(">SCHEMA", .{});

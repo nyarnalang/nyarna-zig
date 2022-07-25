@@ -220,7 +220,11 @@ block_config: ?*const model.BlockConfig = null,
 syntax_proc: ?*syntaxes.SpecialSyntax.Processor = null,
 /// recently parsed whitespace. might be either added to nodes to discarded
 /// depending on the following item.
-dangling_space: ?*model.Node = null,
+dangling: union(enum) {
+  space: *model.Node,
+  parsep: usize,
+  none,
+} = .none,
 /// number of symbols existing in intpr.symbols when this level has been started
 sym_start: usize,
 semantics: enum{
@@ -242,10 +246,12 @@ pub fn append(
     const res = try proc.push(proc, item.pos, .{.node = item});
     std.debug.assert(res == .none);
   } else {
-    if (self.dangling_space) |space_node| {
-      try self.nodes.append(intpr.allocator(), space_node);
-      self.dangling_space = null;
+    switch (self.dangling) {
+      .space  => |node|     try self.nodes.append(intpr.allocator(), node),
+      .parsep => |newlines| try self.pushParagraph(intpr, newlines),
+      .none   => {},
     }
+    self.dangling = .none;
     const res = if (self.fullast) item else switch (item.data) {
       .literal, .unresolved_call, .unresolved_symref, .expression, .void =>
         item,

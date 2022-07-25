@@ -84,7 +84,7 @@ pub const Location = struct {
 };
 
 pub const Output = struct {
-  name  : *Value.TextScalar,
+  name  : *Expression,
   schema: ?*Value.Schema,
   body  : *Expression,
 

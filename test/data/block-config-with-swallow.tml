@@ -16,4 +16,8 @@
 \sausage
 
 --- output
-:foo:# bar\sausage
+:foo:
+
+# bar
+
+\sausage

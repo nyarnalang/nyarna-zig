@@ -300,7 +300,7 @@ inline fn procParagraphEnd(self: *@This()) !void {
   const newline_count = self.lexer.newline_count;
   self.advance();
   if (self.cur != .block_end_open and self.cur != .end_source) {
-    try self.curLevel().pushParagraph(self.intpr(), newline_count);
+    self.curLevel().dangling = .{.parsep = newline_count};
   }
 }
 
@@ -519,7 +519,14 @@ inline fn procTextual(self: *@This()) !void {
       // dangling space will be postponed for the case of a following,
       // swallowing command that ends the current level.
       if (non_space_len > 0) try lvl.append(self.intpr(), node)
-      else lvl.dangling_space = node;
+      else {
+        switch (lvl.dangling) {
+          .space  => unreachable,
+          .parsep => |num_lines| try lvl.pushParagraph(self.intpr(), num_lines),
+          .none   => {},
+        }
+        lvl.dangling = .{.space = node};
+      }
       self.state = .default;
     }
   } else self.state = .default; // happens with space at block/arg end
@@ -1132,6 +1139,11 @@ fn closeSwallowing(self: *@This(), target_depth: usize) !void {
       ) else last(parent.seq.items).content.pos.end
     ) else last(parent.nodes.items).*.pos.end;
 
+    // dangling space of the current level will be transferred to the
+    // target level.
+    const dangling = self.levels.items[self.levels.items.len - 2].dangling;
+    self.levels.items[self.levels.items.len - 2].dangling = .none;
+
     var i = self.levels.items.len - 2;
     while (i > target_level) : (i -= 1) {
       const cur_parent = &self.levels.items[i - 1];
@@ -1155,6 +1167,8 @@ fn closeSwallowing(self: *@This(), target_depth: usize) !void {
       .unknown         => unreachable,
       .unresolved_call => |*uc| &uc.mapper,
     };
+    tl.dangling = dangling;
+
     // finally, shift the new level on top of the target_level
     self.levels.items[target_level + 1] = last(self.levels.items).*;
     const ll = &self.levels.items[target_level + 1];

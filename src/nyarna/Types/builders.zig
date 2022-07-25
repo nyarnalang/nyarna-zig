@@ -170,6 +170,7 @@ pub const IntersectionBuilder = struct {
         } else tcount += 1;
       } else break;
     }
+    std.debug.assert(scalar != null or tcount > 0);
 
     defer if (self.allocator) |allocator| {
       allocator.free(self.sources);
@@ -658,9 +659,15 @@ pub const SequenceBuilder = struct {
   /// returns the previous type the pushed type is incompatible with, if any.
   pub fn push(
     self        : *Self,
-    spec        : model.SpecType,
+    input       : model.SpecType,
     force_direct: bool,
   ) std.mem.Allocator.Error!PushResult {
+    const spec = if (input.t.isStruc(.optional)) blk: {
+      const res = self.errorIfForced(force_direct);
+      if (res != .success) return res;
+      break :blk input.t.structural.optional.inner.at(input.pos);
+    } else input;
+
     if (self.single) |single| {
       switch (spec.t) {
         .named => |named| switch (named.data) {

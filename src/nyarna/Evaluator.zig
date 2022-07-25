@@ -460,7 +460,10 @@ fn doConvert(
             }
             break :blk builder.items;
           },
-          else => unreachable,
+          // TODO: convert between numeric types directly
+          .int   => |*int_val| try self.toString(int_val),
+          .float => |*float_val| try self.toString(float_val),
+          else   => unreachable,
         };
         return if (
           try self.ctx.textFromString(value.origin, input, txt)
@@ -773,10 +776,14 @@ fn evalOutput(
   self: *Evaluator,
   out : *model.Expression.Output,
 ) nyarna.Error!*model.Value {
+  const name = try self.evaluate(out.name);
   const value = try self.evaluate(out.body);
-  if (value.data == .poison) return try self.ctx.values.poison(out.expr().pos);
+  if (name.data == .poison or value.data == .poison) {
+    return try self.ctx.values.poison(out.expr().pos);
+  }
   return (
-    try self.ctx.values.output(out.expr().pos, out.name, out.schema, value)
+    try self.ctx.values.output(
+      out.expr().pos, &name.data.text, out.schema, value)
   ).value();
 }
 
@@ -1079,7 +1086,7 @@ fn coerce(
           .concat => |*con| for (con.content.items) |item| {
             try cv.content.append(try self.coerce(item, concat.inner));
           },
-          .text, .record => {
+          .definition, .location, .output, .record, .text, .@"type" => {
             try cv.content.append(try self.coerce(value, concat.inner));
           },
           else => unreachable,
@@ -1108,18 +1115,40 @@ fn coerce(
       .sequence => |*seq| {
         var lv = try self.ctx.values.seq(value.origin, seq);
         if (!value_type.isNamed(.void)) {
-          const seq_value = blk: {
-            if (seq.direct) |direct| {
-              if (self.ctx.types().lesserEqual(value_type, direct)) {
-                break :blk try self.coerce(value, direct);
+          switch (value.data) {
+            .seq => |input_seq| {
+              for (input_seq.content.items) |item| {
+                const item_type = try self.ctx.types().valueType(item.content);
+                if (seq.direct) |direct| if (
+                  self.ctx.types().lesserEqual(item_type, direct)
+                ) {
+                  try lv.content.append(.{
+                    .content  = try self.coerce(item.content, direct),
+                    .lf_after = item.lf_after,
+                  });
+                  continue;
+                };
+                std.debug.assert(for (seq.inner) |cur| {
+                  if (cur.typedef().eql(item_type)) break true;
+                } else false);
+                try lv.content.append(item);
               }
+            },
+            else => {
+              const seq_value = blk: {
+                if (seq.direct) |direct| {
+                  if (self.ctx.types().lesserEqual(value_type, direct)) {
+                    break :blk try self.coerce(value, direct);
+                  }
+                }
+                std.debug.assert(for (seq.inner) |cur| {
+                  if (cur.typedef().eql(value_type)) break true;
+                } else false);
+                break :blk value;
+              };
+              try lv.content.append(.{.content = seq_value, .lf_after = 0});
             }
-            std.debug.assert(for (seq.inner) |cur| {
-              if (cur.typedef().eql(value_type)) break true;
-            } else false);
-            break :blk value;
-          };
-          try lv.content.append(.{.content = seq_value, .lf_after = 0});
+          }
         }
         return lv.value();
       },

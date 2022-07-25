@@ -651,6 +651,7 @@ pub fn calcSequence(
   var iter = TreeNode(void).Iter{
     .cur = &self.prefix_trees.sequence, .types = self,
   };
+  std.debug.assert(direct == null or !direct.?.isStruc(.optional));
   try iter.descend(if (direct) |d| d else self.every(), {});
   for (inner) |t| try iter.descend(t.typedef(), {});
   return model.Type{.structural = iter.cur.value orelse blk: {
@@ -1278,6 +1279,10 @@ pub fn convertible(self: *Self, from: model.Type, to: model.Type) bool {
       .schema_def => return to.isNamed(.schema),
       .space => to.isStruc(.concat) or to.isStruc(.sequence),
       .literal => to_scalar != null,
+      .textual => if (to_scalar) |ts| ts.isNamed(.textual) else false,
+      .int, .float => if (to_scalar) |ts| (
+        ts.isNamed(.int) or ts.isNamed(.float) or ts.eql(self.text())
+      ) else false,
       else => false,
     },
     .structural => |from_struc| switch (from_struc.*) {
@@ -1315,6 +1320,50 @@ pub fn convertible(self: *Self, from: model.Type, to: model.Type) bool {
         return true;
       },
       else => false,
+    },
+  };
+}
+
+/// replaces the scalar type in t with scalar_type and returns the resulting
+/// type.
+///
+/// Precondition: containedScalar(t) doesn't return null.
+pub fn replaceScalar(
+  self       : *Self,
+  t          : model.Type,
+  scalar_type: model.Type,
+) std.mem.Allocator.Error!?model.Type {
+  return switch (t) {
+    .structural => |strct| switch (strct.*) {
+      .optional => |*opt| if (
+        try self.replaceScalar(opt.inner, scalar_type)
+      ) |inner| try self.optional(inner) else null,
+      .concat   => |*con| if (
+        try self.replaceScalar(con.inner, scalar_type)
+      ) |inner| try self.concat(inner) else null,
+      .sequence => |*seq| blk: {
+        if (try self.replaceScalar(seq.direct.?, scalar_type)) |direct| {
+          var builder =
+            builders.SequenceBuilder.init(self, self.allocator, true);
+          _ = try builder.push(direct.predef(), true);
+          for (seq.inner) |rec| {
+            _ = try builder.push(rec.typedef().predef(), false);
+          }
+          break :blk (try builder.finish(null, null)).t;
+        } break :blk null;
+      },
+      .intersection => |*inter| blk: {
+        var builder = try builders.IntersectionBuilder.init(2, self.allocator);
+        std.debug.assert(inter.scalar != null);
+        _ = builder.pushUnique(&scalar_type, model.Position.intrinsic());
+        builder.push(inter.types);
+        break :blk try builder.finish(self);
+      },
+      else => unreachable,
+    },
+    .named => |named| switch (named.data) {
+      .textual, .int, .float, .@"enum", .space, .literal => scalar_type,
+      else => unreachable,
     },
   };
 }

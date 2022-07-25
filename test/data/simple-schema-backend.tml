@@ -18,16 +18,15 @@
     content = \matcher:
     :(\Text):<val \content>
       \content
+      \
     :(\Section):<val \sec>
       \# \sec::title
       \
       \map(\sec::content, \content, \Concat)
-      \
     :(\Subsection):<val \sub>
       \#\# \sub::title
       \
       \map(\sub::content, \content, \Concat)
-      \
     \end(matcher)
   :body:
     \Output(\doc::name.md):

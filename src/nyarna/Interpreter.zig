@@ -1054,26 +1054,21 @@ fn tryInterpretOutput(
     try self.associate(
       out.name, self.ctx.types().system.output_name.predef(), stage)
   ) orelse return null;
-  switch ((try self.ctx.evaluator().evaluate(name_expr)).data) {
-    .text => |*txt| {
-      const out_expr = try self.ctx.global().create(model.Expression);
-      out_expr.* = .{
-        .pos = out.node().pos,
-        .data = .{.output = .{
-          .name   = txt,
-          .schema = schema,
-          .body   = expr,
-        }},
-        .expected_type = self.ctx.types().output(),
-      };
-      return out_expr;
-    },
-    .poison => {
-      out.node().data = .poison;
-      return null;
-    },
-    else => unreachable,
+  if (name_expr.expected_type.isNamed(.poison)) {
+    out.node().data = .poison;
+    return null;
   }
+  const out_expr = try self.ctx.global().create(model.Expression);
+  out_expr.* = .{
+    .pos = out.node().pos,
+    .data = .{.output = .{
+      .name   = name_expr,
+      .schema = schema,
+      .body   = expr,
+    }},
+    .expected_type = self.ctx.types().output(),
+  };
+  return out_expr;
 }
 
 fn tryInterpretRAccess(
@@ -3668,9 +3663,13 @@ pub fn interpretWithTargetScalar(
       if (try self.tryInterpret(input, stage)) |expr| {
         if (Types.containedScalar(expr.expected_type)) |scalar_type| {
           if (self.ctx.types().lesserEqual(scalar_type, spec.t)) return expr;
-          if (expr.expected_type.isNamed(.space) and spec.t.isNamed(.void)) {
-            const target_type =
-              try self.typeWithoutSpace(expr.expected_type);
+          const possible_target_type = if (
+            expr.expected_type.isNamed(.space) and spec.t.isNamed(.void)
+          ) try self.typeWithoutSpace(expr.expected_type) else if (
+            self.ctx.types().convertible(scalar_type, spec.t)
+          ) try self.ctx.types().replaceScalar(expr.expected_type, spec.t)
+          else null;
+          if (possible_target_type) |target_type| {
             const conv = try self.ctx.global().create(model.Expression);
             conv.* = .{
               .pos = expr.pos,
@@ -3681,10 +3680,11 @@ pub fn interpretWithTargetScalar(
               }},
             };
             return conv;
+          } else {
+            self.ctx.logger.ScalarTypesMismatch(
+              &.{scalar_type.at(input.pos), spec});
+            expr.data = .{.value = try self.ctx.values.poison(input.pos)};
           }
-          self.ctx.logger.ScalarTypesMismatch(
-            &.{scalar_type.at(input.pos), spec});
-          expr.data = .{.value = try self.ctx.values.poison(input.pos)};
         }
         return expr;
       }
@@ -3884,6 +3884,16 @@ pub fn interpretWithTargetScalar(
           if (contained.isNamed(.space)) {
             stype = self.ctx.types().@"void"().at(spec.pos);
             para_type = try self.typeWithoutSpace(para_type);
+          } else {
+            para_type = if (
+              try self.ctx.types().replaceScalar(para_type, stype.t)
+            ) |repl| repl else {
+              self.ctx.logger.ExpectedExprOfTypeXGotY(&.{
+                para_type.at(item.content.pos), stype,
+              });
+              _ = try builder.push(self.ctx.types().poison().predef(), false);
+              continue;
+            };
           }
         }
         const pst = para_type.at(item.content.pos);
