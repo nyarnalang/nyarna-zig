@@ -837,7 +837,7 @@ pub const Impl = lib.Provider.Wrapper(struct {
   ) nyarna.Error!*model.Value {
     switch (eval.target_type.named.data) {
       .int => |*int| {
-        var ret: i64 = 0;
+        var ret: i64 = 1;
         for (list.content.items) |item| {
           if (@mulWithOverflow(i64, ret, item.data.int.content, &ret)) {
             eval.ctx.logger.OutOfRange(pos, eval.target_type, "<overflow>");
@@ -849,7 +849,7 @@ pub const Impl = lib.Provider.Wrapper(struct {
         return try eval.ctx.intAsValue(pos, ret, unit, int);
       },
       .float => |*fl| {
-        var ret: f64 = 0;
+        var ret: f64 = 1;
         for (list.content.items) |item| ret *= item.data.float.content;
         const unit = if (list.content.items.len == 0) 0
         else list.content.items[0].data.float.cur_unit;

@@ -197,14 +197,37 @@ pub const Resolver = struct {
       // access on an unknown function. can't be resolved.
       .function_returning => |*fr| fr.ns,
       .runtime_chain => |*rc| blk: {
-        if (try searchAccessible(self.intpr, rc.t, uacc.id)) |sr| switch (sr) {
+        const type_val = switch (rc.base.data) {
+          .expression => |expr| switch (expr.data) {
+            .value => |val| switch (val.data) {
+              .@"type" => |tv| if (rc.indexes.items.len == 0) tv else null,
+              else => null,
+            },
+            else => null,
+          },
+          else => null,
+        };
+
+        if (
+          try searchAccessible(
+            self.intpr, if (type_val) |tv| tv.t else rc.t, uacc.id)
+        ) |sr| switch (sr) {
           .field => |field| {
-            try rc.indexes.append(self.intpr.allocator(), field.index);
-            rc.t = field.t;
-            return res;
+            if (type_val != null) {
+              self.intpr.ctx.logger.FieldAccessWithoutInstance(uacc.node().pos);
+              return .poison;
+            } else {
+              try rc.indexes.append(self.intpr.allocator(), field.index);
+              rc.t = field.t;
+              return res;
+            }
           },
           .symbol => |sym| {
             if (sym.data == .poison) return Resolution.poison;
+            if (type_val != null) {
+              return Resolution.symRef(
+                rc.ns, sym, null, rc.last_name_pos, false);
+            }
             const subject = if (rc.indexes.items.len == 0) rc.base
               else (try self.intpr.node_gen.raccess(
                 uacc.node().pos, rc.base, rc.indexes.items, rc.last_name_pos,
