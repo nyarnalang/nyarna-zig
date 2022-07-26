@@ -116,7 +116,7 @@ pub const SymbolDefs = struct {
     return &ret.proc;
   }
 
-  inline fn logger(self: *SymbolDefs) *errors.Handler {
+  fn logger(self: *SymbolDefs) *errors.Handler {
     return self.intpr.ctx.logger;
   }
 

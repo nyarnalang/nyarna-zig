@@ -6,11 +6,11 @@
   Bike = \Record:
     name: \Text
   \end(Record)
-:backends:<val \doc, syntax definitions>
+:backends:|\doc|
   sum = \backend:
   :funcs:
     process = \matcher:
-    :(\Bike):<val \bike>
+    :(\Bike):|\bike|
       \process(\bike::name)
     \end(matcher)
   :body:

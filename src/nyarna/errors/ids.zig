@@ -26,7 +26,7 @@ pub const GenericParserError = enum {
   ConstructorUnavailable, NoBuiltinProvider, IllegalContentInPrototypeFuncs,
   BlockNameAtTopLevel, KeywordMustBeCalled, NotAllowedForOption,
   CannotCallLibraryImport, UnexpectedBlockNameExpr, NotABackend, EmptyBackend,
-  BackendOutsideSchemaDef, InvalidCollector,
+  BackendOutsideSchemaDef, InvalidCollector, UnexpectedCaptureVars,
 };
 
 pub const WrongItemError = enum {
@@ -87,7 +87,7 @@ pub const ScalarError = enum {
   UnknownResolver, UnknownUnique, UnknownPrototype, UnknownBuiltin,
   DoesntHaveConstructor, InvalidNumber, NumberTooLarge, TooManyDecimals,
   FactorMustntBeNegative, MustHaveDefinedSuffix, InvalidDecimals,
-  UnexpectedBlockVar, UnknownBackend,
+  UnknownBackend,
 };
 
 pub const WrongIdError = enum {

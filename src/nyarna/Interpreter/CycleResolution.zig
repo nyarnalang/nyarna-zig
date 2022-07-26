@@ -55,7 +55,7 @@ const TypeResolver = struct {
     };
   }
 
-  inline fn uStruct(gen: anytype) graph.ResolutionContext.Result {
+  fn uStruct(gen: anytype) graph.ResolutionContext.Result {
     return .{.unfinished_type = .{.structural = gen.generated.?}};
   }
 
@@ -279,7 +279,7 @@ pub fn create(
   return res;
 }
 
-inline fn createStructural(self: *CycleResolution, gen: anytype) !void {
+fn createStructural(self: *CycleResolution, gen: anytype) !void {
   gen.generated = try self.intpr.ctx.global().create(model.Type.Structural);
 }
 

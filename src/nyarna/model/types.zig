@@ -35,7 +35,7 @@ pub const Callable = struct {
   /// therefore never interact with the type lattice.
   repr: *Callable,
 
-  pub inline fn typedef(self: *const @This()) Type {
+  pub fn typedef(self: *const @This()) Type {
     return Structural.typedef(self);
   }
 };
@@ -44,11 +44,11 @@ pub const Callable = struct {
 pub const Concat = struct {
   inner: Type,
 
-  pub inline fn pos(self: *@This()) Position {
+  pub fn pos(self: *@This()) Position {
     return Structural.pos(self);
   }
 
-  pub inline fn typedef(self: *const @This()) Type {
+  pub fn typedef(self: *const @This()) Type {
     return Structural.typedef(self);
   }
 };
@@ -60,15 +60,15 @@ pub const Enum = struct {
   /// the map's value is the position where the enum value has been defined.
   values: std.StringArrayHashMapUnmanaged(model.Position),
 
-  pub inline fn pos(self: *const @This()) Position {
+  pub fn pos(self: *const @This()) Position {
     return Named.pos(self);
   }
 
-  pub inline fn typedef(self: *const @This()) Type {
+  pub fn typedef(self: *const @This()) Type {
     return Named.typedef(self);
   }
 
-  pub inline fn named(self: *const @This()) *Named {
+  pub fn named(self: *const @This()) *Named {
     return Named.parent(self);
   }
 };
@@ -85,15 +85,15 @@ pub const FloatNum = struct {
   max: f64,
   suffixes: []Unit,
 
-  pub inline fn pos(self: *@This()) Position {
+  pub fn pos(self: *@This()) Position {
     return Named.pos(self);
   }
 
-  pub inline fn typedef(self: *const @This()) Type {
+  pub fn typedef(self: *const @This()) Type {
     return Named.typedef(self);
   }
 
-  pub inline fn named(self: *const @This()) *Named {
+  pub fn named(self: *const @This()) *Named {
     return Named.parent(self);
   }
 };
@@ -104,11 +104,11 @@ pub const Intersection = struct {
   scalar: ?Type,
   types: []Type,
 
-  pub inline fn pos(self: *@This()) Position {
+  pub fn pos(self: *@This()) Position {
     return Structural.pos(self);
   }
 
-  pub inline fn typedef(self: *const @This()) Type {
+  pub fn typedef(self: *const @This()) Type {
     return Structural.typedef(self);
   }
 };
@@ -125,15 +125,15 @@ pub const IntNum = struct {
   max: i64,
   suffixes: []Unit,
 
-  pub inline fn pos(self: *@This()) Position {
+  pub fn pos(self: *@This()) Position {
     return Named.pos(self);
   }
 
-  pub inline fn typedef(self: *const @This()) Type {
+  pub fn typedef(self: *const @This()) Type {
     return Named.typedef(self);
   }
 
-  pub inline fn named(self: *const @This()) *Named {
+  pub fn named(self: *const @This()) *Named {
     return Named.parent(self);
   }
 };
@@ -142,11 +142,11 @@ pub const IntNum = struct {
 pub const List = struct {
   inner: Type,
 
-  pub inline fn pos(self: *@This()) Position {
+  pub fn pos(self: *@This()) Position {
     return Structural.pos(self);
   }
 
-  pub inline fn typedef(self: *const @This()) Type {
+  pub fn typedef(self: *const @This()) Type {
     return Structural.typedef(self);
   }
 };
@@ -156,11 +156,11 @@ pub const HashMap = struct {
   key  : model.Type,
   value: model.Type,
 
-  pub inline fn pos(self: *@This()) Position {
+  pub fn pos(self: *@This()) Position {
     return Structural.pos(self);
   }
 
-  pub inline fn typedef(self: *const @This()) Type {
+  pub fn typedef(self: *const @This()) Type {
     return Structural.typedef(self);
   }
 };
@@ -169,11 +169,11 @@ pub const HashMap = struct {
 pub const Optional = struct {
   inner: Type,
 
-  pub inline fn pos(self: *@This()) Position {
+  pub fn pos(self: *@This()) Position {
     return Structural.pos(self);
   }
 
-  pub inline fn typedef(self: *const @This()) Type {
+  pub fn typedef(self: *const @This()) Type {
     return Structural.typedef(self);
   }
 };
@@ -194,15 +194,15 @@ pub const Sequence = struct {
     repr: *Sequence,
   },
 
-  pub inline fn pos(self: *@This()) Position {
+  pub fn pos(self: *@This()) Position {
     return Structural.pos(self);
   }
 
-  pub inline fn typedef(self: *const @This()) Type {
+  pub fn typedef(self: *const @This()) Type {
     return Structural.typedef(self);
   }
 
-  pub inline fn repr(self: *const @This()) Type {
+  pub fn repr(self: *const @This()) Type {
     return if (self.auto) |auto| auto.repr.typedef() else self.typedef();
   }
 };
@@ -217,11 +217,11 @@ pub const Record = struct {
     return Named.pos(self);
   }
 
-  pub inline fn typedef(self: *const @This()) Type {
+  pub fn typedef(self: *const @This()) Type {
     return Named.typedef(self);
   }
 
-  pub inline fn named(self: *const @This()) *Named {
+  pub fn named(self: *const @This()) *Named {
     return Named.parent(self);
   }
 };
@@ -241,11 +241,11 @@ pub const Textual = struct {
   /// not changed after creation
   exclude: std.hash_map.AutoHashMapUnmanaged(u21, void),
 
-  pub inline fn pos(self: *@This()) Position {
+  pub fn pos(self: *@This()) Position {
     return Named.pos(self);
   }
 
-  pub inline fn typedef(self: *const @This()) Type {
+  pub fn typedef(self: *const @This()) Type {
     return Named.typedef(self);
   }
 
@@ -393,21 +393,21 @@ pub const Type = union(enum) {
     };
   }
 
-  pub inline fn isStruc(t: Type, comptime expected: anytype) bool {
+  pub fn isStruc(t: Type, comptime expected: anytype) bool {
     return switch (t) {
       .structural => |strct| strct.* == expected,
       else => false,
     };
   }
 
-  pub inline fn isNamed(t: Type, comptime expected: anytype) bool {
+  pub fn isNamed(t: Type, comptime expected: anytype) bool {
     return switch (t) {
       .named => |named| named.data == expected,
       else => false,
     };
   }
 
-  pub inline fn eql(a: Type, b: Type) bool {
+  pub fn eql(a: Type, b: Type) bool {
     return switch (a) {
       .named => |ia|
         switch (b) {.named => |ib| ia == ib, else => false},
@@ -519,11 +519,11 @@ pub const Type = union(enum) {
     }
   }
 
-  pub inline fn formatter(self: Type) std.fmt.Formatter(format) {
+  pub fn formatter(self: Type) std.fmt.Formatter(format) {
     return .{.data = self};
   }
 
-  pub inline fn formatterAll(types: []const Type)
+  pub fn formatterAll(types: []const Type)
       std.fmt.Formatter(formatAll) {
     return .{.data = types};
   }

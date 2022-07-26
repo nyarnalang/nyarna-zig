@@ -14,6 +14,7 @@ const Lexer        = @import("Lexer.zig");
 const nyarna       = @import("../../nyarna.zig");
 const ModuleEntry  = @import("../Globals.zig").ModuleEntry;
 const Parser       = @import("../Parser.zig");
+const PipeCapture  = @import("PipeCapture.zig");
 const syntaxes     = @import("syntaxes.zig");
 const unicode      = @import("../unicode.zig");
 
@@ -88,23 +89,23 @@ state    : State,
 cur      : model.Token,
 cur_start: model.Cursor,
 
-pub inline fn allocator(self: *@This()) std.mem.Allocator {
+pub fn allocator(self: *@This()) std.mem.Allocator {
   return self.intpr().allocator();
 }
 
-pub inline fn intpr(self: *@This()) *Interpreter {
+pub fn intpr(self: *@This()) *Interpreter {
   return self.lexer.intpr;
 }
 
-pub inline fn logger(self: *@This()) *errors.Handler {
+pub fn logger(self: *@This()) *errors.Handler {
   return self.intpr().ctx.logger;
 }
 
-pub inline fn loader(self: *@This()) *Loader {
+pub fn loader(self: *@This()) *Loader {
   return self.intpr().loader;
 }
 
-pub inline fn source(self: *@This()) *const model.Source {
+pub fn source(self: *@This()) *const model.Source {
   return self.lexer.walker.source;
 }
 
@@ -138,12 +139,13 @@ fn pushLevel(self: *@This(), fullast: bool) !void {
     .command   = undefined,
     .fullast   = fullast,
     .sym_start = self.intpr().symbols.items.len,
+    .capture   = &.{},
   });
 }
 
 /// retrieves the next valid token from the lexer.
 /// emits errors for any invalid token along the way.
-pub inline fn advance(self: *@This()) void {
+pub fn advance(self: *@This()) void {
   while (true) {
     self.cur_start = self.lexer.recent_end;
     (switch (self.lexer.next() catch blk: {
@@ -181,7 +183,7 @@ pub inline fn advance(self: *@This()) void {
 
 /// retrieves the next token from the lexer. true iff that token is valid.
 /// if false is returned, self.cur is to be considered undefined.
-pub inline fn getNext(self: *@This()) bool {
+pub fn getNext(self: *@This()) bool {
   self.cur_start = self.lexer.recent_end;
   (switch (self.lexer.next() catch {
     self.logger().InvalidUtf8Encoding(
@@ -219,11 +221,11 @@ fn leaveLevel(self: *@This()) !void {
   _ = self.levels.pop();
 }
 
-inline fn curLevel(self: *@This()) *ContentLevel {
+fn curLevel(self: *@This()) *ContentLevel {
   return last(self.levels.items);
 }
 
-inline fn procStart(self: *@This(), implicit_fullast: bool) !void {
+fn procStart(self: *@This(), implicit_fullast: bool) !void {
   while (self.cur == .space or self.cur == .indent) self.advance();
   // this state is used for initial top-level and for list arguments.
   // list arguments do not change block configuration and so will always
@@ -235,7 +237,7 @@ inline fn procStart(self: *@This(), implicit_fullast: bool) !void {
   self.state = .default;
 }
 
-inline fn procPossibleStart(self: *@This()) !void {
+fn procPossibleStart(self: *@This()) !void {
   while (self.cur == .space) self.advance();
   if (self.cur == .list_end) {
     self.state = .after_list;
@@ -245,7 +247,7 @@ inline fn procPossibleStart(self: *@This()) !void {
   }
 }
 
-inline fn procEndSource(self: *@This()) !void {
+fn procEndSource(self: *@This()) !void {
   while (self.levels.items.len > 1) {
     try self.leaveLevel();
     const parent = self.curLevel();
@@ -269,7 +271,7 @@ inline fn procEndSource(self: *@This()) !void {
   }
 }
 
-inline fn procSymref(self: *@This()) !void {
+fn procSymref(self: *@This()) !void {
   self.curLevel().command = .{
     .start = self.cur_start,
     .info = .{
@@ -288,7 +290,7 @@ inline fn procSymref(self: *@This()) !void {
   self.advance();
 }
 
-inline fn procLeaveArg(self: *@This()) !void {
+fn procLeaveArg(self: *@This()) !void {
   try self.leaveLevel();
   if (self.cur == .comma) {
     self.advance();
@@ -296,7 +298,7 @@ inline fn procLeaveArg(self: *@This()) !void {
   } else self.state = .after_list;
 }
 
-inline fn procParagraphEnd(self: *@This()) !void {
+fn procParagraphEnd(self: *@This()) !void {
   const newline_count = self.lexer.newline_count;
   self.advance();
   if (self.cur != .block_end_open and self.cur != .end_source) {
@@ -310,7 +312,7 @@ fn skipOverBlockConfig(self: *@This()) !void {
   self.advance();
   var colon_start: ?model.Position = null;
   var buffer: model.BlockConfig = undefined;
-  const check_swallow = if (self.cur == .diamond_open) blk: {
+  const check_pipe = if (self.cur == .diamond_open) blk: {
     try BlockConfig.init(
       &buffer, self.allocator(), self).parse();
     if (self.cur == .blocks_sep) {
@@ -319,10 +321,18 @@ fn skipOverBlockConfig(self: *@This()) !void {
       break :blk true;
     } else break :blk false;
   } else true;
+  const check_swallow = if (check_pipe) if (self.cur == .pipe) blk: {
+    try PipeCapture.init(self, self.curLevel()).parse();
+    if (self.cur == .blocks_sep) {
+      colon_start = self.lexer.walker.posFrom(self.cur_start);
+      self.advance();
+      break :blk true;
+    } else break :blk false;
+  } else true else false;
   if (check_swallow) _ = self.checkSwallow(colon_start);
 }
 
-inline fn procBlockNameStart(self: *@This()) !void {
+fn procBlockNameStart(self: *@This()) !void {
   if (self.levels.items.len == 1) {
     const start = self.cur_start;
     while (true) {
@@ -342,7 +352,7 @@ inline fn procBlockNameStart(self: *@This()) !void {
   }
 }
 
-inline fn enterBlockNameExpr(self: *@This(), valid: bool) !void {
+fn enterBlockNameExpr(self: *@This(), valid: bool) !void {
   const start = self.cur_start;
   while (self.cur == .space) self.advance();
   try self.pushLevel(self.curLevel().fullast);
@@ -367,7 +377,7 @@ inline fn enterBlockNameExpr(self: *@This(), valid: bool) !void {
   self.advance();
 }
 
-inline fn procBlockNameExprStart(self: *@This()) !void {
+fn procBlockNameExprStart(self: *@This()) !void {
   const valid = if (self.levels.items.len > 1) blk: {
     try self.leaveLevel();
     break :blk true;
@@ -375,7 +385,7 @@ inline fn procBlockNameExprStart(self: *@This()) !void {
   try self.enterBlockNameExpr(valid);
 }
 
-inline fn procEndCommand(self: *@This()) !void {
+fn procEndCommand(self: *@This()) !void {
   self.advance();
   const do_shift = switch (self.cur) {
     .call_id => blk: {
@@ -430,17 +440,17 @@ inline fn procEndCommand(self: *@This()) !void {
   }
 }
 
-inline fn procIllegalNameSep(self: *@This()) void {
+fn procIllegalNameSep(self: *@This()) void {
   self.logger().IllegalNameSep(self.lexer.walker.posFrom(self.cur_start));
   self.advance();
 }
 
-inline fn procIdSet(self: *@This()) void {
+fn procIdSet(self: *@This()) void {
   self.state = .before_id;
   self.advance();
 }
 
-inline fn procTextual(self: *@This()) !void {
+fn procTextual(self: *@This()) !void {
   var content: std.ArrayListUnmanaged(u8) = .{};
   var non_space_len: usize = 0;
   var non_space_line_len: usize = 0;
@@ -532,7 +542,7 @@ inline fn procTextual(self: *@This()) !void {
   } else self.state = .default; // happens with space at block/arg end
 }
 
-inline fn procCommand(self: *@This()) !void {
+fn procCommand(self: *@This()) !void {
   var lvl = self.curLevel();
   while (true) switch (lvl.command.info.unknown.data) {
     .import => |*import| {
@@ -698,7 +708,7 @@ inline fn procCommand(self: *@This()) !void {
   }
 }
 
-inline fn procAfterList(self: *@This()) !void {
+fn procAfterList(self: *@This()) !void {
   const end = self.lexer.recent_end;
   const lvl = self.curLevel();
   switch (lvl.semantics) {
@@ -768,7 +778,7 @@ inline fn procAfterList(self: *@This()) !void {
   }
 }
 
-inline fn procAfterBlocksStart(self: *@This()) !void {
+fn procAfterBlocksStart(self: *@This()) !void {
   var pb_exists = PrimaryBlockExists.unknown;
   if (try self.processBlockHeader(&pb_exists)) {
     self.state =
@@ -803,7 +813,7 @@ inline fn procAfterBlocksStart(self: *@This()) !void {
   }
 }
 
-inline fn procBlockName(self: *@This()) !void {
+fn procBlockName(self: *@This()) !void {
   while (true) {
     self.advance();
     if (self.cur != .space) break;
@@ -861,7 +871,7 @@ inline fn procBlockName(self: *@This()) !void {
   ) .special else .default;
 }
 
-inline fn procBeforeId(self: *@This()) !void {
+fn procBeforeId(self: *@This()) !void {
   while (self.cur == .space) self.advance();
   if (self.cur == .call_id) {
     self.advance();
@@ -872,7 +882,7 @@ inline fn procBeforeId(self: *@This()) !void {
   self.state = .after_id;
 }
 
-inline fn procAfterId(self: *@This()) !void {
+fn procAfterId(self: *@This()) !void {
   while (self.cur == .space) self.advance();
   switch (self.cur) {
     .comma => {
@@ -895,7 +905,7 @@ inline fn procAfterId(self: *@This()) !void {
   }
 }
 
-inline fn procSpecial(self: *@This()) !void {
+fn procSpecial(self: *@This()) !void {
   const proc = self.curLevel().syntax_proc.?;
   const result = try switch (self.cur) {
     .indent => syntaxes.SpecialSyntax.Processor.Action.none,
@@ -949,7 +959,7 @@ inline fn procSpecial(self: *@This()) !void {
       const bh = &value.data.block_header;
 
       self.advance();
-      const check_swallow: ?model.Position =
+      const check_pipe: ?model.Position =
         if (self.cur == .diamond_open) blk: {
           bh.config = @as(model.BlockConfig, undefined);
           try BlockConfig.init(
@@ -959,6 +969,13 @@ inline fn procSpecial(self: *@This()) !void {
             break :blk self.lexer.walker.posFrom(self.cur_start);
           } else break :blk null;
         } else self.source().between(start, self.cur_start);
+      const check_swallow = if (check_pipe) |pos| if (self.cur == .pipe) blk: {
+        try PipeCapture.init(self, self.curLevel()).parse();
+        if (self.cur == .blocks_sep) {
+          defer self.advance();
+          break :blk self.lexer.walker.posFrom(self.cur_start);
+        } else break :blk null;
+      } else pos else null;
       if (check_swallow) |colon_pos| {
         bh.swallow_depth = self.checkSwallow(colon_pos);
       }
@@ -1041,7 +1058,7 @@ fn processBlockHeader(self: *@This(), pb_exists: ?*PrimaryBlockExists) !bool {
     self.levels.items.len - if (pb_exists == null) @as(usize, 2) else 1];
   // position of the colon *after* a block header, for additional swallow
   var colon_start: ?model.Position = null;
-  const check_swallow = if (self.cur == .diamond_open) blk: {
+  const check_pipe = if (self.cur == .diamond_open) blk: {
     const config = try self.allocator().create(model.BlockConfig);
     try BlockConfig.init(config, self.allocator(), self).parse();
     const pos = self.source().at(self.cur_start);
@@ -1058,6 +1075,20 @@ fn processBlockHeader(self: *@This(), pb_exists: ?*PrimaryBlockExists) !bool {
       break :blk true;
     } else break :blk false;
   } else true;
+  const check_swallow = if (check_pipe) if (self.cur == .pipe) blk: {
+    if (pb_exists) |ind| if (ind.* == .unknown) {
+      try parent.command.pushPrimary(self.source().at(self.cur_start), true);
+      try self.pushLevel(
+        if (parent.command.choseAstNodeParam()) false else parent.fullast);
+      ind.* = .yes;
+    };
+    try PipeCapture.init(self, self.curLevel()).parse();
+    if (self.cur == .blocks_sep) {
+      colon_start = self.lexer.walker.posFrom(self.cur_start);
+      self.advance();
+      break :blk true;
+    } else break :blk false;
+  } else true else false;
   if (check_swallow) {
     if (self.checkSwallow(colon_start)) |swallow_depth| {
       if (pb_exists) |ind| {

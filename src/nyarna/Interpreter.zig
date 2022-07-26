@@ -11,7 +11,7 @@
 
 const std = @import("std");
 
-const CycleResolution   = @import("Interpreter/CycleResolution.zig");
+const CycleResolution     = @import("Interpreter/CycleResolution.zig");
 const chains              = @import("Interpreter/chains.zig");
 const graph               = @import("Interpreter/graph.zig");
 const IntersectionChecker = @import("Interpreter/IntersectionChecker.zig");
@@ -26,6 +26,8 @@ const lib    = nyarna.lib;
 const Loader = nyarna.Loader;
 const model  = nyarna.model;
 const Types  = nyarna.Types;
+
+const last = @import("helpers.zig").last;
 
 pub const Errors = error {
   referred_source_unavailable,
@@ -193,7 +195,7 @@ pub fn create(
   return ret;
 }
 
-pub inline fn allocator(self: *Interpreter) std.mem.Allocator {
+pub fn allocator(self: *Interpreter) std.mem.Allocator {
   return self.loader.storage.allocator();
 }
 
@@ -210,7 +212,7 @@ pub fn addNamespace(self: *Interpreter, character: u21) !void {
   }
 }
 
-pub inline fn namespace(self: *Interpreter, ns: u15) *Namespace {
+pub fn namespace(self: *Interpreter, ns: u15) *Namespace {
   return &self.namespaces.items[ns];
 }
 
@@ -230,7 +232,7 @@ pub fn resetSyms(self: *Interpreter, state: Mark) void {
   }
 }
 
-pub inline fn type_namespace(self: *Interpreter, t: model.Type) !*Namespace {
+pub fn type_namespace(self: *Interpreter, t: model.Type) !*Namespace {
   const entry = try self.type_namespaces.getOrPutValue(
     self.allocator(), t, Namespace{.index = null});
   return entry.value_ptr;
@@ -642,11 +644,8 @@ fn tryInterpretCapture(
   self: *Interpreter,
   cpt : *model.Node.Capture,
 ) !?*model.Expression {
-  inline for (.{.val, .key, .index}) |name| {
-    if (@field(cpt, @tagName(name))) |item| {
-      self.ctx.logger.UnexpectedBlockVar(item.pos, @tagName(name));
-    }
-  }
+  self.ctx.logger.UnexpectedCaptureVars(
+    cpt.vars[0].pos.span(last(cpt.vars).pos));
   // remove capture from the tree, replace it with content
   const content = cpt.content;
   cpt.node().data = content.data;
@@ -1565,57 +1564,52 @@ pub fn ensureMatchTypesPresent(
   stage: Stage,
 ) nyarna.Error!CheckResult {
   var res: CheckResult = .success;
-  for (cases) |*case| switch (case.variable) {
-    .def => |val| {
-      if (
-        try self.associate(case.t, self.ctx.types().@"type"().predef(), stage)
-      ) |expr| {
-        case.t.data = .{.expression = expr};
-        const value = try self.ctx.evaluator().evaluate(expr);
-        expr.data = .{.value = value};
-        expr.expected_type = try self.ctx.types().valueType(value);
-        switch (value.data) {
-          .@"type" => |tv| {
-            const sym = try self.ctx.global().create(model.Symbol);
-            sym.* = .{
-              .defined_at = expr.pos,
-              .name       = try self.ctx.global().dupe(u8, val.name),
-              .data       = .{.variable = .{
-                .spec       = tv.t.at(value.origin),
-                .container  = case.content.container.?,
-                .offset     = case.content.container.?.num_values,
-                .kind       = .given,
-              }},
-            };
-            case.variable = .{.sym = &sym.data.variable};
-            const ns = self.namespace(val.ns);
-            const mark = self.markSyms();
-            defer self.resetSyms(mark);
-            if (try ns.tryRegister(self, sym)) {
-              _ = try
-                self.tryInterpret(case.content.root, .{.kind = .resolve});
-            }
-          },
-          .poison => res = .poison,
-          else => unreachable,
-        }
-      } else if (res != .poison) res = .unfinished;
-    },
-    .sym  => {},
-    .none => if (
+  for (cases) |*case| {
+    const t = if (
       try self.associate(case.t, self.ctx.types().@"type"().predef(), stage)
-    ) |expr| {
+    ) |expr| blk: {
       case.t.data = .{.expression = expr};
       const value = try self.ctx.evaluator().evaluate(expr);
       expr.data = .{.value = value};
       expr.expected_type = try self.ctx.types().valueType(value);
       switch (value.data) {
-        .@"type" => {},
-        .poison  => res = .poison,
-        else     => unreachable,
+        .@"type" => |tv| break :blk tv.t.at(value.origin),
+        .poison => {
+          res = .poison;
+          continue;
+        },
+        else => unreachable,
       }
-    },
-  };
+    } else {
+      res = .unfinished;
+      continue;
+    };
+
+    switch (case.variable) {
+      .def => |val| {
+        const sym = try self.ctx.global().create(model.Symbol);
+        sym.* = .{
+          .defined_at = val.pos,
+          .name       = try self.ctx.global().dupe(u8, val.name),
+          .data       = .{.variable = .{
+            .spec       = t,
+            .container  = case.content.container.?,
+            .offset     = case.content.container.?.num_values,
+            .kind       = .given,
+          }},
+        };
+        case.variable = .{.sym = &sym.data.variable};
+        const ns = self.namespace(val.ns);
+        const mark = self.markSyms();
+        defer self.resetSyms(mark);
+        if (try ns.tryRegister(self, sym)) {
+          _ = try
+            self.tryInterpret(case.content.root, .{.kind = .resolve});
+        }
+      },
+      .sym, .none  => {},
+    }
+  }
   return res;
 }
 
@@ -1641,8 +1635,7 @@ fn tryInterpretMatchCases(
   if (res != .success) return res;
 
   for (match.cases) |case| {
-    const has_var =
-      if (case.content.capture) |capture| capture.val != null else false;
+    const has_var = case.content.capture.len > 0;
     try builder.push(
       &case.t.data.expression.data.value.data.@"type".t,
       case.t.pos,
@@ -1699,17 +1692,17 @@ pub fn tryPregenMatcherFunc(
   stage   : Stage,
 ) !?*model.Function {
   if (matcher.pregen) |pregen| return pregen;
-  if ((
-    try self.ensureMatchTypesPresent(matcher.body.cases, stage)
-  ) == .success) {
+  if (
+    (try self.ensureMatchTypesPresent(matcher.body.cases, stage)) == .success
+  ) {
     const input_type = blk: {
       var builder = try Types.IntersectionBuilder.init(
         matcher.body.cases.len, self.allocator());
       var checker = IntersectionChecker.init(self, true);
       var seen_failed = false;
       for (matcher.body.cases) |case| {
-        const sym = case.variable.sym;
-        if (!(try checker.push(&builder, &sym.spec.t, sym.spec.pos))) {
+        const val = case.t.data.expression.data.value;
+        if (!(try checker.push(&builder, &val.data.@"type".t, val.origin))) {
           seen_failed = true;
         }
       }
@@ -3466,7 +3459,7 @@ pub fn probeType(
   }
 }
 
-pub inline fn genValueNode(
+pub fn genValueNode(
   self   : *Interpreter,
   content: *model.Value,
 ) !*model.Node {

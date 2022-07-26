@@ -65,12 +65,12 @@ pub const Position = struct {
 
   /// Creates a new position starting at the start of left and ending at the end
   /// of right.
-  pub inline fn span(left: Position, right: Position) Position {
+  pub fn span(left: Position, right: Position) Position {
     std.debug.assert(left.source == right.source);
     return .{.source = left.source, .start = left.start, .end = right.end};
   }
 
-  pub inline fn intrinsic() Position {
+  pub fn intrinsic() Position {
     return .{
       .start  = Cursor.unknown(),
       .end    = Cursor.unknown(),
@@ -181,12 +181,12 @@ pub const Source = struct {
 
   /// returns the position inside the source at the given cursor
   /// (starts & ends there)
-  pub inline fn at(s: *const Source, cursor: Cursor) Position {
+  pub fn at(s: *const Source, cursor: Cursor) Position {
     return s.between(cursor, cursor);
   }
 
   /// returns the position inside the source between start and end
-  pub inline fn between(s: *const Source, start: Cursor, end: Cursor) Position {
+  pub fn between(s: *const Source, start: Cursor, end: Cursor) Position {
     return .{.source = s.meta, .start = start, .end = end};
   }
 };
@@ -252,12 +252,6 @@ pub const BlockConfig = struct {
     index: usize,
   };
 
-  pub const VarDef = struct {
-    cmd_char: u21,
-    name    : []const u8,
-    pos     : Position,
-  };
-
   /// custom syntax to use in this block.
   syntax: ?SyntaxDef = null,
   /// see doc of Map
@@ -270,10 +264,6 @@ pub const BlockConfig = struct {
   /// this requires the block being used in a context where it can return an
   /// Ast value.
   full_ast: ?Position = null,
-  // the three kinds of variables that may be defined in a block config
-  key  : ?VarDef = null,
-  val  : ?VarDef = null,
-  index: ?VarDef = null,
 };
 
 /// a type that has been specified at a certain position as target type.
@@ -330,7 +320,7 @@ pub const Function = struct {
   /// of this function.
   variables: *VariableContainer,
 
-  pub inline fn sig(self: *const Function) *const Signature {
+  pub fn sig(self: *const Function) *const Signature {
     return self.callable.sig;
   }
 
@@ -382,7 +372,7 @@ pub const Signature = struct {
     return sig.returns.isNamed(.ast);
   }
 
-  pub inline fn typedef(self: *const @This()) Type {
+  pub fn typedef(self: *const @This()) Type {
     return Type.Structural.typedef(self);
   }
 };

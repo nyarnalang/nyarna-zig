@@ -12,7 +12,7 @@ const Types       = nyarna.Types;
 const SchemaBuilder = @This();
 
 const BackendDef = struct {
-  doc_var: ?model.Node.Capture.VarDef,
+  doc_var: ?model.Value.Ast.VarDef,
   backend: *model.Node.Backend,
 };
 
@@ -27,7 +27,7 @@ const BackendBuilder = struct {
   fn merge(
     self      : *@This(),
     backend   : *model.Node.Backend,
-    doc_var   : ?model.Node.Capture.VarDef,
+    doc_var   : ?model.Value.Ast.VarDef,
     var_offset: u15,
   ) !void {
     // create the variable referencing the document, as specified by :<val \x>
@@ -116,7 +116,7 @@ pub fn destroy(self: *SchemaBuilder) void {
 fn pushBackend(
   self: *SchemaBuilder,
   node: *model.Node,
-  val : ?model.Node.Capture.VarDef,
+  val : ?model.Value.Ast.VarDef,
 ) !bool {
   switch (node.data) {
     .backend => |*b| try self.backends.append(
@@ -149,6 +149,7 @@ fn procBackend(
     .command   = undefined,
     .fullast   = false,
     .sym_start = self.loader.interpreter.symbols.items.len,
+    .capture   = &.{},
   };
 
   // generate a variable container for the backend's variables, calculate

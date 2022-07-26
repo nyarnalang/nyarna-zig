@@ -6,9 +6,9 @@
   \end(Record)
 
   typeOf = \matcher:
-  :(\Text):<val \v>
+  :(\Text):| \v |
     Text: \v
-  :(\Bold):<val \b>
+  :(\Bold):|\b |
     Bold: \b::content
   \end(matcher)
 \end(declare)

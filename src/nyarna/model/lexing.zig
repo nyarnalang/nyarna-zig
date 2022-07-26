@@ -66,6 +66,8 @@ pub const Token = enum(u16) {
   diamond_open,
   /// '>' specifying swallowing [7.10] or closing block config [7.11]
   diamond_close,
+  /// '|' opening or closing capture parameters
+  pipe,
   /// any special character inside a block with special syntax [7.12]
   special,
   /// signals the end of the current source.

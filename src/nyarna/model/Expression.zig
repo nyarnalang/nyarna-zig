@@ -172,7 +172,7 @@ pub const Varmap = struct {
 pub const VarRetrieval = struct {
   variable: *Symbol.Variable,
 
-  pub inline fn expr(self: *@This()) *Expression {
+  pub fn expr(self: *@This()) *Expression {
     return Expression.parent(self);
   }
 };
@@ -181,7 +181,7 @@ pub const tg = struct {
   pub const Concat = struct {
     inner: *Expression,
 
-    pub inline fn expr(self: *@This()) *Expression {
+    pub fn expr(self: *@This()) *Expression {
       return Expression.parent(self);
     }
   };
@@ -190,7 +190,7 @@ pub const tg = struct {
     key  : *Expression,
     value: *Expression,
 
-    pub inline fn expr(self: *@This()) *Expression {
+    pub fn expr(self: *@This()) *Expression {
       return Expression.parent(self);
     }
   };
@@ -198,7 +198,7 @@ pub const tg = struct {
   pub const List = struct {
     inner: *Expression,
 
-    pub inline fn expr(self: *@This()) *Expression {
+    pub fn expr(self: *@This()) *Expression {
       return Expression.parent(self);
     }
   };
@@ -206,7 +206,7 @@ pub const tg = struct {
   pub const Optional = struct {
     inner: *Expression,
 
-    pub inline fn expr(self: *@This()) *Expression {
+    pub fn expr(self: *@This()) *Expression {
       return Expression.parent(self);
     }
   };
@@ -216,7 +216,7 @@ pub const tg = struct {
     inner : []Varargs.Item,
     auto  : ?*Expression,
 
-    pub inline fn expr(self: *@This()) *Expression {
+    pub fn expr(self: *@This()) *Expression {
       return Expression.parent(self);
     }
   };

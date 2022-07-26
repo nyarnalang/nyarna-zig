@@ -29,10 +29,10 @@ pub fn init(
 }
 
 const ConfigItemKind = enum {
-  csym, empty, fullast, map, off,syntax, val, key, index, unknown,
+  csym, empty, fullast, map, off,syntax, unknown,
 };
 
-inline fn getItemKind(self: *BlockConfig, first: bool) ?ConfigItemKind {
+fn getItemKind(self: *BlockConfig, first: bool) ?ConfigItemKind {
   while (true) {
     self.parser.advance();
     if (self.parser.cur != .space) break;
@@ -59,9 +59,6 @@ inline fn getItemKind(self: *BlockConfig, first: bool) ?ConfigItemKind {
     std.hash.Adler32.hash("map")     => .map,
     std.hash.Adler32.hash("off")     => .off,
     std.hash.Adler32.hash("fullast") => .fullast,
-    std.hash.Adler32.hash("val")     => .val,
-    std.hash.Adler32.hash("key")     => .key,
-    std.hash.Adler32.hash("index")   => .index,
     std.hash.Adler32.hash("")        => .empty,
     else => blk: {
       self.parser.logger().UnknownConfigDirective(
@@ -71,7 +68,7 @@ inline fn getItemKind(self: *BlockConfig, first: bool) ?ConfigItemKind {
   };
 }
 
-inline fn procCsym(self: *BlockConfig) !bool {
+fn procCsym(self: *BlockConfig) !bool {
   if (self.parser.cur == .ns_char) {
     try self.map_list.append(.{
       .pos = self.parser.lexer.walker.posFrom(self.cur_item_start),
@@ -86,7 +83,7 @@ inline fn procCsym(self: *BlockConfig) !bool {
   }
 }
 
-inline fn procSyntax(self: *BlockConfig) bool {
+fn procSyntax(self: *BlockConfig) bool {
   if (self.parser.cur == .literal) {
     const syntax_name =
       self.parser.lexer.walker.contentFrom(self.parser.cur_start.byte_offset);
@@ -118,7 +115,7 @@ inline fn procSyntax(self: *BlockConfig) bool {
   }
 }
 
-inline fn procMap(self: *BlockConfig) !bool {
+fn procMap(self: *BlockConfig) !bool {
   var failed = false;
   if (self.parser.cur == .ns_char) {
     const from = self.parser.lexer.code_point;
@@ -145,7 +142,7 @@ const ResultAction = enum {
   none, recover, dont_consume_next,
 };
 
-inline fn procOff(self: *BlockConfig) !ResultAction {
+fn procOff(self: *BlockConfig) !ResultAction {
   switch (self.parser.cur) {
     .comment => self.into.off_comment =
       self.parser.lexer.walker.posFrom(self.parser.cur_start),
@@ -178,32 +175,6 @@ inline fn procOff(self: *BlockConfig) !ResultAction {
     }
   }
   return .none;
-}
-
-inline fn procVarSym(self: *BlockConfig, kind: ConfigItemKind) !bool {
-  const pos = self.parser.lexer.walker.posFrom(self.parser.cur_start);
-  if (self.parser.cur == .symref) {
-    const target = switch (kind) {
-      .val   => &self.into.val,
-      .key   => &self.into.key,
-      .index => &self.into.index,
-      else   => unreachable,
-    };
-    if (target.*) |prev| {
-      self.parser.logger().DuplicateBlockHeader(@tagName(kind), pos, prev.pos);
-      return false;
-    }
-    target.* = .{
-      .cmd_char = self.parser.lexer.code_point,
-      .name     = self.parser.lexer.recent_id,
-      .pos      = pos,
-    };
-    return true;
-  } else {
-    self.parser.logger().ExpectedXGotY(
-      pos, &.{.{.token = .symref}}, .{.token = self.parser.cur});
-    return false;
-  }
 }
 
 pub fn parse(self: *BlockConfig) !void {
@@ -242,9 +213,6 @@ pub fn parse(self: *BlockConfig) !void {
           self.into.full_ast =
             self.parser.lexer.walker.posFrom(self.parser.cur_start);
           break :consume_next;
-        },
-        .val, .key, .index => if (!(try self.procVarSym(kind))) {
-          recover = true;
         },
         .empty => {
           self.parser.logger().ExpectedXGotY(

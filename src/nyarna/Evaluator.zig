@@ -1061,7 +1061,7 @@ fn doEvaluate(
   };
 }
 
-inline fn toString(self: *Evaluator, input: anytype) ![]u8 {
+fn toString(self: *Evaluator, input: anytype) ![]u8 {
   const fmt = input.formatter();
   return std.fmt.allocPrint(self.ctx.global(), "{}", .{fmt});
 }

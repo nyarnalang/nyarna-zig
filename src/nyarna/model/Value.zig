@@ -11,15 +11,22 @@ const offset = @import("../helpers.zig").offset;
 const Value = @This();
 
 pub const Ast = struct {
+  /// a capture variable defined on this block.
+  pub const VarDef = struct {
+    ns  : u15,
+    name: []const u8,
+    pos : model.Position,
+  };
+
   root      : *Node,
   container : ?*model.VariableContainer,
   /// slice into the interpreters' list of symbols declarations.
   /// used for checking name collisions of variables that are introduced after
   /// parsing, e.g. function parameters or captures.
   inner_syms: []model.Symbol.Definition,
-  capture   : ?*Node.Capture,
+  capture   : []VarDef,
 
-  pub inline fn value(self: *@This()) *Value {
+  pub fn value(self: *@This()) *Value {
     return Value.parent(self);
   }
 };
@@ -30,7 +37,7 @@ pub const BlockHeader = struct {
   config       : ?model.BlockConfig = null,
   swallow_depth: ?u21 = null,
 
-  pub inline fn value(self: *@This()) *Value {
+  pub fn value(self: *@This()) *Value {
     return Value.parent(self);
   }
 };
@@ -40,7 +47,7 @@ pub const Concat = struct {
   t      : *const Type.Concat,
   content: std.ArrayList(*Value),
 
-  pub inline fn value(self: *@This()) *Value {
+  pub fn value(self: *@This()) *Value {
     return Value.parent(self);
   }
 };
@@ -55,7 +62,7 @@ pub const Definition = struct {
   },
   root: ?model.Position = null,
 
-  pub inline fn value(self: *@This()) *Value {
+  pub fn value(self: *@This()) *Value {
     return Value.parent(self);
   }
 };
@@ -65,7 +72,7 @@ pub const Enum = struct {
   t    : *const Type.Enum,
   index: usize,
 
-  pub inline fn value(self: *@This()) *Value {
+  pub fn value(self: *@This()) *Value {
     return Value.parent(self);
   }
 };
@@ -76,7 +83,7 @@ pub const FloatNum = struct {
   content : f64,
   cur_unit: usize,
 
-  pub inline fn value(self: *@This()) *Value {
+  pub fn value(self: *@This()) *Value {
     return Value.parent(self);
   }
 
@@ -124,7 +131,7 @@ pub const FloatNum = struct {
 pub const FuncRef = struct {
   func: *model.Function,
 
-  pub inline fn value(self: *@This()) *Value {
+  pub fn value(self: *@This()) *Value {
     return Value.parent(self);
   }
 };
@@ -135,7 +142,7 @@ pub const HashMap = struct {
   t: *const Type.HashMap,
   items: Items,
 
-  pub inline fn value(self: *@This()) *Value {
+  pub fn value(self: *@This()) *Value {
     return Value.parent(self);
   }
 };
@@ -146,7 +153,7 @@ pub const IntNum = struct {
   content : i64,
   cur_unit: usize,
 
-  pub inline fn value(self: *@This()) *Value {
+  pub fn value(self: *@This()) *Value {
     return Value.parent(self);
   }
 
@@ -197,7 +204,7 @@ pub const List = struct {
   t: *const Type.List,
   content: std.ArrayList(*Value),
 
-  pub inline fn value(self: *@This()) *Value {
+  pub fn value(self: *@This()) *Value {
     return Value.parent(self);
   }
 };
@@ -212,29 +219,29 @@ pub const Location = struct {
   borrow : ?model.Position = null,
   header : ?*BlockHeader   = null,
 
-  pub inline fn value(self: *@This()) *Value {
+  pub fn value(self: *@This()) *Value {
     return Value.parent(self);
   }
 
-  pub inline fn withDefault(self: *Location, v: *Expression) *Location {
+  pub fn withDefault(self: *Location, v: *Expression) *Location {
     std.debug.assert(self.default == null);
     self.default = v;
     return self;
   }
 
-  pub inline fn withHeader(self: *Location, v: *BlockHeader) *Location {
+  pub fn withHeader(self: *Location, v: *BlockHeader) *Location {
     std.debug.assert(self.header == null);
     self.header = v;
     return self;
   }
 
-  pub inline fn withPrimary(self: *Location, v: model.Position) *Location {
+  pub fn withPrimary(self: *Location, v: model.Position) *Location {
     std.debug.assert(self.primary == null);
     self.primary = v;
     return self;
   }
 
-  pub inline fn withVarargs(self: *Location, v: model.Position) *Location {
+  pub fn withVarargs(self: *Location, v: model.Position) *Location {
     std.debug.assert(self.varargs == null);
     self.varargs = v;
     return self;
@@ -246,7 +253,7 @@ pub const Output = struct {
   schema: ?*Schema,
   body  : *Value,
 
-  pub inline fn value(self: *@This()) *Value {
+  pub fn value(self: *@This()) *Value {
     return Value.parent(self);
   }
 };
@@ -254,7 +261,7 @@ pub const Output = struct {
 pub const PrototypeVal = struct {
   pt: model.Prototype,
 
-  pub inline fn value(self: *@This()) *Value {
+  pub fn value(self: *@This()) *Value {
     return Value.parent(self);
   }
 };
@@ -264,7 +271,7 @@ pub const Record = struct {
   t     : *const Type.Record,
   fields: []*Value,
 
-  pub inline fn value(self: *@This()) *Value {
+  pub fn value(self: *@This()) *Value {
     return Value.parent(self);
   }
 };
@@ -280,7 +287,7 @@ pub const Schema = struct {
   /// No more than one backend will be compiled into a schema.
   backend: ?*model.Function,
 
-  pub inline fn value(self: *@This()) *Value {
+  pub fn value(self: *@This()) *Value {
     return Value.parent(self);
   }
 };
@@ -290,11 +297,11 @@ pub const SchemaDef = struct {
   root    : *Node,
   backends: []*Node.Definition,
   /// This is the `val` capture on the backends block, if any.
-  doc_var : ?Node.Capture.VarDef,
+  doc_var : ?Ast.VarDef,
   /// if this SchemaDef has already been instaniated, this is its instance.
   instance: ?*Schema = null,
 
-  pub inline fn value(self: *@This()) *Value {
+  pub fn value(self: *@This()) *Value {
     return Value.parent(self);
   }
 };
@@ -308,7 +315,7 @@ pub const Seq = struct {
   t      : *const Type.Sequence,
   content: std.ArrayList(Item),
 
-  pub inline fn value(self: *@This()) *Value {
+  pub fn value(self: *@This()) *Value {
     return Value.parent(self);
   }
 };
@@ -319,7 +326,7 @@ pub const TextScalar = struct {
   t      : Type,
   content: []const u8,
 
-  pub inline fn value(self: *@This()) *Value {
+  pub fn value(self: *@This()) *Value {
     return Value.parent(self);
   }
 };
@@ -327,7 +334,7 @@ pub const TextScalar = struct {
 pub const TypeVal = struct {
   t: Type,
 
-  pub inline fn value(self: *@This()) *Value {
+  pub fn value(self: *@This()) *Value {
     return Value.parent(self);
   }
 };

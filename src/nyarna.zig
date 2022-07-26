@@ -52,16 +52,16 @@ pub const Context = struct {
   /// will be owned by Globals, though you are allowed (but not required)
   /// to deallocate it again using this allocator. Globals will deallocate
   /// all remaining data at the end of its lifetime.
-  pub inline fn global(self: Context) std.mem.Allocator {
+  pub fn global(self: Context) std.mem.Allocator {
     return self.data.storage.allocator();
   }
 
   /// Interface to the type lattice. It allows you to create and compare types.
-  pub inline fn types(self: Context) *Types {
+  pub fn types(self: Context) *Types {
     return &self.data.types;
   }
 
-  pub inline fn createValueExpr(
+  pub fn createValueExpr(
     self   : Context,
     content: *model.Value,
   ) !*model.Expression {
@@ -74,7 +74,7 @@ pub const Context = struct {
     return e;
   }
 
-  pub inline fn evaluator(self: *const Context) Evaluator {
+  pub fn evaluator(self: *const Context) Evaluator {
     return Evaluator{.ctx = self.*};
   }
 

@@ -192,6 +192,10 @@ const State = enum(i8) {
   /// may yield diamond_close (it's an error if it doesn't), then
   /// transitions to at_header or special_syntax.
   after_depth,
+  /// in front of a capture parameter.
+  capture_start,
+  /// after a capture parameter.
+  capture_param,
   /// like indent_capture, but transitions to special_syntax_check_indent
   special_syntax_indent_capture,
   /// like check_parsep, but transitions to special_syntax_check_indent
@@ -302,7 +306,7 @@ pub fn deinit(_: *Lexer) void {
 /// assumes current character is '#'.
 /// Reads comment content according to [7.5.1].
 /// Returns true iff comment includes newline character.
-inline fn readComment(self: *Lexer, cur: *u21) bool {
+fn readComment(self: *Lexer, cur: *u21) bool {
   cur.* = self.walker.nextInline() catch |e| {
     self.cur_stored = e;
     return false;
@@ -352,7 +356,7 @@ inline fn readComment(self: *Lexer, cur: *u21) bool {
 /// starts at cur character. while cur is newline, space or tab,
 /// read next character into cur. return number of newlines seen,
 /// while storing the beginning of the current line into l.line_start.
-inline fn emptyLines(self: *Lexer, cur: *u21) u16 {
+fn emptyLines(self: *Lexer, cur: *u21) u16 {
   var newlines_seen: u16 = 0;
   self.line_start = self.walker.before;
   while (true) {
@@ -417,7 +421,7 @@ inline fn emptyLines(self: *Lexer, cur: *u21) u16 {
 
 /// transition to a new state via the offset between base_from and base_to.
 /// used for transparently handling special_syntax transitions.
-inline fn transition(
+fn transition(
            self     : *Lexer,
   comptime base_from: State,
            base_to  : State,
@@ -426,7 +430,7 @@ inline fn transition(
     @enumToInt(self.state) + (@enumToInt(base_to) - @enumToInt(base_from)));
 }
 
-inline fn procIndentCapture(self: *Lexer, cur: *u21) ?Token {
+fn procIndentCapture(self: *Lexer, cur: *u21) ?Token {
   switch (cur.*) {
     4 => return .end_source,
     '#' => {
@@ -454,7 +458,7 @@ inline fn procIndentCapture(self: *Lexer, cur: *u21) ?Token {
   }
 }
 
-inline fn procCheckIndent(self: *Lexer, cur: *u21) ?Token {
+fn procCheckIndent(self: *Lexer, cur: *u21) ?Token {
   if (cur.* == 4) return .end_source;
   self.transition(
     .check_indent, if (self.colons_disabled_at == null)
@@ -473,7 +477,7 @@ inline fn procCheckIndent(self: *Lexer, cur: *u21) ?Token {
   } return null;
 }
 
-inline fn procCheckParsep(self: *Lexer, cur: *u21) ?Token {
+fn procCheckParsep(self: *Lexer, cur: *u21) ?Token {
   const newlines = self.emptyLines(cur);
   self.recent_end = self.line_start;
   self.transition(.check_parsep, .check_indent);
@@ -485,7 +489,7 @@ inline fn procCheckParsep(self: *Lexer, cur: *u21) ?Token {
   } else return null;
 }
 
-inline fn procCheckBlockName(self: *Lexer, cur: *u21) !?Token {
+fn procCheckBlockName(self: *Lexer, cur: *u21) !?Token {
   if (cur.* == ':') {
     // if previous block disabled comments, re-enable them. this needs
     // not be done for disabled colons, because if colons are disabled,
@@ -523,7 +527,7 @@ inline fn procCheckBlockName(self: *Lexer, cur: *u21) !?Token {
   return null;
 }
 
-inline fn procBlock(self: *Lexer, cur: *u21) !?Token {
+fn procBlock(self: *Lexer, cur: *u21) !?Token {
   const res =
     if (self.state == .in_block) try self.processContent(.block, cur)
     else try self.processContent(.special, cur);
@@ -540,13 +544,13 @@ inline fn procBlock(self: *Lexer, cur: *u21) !?Token {
   }
 }
 
-inline fn procArg(self: *Lexer, cur: *u21) !Token {
+fn procArg(self: *Lexer, cur: *u21) !Token {
   const res = try self.processContent(.args, cur);
   self.recent_end = self.walker.before;
   return if (res.token) |t| t else .ws_break;
 }
 
-inline fn procArgStart(self: *Lexer, cur: *u21) !?Token {
+fn procArgStart(self: *Lexer, cur: *u21) !?Token {
   if (try self.readDumpableSpace(cur)) {
     self.recent_end = self.walker.before;
     return .space;
@@ -566,7 +570,7 @@ inline fn procArgStart(self: *Lexer, cur: *u21) !?Token {
   }
 }
 
-inline fn procBeforeIdSetter(self: *Lexer, cur: *u21) !?Token {
+fn procBeforeIdSetter(self: *Lexer, cur: *u21) !?Token {
   if (try self.readDumpableSpace(cur)) {
     self.recent_end = self.walker.before;
     return .space;
@@ -586,7 +590,7 @@ inline fn procBeforeIdSetter(self: *Lexer, cur: *u21) !?Token {
   }
 }
 
-inline fn procAfterAccessColons(self: *Lexer, cur: *u21) ?Token {
+fn procAfterAccessColons(self: *Lexer, cur: *u21) ?Token {
   if (self.readIdentifier(cur)) {
     self.state = .after_id;
     self.recent_end = self.walker.before;
@@ -596,7 +600,7 @@ inline fn procAfterAccessColons(self: *Lexer, cur: *u21) ?Token {
   return null;
 }
 
-inline fn procAfterAssign(self: *Lexer, cur: *u21) !?Token {
+fn procAfterAssign(self: *Lexer, cur: *u21) !?Token {
   if (try self.exprContinuation(cur, false)) |t| {
     self.recent_end = self.walker.before;
     return t;
@@ -608,7 +612,7 @@ inline fn procAfterAssign(self: *Lexer, cur: *u21) !?Token {
   }
 }
 
-inline fn procReadBlockName(self: *Lexer, cur: *u21) !Token {
+fn procReadBlockName(self: *Lexer, cur: *u21) !Token {
   const res = try self.processContent(.block_name, cur);
   if (res.hit_line_end) {
     std.debug.assert(res.token == null);
@@ -621,7 +625,7 @@ inline fn procReadBlockName(self: *Lexer, cur: *u21) !Token {
   return res.token.?;
 }
 
-inline fn procAfterId(self: *Lexer, cur: *u21) !?Token {
+fn procAfterId(self: *Lexer, cur: *u21) !?Token {
   if (try self.exprContinuation(cur, false)) |t| {
     self.recent_end = self.walker.before;
     return t;
@@ -631,7 +635,7 @@ inline fn procAfterId(self: *Lexer, cur: *u21) !?Token {
   }
 }
 
-inline fn procAfterArgs(self: *Lexer, cur: *u21) !?Token {
+fn procAfterArgs(self: *Lexer, cur: *u21) !?Token {
   if (try self.exprContinuation(cur, true)) |t| {
     self.recent_end = self.walker.before;
     return t;
@@ -642,7 +646,7 @@ inline fn procAfterArgs(self: *Lexer, cur: *u21) !?Token {
   }
 }
 
-inline fn procAfterBlocksColon(self: *Lexer, cur: *u21) ?Token {
+fn procAfterBlocksColon(self: *Lexer, cur: *u21) ?Token {
   switch (cur.*) {
     '<' => {
       self.state = .config_item_start;
@@ -667,6 +671,12 @@ inline fn procAfterBlocksColon(self: *Lexer, cur: *u21) ?Token {
       self.recent_end = self.walker.before;
       return .swallow_depth;
     },
+    '|' => {
+      self.state = .capture_start;
+      self.cur_stored = self.walker.nextInline();
+      self.recent_end = self.walker.before;
+      return .pipe;
+    },
     else => {
       self.state =
         if (self.level.special == .disabled) .at_header else .special_syntax;
@@ -675,7 +685,7 @@ inline fn procAfterBlocksColon(self: *Lexer, cur: *u21) ?Token {
   }
 }
 
-inline fn procAtHeader(self: *Lexer, cur: *u21) !?Token {
+fn procAtHeader(self: *Lexer, cur: *u21) !?Token {
   const res = try self.processContent(.block, cur);
   if (res.hit_line_end) {
     self.newline_count = 1;
@@ -700,7 +710,7 @@ inline fn procAtHeader(self: *Lexer, cur: *u21) !?Token {
   }
 }
 
-inline fn procConfigItemStart(self: *Lexer, cur: *u21) !Token {
+fn procConfigItemStart(self: *Lexer, cur: *u21) !Token {
   if (try self.readDumpableSpace(cur)) {
     self.recent_end = self.walker.before;
     return .space;
@@ -721,7 +731,7 @@ inline fn procConfigItemStart(self: *Lexer, cur: *u21) !Token {
   return .identifier;
 }
 
-inline fn procConfigItemArg(self: *Lexer, cur: *u21) !?Token {
+fn procConfigItemArg(self: *Lexer, cur: *u21) !?Token {
   const res = try self.processContent(.config, cur);
   self.recent_end = self.walker.before;
   if (res.token) |t| return t
@@ -733,7 +743,7 @@ inline fn procConfigItemArg(self: *Lexer, cur: *u21) !?Token {
   }
 }
 
-inline fn procAfterConfig(self: *Lexer, cur: *u21) ?Token {
+fn procAfterConfig(self: *Lexer, cur: *u21) ?Token {
   if (cur.* == ':') {
     self.state = .after_blocks_colon;
     self.cur_stored = self.walker.nextInline();
@@ -746,7 +756,33 @@ inline fn procAfterConfig(self: *Lexer, cur: *u21) ?Token {
   }
 }
 
-inline fn mods(self: *Lexer) [2]*?ModStart {
+fn procCaptureParam(self: *Lexer, cur: *u21) ?Token {
+  const res = try self.processContent(.capture, cur);
+  self.recent_end = self.walker.before;
+  if (res.token) |t| return t else {
+    cur.* = self.cur_stored catch {
+      return .space;
+    };
+    return null;
+  }
+}
+
+fn procCaptureNext(self: *Lexer, cur: *u21) ?Token {
+  const res = switch (cur.*) {
+    '|' => self.advanceAndReturn(.pipe, .after_config),
+    ',' => self.advanceAndReturn(.comma, .capture_start),
+    ' ', '\t' => self.hitWhitespace(cur),
+    else => {
+      self.state =
+        if (self.level.special == .disabled) .at_header else .special_syntax;
+      return null;
+    },
+  };
+  self.recent_end = self.walker.before;
+  return res.token;
+}
+
+fn mods(self: *Lexer) [2]*?ModStart {
   return [2]*?ModStart{&self.colons_disabled_at, &self.comments_disabled_at};
 }
 
@@ -768,7 +804,7 @@ fn enterSwallow(self: *Lexer) void {
   }
 }
 
-inline fn procAfterDepth(self: *Lexer, cur: *u21) ?Token {
+fn procAfterDepth(self: *Lexer, cur: *u21) ?Token {
   self.state =
     if (self.level.special == .disabled) .at_header else .special_syntax;
   if (cur.* == '>') {
@@ -779,7 +815,7 @@ inline fn procAfterDepth(self: *Lexer, cur: *u21) ?Token {
   } else return null;
 }
 
-inline fn procBeforeEndId(self: *Lexer) Token {
+fn procBeforeEndId(self: *Lexer) Token {
   var res = self.matchEndCommand(true);
   if (res == .call_id) {
     self.level = self.levels.pop();
@@ -802,7 +838,7 @@ inline fn procBeforeEndId(self: *Lexer) Token {
   return res;
 }
 
-inline fn procAfterEndId(self: *Lexer, cur: *u21) ?Token {
+fn procAfterEndId(self: *Lexer, cur: *u21) ?Token {
   if (cur.* == ')') {
     self.cur_stored = self.walker.nextInline();
     self.recent_end = self.walker.before;
@@ -832,48 +868,50 @@ pub fn next(self: *Lexer) !Token {
       if (try self.procCheckBlockName(&cur)) |t| return t,
     .in_block, .special_syntax =>
       if (try self.procBlock(&cur)) |t| return t,
-    .in_arg => return try self.procArg(&cur),
-    .arg_start => if (try self.procArgStart(&cur)) |t| return t,
+    .in_arg           => return try self.procArg(&cur),
+    .arg_start        => if (try self.procArgStart(&cur)) |t| return t,
     .before_id_setter =>
       if (try self.procBeforeIdSetter(&cur)) |t| return t,
     .after_access_colons =>
       if (self.procAfterAccessColons(&cur)) |t| return t,
-    .after_assign => if (try self.procAfterAssign(&cur)) |t| return t,
-    .read_block_name => return try self.procReadBlockName(&cur),
-    .after_id => if (try self.procAfterId(&cur)) |t| return t,
-    .after_args => if (try self.procAfterArgs(&cur)) |t| return t,
+    .after_assign       => if (try self.procAfterAssign(&cur)) |t| return t,
+    .read_block_name    => return try self.procReadBlockName(&cur),
+    .after_id           => if (try self.procAfterId(&cur)) |t| return t,
+    .after_args         => if (try self.procAfterArgs(&cur)) |t| return t,
     .after_blocks_colon =>
       if (self.procAfterBlocksColon(&cur)) |t| return t,
-    .at_header => if (try self.procAtHeader(&cur)) |t| return t,
+    .at_header         => if (try self.procAtHeader(&cur)) |t| return t,
     .config_item_start => return try self.procConfigItemStart(&cur),
-    .config_item_arg => if (try self.procConfigItemArg(&cur)) |t| return t,
-    .after_config => if (self.procAfterConfig(&cur)) |t| return t,
-    .after_depth => if (self.procAfterDepth(&cur)) |t| return t,
-    .before_end_id => return self.procBeforeEndId(),
-    .after_end_id => if (self.procAfterEndId(&cur)) |t| return t,
+    .config_item_arg   => if (try self.procConfigItemArg(&cur)) |t| return t,
+    .after_config      => if (self.procAfterConfig(&cur)) |t| return t,
+    .after_depth       => if (self.procAfterDepth(&cur)) |t| return t,
+    .before_end_id     => return self.procBeforeEndId(),
+    .after_end_id      => if (self.procAfterEndId(&cur)) |t| return t,
+    .capture_start     => if (self.procCaptureParam(&cur)) |t| return t,
+    .capture_param     => if (self.procCaptureNext(&cur)) |t| return t,
   };
 }
 
-const Surrounding = enum {block, args, config, block_name, special};
+const Surrounding = enum {block, args, config, block_name, special, capture};
 const ContentResult = struct {
   hit_line_end: bool = false,
   token: ?Token = null
 };
 
-inline fn hitLineEnd(self: *Lexer, cr: bool) ContentResult {
+fn hitLineEnd(self: *Lexer, cr: bool) ContentResult {
   self.cur_stored =
     if (cr) self.walker.nextAfterCR() else self.walker.nextAfterLF();
   self.newline_count = 1;
   return ContentResult{.hit_line_end = true};
 }
 
-inline fn hitCommentChar(
+fn hitCommentChar(
            self: *Lexer,
   comptime ctx : Surrounding,
            cur : *u21,
 ) ?ContentResult {
   switch (ctx) {
-    .block_name => return null,
+    .block_name, .capture => return null,
     .config => {
       self.cur_stored = self.walker.nextInline();
       return ContentResult{.token = .comment};
@@ -902,7 +940,7 @@ inline fn hitCommentChar(
   }
 }
 
-inline fn hitWhitespace(self: *Lexer, cur: *u21) ContentResult {
+fn hitWhitespace(self: *Lexer, cur: *u21) ContentResult {
   while (true) {
     cur.* = self.walker.nextInline() catch |e| {
       self.cur_stored = e;
@@ -914,7 +952,7 @@ inline fn hitWhitespace(self: *Lexer, cur: *u21) ContentResult {
   return ContentResult{.token = .space};
 }
 
-inline fn hitColon(
+fn hitColon(
            self: *Lexer,
   comptime ctx : Surrounding,
            cur : *u21,
@@ -942,7 +980,7 @@ inline fn hitColon(
 
 /// return null for an unescaped line end since it may be part of a parsep.
 /// hit_line_end is true if the recently processed character was a line break.
-inline fn processContent(
+fn processContent(
            self: *Lexer,
   comptime ctx : Surrounding,
            cur : *u21,
@@ -959,10 +997,15 @@ inline fn processContent(
     '>' => if (ctx == .config) {
       return self.advanceAndReturn(.diamond_close, .after_config);
     },
+    '|' => if (ctx == .capture) {
+      return self.advanceAndReturn(.pipe, .after_config);
+    },
     ':' => if (self.hitColon(ctx, cur)) |res| return res,
-    ',' => if (ctx == .args or ctx == .config) {
-      return self.advanceAndReturn(.comma,
-          if (ctx == .config) .config_item_start else .arg_start);
+    ',' => switch (ctx) {
+      .args    => return self.advanceAndReturn(.comma, .arg_start),
+      .capture => return self.advanceAndReturn(.comma, .capture_start),
+      .config  => return self.advanceAndReturn(.comma, .config_item_start),
+      else => {},
     },
     '=' => if (ctx == .args) {
       return self.advanceAndReturn(.name_sep, null);
@@ -1012,7 +1055,13 @@ inline fn processContent(
     .block_name => {},
     else => if (self.intpr.command_characters.get(cur.*)) |ns| {
       self.ns = ns;
-      return self.genCommand(cur, ctx != .args);
+      if (ctx != .capture) {
+        return self.genCommand(cur, ctx != .args);
+      } else {
+        const ret = self.genCommand(cur, false);
+        self.state = .capture_param;
+        return ret;
+      }
     } else if (cur.* == self.level.end_char and self.checkEndCommand()) {
       return self.genCommand(cur, ctx != .args);
     },
@@ -1054,7 +1103,7 @@ inline fn processContent(
   }
 }
 
-inline fn advanceAndReturn(
+fn advanceAndReturn(
            self     : *Lexer,
            value    : Token,
   comptime new_state: ?State,
@@ -1076,6 +1125,7 @@ fn readLiteral(
       0...32 => break,
       '#' => if (self.comments_disabled_at == null) break,
       '>' => if (ctx == .config) break,
+      '|' => if (ctx == .capture) break,
       ':' => switch (ctx) {
         .block_name => break,
         .args       => {
@@ -1231,7 +1281,7 @@ fn readNumber(self: *Lexer, cur: *u21) void {
   self.cur_stored = cur.*;
 }
 
-inline fn advancing(
+fn advancing(
   self: *Lexer,
   cur : *u21,
   f   : @TypeOf(Walker.nextInline),
@@ -1271,7 +1321,7 @@ fn readDumpableSpace(self: *Lexer, cur: *u21) !bool {
   } else return false;
 }
 
-inline fn checkEndCommand(self: *Lexer) bool {
+fn checkEndCommand(self: *Lexer) bool {
   self.walker.mark();
   defer {
     self.walker.resetToMark();
@@ -1412,7 +1462,7 @@ fn pushLevel(self: *Lexer) !void {
   };
 }
 
-inline fn curBaseState(self: *Lexer) State {
+fn curBaseState(self: *Lexer) State {
   return if (self.paren_depth > 0) (
     State.in_arg
   ) else if (self.level.special == .disabled) (
@@ -1458,6 +1508,12 @@ pub fn readBlockHeader(self: *Lexer) void {
 /// block headers are aborted on the first error, to avoid parsing large
 /// chunks of code as block header if it's not properly closed.
 pub fn abortBlockHeader(self: *Lexer) void {
+  self.state = if (self.level.special == .disabled) (
+    .at_header
+  ) else .special_syntax;
+}
+
+pub fn abortCaptureList(self: *Lexer) void {
   self.state = if (self.level.special == .disabled) (
     .at_header
   ) else .special_syntax;

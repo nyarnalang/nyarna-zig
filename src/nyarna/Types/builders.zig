@@ -26,7 +26,7 @@ pub const EnumBuilder = struct {
     return Self{.ctx = ctx, .ret = &named.data.@"enum"};
   }
 
-  pub inline fn add(self: *Self, value: []const u8, pos: model.Position) !void {
+  pub fn add(self: *Self, value: []const u8, pos: model.Position) !void {
     try self.ret.values.put(self.ctx.global(), value, pos);
   }
 
@@ -75,7 +75,7 @@ pub const IntersectionBuilder = struct {
     };
   }
 
-  pub inline fn staticSources(sources: anytype) Static(sources.len) {
+  pub fn staticSources(sources: anytype) Static(sources.len) {
     return Static(sources.len).init(sources);
   }
 

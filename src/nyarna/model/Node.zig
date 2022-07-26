@@ -41,7 +41,7 @@ pub const Assign = struct {
   /// rvalue node.
   replacement: *Node,
 
-  pub inline fn node(self: *@This()) *Node {
+  pub fn node(self: *@This()) *Node {
     return Node.parent(self);
   }
 };
@@ -53,7 +53,7 @@ pub const Backend = struct {
   funcs: []*model.Node.Definition,
   body : ?*model.Value.Ast,
 
-  pub inline fn node(self: *@This()) *Node {
+  pub fn node(self: *@This()) *Node {
     return Node.parent(self);
   }
 };
@@ -68,7 +68,7 @@ pub const Branches = struct {
   cond_type: ?model.Type,
   branches : []*Node,
 
-  pub inline fn node(self: *@This()) *Node {
+  pub fn node(self: *@This()) *Node {
     return Node.parent(self);
   }
 };
@@ -83,30 +83,20 @@ pub const BuiltinGen = struct {
     expr: *Expression,
   },
 
-  pub inline fn node(self: *@This()) *Node {
+  pub fn node(self: *@This()) *Node {
     return Node.parent(self);
   }
 };
 
-/// Capture nodes are generated from block configuration that defines capture
-/// variables. They wrap the actual content.
+/// Capture nodes are generated from given capture variables.
+/// They wrap the actual content.
 pub const Capture = struct {
-  pub const VarDef = struct {
-    ns  : u15,
-    name: []const u8,
-    pos : model.Position,
-  };
-
-  /// given name for 'val' in block config
-  val  : ?VarDef = null,
-  /// given name for 'key' in block config
-  key  : ?VarDef = null,
-  /// given name for 'index' in block config, if any
-  index: ?VarDef = null,
+  /// at least one
+  vars: []Value.Ast.VarDef,
   /// block's content
   content: *Node,
 
-  pub inline fn node(self: *@This()) *Node {
+  pub fn node(self: *@This()) *Node {
     return Node.parent(self);
   }
 };
@@ -114,7 +104,7 @@ pub const Capture = struct {
 pub const Concat = struct {
   items: []*Node,
 
-  pub inline fn node(self: *@This()) *Node {
+  pub fn node(self: *@This()) *Node {
     return Node.parent(self);
   }
 };
@@ -127,7 +117,7 @@ pub const Definition = struct {
   /// initially false, may be set to true during \declare processing
   public: bool,
 
-  pub inline fn node(self: *@This()) *Node {
+  pub fn node(self: *@This()) *Node {
     return Node.parent(self);
   }
 };
@@ -142,7 +132,7 @@ pub const RootDef = struct {
   root  : ?*Node,
   params: ?*Node,
 
-  pub inline fn node(self: *@This()) *Node {
+  pub fn node(self: *@This()) *Node {
     return Node.parent(self);
   }
 };
@@ -162,7 +152,7 @@ pub const Funcgen = struct {
   /// unused if `returns` is set.
   cur_returns: Type,
 
-  pub inline fn node(self: *@This()) *Node {
+  pub fn node(self: *@This()) *Node {
     return Node.parent(self);
   }
 };
@@ -171,7 +161,7 @@ pub const Import = struct {
   ns_index    : u15,
   module_index: usize,
 
-  pub inline fn node(self: *@This()) *Node {
+  pub fn node(self: *@This()) *Node {
     return Node.parent(self);
   }
 };
@@ -180,7 +170,7 @@ pub const Literal = struct {
   kind: enum {text, space},
   content: []const u8,
 
-  pub inline fn node(self: *@This()) *Node {
+  pub fn node(self: *@This()) *Node {
     return Node.parent(self);
   }
 };
@@ -203,7 +193,7 @@ pub const Location = struct {
   default    : ?*Node,
   additionals: ?*Additionals,
 
-  pub inline fn node(self: *@This()) *Node {
+  pub fn node(self: *@This()) *Node {
     return Node.parent(self);
   }
 };
@@ -215,7 +205,7 @@ pub const Seq = struct {
   // lf_after of last item is ignored.
   items: []Item,
 
-  pub inline fn node(self: *@This()) *Node {
+  pub fn node(self: *@This()) *Node {
     return Node.parent(self);
   }
 };
@@ -226,7 +216,7 @@ pub const Map = struct {
   func     : ?*Node,
   collector: ?*Node,
 
-  pub inline fn node(self: *@This()) *Node {
+  pub fn node(self: *@This()) *Node {
     return Node.parent(self);
   }
 };
@@ -238,9 +228,9 @@ pub const Match = struct {
     t        : *Node,
     content  : *Value.Ast,
     /// if given, is initially def, which will transition to sym. sym will not
-    /// have its container set yet. 'none' if no val capture was given in block.
+    /// have its container set yet. .none if no capture was given for the block.
     variable : union(enum) {
-      def: Node.Capture.VarDef,
+      def: Value.Ast.VarDef,
       sym: *model.Symbol.Variable,
       none
     },
@@ -249,7 +239,7 @@ pub const Match = struct {
   subject: *Node,
   cases  : []Case,
 
-  pub inline fn node(self: *@This()) *Node {
+  pub fn node(self: *@This()) *Node {
     return Node.parent(self);
   }
 };
@@ -266,7 +256,7 @@ pub const Matcher = struct {
   /// used during declare resolution.
   pregen: ?*model.Function = null,
 
-  pub inline fn node(self: *@This()) *Node {
+  pub fn node(self: *@This()) *Node {
     return Node.parent(self);
   }
 };
@@ -276,7 +266,7 @@ pub const Output = struct {
   schema: ?*Node,
   body  : *Node,
 
-  pub inline fn node(self: *@This()) *Node {
+  pub fn node(self: *@This()) *Node {
     return Node.parent(self);
   }
 };
@@ -289,7 +279,7 @@ pub const ResolvedAccess = struct {
   last_name_pos: model.Position,
   ns           : u15,
 
-  pub inline fn node(self: *@This()) *Node {
+  pub fn node(self: *@This()) *Node {
     return Node.parent(self);
   }
 };
@@ -300,7 +290,7 @@ pub const ResolvedCall = struct {
   args  : []*Node,
   sig   : *const model.Signature,
 
-  pub inline fn node(self: *@This()) *Node {
+  pub fn node(self: *@This()) *Node {
     return Node.parent(self);
   }
 };
@@ -310,7 +300,7 @@ pub const ResolvedSymref = struct {
   sym     : *Symbol,
   name_pos: model.Position,
 
-  pub inline fn node(self: *@This()) *Node {
+  pub fn node(self: *@This()) *Node {
     return Node.parent(self);
   }
 };
@@ -321,7 +311,7 @@ pub const UnresolvedAccess = struct {
   id_pos : model.Position,
   ns     : u15,
 
-  pub inline fn node(self: *@This()) *Node {
+  pub fn node(self: *@This()) *Node {
     return Node.parent(self);
   }
 };
@@ -334,7 +324,7 @@ pub const UnresolvedCall = struct {
     primary,
     position,
 
-    pub inline fn isDirect(self: ArgKind) bool {
+    pub fn isDirect(self: ArgKind) bool {
       return self == .direct or self == .primary;
     }
   };
@@ -352,7 +342,7 @@ pub const UnresolvedCall = struct {
   /// gotten a default block config – which will then be reported as error.
   first_block_arg: usize,
 
-  pub inline fn node(self: *@This()) *Node {
+  pub fn node(self: *@This()) *Node {
     return Node.parent(self);
   }
 };
@@ -361,11 +351,11 @@ pub const UnresolvedSymref = struct {
   name      : []const u8,
   nschar_len: u3,
 
-  pub inline fn node(self: *@This()) *Node {
+  pub fn node(self: *@This()) *Node {
     return Node.parent(self);
   }
 
-  pub inline fn namePos(self: *@This()) model.Position {
+  pub fn namePos(self: *@This()) model.Position {
     return self.node().pos.trimFrontChar(self.nschar_len);
   }
 };
@@ -382,7 +372,7 @@ pub const Varargs = struct {
   t       : *Type.List,
   content : std.ArrayListUnmanaged(Item) = .{},
 
-  pub inline fn node(self: *@This()) *Node {
+  pub fn node(self: *@This()) *Node {
     return Node.parent(self);
   }
 };
@@ -401,7 +391,7 @@ pub const Varmap = struct {
   t       : *Type.HashMap,
   content : std.ArrayListUnmanaged(Item) = .{},
 
-  pub inline fn node(self: *@This()) *Node {
+  pub fn node(self: *@This()) *Node {
     return Node.parent(self);
   }
 };
@@ -420,7 +410,7 @@ pub const VarTypeSetter = struct {
   v: *Symbol.Variable,
   content: *Node,
 
-  pub inline fn node(self: *@This()) *Node {
+  pub fn node(self: *@This()) *Node {
     return Node.parent(self);
   }
 };
@@ -437,63 +427,63 @@ pub const tg = struct {
   pub const Concat = struct {
     inner    : *Node,
     generated: ?*Type.Structural = null,
-    pub inline fn node(self: *@This()) *Node {return Node.parent(self);}
+    pub fn node(self: *@This()) *Node {return Node.parent(self);}
   };
   pub const Enum = struct {
     values: []Node.Varargs.Item,
-    pub inline fn node(self: *@This()) *Node {return Node.parent(self);}
+    pub fn node(self: *@This()) *Node {return Node.parent(self);}
   };
   pub const HashMap = struct {
     key      : *Node,
     value    : *Node,
     generated: ?*Type.Structural = null,
-    pub inline fn node(self: *@This()) *Node {return Node.parent(self);}
+    pub fn node(self: *@This()) *Node {return Node.parent(self);}
   };
   pub const Intersection = struct {
     types    : []Varargs.Item,
     generated: ?*Type.Structural = null,
-    pub inline fn node(self: *@This()) *Node {return Node.parent(self);}
+    pub fn node(self: *@This()) *Node {return Node.parent(self);}
   };
   pub const List = struct {
     inner    : *Node,
     generated: ?*Type.Structural = null,
-    pub inline fn node(self: *@This()) *Node {return Node.parent(self);}
+    pub fn node(self: *@This()) *Node {return Node.parent(self);}
   };
   pub const Numeric = struct {
     backend : *Node,
     min     : ?*Node,
     max     : ?*Node,
     suffixes: *Value.HashMap,
-    pub inline fn node(self: *@This()) *Node {return Node.parent(self);}
+    pub fn node(self: *@This()) *Node {return Node.parent(self);}
   };
   pub const Optional = struct {
     inner    : *Node,
     generated: ?*Type.Structural = null,
-    pub inline fn node(self: *@This()) *Node {return Node.parent(self);}
+    pub fn node(self: *@This()) *Node {return Node.parent(self);}
   };
   pub const Sequence = struct {
     direct   : ?*Node,
     inner    : []Node.Varargs.Item,
     auto     : ?*Node,
     generated: ?*Type.Structural = null,
-    pub inline fn node(self: *@This()) *Node {return Node.parent(self);}
+    pub fn node(self: *@This()) *Node {return Node.parent(self);}
   };
   pub const Prototype = struct {
     params     : locations.List(void),
     constructor: ?*Node,
     funcs      : ?*Node,
-    pub inline fn node(self: *@This()) *Node {return Node.parent(self);}
+    pub fn node(self: *@This()) *Node {return Node.parent(self);}
   };
   pub const Record = struct {
     fields   : locations.List(void),
     generated: ?*Type.Named = null,
-    pub inline fn node(self: *@This()) *Node {return Node.parent(self);}
+    pub fn node(self: *@This()) *Node {return Node.parent(self);}
   };
   pub const Textual = struct {
     categories   : []Varargs.Item,
     include_chars: ?*Node,
     exclude_chars: ?*Node,
-    pub inline fn node(self: *@This()) *Node {return Node.parent(self);}
+    pub fn node(self: *@This()) *Node {return Node.parent(self);}
   };
   pub const Unique = struct {
     constr_params: ?*Node,
@@ -501,7 +491,7 @@ pub const tg = struct {
     /// later the constructor is built. This field stores the built type so that
     /// the constructor knows its return type.
     generated: Type = undefined,
-    pub inline fn node(self: *@This()) *Node {return Node.parent(self);}
+    pub fn node(self: *@This()) *Node {return Node.parent(self);}
   };
 };
 

@@ -216,6 +216,8 @@ nodes: std.ArrayListUnmanaged(*model.Node) = .{},
 seq: std.ArrayListUnmanaged(model.Node.Seq.Item) = .{},
 /// block configuration of this level. only applicable to block arguments.
 block_config: ?*const model.BlockConfig = null,
+/// capture variables of this block.
+capture: []model.Value.Ast.VarDef,
 /// syntax that parses this level. only applicable to block arguments.
 syntax_proc: ?*syntaxes.SpecialSyntax.Processor = null,
 /// recently parsed whitespace. might be either added to nodes to discarded
@@ -298,36 +300,9 @@ pub fn implicitBlockConfig(self: *ContentLevel) ?*model.BlockConfig {
   };
 }
 
-fn varDef(
-  ip   : *Interpreter,
-  input: ?model.BlockConfig.VarDef,
-) ?model.Node.Capture.VarDef {
-  if (input) |vd| {
-    if (ip.command_characters.get(vd.cmd_char)) |ns_index| {
-      return model.Node.Capture.VarDef{
-        .ns   = ns_index,
-        .name = vd.name,
-        .pos  = vd.pos,
-      };
-    }
-    const chr = EncodedCharacter.init(vd.cmd_char);
-    ip.ctx.logger.IsNotANamespaceCharacter(chr.repr(), vd.pos, vd.pos);
-  }
-  return null;
-}
-
 pub fn finalize(self: *ContentLevel, p: *Impl) !*model.Node {
   const ip = p.intpr();
-  var capture: ?*model.Node.Capture = null;
-  if (self.block_config) |c| {
-    if (c.val != null or c.key != null or c.index != null) {
-      // position and content set later from the calculated content_node.
-      capture = try ip.node_gen.capture(
-        undefined, varDef(ip, c.val), varDef(ip, c.key), varDef(ip, c.index),
-        undefined);
-    }
-    try p.revertBlockConfig(c.*);
-  }
+  if (self.block_config) |c| try p.revertBlockConfig(c.*);
 
   ip.resetSyms(self.sym_start);
 
@@ -353,9 +328,9 @@ pub fn finalize(self: *ContentLevel, p: *Impl) !*model.Node {
         last(self.seq.items).content.pos),
       .{.items = self.seq.items})).node();
   };
-  if (capture) |c_node| {
-    c_node.content = content_node;
-    c_node.node().pos = content_node.pos;
+  if (self.capture.len > 0) {
+    const c_node = try p.intpr().node_gen.capture(
+      content_node.pos, self.capture, content_node);
     return c_node.node();
   } else return content_node;
 }

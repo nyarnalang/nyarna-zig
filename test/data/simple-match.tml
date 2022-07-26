@@ -9,9 +9,9 @@
     input: \Intersection(\Text, \Bold)
   :body:
     \match(\input):
-    :(\Text):<val \v>
+    :(\Text):| \v|
       Text: \v
-    :(\Bold):<val \b>
+    :(\Bold):|  \b  |
       Bold: \b::content
     \end(match)
   \end(func)

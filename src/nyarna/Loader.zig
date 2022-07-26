@@ -88,6 +88,6 @@ pub fn hasEncounteredOptions(self: *Loader) bool {
   return if (self.eo_impl) |impl| impl(self) else false;
 }
 
-pub inline fn ctx(self: *Loader) nyarna.Context {
+pub fn ctx(self: *Loader) nyarna.Context {
   return .{.data = self.data, .logger = &self.logger};
 }

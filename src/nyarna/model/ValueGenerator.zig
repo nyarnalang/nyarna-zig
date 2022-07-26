@@ -12,19 +12,19 @@ const Self = @This();
 
 dummy: u8 = 0, // needed for @fieldParentPtr to work
 
-inline fn allocator(self: *const Self) std.mem.Allocator {
+fn allocator(self: *const Self) std.mem.Allocator {
   return @fieldParentPtr(nyarna.Context, "values", self).global();
 }
 
-inline fn types(self: *const Self) *nyarna.Types {
+fn types(self: *const Self) *nyarna.Types {
   return @fieldParentPtr(nyarna.Context, "values", self).types();
 }
 
-inline fn create(self: *const Self) !*Value {
+fn create(self: *const Self) !*Value {
   return self.allocator().create(Value);
 }
 
-pub inline fn value(
+pub fn value(
   self: *const Self,
   pos : Position,
   data: Value.Data,
@@ -34,12 +34,12 @@ pub inline fn value(
   return ret;
 }
 
-pub inline fn ast(
+pub fn ast(
   self      : *const Self,
   root      : *Node,
   container : ?*model.VariableContainer,
   inner_syms: []model.Symbol.Definition,
-  capture   : ?*Node.Capture,
+  capture   : []model.Value.Ast.VarDef,
 ) !*Value.Ast {
   return &(try self.value(root.pos, .{.ast = .{
     .root         = root,
@@ -49,7 +49,7 @@ pub inline fn ast(
   }})).data.ast;
 }
 
-pub inline fn blockHeader(
+pub fn blockHeader(
   self         : *const Self,
   pos          : Position,
   config       : ?model.BlockConfig,
@@ -60,7 +60,7 @@ pub inline fn blockHeader(
   )).data.block_header;
 }
 
-pub inline fn concat(
+pub fn concat(
   self: *const Self,
   pos : Position,
   t   : *const Type.Concat,
@@ -73,7 +73,7 @@ pub inline fn concat(
   })).data.concat;
 }
 
-pub inline fn definition(
+pub fn definition(
   self       : *const Self,
   pos        : Position,
   name       : *Value.TextScalar,
@@ -85,7 +85,7 @@ pub inline fn definition(
   }})).data.definition;
 }
 
-pub inline fn @"enum"(
+pub fn @"enum"(
   self : *const Self,
   pos  : Position,
   t    : *const Type.Enum,
@@ -95,7 +95,7 @@ pub inline fn @"enum"(
     pos, .{.@"enum" = .{.t = t, .index = index}})).data.@"enum";
 }
 
-pub inline fn float(
+pub fn float(
   self   : *const Self,
   pos    : Position,
   t      : *const Type.FloatNum,
@@ -107,7 +107,7 @@ pub inline fn float(
   )).data.float;
 }
 
-pub inline fn funcRef(
+pub fn funcRef(
   self: *const Self,
   pos : Position,
   func: *model.Function,
@@ -116,7 +116,7 @@ pub inline fn funcRef(
     pos, .{.funcref = .{.func = func}})).data.funcref;
 }
 
-pub inline fn hashMap(
+pub fn hashMap(
   self: *const Self,
   pos : Position,
   t   : *const Type.HashMap,
@@ -126,7 +126,7 @@ pub inline fn hashMap(
   })).data.hashmap;
 }
 
-pub inline fn int(
+pub fn int(
   self   : *const Self,
   pos    : Position,
   t      : *const Type.IntNum,
@@ -139,7 +139,7 @@ pub inline fn int(
 
 /// Generates an intrinsic location (contained positions are <intrinsic>).
 /// The given name must live at least as long as the Context.
-pub inline fn intrinsicLoc(
+pub fn intrinsicLoc(
   self: *const Self,
   name: []const u8,
   t: Type,
@@ -149,7 +149,7 @@ pub inline fn intrinsicLoc(
   return self.location(Position.intrinsic(), name_val, t.predef());
 }
 
-pub inline fn list(
+pub fn list(
   self: *const Self,
   pos : Position,
   t   : *const Type.List,
@@ -159,7 +159,7 @@ pub inline fn list(
   })).data.list;
 }
 
-pub inline fn location(
+pub fn location(
   self: *const Self,
   pos : Position,
   name: *Value.TextScalar,
@@ -169,7 +169,7 @@ pub inline fn location(
     pos, .{.location = .{.name = name, .spec = spec}})).data.location;
 }
 
-pub inline fn output(
+pub fn output(
   self  : *const Self,
   pos   : Position,
   name  : *Value.TextScalar,
@@ -185,13 +185,13 @@ pub inline fn output(
   })).data.output;
 }
 
-pub inline fn schemaDef(
+pub fn schemaDef(
   self    : *const Self,
   pos     : Position,
   defs    : []*Node.Definition,
   root    : *Node,
   backends: []*Node.Definition,
-  doc_var : ?Node.Capture.VarDef,
+  doc_var : ?Value.Ast.VarDef,
 ) !*Value.SchemaDef {
   return &(try self.value(pos, .{
     .schema_def = .{
@@ -203,7 +203,7 @@ pub inline fn schemaDef(
   })).data.schema_def;
 }
 
-pub inline fn schema(
+pub fn schema(
   self   : *const Self,
   pos    : Position,
   root   : model.SpecType,
@@ -219,7 +219,7 @@ pub inline fn schema(
   })).data.schema;
 }
 
-pub inline fn seq(
+pub fn seq(
   self: *const Self,
   pos : Position,
   t   : *const Type.Sequence,
@@ -231,7 +231,7 @@ pub inline fn seq(
   })).data.seq;
 }
 
-pub inline fn prototype(
+pub fn prototype(
   self: *const Self,
   pos : Position,
   pt  : model.Prototype,
@@ -240,7 +240,7 @@ pub inline fn prototype(
     pos, .{.prototype = .{.pt = pt}})).data.prototype;
 }
 
-pub inline fn record(
+pub fn record(
   self: *const Self,
   pos : Position,
   t   : *const Type.Record,
@@ -252,7 +252,7 @@ pub inline fn record(
     pos, .{.record = .{.t = t, .fields = fields}})).data.record;
 }
 
-pub inline fn textScalar(
+pub fn textScalar(
   self: *const Self,
   pos : Position,
   t   : Type,
@@ -262,7 +262,7 @@ pub inline fn textScalar(
     pos, .{.text = .{.t = t, .content = content}})).data.text;
 }
 
-pub inline fn @"type"(
+pub fn @"type"(
   self: *const Self,
   pos : Position,
   t   : Type,
@@ -275,10 +275,10 @@ pub inline fn @"type"(
     pos, .{.@"type" = .{.t = t}})).data.@"type";
 }
 
-pub inline fn @"void"(self: *const Self, pos: Position) !*Value {
+pub fn @"void"(self: *const Self, pos: Position) !*Value {
   return self.value(pos, .void);
 }
 
-pub inline fn poison(self: *const Self, pos: Position) !*Value {
+pub fn poison(self: *const Self, pos: Position) !*Value {
   return self.value(pos, .poison);
 }

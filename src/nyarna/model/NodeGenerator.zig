@@ -22,22 +22,24 @@ pub fn init(allocator: std.mem.Allocator, ctx: nyarna.Context) Self {
   };
 }
 
-inline fn create(self: Self) !*Node {
+fn create(self: Self) !*Node {
   return self.allocator.create(Node);
 }
 
-pub inline fn newNode(self: Self, pos: Position, content: Node.Data) !*Node {
+pub fn newNode(self: Self, pos: Position, content: Node.Data) !*Node {
   const ret = try self.create();
   ret.* = .{.pos = pos, .data = content};
   return ret;
 }
 
-fn copyVarDef(self: Self, def: ?Node.Capture.VarDef) !?Node.Capture.VarDef {
-  if (def) |val| return Node.Capture.VarDef{
-    .ns   = val.ns,
-    .name = try self.allocator.dupe(u8, val.name),
-    .pos  = val.pos,
-  } else return null;
+fn copyVarDefs(self: Self, defs: []Value.Ast.VarDef) ![]Value.Ast.VarDef {
+  const ret = try self.allocator.alloc(Value.Ast.VarDef, defs.len);
+  for (defs) |def, i| ret[i] = .{
+    .ns   = def.ns,
+    .name = try self.allocator.dupe(u8, def.name),
+    .pos  = def.pos,
+  };
+  return ret;
 }
 
 fn copyArr(
@@ -75,7 +77,7 @@ pub fn copy(self: Self, node: *Node) std.mem.Allocator.Error!*Node {
         try self.copyArr(Node.Definition, "definition", ba.funcs),
         if (ba.body) |body| (
           try self.ctx.values.ast(
-            try self.copy(body.root), body.container, &.{}, null)
+            try self.copy(body.root), body.container, &.{}, &.{})
         ) else null,
       )
     ).node(),
@@ -99,8 +101,8 @@ pub fn copy(self: Self, node: *Node) std.mem.Allocator.Error!*Node {
     ).node(),
     .capture => |*cap| (
       try self.capture(
-        node.pos, try self.copyVarDef(cap.val), try self.copyVarDef(cap.key),
-        try self.copyVarDef(cap.index), try self.copy(cap.content))
+        node.pos, try self.copyVarDefs(cap.vars),
+        try self.copy(cap.content))
     ).node(),
     .concat => |*con| {
       const items = try self.allocator.alloc(*Node, con.items.len);
@@ -121,9 +123,7 @@ pub fn copy(self: Self, node: *Node) std.mem.Allocator.Error!*Node {
             const syms = try self.allocator.alloc(
               model.Symbol.Definition, ast.inner_syms.len);
             for (ast.inner_syms) |sym, index| syms[index] = sym;
-            const cap = if (ast.capture) |orig| (
-              &(try self.copy(orig.node())).data.capture
-            ) else null;
+            const cap = try self.copyVarDefs(ast.capture);
             const copied_ast = try self.ctx.values.ast(
               try self.copy(ast.root), ast.container, syms, cap);
             const cexpr = try self.ctx.createValueExpr(copied_ast.value());
@@ -184,9 +184,7 @@ pub fn copy(self: Self, node: *Node) std.mem.Allocator.Error!*Node {
             .alive = def.alive,
           };
         }
-        const cpt = if (case.content.capture) |cap| (
-          &(try self.copy(cap.node())).data.capture
-        ) else null;
+        const cpt = try self.copyVarDefs(case.content.capture);
         switch (case.variable) {
           .def => |def| {
             cases[index] = .{
@@ -194,7 +192,11 @@ pub fn copy(self: Self, node: *Node) std.mem.Allocator.Error!*Node {
               .content = try self.ctx.values.ast(
                 try self.copy(case.content.root), case.content.container,
                 inner_syms, cpt),
-              .variable = .{.def = (try self.copyVarDef(def)).?},
+              .variable = .{.def = Value.Ast.VarDef{
+                .ns   = def.ns,
+                .name = try self.allocator.dupe(u8, def.name),
+                .pos  = def.pos,
+              }},
             };
           },
           .sym => |sym| {
@@ -405,7 +407,7 @@ pub fn copy(self: Self, node: *Node) std.mem.Allocator.Error!*Node {
   };
 }
 
-pub inline fn assign(
+pub fn assign(
   self   : Self,
   pos    : Position,
   content: Node.Assign,
@@ -413,7 +415,7 @@ pub inline fn assign(
   return &(try self.newNode(pos, .{.assign = content})).data.assign;
 }
 
-pub inline fn backend(
+pub fn backend(
   self : Self,
   pos  : Position,
   vars : ?*model.Node,
@@ -425,7 +427,7 @@ pub inline fn backend(
   }})).data.backend;
 }
 
-pub inline fn branches(
+pub fn branches(
   self   : Self,
   pos    : Position,
   content: Node.Branches,
@@ -433,7 +435,7 @@ pub inline fn branches(
   return &(try self.newNode(pos, .{.branches = content})).data.branches;
 }
 
-pub inline fn builtinGen(
+pub fn builtinGen(
   self   : Self,
   pos    : Position,
   params : *Node,
@@ -445,20 +447,18 @@ pub inline fn builtinGen(
   }})).data.builtingen;
 }
 
-pub inline fn capture(
+pub fn capture(
   self   : Self,
   pos    : Position,
-  val    : ?Node.Capture.VarDef,
-  key    : ?Node.Capture.VarDef,
-  index  : ?Node.Capture.VarDef,
+  vars   : []model.Value.Ast.VarDef,
   content: *Node,
 ) !*Node.Capture {
   return &(try self.newNode(pos, .{.capture = .{
-    .val = val, .key = key, .index = index, .content = content,
+    .vars = vars, .content = content,
   }})).data.capture;
 }
 
-pub inline fn concat(
+pub fn concat(
   self   : Self,
   pos    : Position,
   content: Node.Concat,
@@ -466,7 +466,7 @@ pub inline fn concat(
   return &(try self.newNode(pos, .{.concat = content})).data.concat;
 }
 
-pub inline fn definition(
+pub fn definition(
   self   : Self,
   pos    : Position,
   content: Node.Definition,
@@ -474,14 +474,14 @@ pub inline fn definition(
   return &(try self.newNode(pos, .{.definition = content})).data.definition;
 }
 
-pub inline fn expression(
+pub fn expression(
   self   : Self,
   content: *Expression,
 ) !*Node {
   return self.newNode(content.pos, .{.expression = content});
 }
 
-pub inline fn funcgen(
+pub fn funcgen(
   self     : Self,
   pos      : Position,
   returns  : ?*Node,
@@ -497,7 +497,7 @@ pub inline fn funcgen(
   }})).data.funcgen;
 }
 
-pub inline fn import(
+pub fn import(
   self        : Self,
   pos         : Position,
   ns_index    : u15,
@@ -509,7 +509,7 @@ pub inline fn import(
     }})).data.import;
 }
 
-pub inline fn literal(
+pub fn literal(
   self   : Self,
   pos    : Position,
   content: Node.Literal,
@@ -517,7 +517,7 @@ pub inline fn literal(
   return &(try self.newNode(pos, .{.literal = content})).data.literal;
 }
 
-pub inline fn location(
+pub fn location(
   self       : Self,
   pos        : Position,
   name       : *Node,
@@ -566,7 +566,7 @@ pub fn locationFromValue(
   return loc_node;
 }
 
-pub inline fn map(
+pub fn map(
   self     : Self,
   pos      : Position,
   input    : *Node,
@@ -578,7 +578,7 @@ pub inline fn map(
   }})).data.map;
 }
 
-pub inline fn match(
+pub fn match(
   self   : Self,
   pos    : Position,
   subject: *Node,
@@ -590,7 +590,7 @@ pub inline fn match(
   }})).data.match;
 }
 
-pub inline fn matcher(
+pub fn matcher(
   self     : Self,
   pos      : Position,
   body     : *Node.Match,
@@ -605,7 +605,7 @@ pub inline fn matcher(
   }})).data.matcher;
 }
 
-pub inline fn output(
+pub fn output(
   self  : Self,
   pos   : Position,
   name  : *Node,
@@ -617,7 +617,7 @@ pub inline fn output(
   }})).data.output;
 }
 
-pub inline fn raccess(
+pub fn raccess(
   self         : Self,
   pos          : Position,
   base         : *Node,
@@ -633,7 +633,7 @@ pub inline fn raccess(
   }})).data.resolved_access;
 }
 
-pub inline fn rcall(
+pub fn rcall(
   self   : Self,
   pos    : Position,
   content: Node.ResolvedCall,
@@ -642,7 +642,7 @@ pub inline fn rcall(
     pos, .{.resolved_call = content})).data.resolved_call;
 }
 
-pub inline fn rsymref(
+pub fn rsymref(
   self   : Self,
   pos    : Position,
   content: Node.ResolvedSymref,
@@ -651,7 +651,7 @@ pub inline fn rsymref(
     pos, .{.resolved_symref = content})).data.resolved_symref;
 }
 
-pub inline fn rootDef(
+pub fn rootDef(
   self  : Self,
   pos   : Position,
   kind  : std.meta.fieldInfo(Node.RootDef, .kind).field_type,
@@ -667,7 +667,7 @@ pub inline fn rootDef(
   )).data.root_def;
 }
 
-pub inline fn seq(
+pub fn seq(
   self   : Self,
   pos    : Position,
   content: Node.Seq,
@@ -675,7 +675,7 @@ pub inline fn seq(
   return &(try self.newNode(pos, .{.seq = content})).data.seq;
 }
 
-pub inline fn tgConcat(
+pub fn tgConcat(
   self : Self,
   pos  : Position,
   inner: *Node,
@@ -684,7 +684,7 @@ pub inline fn tgConcat(
     pos, .{.gen_concat = .{.inner = inner}})).data.gen_concat;
 }
 
-pub inline fn tgEnum(
+pub fn tgEnum(
   self  : Self,
   pos   : Position,
   values: []Node.Varargs.Item,
@@ -693,7 +693,7 @@ pub inline fn tgEnum(
     pos, .{.gen_enum = .{.values = values}})).data.gen_enum;
 }
 
-pub inline fn tgHashMap(
+pub fn tgHashMap(
   self : Self,
   pos  : Position,
   key  : *Node,
@@ -703,7 +703,7 @@ pub inline fn tgHashMap(
     pos, .{.gen_map = .{.key = key, .value = value}})).data.gen_map;
 }
 
-pub inline fn tgIntersection(
+pub fn tgIntersection(
   self : Self,
   pos  : Position,
   types: []Node.Varargs.Item
@@ -712,7 +712,7 @@ pub inline fn tgIntersection(
     pos, .{.gen_intersection = .{.types = types}})).data.gen_intersection;
 }
 
-pub inline fn tgList(
+pub fn tgList(
   self : Self,
   pos  : Position,
   inner: *Node,
@@ -721,7 +721,7 @@ pub inline fn tgList(
     pos, .{.gen_list = .{.inner = inner}})).data.gen_list;
 }
 
-pub inline fn tgNumeric(
+pub fn tgNumeric(
   self    : Self,
   pos     : Position,
   nbackend: *Node,
@@ -739,7 +739,7 @@ pub inline fn tgNumeric(
   )).data.gen_numeric;
 }
 
-pub inline fn tgOptional(
+pub fn tgOptional(
   self : Self,
   pos  : Position,
   inner: *Node,
@@ -748,7 +748,7 @@ pub inline fn tgOptional(
     pos, .{.gen_optional = .{.inner = inner}})).data.gen_optional;
 }
 
-pub inline fn tgSequence(
+pub fn tgSequence(
   self  : Self,
   pos   : Position,
   direct: ?*Node,
@@ -762,7 +762,7 @@ pub inline fn tgSequence(
   )).data.gen_sequence;
 }
 
-pub inline fn tgPrototype(
+pub fn tgPrototype(
   self       : Self,
   pos        : Position,
   params     : *Node,
@@ -778,7 +778,7 @@ pub inline fn tgPrototype(
   )).data.gen_prototype;
 }
 
-pub inline fn tgRecord(
+pub fn tgRecord(
   self  : Self,
   pos   : Position,
   fields: *Node,
@@ -788,7 +788,7 @@ pub inline fn tgRecord(
   }})).data.gen_record;
 }
 
-pub inline fn tgTextual(
+pub fn tgTextual(
   self         : Self,
   pos          : Position,
   categories   : []Node.Varargs.Item,
@@ -803,7 +803,7 @@ pub inline fn tgTextual(
     }})).data.gen_textual;
 }
 
-pub inline fn tgUnique(
+pub fn tgUnique(
   self  : Self,
   pos   : Position,
   params: ?*Node,
@@ -812,7 +812,7 @@ pub inline fn tgUnique(
     pos, .{.gen_unique = .{.constr_params = params}})).data.gen_unique;
 }
 
-pub inline fn uAccess(
+pub fn uAccess(
   self   : Self,
   pos    : Position,
   content: Node.UnresolvedAccess,
@@ -821,7 +821,7 @@ pub inline fn uAccess(
     pos, .{.unresolved_access = content})).data.unresolved_access;
 }
 
-pub inline fn uCall(
+pub fn uCall(
   self   : Self,
   pos    : Position,
   content: Node.UnresolvedCall,
@@ -830,7 +830,7 @@ pub inline fn uCall(
     pos, .{.unresolved_call = content})).data.unresolved_call;
 }
 
-pub inline fn uSymref(
+pub fn uSymref(
   self   : Self,
   pos    : Position,
   content: Node.UnresolvedSymref,
@@ -839,7 +839,7 @@ pub inline fn uSymref(
     pos, .{.unresolved_symref = content})).data.unresolved_symref;
 }
 
-pub inline fn varargs(
+pub fn varargs(
   self    : Self,
   pos     : Position,
   spec_pos: Position,
@@ -849,7 +849,7 @@ pub inline fn varargs(
     pos, .{.varargs = .{.t = t, .spec_pos = spec_pos}})).data.varargs;
 }
 
-pub inline fn varmap(
+pub fn varmap(
   self    : Self,
   pos     : Position,
   spec_pos: Position,
@@ -859,16 +859,16 @@ pub inline fn varmap(
     pos, .{.varmap = .{.t = t, .spec_pos = spec_pos}})).data.varmap;
 }
 
-pub inline fn vtSetter(self: Self, v: *Symbol.Variable, n: *Node) !*Node {
+pub fn vtSetter(self: Self, v: *Symbol.Variable, n: *Node) !*Node {
   return try self.newNode(n.pos, .{.vt_setter = .{
     .v = v, .content = n,
   }});
 }
 
-pub inline fn poison(self: Self, pos: Position) !*Node {
+pub fn poison(self: Self, pos: Position) !*Node {
   return self.newNode(pos, .poison);
 }
 
-pub inline fn @"void"(self: Self, pos: Position) !*Node {
+pub fn @"void"(self: Self, pos: Position) !*Node {
   return self.newNode(pos, .void);
 }

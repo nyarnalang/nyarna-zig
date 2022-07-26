@@ -361,67 +361,67 @@ pub fn deinit(_: *Self) void {
   // the named types.
 }
 
-pub inline fn ast(self: *Self) model.Type {
+pub fn ast(self: *Self) model.Type {
   return self.predefined.ast.typedef();
 }
 
-pub inline fn blockHeader(self: *Self) model.Type {
+pub fn blockHeader(self: *Self) model.Type {
   return self.predefined.block_header.typedef();
 }
 
-pub inline fn definition(self: *Self) model.Type {
+pub fn definition(self: *Self) model.Type {
   return self.predefined.definition.typedef();
 }
 
-pub inline fn every(self: *Self) model.Type {
+pub fn every(self: *Self) model.Type {
   return self.predefined.every.typedef();
 }
 
-pub inline fn frameRoot(self: *Self) model.Type {
+pub fn frameRoot(self: *Self) model.Type {
   return self.predefined.frame_root.typedef();
 }
 
-pub inline fn literal(self: *Self) model.Type {
+pub fn literal(self: *Self) model.Type {
   return self.predefined.literal.typedef();
 }
 
-pub inline fn location(self: *Self) model.Type {
+pub fn location(self: *Self) model.Type {
   return self.predefined.location.typedef();
 }
 
-pub inline fn output(self: *Self) model.Type {
+pub fn output(self: *Self) model.Type {
   return self.predefined.output.typedef();
 }
 
-pub inline fn poison(self: *Self) model.Type {
+pub fn poison(self: *Self) model.Type {
   return self.predefined.poison.typedef();
 }
 
-pub inline fn prototype(self: *Self) model.Type {
+pub fn prototype(self: *Self) model.Type {
   return self.predefined.prototype.typedef();
 }
 
-pub inline fn schema(self: *Self) model.Type {
+pub fn schema(self: *Self) model.Type {
   return self.predefined.schema.typedef();
 }
 
-pub inline fn schemaDef(self: *Self) model.Type {
+pub fn schemaDef(self: *Self) model.Type {
   return self.predefined.schema_def.typedef();
 }
 
-pub inline fn space(self: *Self) model.Type {
+pub fn space(self: *Self) model.Type {
   return self.predefined.space.typedef();
 }
 
-pub inline fn text(self: *Self) model.Type {
+pub fn text(self: *Self) model.Type {
   return self.system.text;
 }
 
-pub inline fn @"type"(self: *Self) model.Type {
+pub fn @"type"(self: *Self) model.Type {
   return self.predefined.@"type".typedef();
 }
 
-pub inline fn @"void"(self: *Self) model.Type {
+pub fn @"void"(self: *Self) model.Type {
   return self.predefined.void.typedef();
 }
 
@@ -1155,7 +1155,7 @@ pub fn valueType(self: *Self, v: *model.Value) !model.Type {
   };
 }
 
-pub inline fn valueSpecType(self: *Self, v: *model.Value) !model.SpecType {
+pub fn valueSpecType(self: *Self, v: *model.Value) !model.SpecType {
   return (try self.valueType(v)).at(v.origin);
 }
 
@@ -1262,7 +1262,7 @@ pub fn expectedType(
   };
 }
 
-pub inline fn litType(self: *Self, lit: *model.Node.Literal) model.Type {
+pub fn litType(self: *Self, lit: *model.Node.Literal) model.Type {
   return if (lit.kind == .text) self.literal() else self.space();
 }
 
@@ -1391,11 +1391,11 @@ pub fn containedScalar(t: model.Type) ?model.Type {
   };
 }
 
-pub inline fn allowedAsConcatInner(t: model.Type) bool {
+pub fn allowedAsConcatInner(t: model.Type) bool {
   return InnerIntend.concat(t) == .allowed;
 }
 
-pub inline fn allowedAsOptionalInner(t: model.Type) bool {
+pub fn allowedAsOptionalInner(t: model.Type) bool {
   return InnerIntend.optional(t) == .allowed;
 }
 

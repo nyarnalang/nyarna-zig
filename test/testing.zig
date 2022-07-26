@@ -293,12 +293,11 @@ const AstEmitter = struct {
       },
       .capture => |cpt| {
         const c = try self.push("CAPTURE");
-        inline for (.{.val, .key, .index}) |name| {
-          if (@field(cpt, @tagName(name))) |item| {
-            try self.emitLine(
-              "=VAR {s} [{}]{s}", .{@tagName(name), item.ns, item.name});
-          }
+        for (cpt.vars) |v| {
+          try self.emitLine("=VAR [{}]{s}", .{v.ns, v.name});
         }
+        try self.emitLine(">CONTENT", .{});
+        try self.process(cpt.content);
         try c.pop();
       },
       .concat => |c| {

@@ -8,6 +8,7 @@ const Interpreter = nyarna.Interpreter;
 const lib         = nyarna.lib;
 const model       = nyarna.model;
 
+const last        = @import("../helpers.zig").last;
 const stringOrder = @import("../helpers.zig").stringOrder;
 
 pub const DefCollector = struct {
@@ -177,7 +178,7 @@ pub const VarProc = struct {
     };
   }
 
-  inline fn empty(self: @This()) !*model.Node {
+  fn empty(self: @This()) !*model.Node {
     return try self.ip.node_gen.void(self.keyword_pos);
   }
 
@@ -442,15 +443,13 @@ pub fn createMatchCases(
     .node => |node| {
       const ast = &case.value.data.expression.data.value.data.ast;
       const T = std.meta.fieldInfo(model.Node.Match.Case, .variable).field_type;
-      const variable: T = if (ast.capture) |capture| blk: {
-        if (capture.key) |key| {
-          intpr.ctx.logger.UnexpectedBlockVar(key.pos, "key");
+      const variable: T = if (ast.capture.len == 0) .none else blk: {
+        if (ast.capture.len > 1) {
+          intpr.ctx.logger.UnexpectedCaptureVars(
+            ast.capture[1].pos.span(last(ast.capture).pos));
         }
-        if (capture.index) |index| {
-          intpr.ctx.logger.UnexpectedBlockVar(index.pos, "index");
-        }
-        break :blk @as(T, if (capture.val) |val| .{.def = val} else .none);
-      } else T.none;
+        break :blk T{.def = ast.capture[0]};
+      };
       try collected.append(.{
         .t        = node,
         .content  = ast,
@@ -1073,7 +1072,7 @@ pub const Checker = struct {
   logger: *nyarna.errors.Handler,
   buffer: [256]u8 = undefined,
 
-  pub inline fn init(
+  pub fn init(
     types : *nyarna.Types,
     logger: *nyarna.errors.Handler,
   ) Checker {

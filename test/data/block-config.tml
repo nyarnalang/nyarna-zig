@@ -4,7 +4,7 @@
 \end(foo)
 \bar:
 :baz:<map \ @, syntax locations>
-:wiz:<val \v, index \i>
+:wiz:|\v, \i|
 :raz:<off :, fullast>
 \end(bar)
 --- tokens
@@ -42,34 +42,30 @@
 7:1[62] block_name_sep
 7:2[63] identifier
 7:5[66] block_name_sep
-7:6[67] diamond_open
-7:7[68] identifier
+7:6[67] pipe
+7:7[68] symref
+7:9[70] comma
 7:10[71] space
 7:11[72] symref
-7:13[74] comma
+7:13[74] pipe
 7:14[75] space
-7:15[76] identifier
-7:20[81] space
-7:21[82] symref
-7:23[84] diamond_close
-7:24[85] space
-8:1[86] block_name_sep
-8:2[87] identifier
-8:5[90] block_name_sep
-8:6[91] diamond_open
-8:7[92] identifier
-8:10[95] space
-8:11[96] block_name_sep
-8:12[97] comma
-8:13[98] space
-8:14[99] identifier
-8:21[106] diamond_close
-8:22[107] space
-9:1[108] block_end_open
-9:6[113] call_id
-9:9[116] list_end
-9:10[117] ws_break
-10:1[118] end_source
+8:1[76] block_name_sep
+8:2[77] identifier
+8:5[80] block_name_sep
+8:6[81] diamond_open
+8:7[82] identifier
+8:10[85] space
+8:11[86] block_name_sep
+8:12[87] comma
+8:13[88] space
+8:14[89] identifier
+8:21[96] diamond_close
+8:22[97] space
+9:1[98] block_end_open
+9:6[103] call_id
+9:9[106] list_end
+9:10[107] ws_break
+10:1[108] end_source
 --- rawast
 +UCALL
   +TARGET
@@ -88,8 +84,10 @@
   -PROTO
   +PROTO name="wiz"
     +CAPTURE
-      =VAR val [0]v
-      =VAR index [0]i
+      =VAR [0]v
+      =VAR [0]i
+      >CONTENT
+      =VOID
     -CAPTURE
   -PROTO
   +PROTO name="raz"

@@ -36,7 +36,7 @@ pub fn init(
   };
 }
 
-inline fn types(self: *@This()) *nyarna.Types {
+fn types(self: *@This()) *nyarna.Types {
   return self.intpr.ctx.types();
 }
 

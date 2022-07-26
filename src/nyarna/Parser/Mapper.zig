@@ -120,7 +120,7 @@ pub const ToSignature = struct {
   }
 
   /// workaround for https://github.com/ziglang/zig/issues/6059
-  inline fn varmapAt(self: *@This(), index: u21) bool {
+  fn varmapAt(self: *@This(), index: u21) bool {
     return if (self.signature.varmap) |vm| vm == index else false;
   }
 
@@ -341,13 +341,13 @@ pub const ToSignature = struct {
     const behavior = ArgBehavior.calc(target_spec.t);
     const arg = switch (behavior) {
       .ast_node => try self.intpr.genValueNode(
-        (try self.intpr.ctx.values.ast(content, null, &.{}, null)).value()),
+        (try self.intpr.ctx.values.ast(content, null, &.{}, &.{})).value()),
       .frame_root => blk: {
         const ac = self.intpr.var_containers.pop();
-        var capture: ?*model.Node.Capture = null;
+        var capture: []model.Value.Ast.VarDef = &.{};
         const inner = switch (content.data) {
           .capture => |*cpt| iblk: {
-            capture = cpt;
+            capture = cpt.vars;
             break :iblk cpt.content;
           },
           else => content,
@@ -422,7 +422,7 @@ pub const ToSignature = struct {
               container.* = .{.num_values = 0};
               break :blk try self.intpr.genValueNode(
                 (try self.intpr.ctx.values.ast(
-                  try self.intpr.node_gen.@"void"(pos), container, &.{}, null)
+                  try self.intpr.node_gen.@"void"(pos), container, &.{}, &.{})
                 ).value());
             },
             else => null,
@@ -439,7 +439,7 @@ pub const ToSignature = struct {
           .list => |*list| if (ArgBehavior.calc(list.inner) != .normal) {
             const content = self.args[i];
             self.args[i] = try self.intpr.genValueNode((
-              try self.intpr.ctx.values.ast(content, null, &.{}, null)
+              try self.intpr.ctx.values.ast(content, null, &.{}, &.{})
             ).value());
           },
           else => {},
@@ -452,7 +452,7 @@ pub const ToSignature = struct {
               if (ArgBehavior.calc(m_type.value) != .normal) {
                 const content = self.args[i];
                 self.args[i] = try self.intpr.genValueNode((
-                  try self.intpr.ctx.values.ast(content, null, &.{}, null)
+                  try self.intpr.ctx.values.ast(content, null, &.{}, &.{})
                 ).value());
               },
             else => {},

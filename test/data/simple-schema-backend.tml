@@ -12,18 +12,18 @@
     title: \Text
     content: \Sequence(\Text) {primary}:2>
   \end(Record)
-:backends:<val \doc, syntax definitions>
+:backends:|\doc|
   markdown = \backend:
   :funcs:
     content = \matcher:
-    :(\Text):<val \content>
+    :(\Text):|\content|
       \content
       \
-    :(\Section):<val \sec>
+    :(\Section):|\sec|
       \# \sec::title
       \
       \map(\sec::content, \content, \Concat)
-    :(\Subsection):<val \sub>
+    :(\Subsection):|\sub|
       \#\# \sub::title
       \
       \map(\sub::content, \content, \Concat)

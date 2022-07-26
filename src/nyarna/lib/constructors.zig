@@ -9,6 +9,8 @@ const Interpreter = nyarna.Interpreter;
 const lib         = nyarna.lib;
 const model       = nyarna.model;
 
+const last = @import("../helpers.zig").last;
+
 fn nodeToVarargsItemList(
   intpr: *Interpreter,
   node: *model.Node,
@@ -181,19 +183,18 @@ pub const Types = lib.Provider.Wrapper(struct {
     if (private) |pnode| try collector.append(pnode, intpr, false, gen);
     var defs = collector.finish();
 
-    var doc_var: ?model.Node.Capture.VarDef = null;
+    var doc_var: ?model.Value.Ast.VarDef = null;
     var backend_defs: []*model.Node.Definition = if (backends) |bnode| blk: {
       var content = switch (bnode.data) {
         .capture => |*cap| cblk: {
-          if (cap.val) |val| {
-            doc_var = model.Node.Capture.VarDef{
-              .ns   = val.ns,
-              .name = try intpr.ctx.global().dupe(u8, val.name),
-              .pos  = val.pos,
-            };
+          if (cap.vars.len > 1) {
+            intpr.ctx.logger.UnexpectedCaptureVars(
+              cap.vars[1].pos.span(last(cap.vars).pos));
           }
-          inline for (.{.key, .index}) |f| if (@field(cap, @tagName(f))) |v| {
-            intpr.ctx.logger.UnexpectedBlockVar(v.pos, @tagName(f));
+          doc_var = model.Value.Ast.VarDef{
+            .ns   = cap.vars[0].ns,
+            .name = try intpr.ctx.global().dupe(u8, cap.vars[0].name),
+            .pos  = cap.vars[0].pos,
           };
           break :cblk cap.content;
         },

@@ -31,7 +31,7 @@ pub const Variable = struct {
     static,
   },
 
-  pub inline fn sym(self: *Variable) *Symbol {
+  pub fn sym(self: *Variable) *Symbol {
     return Symbol.parent(self);
   }
 

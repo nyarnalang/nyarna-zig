@@ -32,7 +32,7 @@ getSourceFn: fn(
 /// be found for the given path. Resolver implementations can return a pointer
 /// into a larger struct to carry additional information. The Cursor's name is
 /// to be allocated via `allocator`.
-pub inline fn resolve(
+pub fn resolve(
   self     : *@This(),
   allocator: std.mem.Allocator,
   path     : []const u8,
@@ -46,7 +46,7 @@ pub inline fn resolve(
 /// Calling getSourceFn on another cursor is undefined behavior.
 /// Returns the source belonging to that descriptor. The source is allocated
 /// with the given allocator and is assigned the given descriptor.
-pub inline fn getSource(
+pub fn getSource(
   self                : *@This(),
   source_allocator    : std.mem.Allocator,
   descriptor_allocator: std.mem.Allocator,
