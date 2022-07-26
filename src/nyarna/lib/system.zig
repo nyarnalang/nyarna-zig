@@ -529,6 +529,17 @@ pub const Impl = lib.Provider.Wrapper(struct {
     return intpr.node_gen.@"void"(pos);
   }
 
+  pub fn @"for"(
+    intpr    : *Interpreter,
+    pos      : model.Position,
+    input    : *model.Node,
+    collector: ?*model.Node,
+    body     : *model.Value.Ast,
+  ) nyarna.Error!*model.Node {
+    return (try intpr.node_gen.@"for"(
+      pos, input, collector, body.root, body.capture, body.container.?)).node();
+  }
+
   pub fn fragment(
     intpr  : *Interpreter,
     pos    : model.Position,
@@ -568,6 +579,7 @@ pub const Impl = lib.Provider.Wrapper(struct {
     params   : ?*model.Node,
     body     : *model.Value.Ast,
   ) nyarna.Error!*model.Node {
+    lib.reportCaptures(intpr, body, 0);
     const pnode = params orelse try intpr.node_gen.void(pos);
     // type system ensures body.container isn't null here
     return (try intpr.node_gen.funcgen(
@@ -1045,7 +1057,7 @@ pub const Checker = struct {
     .{"Optional",        .prototype},
     .{"Output",          .output},
     .{"OutputName",      .textual, .output_name},
-    .{"Positive",        .int},
+    .{"Positive",        .int, .positive},
     .{"Record",          .prototype},
     .{"Schema",          .schema},
     .{"SchemaDef",       .schema_def},
@@ -1058,6 +1070,7 @@ pub const Checker = struct {
     .{"backend",         .keyword},
     .{"block",           .keyword},
     .{"builtin",         .keyword},
+    .{"for",             .keyword},
     .{"fragment",        .keyword},
     .{"if",              .keyword},
     .{"keyword",         .keyword},

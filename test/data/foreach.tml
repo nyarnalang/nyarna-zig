@@ -2,8 +2,8 @@
 --- input
 \declare:
    foo = \func:
+     item : \Text
      index: \Positive
-     item: \Text
    :body:
      \index:,foo\item
    \end(func)

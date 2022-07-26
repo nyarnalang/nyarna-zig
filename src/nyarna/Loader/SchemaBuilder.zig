@@ -42,12 +42,12 @@ const BackendBuilder = struct {
       // as it is expected for function parameters.
       sym.* = .{
         .defined_at = v.pos,
-        .name = v.name,
-        .data = .{.variable = .{
-          .kind      = .given,
-          .spec      = self.doc_type.typedef().predef(),
-          .container = self.container,
-          .offset    = var_offset,
+        .name       = v.name,
+        .data       = .{.variable = .{
+          .kind       = .given,
+          .spec       = self.doc_type.typedef().predef(),
+          .container  = self.container,
+          .offset     = var_offset,
         }},
       };
       const ns = self.intpr.namespace(0);

@@ -12,6 +12,8 @@ const model       = nyarna.model;
 pub const system       = @import("lib/system.zig");
 pub const constructors = @import("lib/constructors.zig");
 
+const last = @import("helpers.zig").last;
+
 /// A provider implements all external functions for a certain Nyarna module.
 pub const Provider = struct {
   pub const KeywordWrapper = fn(
@@ -68,17 +70,27 @@ pub const Provider = struct {
 
       provider: Provider,
 
-      fn getTypedValue(comptime T: type, v: *model.Value) T {
+      fn getTypedValue(
+        comptime T    : type,
+                 v    : *model.Value,
+                 intpr: anytype,
+      ) T {
         return switch (T) {
           model.Type => v.data.@"type".t,
           else => switch (@typeInfo(T)) {
             .Int      => @intCast(T, v.data.int.content),
             .Float    => @floatCast(T, v.data.float.content),
             .Optional => |opt| if (v.data == .void) null
-                               else getTypedValue(opt.child, v),
+                               else getTypedValue(opt.child, v, intpr),
             .Pointer  => |ptr| switch (ptr.child) {
-              model.Node              => v.data.ast.root,
-              model.Node.Varmap       => &v.data.ast.root.data.varmap,
+              model.Node              => blk: {
+                reportCaptures(intpr, &v.data.ast, 0);
+                break :blk v.data.ast.root;
+              },
+              model.Node.Varmap       => blk: {
+                reportCaptures(intpr, &v.data.ast, 0);
+                break :blk &v.data.ast.root.data.varmap;
+              },
               model.Value             => v,
               model.Value.Ast         => &v.data.ast,
               model.Value.BlockHeader => &v.data.block_header,
@@ -128,7 +140,8 @@ pub const Provider = struct {
                 0 => ctx,
                 1 => pos,
                 else =>
-                  getTypedValue(f.field_type, stack_frame[index - 2].value),
+                  getTypedValue(
+                    f.field_type, stack_frame[index - 2].value, ctx),
               };
             }
             return @call(.{}, @field(impls, decl.name), unwrapped);
@@ -237,14 +250,13 @@ pub fn extFunc(
   return ret;
 }
 
-pub fn ensureVarAbsense(
-  logger: *nyarna.errors.Handler,
-  bc    : *model.BlockConfig,
-  fields: anytype,
+pub fn reportCaptures(
+  intpr: *Interpreter,
+  ast: *model.Value.Ast,
+  allowed: usize,
 ) void {
-  inline for (fields) |field| {
-    if (@field(bc, @tagName(field))) |given| {
-      logger.UnexpectedBlockVar(given.pos, @tagName(field));
-    }
+  if (ast.capture.len > allowed) {
+    intpr.ctx.logger.UnexpectedCaptureVars(
+      ast.capture[allowed].pos.span(last(ast.capture).pos));
   }
 }

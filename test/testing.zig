@@ -317,6 +317,23 @@ const AstEmitter = struct {
         try self.emitLine("=LIT {s} \"{}\"",
           .{@tagName(a.kind), std.zig.fmtEscapes(a.content)});
       },
+      .@"for" => |f| {
+        const lvl = try self.push("FOR");
+        try self.process(f.input);
+        if (f.collector) |coll| {
+          try self.emitLine(">COLLECTOR", .{});
+          try self.process(coll);
+        }
+        if (f.captures.len > 0) {
+          try self.emitLine(">CAPTURES", .{});
+          for (f.captures) |v| {
+            try self.emitLine("=VAR [{}]{s}", .{v.ns, v.name});
+          }
+        }
+        try self.emitLine(">BODY", .{});
+        try self.process(f.body);
+        try lvl.pop();
+      },
       .funcgen => |fg| {
         const func = try self.push("FUNC");
         if (fg.returns) |ret| {

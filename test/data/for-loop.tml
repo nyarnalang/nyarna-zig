@@ -1,8 +1,7 @@
 === for loop
 --- input
-\for(item, index, in=\listOf(spam, egg, sausage, spam)):
-  \index=\item
-  \
+\for(\List(\Text)(spam, egg, sausage, spam), \Concat):|\item, \index|
+  \index=\item\
 \end(for)
 --- output
 1=spam

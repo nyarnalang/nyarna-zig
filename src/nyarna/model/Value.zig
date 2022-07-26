@@ -14,6 +14,7 @@ pub const Ast = struct {
   /// a capture variable defined on this block.
   pub const VarDef = struct {
     ns  : u15,
+    /// always allocated in global storage.
     name: []const u8,
     pos : model.Position,
   };

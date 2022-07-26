@@ -98,6 +98,13 @@ pub const Namespace = struct {
   }
 };
 
+const IterableInput = struct {
+  const Kind = enum {concat, list, sequence};
+
+  kind     : Kind,
+  item_type: model.Type,
+};
+
 const Interpreter = @This();
 
 pub const ActiveVarContainer = struct {
@@ -757,8 +764,7 @@ fn tryInterpretMap(
     break :blk null;
   } else null;
 
-  var given_kind: enum {concat, list, sequence} = undefined;
-  if (!seen_unfinished) input_blk: {
+  const input: IterableInput = if (!seen_unfinished) blk: {
     const scalar = if (func_input_type) |t| Types.containedScalar(t) else null;
     if (
       if (scalar) |st| (
@@ -767,146 +773,41 @@ fn tryInterpretMap(
       ) else try self.tryInterpret(map.input, stage)
     ) |expr| {
       map.input.data = .{.expression = expr};
-      const input_item_type = switch (expr.expected_type) {
-        .structural => |strct| switch (strct.*) {
-          .concat   => |*con| blk: {
-            given_kind = .concat;
-            break :blk con.inner;
-          },
-          .list     => |*lst| blk: {
-            given_kind = .list;
-            break :blk lst.inner;
-          },
-          .sequence => |*seq| blk: {
-            var inner = self.ctx.types().every();
-            for (seq.inner) |item| {
-              inner = try self.ctx.types().sup(inner, item.typedef());
-            }
-            if (seq.direct) |dt| {
-              inner = try self.ctx.types().sup(inner, dt);
-            }
-            given_kind = .sequence;
-            break :blk inner;
-          },
-          else      => {
-            self.ctx.logger.NotIterable(&.{expr.expected_type.at(expr.pos)});
+      if (
+        try self.inspectIterableInput(expr.expected_type.at(expr.pos))
+      ) |input_i| {
+        if (func_input_type) |it| {
+          if (!(self.ctx.types().lesserEqual(input_i.item_type, it))) {
+            self.ctx.logger.ExpectedExprOfTypeXGotY(
+              &.{input_i.item_type.at(map.input.pos), it.at(map.func.?.pos)});
             expr.data = .poison;
-            break :input_blk;
-          },
-        },
-        .named => |named| {
-          if (named.data != .poison) {
-            self.ctx.logger.NotIterable(&.{expr.expected_type.at(expr.pos)});
+            seen_poison = true;
           }
-          expr.data = .poison;
-          break :input_blk;
-        },
-      };
-      if (func_input_type) |it| {
-        if (!(self.ctx.types().lesserEqual(input_item_type, it))) {
-          self.ctx.logger.ExpectedExprOfTypeXGotY(
-            &.{input_item_type.at(map.input.pos), it.at(map.func.?.pos)});
-          expr.data = .poison;
-          seen_poison = true;
-        }
-      } else ret_inner_type = input_item_type.at(expr.pos);
-    } else seen_unfinished = true;
-  }
-
-  if (seen_poison) {
-    map.node().data = .poison;
-    return null;
-  } else if (seen_unfinished) return null;
-
-  const ret_type = if (map.collector) |coll| blk: {
-    if (try self.tryInterpret(coll, stage)) |expr| {
-      const value = try self.ctx.evaluator().evaluate(expr);
-      expr.data = .{.value = value};
-      coll.data = .{.expression = expr};
-      switch (value.data) {
-        .poison    => seen_poison = true,
-        .prototype => |*pv| switch (pv.pt) {
-          .concat => break :blk (
-            try self.ctx.types().concat(ret_inner_type.t)
-          ) orelse {
-            self.ctx.logger.InvalidInnerConcatType(&.{ret_inner_type});
-            seen_poison = true;
-            value.data = .poison;
-            break :blk undefined;
-          },
-          .list => break :blk (
-            try self.ctx.types().list(ret_inner_type.t)
-          ) orelse {
-            self.ctx.logger.InvalidInnerListType(&.{ret_inner_type});
-            seen_poison = true;
-            value.data = .poison;
-            break :blk undefined;
-          },
-          .sequence => {
-            var builder = Types.SequenceBuilder.init(
-              self.ctx.types(), self.allocator(), true);
-            const res = try builder.push(ret_inner_type, true);
-            res.report(ret_inner_type, self.ctx.logger);
-            if (res != .success) {
-              seen_poison = true;
-              value.data = .poison;
-              break :blk undefined;
-            } else {
-              break :blk (try builder.finish(null, null)).t;
-            }
-          },
-          else => {},
-        },
-        else => {}
-      }
-      self.ctx.logger.InvalidCollector(coll.pos);
-      seen_poison = true;
-      value.data = .poison;
-    } else seen_unfinished = true;
-    break :blk undefined;
-  } else switch (given_kind) {
-    .concat => (
-      try self.ctx.types().concat(ret_inner_type.t)
-    ) orelse blk: {
-      self.ctx.logger.InvalidInnerConcatType(&.{ret_inner_type});
-      seen_poison = true;
-      break :blk undefined;
-    },
-    .list => (
-      try self.ctx.types().list(ret_inner_type.t)
-    ) orelse blk: {
-      self.ctx.logger.InvalidInnerListType(&.{ret_inner_type});
-      seen_poison = true;
-      break :blk undefined;
-    },
-    .sequence => blk: {
-      var builder = Types.SequenceBuilder.init(
-        self.ctx.types(), self.allocator(), true);
-      const res = try builder.push(ret_inner_type, true);
-      res.report(ret_inner_type, self.ctx.logger);
-      if (res != .success) {
+        } else ret_inner_type = input_i.item_type.at(expr.pos);
+        break :blk input_i;
+      } else {
+        expr.data = .poison;
         seen_poison = true;
         break :blk undefined;
-      } else {
-        break :blk (try builder.finish(null, null)).t;
       }
-    },
-  };
+    } else {
+      seen_unfinished = true;
+      break :blk undefined;
+    }
+  } else undefined;
+
   if (seen_poison) {
     map.node().data = .poison;
     return null;
   } else if (seen_unfinished) return null;
 
-  const ret = try self.ctx.global().create(model.Expression);
-  ret.* = .{
-    .pos = map.node().pos,
-    .data = .{.map = .{
-      .input = map.input.data.expression,
-      .func  = if (map.func) |f| f.data.expression else null,
-    }},
-    .expected_type = ret_type,
-  };
-  return ret;
+  const coll: ?*model.Expression = if (map.collector) |c_node| (
+    (try self.tryInterpret(c_node, stage)) orelse return null
+  ) else null;
+
+  return try self.genMap(
+    map.node().pos, map.input.data.expression, input,
+    if (map.func) |f| f.data.expression else null, ret_inner_type.t, coll);
 }
 
 fn tryInterpretDef(
@@ -943,6 +844,244 @@ fn tryInterpretDef(
   const def_val = try self.ctx.values.definition(
     def.node().pos, name, content, def.node().pos);
   return try self.ctx.createValueExpr(def_val.value());
+}
+
+/// check whether input type t is iterable. if so, returns relevant data.
+/// Else, reports error(s) and returns null.
+fn inspectIterableInput(
+  self      : *Interpreter,
+  spec      : model.SpecType,
+) !?IterableInput {
+  return switch (spec.t) {
+    .structural => |strct| switch (strct.*) {
+      .concat => |*con| IterableInput{.kind = .concat, .item_type = con.inner},
+      .list   => |*lst| IterableInput{.kind = .list, .item_type = lst.inner},
+      .sequence => |*seq| {
+        var inner = self.ctx.types().every();
+        for (seq.inner) |item| {
+          inner = try self.ctx.types().sup(inner, item.typedef());
+        }
+        if (seq.direct) |dt| {
+          inner = try self.ctx.types().sup(inner, dt);
+        }
+        return IterableInput{.kind = .sequence, .item_type = inner};
+      },
+      else => {
+        self.ctx.logger.NotIterable(&.{spec});
+        return null;
+      },
+    },
+    .named => |named| {
+      if (named.data != .poison) self.ctx.logger.NotIterable(&.{spec});
+      return null;
+    },
+  };
+}
+
+/// checks if input is interpretable. Returns the iterable
+/// kind of the input on success, or null if either input or collector can't be
+/// interpreted.
+fn inspectForInput(
+  self  : *Interpreter,
+  f_node: *model.Node.For,
+  stage : Stage,
+) !?IterableInput {
+  if (try self.tryInterpret(f_node.input, stage)) |expr| {
+    f_node.input.data = .{.expression = expr};
+    if (
+      try self.inspectIterableInput(expr.expected_type.at(expr.pos))
+    ) |input| {
+      if (!f_node.gen_vars and f_node.captures.len > 0) {
+        f_node.gen_vars = true;
+        const mark = self.markSyms();
+        defer self.resetSyms(mark);
+        const item_sym = try self.ctx.global().create(model.Symbol);
+        item_sym.* = .{
+          .defined_at = f_node.captures[0].pos,
+          .name       = f_node.captures[0].name,
+          .data       = .{.variable = .{
+            .spec       = input.item_type.at(f_node.input.pos),
+            .container  = f_node.variables,
+            .offset     = f_node.variables.num_values,
+            .kind       = .given,
+          }},
+          .parent_type = null,
+        };
+        f_node.variables.num_values += 1;
+        _ = try self.namespaces.items[f_node.captures[0].ns].tryRegister(
+          self, item_sym);
+        if (f_node.captures.len > 1) {
+          const index_sym = try self.ctx.global().create(model.Symbol);
+          index_sym.* = .{
+            .defined_at = f_node.captures[1].pos,
+            .name       = f_node.captures[1].name,
+            .data       = .{.variable = .{
+              .spec       = self.ctx.types().system.positive.predef(),
+              .container  = f_node.variables,
+              .offset     = f_node.variables.num_values,
+              .kind       = .given,
+            }},
+            .parent_type = null,
+          };
+          f_node.variables.num_values += 1;
+          _ = try self.namespaces.items[f_node.captures[1].ns].tryRegister(
+            self, index_sym);
+        }
+        if (f_node.captures.len > 2) {
+          self.ctx.logger.UnexpectedCaptureVars(
+            f_node.captures[2].pos.span(last(f_node.captures).pos));
+        }
+        _ = try self.tryInterpret(f_node.body, .{.kind = .resolve});
+      }
+      return input;
+    } else {
+      expr.data = .poison;
+    }
+  }
+  return null;
+}
+
+fn genMapRetType(
+  self     : *Interpreter,
+  input    : IterableInput,
+  body_pos : model.Position,
+  collector: ?*model.Expression,
+) !model.Type {
+  const gen = if (collector) |expr| blk: {
+    const value = try self.ctx.evaluator().evaluate(expr);
+    expr.data = .{.value = value};
+    switch (value.data) {
+      .poison    => return self.ctx.types().poison(),
+      .prototype => |*pv| switch (pv.pt) {
+        .concat    => break :blk IterableInput.Kind.concat,
+        .list      => break :blk IterableInput.Kind.list,
+        .sequence  => break :blk IterableInput.Kind.sequence,
+        else       => {},
+      },
+      else => {}
+    }
+    self.ctx.logger.InvalidCollector(expr.pos);
+    return self.ctx.types().poison();
+  } else input.kind;
+  return switch (gen) {
+    .concat => (
+      try self.ctx.types().concat(input.item_type)
+    ) orelse blk: {
+      self.ctx.logger.InvalidInnerConcatType(&.{input.item_type.at(body_pos)});
+      break :blk self.ctx.types().poison();
+    },
+    .list => (
+      try self.ctx.types().list(input.item_type)
+    ) orelse blk: {
+      self.ctx.logger.InvalidInnerListType(&.{input.item_type.at(body_pos)});
+      break :blk self.ctx.types().poison();
+    },
+    .sequence => blk: {
+      var builder = Types.SequenceBuilder.init(
+        self.ctx.types(), self.allocator(), true);
+      const res = try builder.push(input.item_type.at(body_pos), true);
+      res.report(input.item_type.at(body_pos), self.ctx.logger);
+      break :blk if (res == .success) (
+        (try builder.finish(null, null)).t
+      ) else self.ctx.types().poison();
+    },
+  };
+}
+
+fn tryForBodyToFunc(
+  self       : *Interpreter,
+  f_node     : *model.Node.For,
+  input      : IterableInput,
+  scalar_type: ?model.SpecType,
+  stage      : Stage,
+) !?*model.Expression {
+  if (
+    if (scalar_type) |st| (
+      try self.interpretWithTargetScalar(f_node.body, st, stage)
+    ) else try self.tryInterpret(f_node.body, stage)
+  ) |expr| {
+    f_node.body.data = .{.expression = expr};
+
+    var builder = try Types.SigBuilder.init(
+      self.ctx, std.math.min(2, f_node.captures.len), expr.expected_type,
+      false);
+    if (f_node.captures.len > 0) {
+      builder.pushUnwrapped(
+        f_node.captures[0].pos, f_node.captures[0].name,
+        input.item_type.at(f_node.input.pos));
+    }
+    if (f_node.captures.len > 1) {
+      builder.pushUnwrapped(
+        f_node.captures[1].pos, f_node.captures[1].name,
+        self.ctx.types().system.positive.predef());
+    }
+    const builder_res = builder.finish();
+
+    const ret = try self.ctx.global().create(model.Function);
+    ret.* = .{
+      .callable = try builder_res.createCallable(self.ctx.global(), .function),
+      .name       = null,
+      .defined_at = f_node.body.pos,
+      .data       = .{.ny = .{.body = expr}},
+      .variables  = f_node.variables,
+    };
+    return try self.ctx.createValueExpr((
+      try self.ctx.values.funcRef(f_node.body.pos, ret)
+    ).value());
+  } else return null;
+}
+
+fn genMap(
+  self     : *Interpreter,
+  pos      : model.Position,
+  input    : *model.Expression,
+  input_i  : IterableInput,
+  func     : ?*model.Expression,
+  ret_inner: model.Type,
+  collector: ?*model.Expression,
+) !*model.Expression {
+  const ret_type = try self.genMapRetType(.{
+    .kind = input_i.kind,
+    .item_type = ret_inner,
+  }, if (func) |f| f.pos else input.pos, collector);
+
+  const ret = try self.ctx.global().create(model.Expression);
+  ret.* = .{
+    .pos = pos,
+    .data = .{.map = .{
+      .input = input, .func = func,
+    }},
+    .expected_type = ret_type,
+  };
+  return ret;
+}
+
+fn tryInterpretFor(
+  self  : *Interpreter,
+  f_node: *model.Node.For,
+  stage : Stage,
+) !?*model.Expression {
+  if (stage.kind == .resolve) {
+    _ = try self.tryInterpret(f_node.input, stage);
+    if (f_node.collector) |collector| {
+      _ = try self.tryInterpret(collector, stage);
+    }
+    _ = try self.tryInterpret(f_node.body, stage);
+    return null;
+  }
+
+  if (try self.inspectForInput(f_node, stage)) |input| {
+    const coll: ?*model.Expression = if (f_node.collector) |c_node| (
+      (try self.tryInterpret(c_node, stage)) orelse return null
+    ) else null;
+
+    if (try self.tryForBodyToFunc(f_node, input, null, stage)) |func| {
+      return try self.genMap(
+        f_node.node().pos, f_node.input.data.expression, input, func,
+        f_node.body.data.expression.expected_type, coll);
+    }
+  }
+  return null;
 }
 
 pub fn tryInterpretImport(
@@ -2997,6 +3136,7 @@ pub fn tryInterpret(
       };
       return expr;
     },
+    .@"for" => |*f| try self.tryInterpretFor(f, stage),
     .funcgen => |*func| blk: {
       const val = (
         try self.tryInterpretFunc(func, stage)
@@ -3233,7 +3373,7 @@ pub fn probeType(
       node.data = .{.expression = expr};
       return expr.expected_type;
     } else return null,
-    .assign, .builtingen, .import, .funcgen, .matcher, .root_def,
+    .assign, .builtingen, .import, .@"for", .funcgen, .matcher, .root_def,
     .vt_setter => if (try self.tryInterpret(node, stage)) |expr| {
       node.data = .{.expression = expr};
       return expr.expected_type;
@@ -3846,6 +3986,20 @@ pub fn interpretWithTargetScalar(
       }
     },
     .expression => |expr| return expr,
+    .@"for" => |*f| {
+      if (try self.inspectForInput(f, stage)) |input_i| {
+        const coll = if (f.collector) |c_node| (
+          (try self.tryInterpret(c_node, stage)) orelse return null
+        ) else null;
+
+        if (try self.tryForBodyToFunc(f, input_i, spec, stage)) |func| {
+          return self.genMap(
+            input.pos, f.input.data.expression, input_i, func,
+            f.body.data.expression.expected_type, coll);
+        }
+      }
+      return null;
+    },
     // for text literals, do compile-time type conversions if possible
     .literal => |*l| {
       if (spec.t.isNamed(.void)) return try self.ctx.createValueExpr(

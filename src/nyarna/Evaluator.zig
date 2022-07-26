@@ -588,9 +588,10 @@ fn evalLocation(
 
 // helper for calling a given target multiple times with one arg
 const Caller = struct {
-  call_expr: ?*model.Expression.Call,
-  eval     : *Evaluator,
-  tmp_expr : ?*model.Expression = null,
+  call_expr  : ?*model.Expression.Call,
+  eval       : *Evaluator,
+  tmp_expr   : ?*model.Expression = null,
+  takes_index: bool,
 
   fn init(
     eval    : *Evaluator,
@@ -599,11 +600,29 @@ const Caller = struct {
     ret_type: model.Type,
   ) !?Caller {
     if (func) |target| {
-      const t_val_expr = if (target.data == .value) target else blk: {
-        const value = try eval.evaluate(target);
-        break :blk try eval.ctx.createValueExpr(value);
+      var t_val     : *model.Value      = undefined;
+      var t_val_expr: *model.Expression = undefined;
+      switch (target.data) {
+        .value => |val| {
+          t_val = val;
+          t_val_expr = target;
+        },
+        else => {
+          t_val = try eval.evaluate(target);
+          t_val_expr = try eval.ctx.createValueExpr(t_val);
+        }
+      }
+      const t_type = try eval.ctx.types().valueType(t_val);
+      const has_index = switch (t_type) {
+        .structural => |strct| switch (strct.*) {
+          .callable => |*c| c.sig.parameters.len == 2,
+          else => unreachable,
+        },
+        .named => |named| switch (named.data) {
+          .poison => return null,
+          else => unreachable,
+        },
       };
-      if (t_val_expr.expected_type.isNamed(.poison)) return null;
 
       const expr = try eval.ctx.global().create(model.Expression);
       expr.* = .{
@@ -616,18 +635,25 @@ const Caller = struct {
         .expected_type = ret_type,
       };
       return Caller{
-        .eval      = eval,
-        .call_expr = &expr.data.call,
+        .eval        = eval,
+        .call_expr   = &expr.data.call,
+        .takes_index = has_index,
       };
     } else return Caller{
-      .eval = eval,
-      .call_expr = null,
+      .eval        = eval,
+      .call_expr   = null,
+      .takes_index = false,
     };
   }
 
-  fn call(self: @This(), input: *model.Expression) !*model.Value {
+  fn call(self: @This(), input: *model.Expression, index: usize) !*model.Value {
     if (self.call_expr) |expr| {
-      expr.exprs = &.{input};
+      expr.exprs = if (self.takes_index) blk: {
+        const index_val = try self.eval.ctx.intAsValue(
+          input.pos, @intCast(i64, index + 1), undefined,
+          &self.eval.ctx.types().system.positive.named.data.int);
+        break :blk &.{input, try self.eval.ctx.createValueExpr(index_val)};
+      } else &.{input};
       return try self.eval.evalCall(self.eval, expr);
     } else return try self.eval.evaluate(input);
   }
@@ -635,6 +661,7 @@ const Caller = struct {
   fn map(
              self  : *@This(),
              input : *model.Value,
+             index : usize,
              target: anytype,
     comptime pusher: anytype,
   ) !void {
@@ -648,7 +675,7 @@ const Caller = struct {
       .data = .{.value = input},
       .expected_type = try self.eval.ctx.types().valueType(input),
     };
-    try pusher(target, try self.call(expr));
+    try pusher(target, try self.call(expr, index));
   }
 
   fn mapEach(
@@ -660,18 +687,22 @@ const Caller = struct {
     // when mapping a concat, the input may be a single value already (?).
     switch (input.data) {
       .concat => |*con| {
-        for (con.content.items) |item| try self.map(item, target, pusher);
+        for (con.content.items) |item, index| {
+          try self.map(item, index, target, pusher);
+        }
       },
       .list => |*lst| {
-        for (lst.content.items) |item| try self.map(item, target, pusher);
+        for (lst.content.items) |item, index| {
+          try self.map(item, index, target, pusher);
+        }
       },
       .poison => {},
       .seq => |*seq| {
-        for (seq.content.items) |item| {
-          try self.map(item.content, target, pusher);
+        for (seq.content.items) |item, index| {
+          try self.map(item.content, index, target, pusher);
         }
       },
-      else => try self.map(input, target, pusher),
+      else => try self.map(input, 0, target, pusher),
     }
   }
 };

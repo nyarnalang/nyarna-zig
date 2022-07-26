@@ -52,7 +52,11 @@ pub fn parse(self: *Self) !void {
             &.{.{.token = model.Token.comma}}, .{.token = .symref});
         } else expect_param = false;
         try self.push(
-          self.parser.lexer.ns, self.parser.lexer.recent_id,
+          self.parser.lexer.ns,
+          // this will become a variable name, therefore copy the name to the
+          // global storage.
+          try self.parser.intpr().ctx.global().dupe(
+            u8, self.parser.lexer.recent_id),
           self.parser.lexer.walker.posFrom(self.parser.cur_start));
       },
       else => {

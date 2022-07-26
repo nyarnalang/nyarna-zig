@@ -122,15 +122,14 @@ pub const Definition = struct {
   }
 };
 
-/// RootDef is a node created from \library, \fragment and \standalone keywords.
-/// it postpones the interpretation of parameters and the root type / schema
-/// until after any options have been fed into the module loader. Generating a
-/// RootDef causes the current module to stop parsing if at least one option is
-/// specified, and will query the importing location for option values.
-pub const RootDef = struct {
-  kind  : enum { library, fragment, standalone },
-  root  : ?*Node,
-  params: ?*Node,
+pub const For = struct {
+  input    : *Node,
+  collector: ?*Node,
+  body     : *Node,
+  captures : []Value.Ast.VarDef,
+  variables: *model.VariableContainer,
+  /// whether variables have been created inside the body
+  gen_vars : bool = false,
 
   pub fn node(self: *@This()) *Node {
     return Node.parent(self);
@@ -305,6 +304,21 @@ pub const ResolvedSymref = struct {
   }
 };
 
+/// RootDef is a node created from \library, \fragment and \standalone keywords.
+/// it postpones the interpretation of parameters and the root type / schema
+/// until after any options have been fed into the module loader. Generating a
+/// RootDef causes the current module to stop parsing if at least one option is
+/// specified, and will query the importing location for option values.
+pub const RootDef = struct {
+  kind  : enum { library, fragment, standalone },
+  root  : ?*Node,
+  params: ?*Node,
+
+  pub fn node(self: *@This()) *Node {
+    return Node.parent(self);
+  }
+};
+
 pub const UnresolvedAccess = struct {
   subject: *Node,
   id     : []const u8,
@@ -346,6 +360,7 @@ pub const UnresolvedCall = struct {
     return Node.parent(self);
   }
 };
+
 pub const UnresolvedSymref = struct {
   ns        : u15,
   name      : []const u8,
@@ -504,6 +519,7 @@ pub const Data = union(enum) {
   concat           : Concat,
   definition       : Definition,
   expression       : *Expression,
+  @"for"           : For,
   funcgen          : Funcgen,
   gen_concat       : tg.Concat,
   gen_enum         : tg.Enum,
@@ -553,6 +569,7 @@ fn parent(it: anytype) *Node {
     Concat           => offset(Data, "concat"),
     Definition       => offset(Data, "definition"),
     *Expression      => offset(Data, "expression"),
+    For              => offset(Data, "for"),
     Funcgen          => offset(Data, "funcgen"),
     Import           => offset(Data, "import"),
     Literal          => offset(Data, "literal"),

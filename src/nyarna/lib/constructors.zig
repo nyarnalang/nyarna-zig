@@ -191,11 +191,7 @@ pub const Types = lib.Provider.Wrapper(struct {
             intpr.ctx.logger.UnexpectedCaptureVars(
               cap.vars[1].pos.span(last(cap.vars).pos));
           }
-          doc_var = model.Value.Ast.VarDef{
-            .ns   = cap.vars[0].ns,
-            .name = try intpr.ctx.global().dupe(u8, cap.vars[0].name),
-            .pos  = cap.vars[0].pos,
-          };
+          doc_var = cap.vars[0];
           break :cblk cap.content;
         },
         else => bnode,

@@ -299,6 +299,7 @@ system: struct {
   integer         : model.Type,
   natural         : model.Type,
   output_name     : model.Type,
+  positive        : model.Type,
   text            : model.Type,
   unicode_category: model.Type,
   numeric_impl    : model.Type,
@@ -1035,6 +1036,7 @@ pub fn list(self: *Self, t: model.Type) std.mem.Allocator.Error!?model.Type {
   switch (t) {
     .named => |named| switch (named.data) {
       .void, .schema, .extension => return null,
+      .poison => return t,
       else => {},
     },
     .structural => {},

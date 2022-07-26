@@ -217,6 +217,12 @@
     collector: \Optional(\Ast)
   \end(keyword)
 
+  for = \keyword:
+    input    : \Ast
+    collector: \Optional(\Ast)
+    body     : \FrameRoot      {primary}
+  \end(keyword)
+
   match = \keyword:
     subject: \Ast
     cases: \HashMap(\Type, \FrameRoot) {primary, varmap}

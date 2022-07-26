@@ -34,11 +34,8 @@ pub fn newNode(self: Self, pos: Position, content: Node.Data) !*Node {
 
 fn copyVarDefs(self: Self, defs: []Value.Ast.VarDef) ![]Value.Ast.VarDef {
   const ret = try self.allocator.alloc(Value.Ast.VarDef, defs.len);
-  for (defs) |def, i| ret[i] = .{
-    .ns   = def.ns,
-    .name = try self.allocator.dupe(u8, def.name),
-    .pos  = def.pos,
-  };
+  // no need to copy name, it's allocated in global storage.
+  for (defs) |def, i| ret[i] = def;
   return ret;
 }
 
@@ -136,6 +133,14 @@ pub fn copy(self: Self, node: *Node) std.mem.Allocator.Error!*Node {
       break :blk try self.expression(expr);
     },
     .root_def   => unreachable, // never copied
+    .@"for"     => |*f| (
+      try self.@"for"(node.pos, try self.copy(f.input),
+        if (f.collector) |collector| try self.copy(collector) else null,
+        try self.copy(f.body),
+        try self.copyVarDefs(f.captures),
+        f.variables,
+      )
+    ).node(),
     .funcgen    => |*fg| (
       try self.funcgen(node.pos,
         if (fg.returns) |returns| try self.copy(returns) else null,
@@ -479,6 +484,24 @@ pub fn expression(
   content: *Expression,
 ) !*Node {
   return self.newNode(content.pos, .{.expression = content});
+}
+
+pub fn @"for"(
+  self     : Self,
+  pos      : Position,
+  input    : *Node,
+  collector: ?*Node,
+  body     : *Node,
+  captures : []Value.Ast.VarDef,
+  variables: *model.VariableContainer,
+) !*Node.For {
+  return &(try self.newNode(pos, .{.@"for" = .{
+    .input     = input,
+    .collector = collector,
+    .body      = body,
+    .captures  = captures,
+    .variables = variables,
+  }})).data.@"for";
 }
 
 pub fn funcgen(
