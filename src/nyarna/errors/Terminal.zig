@@ -362,9 +362,11 @@ fn typeError(
     .NotCallable => {
       self.renderError("expression of type {} is not callable", .{main});
     },
-    .MustTakeSingleArgument => {
+    .UnfitForMapFunction => {
       self.renderError(
-        "expected callable that takes a single argument, got {}", .{main});
+        "expected callable that takes either a single argument or " ++
+        "two arguments with the second one taking a Positive value. Got {}",
+        .{main});
     },
     .NotIterable => {
       self.renderError("expression of type {} is not iterable", .{main});

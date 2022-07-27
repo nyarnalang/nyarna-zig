@@ -151,7 +151,7 @@ pub const TypeError = enum {
    /// gives one type.
    NotCallable,
    /// gives one type.
-   MustTakeSingleArgument,
+   UnfitForMapFunction,
    /// gives one type.
    NotIterable,
 };

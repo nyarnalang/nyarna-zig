@@ -742,12 +742,17 @@ fn tryInterpretMap(
         .structural => |strct| switch (strct.*) {
           .callable => |*call| {
             ret_inner_type = call.sig.returns.at(func.pos);
-            if (call.sig.parameters.len == 1) {
-              break :blk call.sig.parameters[0].spec.t;
-            } else {
-              self.ctx.logger.MustTakeSingleArgument(
-                &.{expr.expected_type.at(expr.pos)});
+            switch (call.sig.parameters.len) {
+              1 => break :blk call.sig.parameters[0].spec.t,
+              2 => if (
+                self.ctx.types().lesserEqual(
+                  self.ctx.types().system.positive,
+                  call.sig.parameters[1].spec.t)
+              ) break :blk call.sig.parameters[0].spec.t,
+              else => {}
             }
+            self.ctx.logger.UnfitForMapFunction(
+              &.{expr.expected_type.at(expr.pos)});
           },
           else => {
             self.ctx.logger.NotCallable(&.{expr.expected_type.at(func.pos)});
