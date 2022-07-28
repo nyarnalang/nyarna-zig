@@ -27,6 +27,7 @@ pub const GenericParserError = enum {
   BlockNameAtTopLevel, KeywordMustBeCalled, NotAllowedForOption,
   CannotCallLibraryImport, UnexpectedBlockNameExpr, NotABackend, EmptyBackend,
   BackendOutsideSchemaDef, InvalidCollector, UnexpectedCaptureVars,
+  SuperfluousSubscript, MissingSubscript, NonPositionalSubscript,
 };
 
 pub const WrongItemError = enum {

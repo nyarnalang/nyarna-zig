@@ -52,6 +52,18 @@ fn copyArr(
   return items;
 }
 
+fn copyPath(
+  self: Self,
+  path: []const Node.Assign.PathItem,
+) ![]Node.Assign.PathItem {
+  const items = try self.allocator.alloc(Node.Assign.PathItem, path.len);
+  for (path) |item, i| switch (item) {
+    .field     => |index| items[i] = .{.field = index},
+    .subscript => |node|  items[i] = .{.subscript = try self.copy(node)},
+  };
+  return items;
+}
+
 pub fn copy(self: Self, node: *Node) std.mem.Allocator.Error!*Node {
   return switch (node.data) {
     .assign => |*ass| (
@@ -60,7 +72,7 @@ pub fn copy(self: Self, node: *Node) std.mem.Allocator.Error!*Node {
           .unresolved => |unres| .{.unresolved = try self.copy(unres)},
           .resolved => |res| .{.resolved = .{
             .target = res.target,
-            .path   = try self.allocator.dupe(usize, res.path),
+            .path   = try self.copyPath(res.path),
             .spec   = res.spec,
             .pos    = res.pos,
           }},
@@ -239,7 +251,7 @@ pub fn copy(self: Self, node: *Node) std.mem.Allocator.Error!*Node {
     ).node(),
     .resolved_access => |*ra| (
       try self.raccess(node.pos, try self.copy(ra.base),
-        try self.allocator.dupe(usize, ra.path), ra.last_name_pos, ra.ns)
+        try self.copyPath(ra.path), ra.last_name_pos, ra.ns)
     ).node(),
     .resolved_call => |*rc| {
       const args = try self.allocator.alloc(*Node, rc.args.len);
@@ -644,7 +656,7 @@ pub fn raccess(
   self         : Self,
   pos          : Position,
   base         : *Node,
-  path         : []const usize,
+  path         : []const Node.Assign.PathItem,
   last_name_pos: Position,
   ns: u15,
 ) !*Node.ResolvedAccess {

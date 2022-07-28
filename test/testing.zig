@@ -228,6 +228,33 @@ const AstEmitter = struct {
     return Popper{.e = self, .name = name};
   }
 
+  fn processNodePath(
+    self : *Self,
+    path : []const model.Node.Assign.PathItem,
+    start: model.Type,
+  ) anyerror!void {
+    var t = start;
+    for (path) |item| switch (item) {
+      .field => |index| {
+        const param =
+          &t.named.data.record.constructor.sig.parameters[index];
+        try self.emitLine("=FIELD {s}", .{param.name});
+        t = param.spec.t;
+      },
+      .subscript => |node| {
+        const subscr = try self.push("SUBSCRIPT");
+        try self.process(node);
+        try subscr.pop();
+        t = switch (t.structural.*) {
+          .concat   => |*con| con.inner,
+          .list     => |*lst| lst.inner,
+          .sequence => |*seq| try self.data.types.seqInnerType(seq),
+          else      => unreachable,
+        };
+      },
+    };
+  }
+
   pub fn process(self: *Self, n: *model.Node) anyerror!void {
     switch (n.data) {
       .assign => |a| {
@@ -239,17 +266,10 @@ const AstEmitter = struct {
             try target.pop();
           },
           .resolved => |r| {
-            var lb = LineBuilder.init(self.depth * 2);
-            try lb.append("=TARGET {s}", .{r.target.sym().name});
-            var t = r.target.spec.t;
-            for (r.path) |index| {
-              const param =
-                &t.named.data.record.constructor.sig.parameters[
-                  index];
-              try lb.append("::{s}", .{param.name});
-              t = param.spec.t;
-            }
-            try lb.finish(self.handler);
+            const target =
+              try self.pushWithKey("TARGET", r.target.sym().name, null);
+            try self.processNodePath(r.path, r.target.spec.t);
+            try target.pop();
           }
         }
         try self.emitLine(">REPL", .{});
@@ -415,9 +435,16 @@ const AstEmitter = struct {
       .resolved_access => |ra| {
         const racc = try self.push("RACCESS");
         try self.process(ra.base);
-        for (ra.path) |index| {
-          try self.emitLine(">DESCEND {}", .{index});
-        }
+        for (ra.path) |item| switch (item) {
+          .field => |index| {
+            try self.emitLine("=DESCEND {}", .{index});
+          },
+          .subscript => |node| {
+            const desc = try self.push("DESCEND");
+            try self.process(node);
+            try desc.pop();
+          },
+        };
         try racc.pop();
       },
       .resolved_call => |rc| {
@@ -615,36 +642,49 @@ const AstEmitter = struct {
     }
   }
 
+  fn processExprPath(
+    self : *Self,
+    path : []const model.Expression.Access.PathItem,
+    start: model.Type,
+  ) anyerror!void {
+    var t = start;
+    for (path) |item| switch (item) {
+      .field => |index| {
+        const param =
+          &t.named.data.record.constructor.sig.parameters[index];
+        try self.emitLine("=FIELD {s}", .{param.name});
+        t = param.spec.t;
+      },
+      .subscript => |expr| {
+        const subscr = try self.push("SUBSCRIPT");
+        try self.processExpr(expr);
+        try subscr.pop();
+        t = switch (t.structural.*) {
+          .concat   => |*con| con.inner,
+          .list     => |*lst| lst.inner,
+          .sequence => |*seq| try self.data.types.seqInnerType(seq),
+          else      => unreachable,
+        };
+      },
+    };
+  }
+
   pub fn processExpr(self: *Self, e: *model.Expression) anyerror!void {
     switch (e.data) {
       .access => |acc| {
-        var builder = std.ArrayList(u8).init(std.testing.allocator);
-        defer builder.deinit();
-        var t = acc.subject.expected_type;
-        for (acc.path) |descend, index| {
-          if (index > 0) try builder.appendSlice("::");
-          const param =
-            &t.named.data.record.constructor.sig.parameters[descend];
-          t = param.spec.t;
-          try builder.appendSlice(param.name);
-        }
-
-        const a = try self.pushWithKey("ACCESS", builder.items, null);
+        const a = try self.push("ACCESS");
         try self.processExpr(acc.subject);
+        try self.processExprPath(acc.path, acc.subject.expected_type);
         try a.pop();
       },
       .assignment => |ass| {
         const a = try self.push("ASSIGNMENT");
-        var lb = LineBuilder.init(self.depth * 2);
-        try lb.append("=TARGET {s}", .{ass.target.sym().name});
-        var t = ass.target.spec.t;
-        for (ass.path) |index| {
-          const param =
-            &t.named.data.record.constructor.sig.parameters[index];
-          try lb.append("::{s}", .{param.name});
-          t = param.spec.t;
-        }
-        try lb.finish(self.handler);
+        if (ass.path.len > 0) {
+          const target =
+            try self.pushWithKey("TARGET", ass.target.sym().name, null);
+          try self.processExprPath(ass.path, ass.target.spec.t);
+          try target.pop();
+        } else try self.emitLine("=TARGET {s}", .{ass.target.sym().name});
         try self.emitLine(">EXPR", .{});
         try self.processExpr(ass.rexpr);
         try a.pop();

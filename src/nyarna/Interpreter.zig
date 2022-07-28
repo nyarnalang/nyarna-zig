@@ -414,6 +414,59 @@ fn tryInterpretURef(
   return try self.tryInterpretChainEnd(uref.node(), stage);
 }
 
+const PathResult = union(enum) {
+  success: struct {
+    path: []model.Expression.Access.PathItem,
+    t   : model.Type,
+  },
+  poison, unfinished
+};
+
+fn tryInterpretPath(
+  self        : *Interpreter,
+  subject_type: model.Type,
+  path        : []const model.Node.Assign.PathItem,
+  stage       : Stage,
+) !PathResult {
+  var cur_t = subject_type;
+  var seen_poison = false;
+  var seen_unfinished = false;
+  for (path) |item| switch (item) {
+    .field     => |index| cur_t = Types.descend(cur_t, index),
+    .subscript => |node| {
+      const req_t = switch (cur_t.structural.*) {
+        .concat => |*con| blk: {
+          cur_t = con.inner;
+          break :blk self.ctx.types().system.positive;
+        },
+        .list => |*lst| blk: {
+          cur_t = lst.inner;
+          break :blk self.ctx.types().system.positive;
+        },
+        .sequence => |*seq| blk: {
+          cur_t = try self.ctx.types().seqInnerType(seq);
+          break :blk self.ctx.types().system.positive;
+        },
+        else => unreachable,
+      };
+      if (try self.associate(node, req_t.predef(), stage)) |s_expr| {
+        node.data = .{.expression = s_expr};
+        if (s_expr.expected_type.isNamed(.poison)) seen_poison = true;
+      } else seen_unfinished = true;
+    }
+  };
+  if (seen_unfinished) return PathResult.unfinished;
+  if (seen_poison) return PathResult.poison;
+
+  const expr_path = try self.ctx.global().alloc(
+    model.Expression.Access.PathItem, path.len);
+  for (path) |item, i| switch (item) {
+    .field => |index| expr_path[i] = .{.field = index},
+    .subscript => |node| expr_path[i] = .{.subscript = node.data.expression},
+  };
+  return PathResult{.success = .{.path = expr_path, .t = cur_t}};
+}
+
 fn tryInterpretAss(
   self : *Interpreter,
   ass  : *model.Node.Assign,
@@ -492,18 +545,30 @@ fn tryInterpretAss(
   const target_expr = (
     try self.associate(ass.replacement, target.spec, stage)
   ) orelse return null;
+
+  const res =
+    try self.tryInterpretPath(target.target.spec.t, target.path, stage);
+  if (res == .unfinished) return null;
+
   const expr = try self.ctx.global().create(model.Expression);
-  const path = try self.ctx.global().dupe(usize, target.path);
-  expr.* = .{
-    .pos  = ass.node().pos,
-    .data = .{
-      .assignment = .{
-        .target = target.target,
-        .path   = path,
-        .rexpr  = target_expr,
-      },
+  expr.* = switch (res) {
+    .poison => .{
+      .pos = ass.node().pos,
+      .data = .poison,
+      .expected_type = self.ctx.types().poison(),
     },
-    .expected_type = self.ctx.types().void(),
+    .success => |s| .{
+      .pos  = ass.node().pos,
+      .data = .{
+        .assignment = .{
+          .target = target.target,
+          .path   = s.path,
+          .rexpr  = target_expr,
+        },
+      },
+      .expected_type = self.ctx.types().void(),
+    },
+    .unfinished => unreachable,
   };
   return expr;
 }
@@ -861,15 +926,8 @@ fn inspectIterableInput(
     .structural => |strct| switch (strct.*) {
       .concat => |*con| IterableInput{.kind = .concat, .item_type = con.inner},
       .list   => |*lst| IterableInput{.kind = .list, .item_type = lst.inner},
-      .sequence => |*seq| {
-        var inner = self.ctx.types().every();
-        for (seq.inner) |item| {
-          inner = try self.ctx.types().sup(inner, item.typedef());
-        }
-        if (seq.direct) |dt| {
-          inner = try self.ctx.types().sup(inner, dt);
-        }
-        return IterableInput{.kind = .sequence, .item_type = inner};
+      .sequence => |*seq| IterableInput{
+        .kind = .sequence, .item_type = try self.ctx.types().seqInnerType(seq),
       },
       else => {
         self.ctx.logger.NotIterable(&.{spec});
@@ -1221,17 +1279,25 @@ fn tryInterpretRAccess(
 ) nyarna.Error!?*model.Expression {
   std.debug.assert(racc.base != racc.node());
   const base = (try self.tryInterpret(racc.base, stage)) orelse return null;
-  var t = base.expected_type;
-  for (racc.path) |index| t = Types.descend(t, index);
-  std.debug.assert(racc.path.len > 0);
+  const res = try self.tryInterpretPath(base.expected_type, racc.path, stage);
+  if (res == .unfinished) return null;
+
   const expr = try self.ctx.global().create(model.Expression);
-  expr.* = .{
-    .pos  = racc.node().pos,
-    .data = .{.access = .{
-      .subject = base,
-      .path    = try self.ctx.global().dupe(usize, racc.path),
-    }},
-    .expected_type = t,
+  expr.* = switch (res) {
+    .poison => .{
+      .pos           = racc.node().pos,
+      .data          = .poison,
+      .expected_type = self.ctx.types().poison(),
+    },
+    .success => |s| .{
+      .pos = racc.node().pos,
+      .data = .{.access = .{
+        .subject = base,
+        .path    = s.path,
+      }},
+      .expected_type = s.t,
+    },
+    .unfinished => unreachable,
   };
   return expr;
 }
@@ -1938,8 +2004,23 @@ fn tryInterpretUCall(
       }
       return null;
     },
-    else => return self.interpretCallToChain(
-      uc, try chains.Resolver.init(self, stage).resolve(uc.target), stage),
+    else => {
+      const resolver = chains.Resolver.init(self, stage);
+      var res = try resolver.resolve(uc.target);
+      if (
+        try resolver.trySubscript(&res, uc.proto_args, uc.node().pos)
+      ) |subscr| {
+        const node = uc.node();
+        const rc = &subscr.runtime_chain; // always a runtime chain
+        node.data = .{.resolved_access = .{
+          .base = rc.base,
+          .path = rc.indexes.items,
+          .last_name_pos = rc.last_name_pos,
+          .ns = rc.ns,
+        }};
+        return self.tryInterpretRAccess(&node.data.resolved_access, stage);
+      } else return self.interpretCallToChain(uc, res, stage);
+    }
   }
 }
 
@@ -3452,16 +3533,9 @@ pub fn probeType(
           .structural => |strct| switch (strct.*) {
             .concat   => |*con| break :blk con.inner.at(map.input.pos),
             .list     => |*lst| break :blk lst.inner.at(map.input.pos),
-            .sequence => |*seq| {
-              var ret = self.ctx.types().every();
-              for (seq.inner) |rec| {
-                ret = try self.ctx.types().sup(ret, rec.typedef());
-              }
-              if (seq.direct) |dt| {
-                ret = try self.ctx.types().sup(ret, dt);
-              }
-              break :blk ret.at(map.input.pos);
-            },
+            .sequence => |*seq| break :blk (
+              try self.ctx.types().seqInnerType(seq)
+            ).at(map.input.pos),
             else => break :blk null,
           },
           .named => break :blk null,
@@ -3550,7 +3624,15 @@ pub fn probeType(
     .output          => return self.ctx.types().output(),
     .resolved_access => |*ra| {
       var t = (try self.probeType(ra.base, stage, sloppy)).?;
-      for (ra.path) |index| t = Types.descend(t, index);
+      for (ra.path) |item| t = switch(item) {
+        .field     => |index| Types.descend(t, index),
+        .subscript => switch (t.structural.*) {
+          .concat    => |*con| con.inner,
+          .list      => |*lst| lst.inner,
+          .sequence  => |*seq| try self.ctx.types().seqInnerType(seq),
+          else       => unreachable,
+        },
+      };
       return t;
     },
     .resolved_call => |*rc| {

@@ -13,10 +13,15 @@ const Expression = @This();
 
 /// retrieval of the value of a substructure
 pub const Access = struct {
+  pub const PathItem = union(enum) {
+    field    : usize,
+    subscript: *Expression,
+  };
+
   subject: *Expression,
   /// list of indexes that identify which part of the value is to be
   /// retrieved.
-  path: []const usize,
+  path: []const PathItem,
 
   pub fn expr(self: *@This()) *Expression {
     return Expression.parent(self);
@@ -28,7 +33,7 @@ pub const Assignment = struct {
   target: *Symbol.Variable,
   /// list of indexes that identify which part of the variable is to be
   /// assigned.
-  path : []const usize,
+  path : []const Access.PathItem,
   rexpr: *Expression,
 
   pub fn expr(self: *@This()) *Expression {

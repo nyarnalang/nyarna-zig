@@ -3,7 +3,7 @@
 \func:
   items : \Sequence(\Text) {primary}
 :body:
-  \items::item(2)
+  \items(2)
 \end(func):>
 
 Lorem ipsum

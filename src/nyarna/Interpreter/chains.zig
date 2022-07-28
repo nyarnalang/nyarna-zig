@@ -8,6 +8,8 @@ const Interpreter = nyarna.Interpreter;
 const lib         = nyarna.lib;
 const model       = nyarna.model;
 
+const last = @import("../helpers.zig").last;
+
 /// Result of resolving an accessor chain.
 pub const Resolution = union(enum) {
   /// chain descends into a runtime value. The base may be either a variable
@@ -16,8 +18,8 @@ pub const Resolution = union(enum) {
     base: *model.Node,
     /// command character used for the base
     ns: u15,
-    /// list of indexes to descend into at runtime.
-    indexes: std.ArrayListUnmanaged(usize) = .{},
+    /// list of items to descend into at runtime.
+    indexes: std.ArrayListUnmanaged(model.Node.Assign.PathItem) = .{},
     /// the current type of the accessed value.
     t: model.Type,
     /// position of the last resolved name in the chain.
@@ -68,12 +70,12 @@ pub const Resolution = union(enum) {
   }
 
   fn chain(
-    ns: u15,
-    base: *model.Node,
-    indexes: std.ArrayListUnmanaged(usize),
-    t: model.Type,
+    ns           : u15,
+    base         : *model.Node,
+    indexes      : std.ArrayListUnmanaged(model.Node.Assign.PathItem),
+    t            : model.Type,
     last_name_pos: model.Position,
-    preliminary: bool,
+    preliminary  : bool,
   ) Resolution {
     return .{.runtime_chain = .{
       .ns = ns, .base = base, .indexes = indexes, .t = t,
@@ -136,7 +138,7 @@ pub const Resolver = struct {
 
   fn resolveSymref(self: Resolver, rs: *model.Node.ResolvedSymref) Resolution {
     switch (rs.sym.data) {
-      .poison => return Resolution.poison,
+      .poison   => return Resolution.poison,
       .variable => |*v| {
         if (v.spec.t.isNamed(.every)) {
           std.debug.assert(self.stage.kind == .intermediate);
@@ -170,7 +172,7 @@ pub const Resolver = struct {
         std.debug.assert(!v.spec.t.isNamed(.every));
         return Resolution.chain(ns, node, .{}, v.spec.t, name_pos, false);
       },
-      .poison => return Resolution.poison,
+      .poison  => return Resolution.poison,
       .unknown => switch (stage.kind) {
         .keyword => {
           self.intpr.ctx.logger.CannotResolveImmediately(node.pos);
@@ -217,7 +219,8 @@ pub const Resolver = struct {
               self.intpr.ctx.logger.FieldAccessWithoutInstance(uacc.node().pos);
               return .poison;
             } else {
-              try rc.indexes.append(self.intpr.allocator(), field.index);
+              try rc.indexes.append(
+                self.intpr.allocator(), .{.field = field.index});
               rc.t = field.t;
               return res;
             }
@@ -293,11 +296,69 @@ pub const Resolver = struct {
     } else return Resolution{.failed = ns};
   }
 
+  pub fn trySubscript(
+    self : Resolver,
+    base: *Resolution,
+    args: []model.Node.UnresolvedCall.ProtoArg,
+    end : model.Position,
+  ) nyarna.Error!?Resolution {
+    switch (base.*) {
+      .runtime_chain => |*rc| {
+        if (
+          switch (rc.t) {
+            .structural => |strct| switch (strct.*) {
+              .concat => |*con| blk: {
+                rc.t = con.inner;
+                break :blk @as(usize, 1);
+              },
+              .list => |*lst| blk: {
+                rc.t = lst.inner;
+                break :blk @as(usize, 1);
+              },
+              .sequence => |*seq| blk: {
+                rc.t = try self.intpr.ctx.types().seqInnerType(seq);
+                break :blk @as(usize, 1);
+              },
+              else => null,
+            },
+            else => null,
+          }
+        ) |expected_subscript| {
+          if (args.len < expected_subscript) {
+            self.intpr.ctx.logger.MissingSubscript(
+              if (args.len > 0) last(args).content.pos else end);
+          } else for (args[expected_subscript..]) |arg| {
+            if (arg.kind != .position) {
+              self.intpr.ctx.logger.NonPositionalSubscript(arg.content.pos);
+            } else {
+              self.intpr.ctx.logger.SuperfluousSubscript(arg.content.pos);
+            }
+          }
+          // if nyarna adds matrixes some time, this needs to be rewritten.
+          std.debug.assert(expected_subscript == 1);
+          if (args[0].kind != .position) {
+            self.intpr.ctx.logger.NonPositionalSubscript(args[0].content.pos);
+          }
+          try rc.indexes.append(self.intpr.allocator(),
+            .{.subscript = args[0].content});
+          return base.*;
+        }
+      },
+      else => {},
+    }
+    return null;
+  }
+
   fn resolveUCall(
     self : Resolver,
     ucall: *model.Node.UnresolvedCall,
   ) nyarna.Error!Resolution {
-    const res = try self.resolve(ucall.target);
+    var res = try self.resolve(ucall.target);
+    if (
+      try self.trySubscript(&res, ucall.proto_args, ucall.node().pos)
+    ) |subscr| {
+      return subscr;
+    }
     switch (res) {
       .function_returning => |*fr| {
         return Resolution.chain(fr.ns, ucall.target, .{}, fr.returns,

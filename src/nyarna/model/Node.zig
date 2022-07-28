@@ -22,6 +22,10 @@ const Node = @This();
 
 /// Assignment Node.
 pub const Assign = struct {
+  pub const PathItem = union(enum) {
+    field    : usize,
+    subscript: *Node,
+  };
   /// The node that is assigned to. If unresolved, is simply another node.
   /// Must be resolved to a 'path' into a variable, the path being a list of
   /// fields to descend into. An empty path assigns to the variable itself.
@@ -33,7 +37,7 @@ pub const Assign = struct {
     unresolved: *Node,
     resolved: struct {
       target: *Symbol.Variable,
-      path  : []usize,
+      path  : []PathItem,
       spec  : model.SpecType,
       pos   : model.Position,
     },
@@ -274,7 +278,7 @@ pub const Output = struct {
 /// resolved.
 pub const ResolvedAccess = struct {
   base         : *Node,
-  path         : []const usize,
+  path         : []const Assign.PathItem,
   last_name_pos: model.Position,
   ns           : u15,
 

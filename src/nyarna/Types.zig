@@ -1393,6 +1393,13 @@ pub fn containedScalar(t: model.Type) ?model.Type {
   };
 }
 
+pub fn seqInnerType(self: *Self, seq: *model.Type.Sequence) !model.Type {
+  var res = self.every();
+  for (seq.inner) |rec| res = try self.sup(res, rec.typedef());
+  if (seq.direct) |direct| res = try self.sup(res, direct);
+  return res;
+}
+
 pub fn allowedAsConcatInner(t: model.Type) bool {
   return InnerIntend.concat(t) == .allowed;
 }

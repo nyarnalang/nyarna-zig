@@ -37,11 +37,13 @@
     -CALL
   -ASSIGNMENT
   >ITEM 0
-  +ACCESS first
+  +ACCESS
     =GETVAR val
+    =FIELD first
   -ACCESS
   =TEXT Text "\n"
-  +ACCESS second
+  +ACCESS
     =GETVAR val
+    =FIELD second
   -ACCESS
 -SEQUENCE

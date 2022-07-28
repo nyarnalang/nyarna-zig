@@ -295,19 +295,61 @@ pub fn evaluateKeywordCall(
   }
 }
 
+fn checkRange(
+  self   : *Evaluator,
+  value  : *model.Value,
+  subject: anytype,
+) !bool {
+  if (
+    value.data.int.content <= 0 or
+    value.data.int.content > subject.content.items.len
+  ) {
+    const str = try std.fmt.allocPrint(
+      self.ctx.global(), "{}", .{value.data.int.content});
+    self.ctx.logger.OutOfRange(
+      value.origin, subject.t.typedef(), str);
+    return false;
+  } else return true;
+}
+
+fn walkPath(
+  self: *Evaluator,
+  base: **model.Value,
+  path: []const model.Expression.Access.PathItem,
+) !?**model.Value {
+  var cur = base;
+  for (path) |item| switch (item) {
+    .field     => |index| cur = &cur.*.data.record.fields[index],
+    .subscript => |expr| {
+      const value = try self.evaluate(expr);
+      if (value.data == .poison) return null;
+      switch (cur.*.data) {
+        .concat => |*con| if (try self.checkRange(value, con)) {
+          cur = &con.content.items[@intCast(usize, value.data.int.content) - 1];
+        } else return null,
+        .list => |*lst| if (try self.checkRange(value, lst)) {
+          cur = &lst.content.items[@intCast(usize, value.data.int.content) - 1];
+        } else return null,
+        .seq => |*seq| if (try self.checkRange(value, seq)) {
+          cur = &seq.content.items[
+            @intCast(usize, value.data.int.content) - 1].content;
+        } else return null,
+        else => unreachable,
+      }
+    }
+  };
+  return cur;
+}
+
 fn evalAccess(
   self  : *Evaluator,
   access: *model.Expression.Access,
 ) nyarna.Error!*model.Value {
   var cur = try self.evaluate(access.subject);
-  for (access.path) |index| {
-    cur = switch (cur.data) {
-      .record => |*record| record.fields[index],
-      .list   => |*list|   list.content.items[index],
-      else    => unreachable,
-    };
-  }
-  return cur;
+  const res = (
+    try self.walkPath(&cur, access.path)
+  ) orelse return try self.ctx.values.poison(access.expr().pos);
+  return res.*;
 }
 
 fn evalAssignment(
@@ -315,13 +357,9 @@ fn evalAssignment(
   ass : *model.Expression.Assignment,
 ) nyarna.Error!*model.Value {
   var cur_ptr = ass.target.curPtr();
-  for (ass.path) |index| {
-    cur_ptr = switch (cur_ptr.*.data) {
-      .record => |*record| &record.fields[index],
-      .list   => |*list|   &list.content.items[index],
-      else => unreachable,
-    };
-  }
+  cur_ptr = (
+    try self.walkPath(cur_ptr, ass.path)
+  ) orelse return try self.ctx.values.poison(ass.expr().pos);
   cur_ptr.* = try self.evaluate(ass.rexpr);
   return self.ctx.values.@"void"(ass.expr().pos);
 }
