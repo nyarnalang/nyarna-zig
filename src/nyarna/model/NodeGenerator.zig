@@ -123,6 +123,7 @@ pub fn copy(self: Self, node: *Node) std.mem.Allocator.Error!*Node {
         .name    = &(try self.copy(def.name.node())).data.literal,
         .content = try self.copy(def.content),
         .public  = def.public,
+        .merge   = def.merge,
       })
     ).node(),
     .expression => |expr| blk: {

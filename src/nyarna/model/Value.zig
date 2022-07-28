@@ -61,7 +61,7 @@ pub const Definition = struct {
     func: *model.Function,
     @"type": model.Type,
   },
-  root: ?model.Position = null,
+  merge: ?model.Position = null,
 
   pub fn value(self: *@This()) *Value {
     return Value.parent(self);
@@ -307,6 +307,17 @@ pub const SchemaDef = struct {
   }
 };
 
+pub const SchemaExt = struct {
+  defs    : []*Node.Definition,
+  backends: []*Node.Definition,
+  /// see SchemaDef
+  doc_var : ?Ast.VarDef,
+
+  pub fn value(self: *@This()) *Value {
+    return Value.parent(self);
+  }
+};
+
 /// a Sequence value
 pub const Seq = struct {
   pub const Item = struct {
@@ -357,6 +368,7 @@ pub const Data = union(enum) {
   record      : Record,
   schema      : Schema,
   schema_def  : SchemaDef,
+  schema_ext  : SchemaExt,
   seq         : Seq,
   text        : TextScalar,
   @"type"     : TypeVal,
@@ -410,6 +422,7 @@ fn parent(it: anytype) *Value {
     Record       => offset(Data, "record"),
     Schema       => offset(Data, "schema"),
     SchemaDef    => offset(Data, "schema_def"),
+    SchemaExt    => offset(Data, "schema_ext"),
     Seq          => offset(Data, "seq"),
     TextScalar   => offset(Data, "text"),
     TypeVal      => offset(Data, "type"),

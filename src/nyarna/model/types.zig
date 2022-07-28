@@ -270,9 +270,8 @@ pub const Named = struct {
     int    : IntNum,
     record : Record,
     // what follows are unique intrinsic types.
-    ast, block_header, definition, every, extension, frame_root, literal,
-    location, output, poison, prototype, schema, schema_def, space, @"type",
-    @"void",
+    ast, block_header, definition, every, frame_root, literal, location, output,
+    poison, prototype, schema, schema_def, schema_ext, space, @"type", @"void",
   };
   /// position at which the type has been declared.
   at: Position,

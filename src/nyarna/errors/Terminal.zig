@@ -151,6 +151,7 @@ fn scalarError(
     .MustHaveDefinedSuffix =>
       "must have one of the defined suffixes (given: no or unknown suffix)",
     .UnknownBackend        => "unknown backend",
+    .UnknownMergeTarget    => "unknown merge target",
   };
   self.renderError("{s}: '{s}'", .{entity, repr});
 }

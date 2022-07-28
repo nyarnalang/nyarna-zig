@@ -55,6 +55,7 @@ pub const SymbolDefs = struct {
   // ----- current line ------
   start  : model.Cursor,
   names  : std.ArrayListUnmanaged(*model.Node.Literal) = .{},
+  merge  : ?model.Position = null,
   primary: ?model.Position = null,
   varargs: ?model.Position = null,
   varmap : ?model.Position = null,
@@ -135,6 +136,7 @@ pub const SymbolDefs = struct {
   }
 
   fn reset(l: *SymbolDefs) void {
+    l.merge   = null;
     l.primary = null;
     l.varargs = null;
     l.varmap  = null;
@@ -193,7 +195,7 @@ pub const SymbolDefs = struct {
         return .none;
       },
       .special_char => |c| switch (c) {
-        '=', '{' => {
+        '|', '=', '{' => {
           self.logger().PrematureToken(
             pos.before(),
             &[_]errors.WrongItemError.ItemDescr{.{.token = .identifier}},
@@ -290,7 +292,11 @@ pub const SymbolDefs = struct {
           self.state = atEnd;
           return null;
         },
-        else => {
+        else => if (self.variant == .defs and c == '|') {
+          self.state = afterPipe;
+          self.merge = pos;
+          return .none;
+        } else {
           self.logger().IllegalItem(
             pos, self.afterNameItems(), .{.character = c});
           return .none;
@@ -306,6 +312,25 @@ pub const SymbolDefs = struct {
       },
       .block_header => unreachable,
     }
+  }
+
+  fn afterPipe(
+    self: *SymbolDefs,
+    pos : model.Position,
+    item: SpecialSyntax.Item,
+  ) std.mem.Allocator.Error!?Processor.Action {
+    switch (item) {
+      .special_char => |c| if (c == '=') {
+        self.merge = self.merge.?.span(pos);
+        self.state = atExpr;
+        return .none;
+      },
+      else => {},
+    }
+    self.logger().IllegalItem(
+      self.merge.?, self.afterNameItems(), .{.character = '|'});
+    self.merge = null;
+    return .none;
   }
 
   fn ltype(
@@ -828,7 +853,7 @@ pub const SymbolDefs = struct {
           }
           break :blk self.genLineNode(
             name, line_pos, "definition", "content", null,
-            &[_][]const u8{}, &[_][]const u8{});
+            &[_][]const u8{"merge"}, &[_][]const u8{});
         },
       };
       try self.produced.append(self.intpr.allocator(), node);

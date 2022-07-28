@@ -118,6 +118,8 @@ pub const Concat = struct {
 pub const Definition = struct {
   name   : *Node.Literal,
   content: *Node,
+  /// position of `|=` if any.
+  merge: ?model.Position,
   /// initially false, may be set to true during \declare processing
   public: bool,
 

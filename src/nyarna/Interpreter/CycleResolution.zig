@@ -1,5 +1,5 @@
 //! A graph.Processor that handles cyclic symbol definitions.
-//! Used for processing \declare, \SchemaDef and \backend nodes.
+//! Used for processing \declare, \SchemaDef, \SchemaExt and \backend nodes.
 
 const std = @import("std");
 
@@ -265,6 +265,12 @@ pub fn create(
 ) !*CycleResolution {
   const in: graph.ResolutionContext.Target =
     if (parent) |ptype| .{.t = ptype} else .{.ns = ns};
+  for (defs) |def| {
+    if (def.merge) |pos| {
+      intpr.ctx.logger.MergeNotAllowedHere(pos);
+      def.merge = null;
+    }
+  }
   const res = try intpr.allocator().create(CycleResolution);
   res.* = .{
     .defs              = defs,
@@ -703,6 +709,7 @@ pub fn execute(self: *CycleResolution) !void {
             std.hash.Adler32.hash("Output")      => types.output(),
             std.hash.Adler32.hash("Schema")      => types.schema(),
             std.hash.Adler32.hash("SchemaDef")   => types.schemaDef(),
+            std.hash.Adler32.hash("SchemaExt")   => types.schemaExt(),
             std.hash.Adler32.hash("Space")       => types.space(),
             std.hash.Adler32.hash("Type")        => types.@"type"(),
             std.hash.Adler32.hash("Void")        => types.@"void"(),
@@ -793,7 +800,7 @@ pub fn execute(self: *CycleResolution) !void {
           .gen_unique => |*gu| if (gu.constr_params) |params| {
             const ret_type = switch (gu.generated.named.data) {
               // these types have a keyword constructor that returns an ast.
-              .location, .definition, .output, .schema_def =>
+              .location, .definition, .output, .schema_def, .schema_ext =>
                 self.intpr.ctx.types().ast(),
               else => gu.generated,
             };
@@ -809,6 +816,7 @@ pub fn execute(self: *CycleResolution) !void {
               .definition => types.constructors.definition = constructor,
               .output     => types.constructors.output     = constructor,
               .schema_def => types.constructors.schema_def = constructor,
+              .schema_ext => types.constructors.schema_ext = constructor,
               .void       => types.constructors.void       = constructor,
               else => unreachable,
             }

@@ -319,6 +319,44 @@ fn procBackend(
   return func;
 }
 
+fn mergeNode(
+  self  : *SchemaBuilder,
+  target: *model.Node,
+  ext   : *model.Node,
+) !void {
+  // TODO
+  std.debug.print("mergeNode({s}, {s})\n", .{@tagName(target.data), @tagName(ext.data)});
+  _ = self;
+}
+
+pub fn pushExt(
+  self: *SchemaBuilder,
+  ext : *model.Value.SchemaExt,
+) !void {
+  const prev_defs = self.defs.items;
+  for (ext.defs) |def| {
+    if (def.merge != null) {
+      const target_def = for (prev_defs) |prev| {
+        if (std.mem.eql(u8, prev.name.content, def.name.content)) {
+          break prev;
+        }
+      } else {
+        self.loader.logger.UnknownMergeTarget(def.node().pos, def.name.content);
+        return;
+      };
+      try self.mergeNode(target_def.content, def.content);
+    } else {
+      try self.defs.append(self.loader.interpreter.allocator(), def);
+    }
+  }
+  if (self.b_name) |name| for (ext.backends) |b| {
+    if (std.mem.eql(u8, b.name.content, name)) {
+      _ = try self.pushBackend(b.content, ext.doc_var);
+      break;
+    }
+  };
+}
+
 pub fn finalize(
   self: *SchemaBuilder,
   pos : model.Position,

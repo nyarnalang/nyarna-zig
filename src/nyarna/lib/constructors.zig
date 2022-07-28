@@ -31,7 +31,7 @@ pub const Types = lib.Provider.Wrapper(struct {
     intpr: *Interpreter,
     pos  : model.Position,
     name : *model.Value.TextScalar,
-    root : *model.Value.Enum,
+    merge: *model.Value.Enum,
     node : *model.Value.Ast,
   ) nyarna.Error!*model.Node {
     const expr = try intpr.interpret(node.root);
@@ -55,7 +55,7 @@ pub const Types = lib.Provider.Wrapper(struct {
           return try intpr.node_gen.poison(pos);
         }
       }, val.origin);
-    def_val.root = if (root.index == 1) root.value().origin else null;
+    def_val.merge = if (merge.index == 1) merge.value().origin else null;
     return intpr.genValueNode(def_val.value());
   }
 
@@ -206,6 +206,52 @@ pub const Types = lib.Provider.Wrapper(struct {
 
     const val = try intpr.ctx.values.schemaDef(
       pos, defs, try gen.copy(root), backend_defs, doc_var);
+    return try intpr.genValueNode(val.value());
+  }
+
+  pub fn @"SchemaExt"(
+    intpr   : *Interpreter,
+    pos     : model.Position,
+    public  : ?*model.Node,
+    private : ?*model.Node,
+    backends: ?*model.Node,
+  ) nyarna.Error!*model.Node {
+    // we generate the nodes into the global storage so that they survive the
+    // finalization of current module's interpreter.
+    const gen = model.NodeGenerator.init(intpr.ctx.global(), intpr.ctx);
+
+    var collector = system.DefCollector{.dt = intpr.ctx.types().definition()};
+    for ([_]?*model.Node{public, private}) |item| {
+      if (item) |node| try collector.collect(node, intpr);
+    }
+    try collector.allocate(intpr.ctx.global());
+    if (public)  |pnode| try collector.append(pnode, intpr, true, gen);
+    if (private) |pnode| try collector.append(pnode, intpr, false, gen);
+    var defs = collector.finish();
+
+    var doc_var: ?model.Value.Ast.VarDef = null;
+    var backend_defs: []*model.Node.Definition = if (backends) |bnode| blk: {
+      var content = switch (bnode.data) {
+        .capture => |*cap| cblk: {
+          if (cap.vars.len > 1) {
+            intpr.ctx.logger.UnexpectedCaptureVars(
+              cap.vars[1].pos.span(last(cap.vars).pos));
+          }
+          doc_var = cap.vars[0];
+          break :cblk cap.content;
+        },
+        else => bnode,
+      };
+
+      collector = system.DefCollector{.dt = intpr.ctx.types().definition()};
+      try collector.collect(content, intpr);
+      try collector.allocate(intpr.ctx.global());
+      try collector.append(content, intpr, false, gen);
+      break :blk collector.finish();
+    } else &.{};
+
+    const val = try intpr.ctx.values.schemaExt(
+      pos, defs, backend_defs, doc_var);
     return try intpr.genValueNode(val.value());
   }
 

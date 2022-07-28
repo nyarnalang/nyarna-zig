@@ -75,15 +75,21 @@
   \end(unique)
 
   Definition = \unique:
-    name : \Literal
-    root = \Bool(false)
-    item : \Ast {primary}
+    name  : \Literal
+    merge = \Bool(false)
+    item  : \Ast {primary}
   \end(unique)
 
   Schema = \unique()
 
   SchemaDef = \unique:
     root    : \Ast
+    public  : \Optional(\Ast) {primary}:<syntax definitions, fullast>
+    private : \Optional(\Ast) {}:<syntax definitions, fullast>
+    backends: \Optional(\Ast) {}:<syntax definitions>
+  \end(unique)
+
+  SchemaExt = \unique:
     public  : \Optional(\Ast) {primary}:<syntax definitions, fullast>
     private : \Optional(\Ast) {}:<syntax definitions, fullast>
     backends: \Optional(\Ast) {}:<syntax definitions>
@@ -257,3 +263,11 @@
 \end(declare)
 
 \library()
+
+\declare(\SchemaDef):
+  use = \keyword:
+    base      : \SchemaDef
+    backend   : \Optional(\Identifier)
+    extensions: \List(\SchemaExt)      {varargs}
+  \end(keyword)
+\end(declare)

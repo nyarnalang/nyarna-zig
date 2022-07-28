@@ -1,80 +1,73 @@
 === Schema extension
 --- input:Document
-\standalone(Schema)
+\fragment(\SchemaDef)
 
-\declare:
-  ChapterContent = \intersection(\Raw)
+\SchemaDef(root=\Document):
+  ChapterContent = \Intersection(\Text)
 
-  Chapter = \record:
-    title: \Raw
-    content: \concat(\ChapterContent) {primary}
-  \end(record)
+  Chapter = \Record:
+    title  : \Text
+    content: \Concat(\ChapterContent) {primary}
+  \end(Record)
 
-  Document = \record:
-    title:    \Raw
-    chapters: \concat(\Chapter) {primary}
-  \end(record)
-\end(declare)
-
-\schema(root=\Document):
-  \backend(html):
-    \template(\Raw):
-      # in a real backend, this would do escaping
-      \this
-    \end(template)
-
-    \template(\Chapter):
+  Document = \Record:
+    title   : \Text
+    chapters: \Sequence(\Chapter) {primary}
+  \end(Record)
+:backends:|\doc|
+  html = \backend:
+  :funcs:
+    process = \matcher:
+    :(\Text):|\txt|
+      \txt
+    :(\Chapter):|\ch|
       \
-
           <section>
-            <h2>\process(\this::title)</h2>
-            \process(\this::content)
-          </section>
-    \end(template)
-
-    \template(\Document):
+            <h2>\process(\ch::title)</h2>
+            \process(\ch::content)
+          </section>\
+    :(\Document):|\root|
       <html>
         <head>
-          <title>\process(\this::title)</title>
+          <title>\process(\root::title)</title>
         </head>
         <body>
-          <h1>\process(\this::title)</h1>
-          \process(\this::chapters)
+          <h1>\process(\root::title)</h1>
+          \map(\root::chapters, \process, \Concat)
         </body>
       </html>
-    \end(template)
-  :actions:
-    \return(\subject::input::name:,.html):
-      \process(\subject::root)
-    \end(return)
+    \end(matcher)
+  :body:
+    \Output(\doc::name.html, body=\process(\doc::root))
   \end(backend)
-\end(schema)
+\end(SchemaDef)
 --- input:Document-graphics
-\standalone(Extension)
+\fragment(\SchemaExt)
 
-\declare:
-  Image = \record:
-    path:    \Raw
-    caption: \Raw
-  \end(record)
-\end(declare)
+\SchemaExt:
+  Image = \Record:
+    path:    \Text
+    caption: \Text
+  \end(Record)
 
-\extension(Document):
-  \extend(\ChapterContent, \Image)
-:backends:
-  \backend(html):
-    \template(\Image):
+  ChapterContent |= \intersection(\Image)
+:backends:|\doc|
+  html = \backend:
+  :funcs:
+    process |= \matcher:
+    :(\Image):|\img|
       \
-
             <figure>
-              <img src="\process(\this::path)" />
-              <figcaption>\process(\this::caption)</figcaption>
-            </figure>
-    \end(template)
+              <img src="\process(\img::path)" />
+              <figcaption>\process(\img::caption)</figcaption>
+            </figure>\
+    \end(matcher)
   \end(backend)
-\end(extension)
+\end(SchemaExt)
 --- input
-\standalone(Document, graphics)
+\standalone(
+  schema = \import(Document)::use(extensions=\import(Document-graphics))
+)
 
 \Document(Article with graphics):
   \Chapter(Text-only chapter):

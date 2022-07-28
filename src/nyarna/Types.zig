@@ -94,7 +94,7 @@ const InnerIntend = enum {
       .named => |named| switch (named.data) {
         .every => InnerIntend.exalt,
         .void  => InnerIntend.collapse,
-        .prototype, .schema, .extension => InnerIntend.forbidden,
+        .prototype, .schema => InnerIntend.forbidden,
         else => InnerIntend.allowed,
       },
     };
@@ -258,6 +258,7 @@ constructors: struct {
   definition: Constructor = .{},
   output    : Constructor = .{},
   schema_def: Constructor = .{},
+  schema_ext: Constructor = .{},
   void      : Constructor = .{},
 
   /// Prototype implementations that generate types.
@@ -287,6 +288,7 @@ predefined: struct {
   prototype   : model.Type.Named,
   schema      : model.Type.Named,
   schema_def  : model.Type.Named,
+  schema_ext  : model.Type.Named,
   space       : model.Type.Named,
   @"type"     : model.Type.Named,
   void        : model.Type.Named,
@@ -410,6 +412,10 @@ pub fn schemaDef(self: *Self) model.Type {
   return self.predefined.schema_def.typedef();
 }
 
+pub fn schemaExt(self: *Self) model.Type {
+  return self.predefined.schema_ext.typedef();
+}
+
 pub fn space(self: *Self) model.Type {
   return self.predefined.space.typedef();
 }
@@ -447,6 +453,7 @@ pub fn typeConstructor(self: *Self, t: model.Type) !Constructor {
       .location    => self.constructors.location,
       .output      => self.constructors.output,
       .schema_def  => self.constructors.schema_def,
+      .schema_ext  => self.constructors.schema_ext,
       .textual     => Constructor{
         .callable   = (try self.constructorOf(t)).?,
         .impl_index = self.prototype_funcs.textual.constructor.?.impl_index,
@@ -928,7 +935,6 @@ fn supWithIntrinsic(
   return switch (intr.data) {
     .@"enum", .float, .int, .record, .textual => unreachable, .void =>
       (try self.optional(other)) orelse self.poison(),
-    .prototype, .schema, .extension, .ast, .frame_root => self.poison(),
     .space, .literal => switch (other) {
       .structural => unreachable, // case is handled in supWithStructural.
       .named => |named| switch (named.data) {
@@ -1021,7 +1027,7 @@ pub fn registerConcat(self: *Self, t: *model.Type.Concat) !bool {
 pub fn registerList(self: *Self, t: *model.Type.List) !bool {
   switch (t.inner) {
     .named => |named| switch (named.data) {
-      .void, .prototype, .schema, .extension => return false,
+      .void, .prototype => return false,
       else => {},
     },
     .structural => {},
@@ -1035,7 +1041,7 @@ pub fn registerList(self: *Self, t: *model.Type.List) !bool {
 pub fn list(self: *Self, t: model.Type) std.mem.Allocator.Error!?model.Type {
   switch (t) {
     .named => |named| switch (named.data) {
-      .void, .schema, .extension => return null,
+      .void, .prototype => return null,
       .poison => return t,
       else => {},
     },
@@ -1119,7 +1125,7 @@ pub fn typeType(self: *Self, t: model.Type) !model.Type {
         return constructor.typedef();
       },
       .record  => |*rec| rec.constructor.typedef(),
-      .location, .definition, .schema_def, .void, .output =>
+      .location, .definition, .schema_def, .schema_ext, .void, .output =>
         // callable may be null if currently processing system.ny. In that
         // case, the type is not callable.
         if ((try self.typeConstructor(t)).callable) |c| c.typedef()
@@ -1149,6 +1155,7 @@ pub fn valueType(self: *Self, v: *model.Value) !model.Type {
     .record       => |*rec|  rec.t.typedef(),
     .schema       => self.schema(),
     .schema_def   => self.schemaDef(),
+    .schema_ext   => self.schemaExt(),
     .seq          => |*seq|  seq.t.typedef(),
     .text         => |*txt|  txt.t,
     .@"type"      => |tv|    try self.typeType(tv.t),

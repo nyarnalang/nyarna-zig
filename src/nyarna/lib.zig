@@ -105,6 +105,7 @@ pub const Provider = struct {
               model.Value.HashMap     => &v.data.hashmap,
               model.Value.Record      => &v.data.record,
               model.Value.Seq         => &v.data.seq,
+              model.Value.SchemaDef   => &v.data.schema_def,
               model.Value.TextScalar  => &v.data.text,
               model.Value.TypeVal     => &v.data.@"type",
               u8 =>

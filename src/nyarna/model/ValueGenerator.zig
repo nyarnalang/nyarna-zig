@@ -24,16 +24,6 @@ fn create(self: *const Self) !*Value {
   return self.allocator().create(Value);
 }
 
-pub fn value(
-  self: *const Self,
-  pos : Position,
-  data: Value.Data,
-) !*Value {
-  const ret = try self.create();
-  ret.* = .{.origin = pos, .data = data};
-  return ret;
-}
-
 pub fn ast(
   self      : *const Self,
   root      : *Node,
@@ -185,50 +175,8 @@ pub fn output(
   })).data.output;
 }
 
-pub fn schemaDef(
-  self    : *const Self,
-  pos     : Position,
-  defs    : []*Node.Definition,
-  root    : *Node,
-  backends: []*Node.Definition,
-  doc_var : ?Value.Ast.VarDef,
-) !*Value.SchemaDef {
-  return &(try self.value(pos, .{
-    .schema_def = .{
-      .defs     = defs,
-      .root     = root,
-      .backends = backends,
-      .doc_var  = doc_var,
-    },
-  })).data.schema_def;
-}
-
-pub fn schema(
-  self   : *const Self,
-  pos    : Position,
-  root   : model.SpecType,
-  symbols: []*model.Symbol,
-  backend: ?*model.Function,
-) !*Value.Schema {
-  return &(try self.value(pos, .{
-    .schema = .{
-      .root    = root,
-      .symbols = symbols,
-      .backend = backend,
-    },
-  })).data.schema;
-}
-
-pub fn seq(
-  self: *const Self,
-  pos : Position,
-  t   : *const Type.Sequence,
-) !*Value.Seq {
-  return &(try self.value(pos, .{
-    .seq = .{
-      .t = t, .content = std.ArrayList(Value.Seq.Item).init(self.allocator()),
-    },
-  })).data.seq;
+pub fn poison(self: *const Self, pos: Position) !*Value {
+  return self.value(pos, .poison);
 }
 
 pub fn prototype(
@@ -250,6 +198,68 @@ pub fn record(
   errdefer self.allocator().free(fields);
   return &(try self.value(
     pos, .{.record = .{.t = t, .fields = fields}})).data.record;
+}
+
+pub fn schema(
+  self   : *const Self,
+  pos    : Position,
+  root   : model.SpecType,
+  symbols: []*model.Symbol,
+  backend: ?*model.Function,
+) !*Value.Schema {
+  return &(try self.value(pos, .{
+    .schema = .{
+      .root    = root,
+      .symbols = symbols,
+      .backend = backend,
+    },
+  })).data.schema;
+}
+
+pub fn schemaDef(
+  self    : *const Self,
+  pos     : Position,
+  defs    : []*Node.Definition,
+  root    : *Node,
+  backends: []*Node.Definition,
+  doc_var : ?Value.Ast.VarDef,
+) !*Value.SchemaDef {
+  return &(try self.value(pos, .{
+    .schema_def = .{
+      .defs     = defs,
+      .root     = root,
+      .backends = backends,
+      .doc_var  = doc_var,
+    },
+  })).data.schema_def;
+}
+
+pub fn schemaExt(
+  self    : *const Self,
+  pos     : Position,
+  defs    : []*Node.Definition,
+  backends: []*Node.Definition,
+  doc_var : ?Value.Ast.VarDef,
+) !*Value.SchemaExt {
+  return &(try self.value(pos, .{
+    .schema_ext = .{
+      .defs     = defs,
+      .backends = backends,
+      .doc_var  = doc_var,
+    },
+  })).data.schema_ext;
+}
+
+pub fn seq(
+  self: *const Self,
+  pos : Position,
+  t   : *const Type.Sequence,
+) !*Value.Seq {
+  return &(try self.value(pos, .{
+    .seq = .{
+      .t = t, .content = std.ArrayList(Value.Seq.Item).init(self.allocator()),
+    },
+  })).data.seq;
 }
 
 pub fn textScalar(
@@ -275,10 +285,16 @@ pub fn @"type"(
     pos, .{.@"type" = .{.t = t}})).data.@"type";
 }
 
-pub fn @"void"(self: *const Self, pos: Position) !*Value {
-  return self.value(pos, .void);
+pub fn value(
+  self: *const Self,
+  pos : Position,
+  data: Value.Data,
+) !*Value {
+  const ret = try self.create();
+  ret.* = .{.origin = pos, .data = data};
+  return ret;
 }
 
-pub fn poison(self: *const Self, pos: Position) !*Value {
-  return self.value(pos, .poison);
+pub fn @"void"(self: *const Self, pos: Position) !*Value {
+  return self.value(pos, .void);
 }

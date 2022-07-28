@@ -101,6 +101,7 @@ pub const DefCollector = struct {
             .content = try gen.expression(
               try ctx.createValueExpr(content_value)
             ),
+            .merge  = def.merge,
             .public = pdef,
           });
           self.defs[self.count] = def_node;
@@ -982,6 +983,30 @@ pub const Impl = lib.Provider.Wrapper(struct {
     }
     return list.content.items[@intCast(usize, index.content - 1)];
   }
+
+  //----------------------
+  // unique type functions
+  //----------------------
+
+  pub fn @"SchemaDef::use"(
+    intpr     : *Interpreter,
+    pos       : model.Position,
+    schema_def: *model.Value.SchemaDef,
+    b_name    : ?*model.Value.TextScalar,
+    extensions: *model.Value.List,
+  ) nyarna.Error!*model.Node {
+    const builder = try nyarna.Loader.SchemaBuilder.create(
+      schema_def, intpr.ctx.data, b_name);
+    for (extensions.content.items) |val| {
+      try builder.pushExt(&val.data.schema_ext);
+    }
+    const val = (
+      try builder.finalize(pos)
+    ) orelse {
+      return intpr.node_gen.poison(pos);
+    };
+    return try intpr.genValueNode(val.value());
+  }
 });
 
 pub const instance = Impl.init();
@@ -1061,6 +1086,8 @@ pub const Checker = struct {
     .{"Record",          .prototype},
     .{"Schema",          .schema},
     .{"SchemaDef",       .schema_def},
+    .{"SchemaDef::use",  .keyword},
+    .{"SchemaExt",       .schema_ext},
     .{"Sequence",        .prototype},
     .{"Text",            .textual, .text},
     .{"Textual",         .prototype},
