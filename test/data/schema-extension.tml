@@ -24,7 +24,7 @@
       \
           <section>
             <h2>\process(\ch::title)</h2>
-            \process(\ch::content)
+      \map(\ch::content, \process, \Concat)
           </section>\
     :(\Document):|\root|
       <html>
@@ -33,7 +33,7 @@
         </head>
         <body>
           <h1>\process(\root::title)</h1>
-          \map(\root::chapters, \process, \Concat)
+      \map(\root::chapters, \process, \Concat)
         </body>
       </html>
     \end(matcher)
@@ -93,8 +93,9 @@
 
     <section>
       <h2>Text-only chapter</h2>
-      Lorem ipsum dolor sit amet
+Lorem ipsum dolor sit amet
     </section>
+
     <section>
       <h2>Image-only chapter</h2>
 
@@ -102,15 +103,19 @@
         <img src="diagram.png" />
         <figcaption>some diagram</figcaption>
       </figure>
+
     </section>
+
     <section>
       <h2>Mixed-content chapter</h2>
-      consectetur adipiscing elit
+consectetur adipiscing elit
 
       <figure>
         <img src="diagram2.png" />
         <figcaption>another diagram</figcaption>
       </figure>
+
     </section>
+
   </body>
 </html>
