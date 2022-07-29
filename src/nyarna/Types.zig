@@ -778,6 +778,16 @@ fn supWithStructure(
             self.poison(),
         else => {},
       },
+      .hashmap => |*hm| switch (other_struc.*) {
+        .hashmap => |*other_hm| {
+          return (
+            try self.hashMap(
+              try self.sup(hm.key, other_hm.key),
+              try self.sup(hm.value, other_hm.value))
+          ) orelse self.poison();
+        },
+        else => {},
+      },
       else => {},
     },
     .named => |named| switch (named.data) {
@@ -822,9 +832,7 @@ fn supWithStructure(
     },
     .concat => |*c|
       (try self.concat(try self.sup(c.inner, other))) orelse self.poison(),
-    .hashmap => {
-      unreachable; // TODO
-    },
+    .hashmap, .list => self.poison(),
     .intersection => |*inter| blk: {
       if (other.isScalar()) {
         const scalar_type = if (inter.scalar) |inter_scalar|
@@ -843,8 +851,6 @@ fn supWithStructure(
       }
       break :blk self.poison();
     },
-    .list => |*l|
-      (try self.list(try self.sup(l.inner, other))) orelse self.poison(),
     .optional => |*o|
       (try self.optional(try self.sup(o.inner, other))) orelse self.poison(),
     .sequence => |*s| switch (other) {
