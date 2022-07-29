@@ -532,15 +532,62 @@ pub fn sup(
     else => {},
   };
   for (named_types) |t, i| switch (t.data) {
-    .int => |_| {
+    .int => |in1| {
       const other = named_types[(i + 1) % 2];
-      return switch (other.data) {
-        .float => |_| unreachable, // TODO
-        .int => |_| unreachable, // TODO
-        else => self.text(),
-      };
+      switch (other.data) {
+        .float => return self.text(),
+        .int => |in2| {
+          if (in1.suffixes.len == 0 and in2.suffixes.len == 0) {
+            if (in1.min <= in2.min and in1.max >= in2.max) {
+              return named_types[i].typedef();
+            }
+            if (in2.min <= in1.min and in2.max >= in2.max) {
+              return named_types[(i + 1) % 2].typedef();
+            }
+            const named = try self.allocator.create(model.Type.Named);
+            named.* = .{
+              .at   = model.Position.intrinsic(),
+              .name = null,
+              .data = .{.int = .{
+                .min      = std.math.min(in1.min, in2.min),
+                .max      = std.math.max(in1.max, in2.max),
+                .suffixes = &.{},
+              }},
+            };
+            return model.Type{.named = named};
+          } else return self.text();
+        },
+        else => {},
+      }
     },
-    .float => |_| unreachable, // TODO
+    .float => |fl1| {
+      const other = named_types[(i + 1) % 2];
+      switch (other.data) {
+        .int => return self.text(),
+        .float => |fl2| {
+          if (fl1.suffixes.len == 0 and fl2.suffixes.len == 0) {
+            if (fl1.min <= fl2.min and fl1.max >= fl2.max) {
+              return named_types[i].typedef();
+            }
+            if (fl2.min <= fl1.min and fl2.max >= fl2.max) {
+              return named_types[(i + 1) % 2].typedef();
+            }
+            const named = try self.allocator.create(model.Type.Named);
+            named.* = .{
+              .at   = model.Position.intrinsic(),
+              .name = null,
+              .data = .{.float = .{
+                .min      = std.math.min(fl1.min, fl2.min),
+                .max      = std.math.max(fl1.max, fl2.max),
+                .suffixes = &.{},
+              }},
+            };
+            return model.Type{.named = named};
+          } else return self.text();
+        },
+        else => {},
+      }
+    },
     else => {},
   };
   for (named_types) |*t, i| switch (t.*.data) {
