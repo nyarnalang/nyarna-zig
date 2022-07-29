@@ -170,7 +170,11 @@ pub const IntersectionBuilder = struct {
         } else tcount += 1;
       } else break;
     }
-    std.debug.assert(scalar != null or tcount > 0);
+    switch (tcount) {
+      0 => return scalar.?,
+      1 => if (scalar == null) return input[0].types[0],
+      else => {},
+    }
 
     defer if (self.allocator) |allocator| {
       allocator.free(self.sources);

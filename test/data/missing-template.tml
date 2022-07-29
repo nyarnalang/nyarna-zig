@@ -26,4 +26,4 @@
 --- errors:document
 14:16 - 14:27 ExpectedExprOfTypeXGotY
   main = Text
-  other = Bikes(12:15) {Bike}
+  other = Bikes(12:15) Bike
