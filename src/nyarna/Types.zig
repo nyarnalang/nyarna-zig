@@ -1278,6 +1278,22 @@ pub fn litType(self: *Self, lit: *model.Node.Literal) model.Type {
 /// returns whether there exists a semantic conversion from `from` to `to`.
 pub fn convertible(self: *Self, from: model.Type, to: model.Type) bool {
   if (self.lesserEqual(from, to)) return true;
+
+  // check whether the given type can be consumed by a Sequence type with
+  // auto set.
+  switch (to) {
+    .structural => |strct| switch (strct.*) {
+      .sequence => |*seq| if (seq.auto) |auto| {
+        const sig = seq.inner[auto.index].constructor.sig;
+        const param = sig.parameters[sig.primary.?];
+        if (self.convertible(from, param.spec.t)) return true;
+      },
+      else => {},
+    },
+    .named => {}
+  }
+
+  // now check for other conversions
   const to_scalar = containedScalar(to);
   return switch (from) {
     .named => |from_inst| switch (from_inst.data) {
@@ -1387,6 +1403,9 @@ pub fn containedScalar(t: model.Type) ?model.Type {
       .sequence => |*seq| blk: {
         if (seq.direct) |direct| {
           if (containedScalar(direct)) |ret| break :blk ret;
+        } else if (seq.auto) |auto| {
+          const sig = seq.inner[auto.index].constructor.sig;
+          break :blk containedScalar(sig.parameters[sig.primary.?].spec.t);
         }
         break :blk null;
       },

@@ -414,18 +414,25 @@ fn convertIntoConcat(
   }
 }
 
+const NonRecordTarget = union(enum) {
+  direct: model.Type,
+  auto  : u21,
+};
+
 fn convertIntoSequence(
   self    : *Evaluator,
   value   : *model.Value,
   lf_after: usize,
   into    : *SequenceBuilder,
-  direct  : model.Type,
+  non_rec : NonRecordTarget,
   others  : []*model.Type.Record,
 ) nyarna.Error!void {
   switch (value.data) {
-    .seq => |*seq| for (seq.content.items) |item| {
-      try self.convertIntoSequence(
-        item.content, item.lf_after, into, direct, others);
+    .seq => |*seq| {
+      for (seq.content.items) |item| {
+        try self.convertIntoSequence(
+          item.content, item.lf_after, into, non_rec, others);
+      }
       return;
     },
     .record => |*rec| for (others) |other_rec| if (rec.t == other_rec) {
@@ -436,11 +443,45 @@ fn convertIntoSequence(
     else => {},
   }
   const t = try self.ctx.types().valueType(value);
-  if (self.ctx.types().lesserEqual(t, direct)) {
-    try into.push(value, lf_after);
-    return;
+  switch (non_rec) {
+    .direct => |direct| {
+      if (self.ctx.types().lesserEqual(t, direct)) {
+        try into.push(value, lf_after);
+        return;
+      }
+      try into.push(try self.doConvert(value, direct), lf_after);
+    },
+    .auto => |index| {
+      const rec = others[index];
+      const rec_val = try self.ctx.values.record(value.origin, rec);
+      for (rec_val.fields) |*field, i| {
+        const param = rec.constructor.sig.parameters[i];
+        field.* = if (i == rec.constructor.sig.primary.?) (
+          try self.doConvert(value, param.spec.t)
+        ) else if (param.default) |expr| (
+          try self.evaluate(expr)
+        ) else switch (param.spec.t) {
+          .structural => |strct| switch (strct.*) {
+            .concat, .optional, .sequence => (
+              try self.ctx.values.@"void"(param.spec.pos)
+            ),
+            .hashmap => |*hm| (
+              try self.ctx.values.hashMap(param.spec.pos, hm)
+            ).value(),
+            .list    => |*lst| (
+              try self.ctx.values.list(param.spec.pos, lst)
+            ).value(),
+            else => unreachable,
+          },
+          .named => |named| switch (named.data) {
+            .void => try self.ctx.values.@"void"(param.spec.pos),
+            else  => unreachable,
+          }
+        };
+      }
+      try into.push(rec_val.value(), lf_after);
+    }
   }
-  try into.push(try self.doConvert(value, direct), lf_after);
 }
 
 fn doConvert(
@@ -539,7 +580,9 @@ fn doConvert(
       .sequence => |*seq| {
         var builder = SequenceBuilder.init(self.ctx);
         try self.convertIntoSequence(
-          value, 0, &builder, seq.direct.?, seq.inner);
+          value, 0, &builder,
+          if (seq.direct) |d| .{.direct = d} else .{.auto = seq.auto.?.index},
+          seq.inner);
         return try builder.finish(value.origin);
       }
     }

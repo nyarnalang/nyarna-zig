@@ -4091,7 +4091,7 @@ pub fn interpretWithTargetScalar(
         ) else null;
 
         if (try self.tryForBodyToFunc(f, input_i, spec, stage)) |func| {
-          return self.genMap(
+          return try self.genMap(
             input.pos, f.input.data.expression, input_i, func,
             f.body.data.expression.expected_type, coll);
         }

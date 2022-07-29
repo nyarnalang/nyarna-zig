@@ -21,7 +21,6 @@ fn genTests(dir: *std.fs.Dir, sets: []TestSet) !void {
   }
 
   const disabled_tests = [_][]const u8{
-    "auto-paragraphs.tml", // missing: intrinsic funcs
     "invalid-comptime-call-in-declare.tml", // TODO: can user define comptime fn
   };
 

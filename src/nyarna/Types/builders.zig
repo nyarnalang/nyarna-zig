@@ -516,7 +516,8 @@ pub const SequenceBuilder = struct {
     t: model.Type,
     auto: union(enum) {
       not_disjoint: model.SpecType,
-      success,invalid_inner,
+      non_optional: model.SpecType,
+      success, invalid_inner, no_primary,
     },
 
     pub fn report(
@@ -525,9 +526,12 @@ pub const SequenceBuilder = struct {
       logger   : *errors.Handler,
     ) void {
       switch (self.auto) {
-        .not_disjoint => |t| logger.TypesNotDisjoint(&.{auto_type.?, t}),
+        .not_disjoint  => |t| logger.TypesNotDisjoint(&.{auto_type.?, t}),
+        .non_optional  => |t|
+          logger.AutoTypeParamNotOptional(&.{auto_type.?, t}),
         .invalid_inner => logger.InvalidInnerSequenceType(&.{auto_type.?}),
-        .success => {},
+        .no_primary    => logger.AutoTypeNeedsPrimary(&.{auto_type.?}),
+        .success       => {},
       }
     }
   };
@@ -757,6 +761,30 @@ pub const SequenceBuilder = struct {
               break :blk null;
             }
           }
+          const sig = rec.constructor.sig;
+          if (sig.primary == null) {
+            res.auto = .no_primary;
+            break :blk null;
+          }
+          for (sig.parameters) |param, index| if (index != sig.primary.?) {
+            if (
+              !switch (param.spec.t) {
+                .structural => |strct| switch (strct.*) {
+                  .concat, .optional, .sequence => true,
+                  .list    => param.capture == .varargs,
+                  .hashmap => if (sig.varmap) |vi| (
+                    vi == @intCast(u21, index)
+                  ) else false,
+                  else     => false,
+                },
+                .named => |n| n.data == .void,
+              }
+            ) {
+              res.auto = .{.non_optional = param.spec};
+              break :blk null;
+            }
+          };
+
           try self.list.append(self.types.allocator, rec);
           break :blk rec;
         },

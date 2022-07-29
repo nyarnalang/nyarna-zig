@@ -317,6 +317,19 @@ fn typeError(
     .InvalidDirectSequenceType => {
       self.renderError("invalid direct type for Sequence: '{}'", .{main});
     },
+    .AutoTypeNeedsPrimary => {
+      self.renderError(
+        "Sequence auto type needs a primary parameter: '{}'", .{main});
+    },
+    .AutoTypeParamNotOptional => {
+      self.renderError(
+        "Sequence auto type has non-primary field that is not optional: '{}'",
+        .{main});
+      const field = types[1].t.formatter();
+      self.writer.print(
+        "  {s} field defined here with type '{}'",
+        .{types[1].pos, field}) catch unreachable;
+    },
     .InvalidMappingKeyType => {
       self.renderError("cannot use type as mapping key: '{}'", .{main});
     },

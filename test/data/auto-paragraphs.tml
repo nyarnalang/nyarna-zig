@@ -1,17 +1,18 @@
 === Auto paragraphs
 --- input
 \declare:
-  Paragraph = \record:
-    content: \Text {primary}
-  \end(record)
+  Paragraph = \Record:
+    id     : \Optional(\Identifier)
+    content: \Text                  {primary}
+  \end(Record)
 
-  Section = \record:
-    title: \Text
-    content: \paragraphs(auto=\Paragraph) {primary}:>
-  \end(record)
+  Section = \Record:
+    title  : \Text
+    content: \Sequence(auto=\Paragraph) {primary}:>
+  \end(Record)
 \end(declare)
 
-\fragment(type=\Section)
+\fragment(root=\Section)
 
 \Section(First Section)
 
@@ -20,55 +21,34 @@ Lorem ipsum
 Dolor sit
 amet
 
-\Paragraph:
+\Paragraph(wubb):
   consectetur adipiscing elit
 \end(Paragraph)
---- ast
-+ROOT "fragment"
-  >CONTENT
-  +CALL
-    +TARGET
-      =TYPE Section
-    -TARGET
-    +PROTO "title"
-      =TEXT Text "First Section"
-    -PROTO
-    +PROTO "content"
-      +CALL
-        +TARGET
-          +FUNC
-            =NAME "listOf"
-          -FUNC
-        -TARGET
-        +PROTO "items"
-          +VARARGS
-            +CALL
-              +TARGET
-                =TYPE Paragraph
-              -TARGET
-              +PROTO "content"
-                =TEXT Text "Lorem ipsum"
-              -PROTO
-            -CALL
-            +CALL
-              +TARGET
-                =TYPE Paragraph
-              -TARGET
-              +PROTO "content"
-                =TEXT Text "Dolor sit\namet"
-              -PROTO
-            -CALL
-            +CALL
-              +TARGET
-                =TYPE Paragraph
-              -TARGET
-              +PROTO "content"
-                =TEXT Text "consectetur adipiscing elit"
-              -PROTO
-            -CALL
-          -VARARGS
-        -PROTO
-      -CALL
-    -PROTO
-  -CALL
--ROOT
+--- document
++RECORD Section
+  >FIELD title
+  =TEXT Text "First Section"
+  >FIELD content
+  +SEQUENCE
+    +RECORD Paragraph
+      >FIELD id
+      =VOID
+      >FIELD content
+      =TEXT Text "Lorem ipsum"
+    -RECORD
+    =SEP 2
+    +RECORD Paragraph
+      >FIELD id
+      =VOID
+      >FIELD content
+      =TEXT Text "Dolor sit\namet"
+    -RECORD
+    =SEP 2
+    +RECORD Paragraph
+      >FIELD id
+      =TEXT Identifier "wubb"
+      >FIELD content
+      =TEXT Text "consectetur adipiscing elit"
+    -RECORD
+  -SEQUENCE
+-RECORD

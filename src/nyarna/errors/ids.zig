@@ -131,6 +131,10 @@ pub const TypeError = enum {
    InvalidInnerSequenceType,
    /// gives one type.
    InvalidDirectSequenceType,
+   /// gives one type
+   AutoTypeNeedsPrimary,
+   /// gives two types
+   AutoTypeParamNotOptional,
    /// gives one type.
    InvalidMappingKeyType,
    /// gives two types: first the one currently given, then the previous one.
