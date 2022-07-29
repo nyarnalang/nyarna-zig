@@ -71,6 +71,12 @@ known_modules: std.StringArrayHashMapUnmanaged(ModuleEntry) = .{},
 resolvers: []ResolverEntry,
 /// set to true if any module encountered errors
 seen_error: bool = false,
+/// known indexes into keyword_registry for system-defined keywords.
+/// used to identify calls to these keywords (e.g. during schema extension)
+/// without calling them. Will be set during interpretation of system.ny
+system_keywords: struct {
+  matcher: usize,
+} = undefined,
 
 pub fn create(
   backing_allocator: std.mem.Allocator,

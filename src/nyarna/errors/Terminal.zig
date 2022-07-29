@@ -207,6 +207,7 @@ fn previousOccurence(
     .FactorsTooFarApart  => " is too many magnitudes away",
     .DuplicateBlockVar   => " has been given previously",
     .DuplicateMatchType  => " has been given previously",
+    .MergeSubjectsIncompatible => " is not the same kind as the merge target",
   };
 
   const entity_name: []const u8 = switch (id) {
@@ -225,6 +226,7 @@ fn previousOccurence(
     .FactorsTooFarApart  => "factor",
     .DuplicateBlockVar   => "name for variable",
     .DuplicateMatchType  => "type",
+    .MergeSubjectsIncompatible => "merge input",
   };
 
   const prev_kind: []const u8 = switch (id) {
@@ -242,6 +244,7 @@ fn previousOccurence(
     .FactorsTooFarApart  => "from this factor",
     .DuplicateBlockVar   => "previous definition",
     .DuplicateMatchType  => "here",
+    .MergeSubjectsIncompatible => "merge target",
   };
 
   self.renderError("{s} '{s}'{s}", .{entity_name, repr, msg});
@@ -418,6 +421,10 @@ fn runtimeError(
   self.style(.{.bold}, "{s}", .{pos});
   switch (id) {
     .IndexError => self.renderError("index error: {s}", .{msg}),
+    .NodePrematurelyProcessed =>
+      self.renderError(
+        "Node of kind {s} is either not a valid definition subject at all or" ++
+        " was given without :<fullast>", .{msg}),
   }
 }
 

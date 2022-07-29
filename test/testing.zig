@@ -936,8 +936,7 @@ const AstEmitter = struct {
         try lvl.pop();
       },
       .definition => |def| {
-        const wrap = try self.pushWithKey("DEF", def.name.content,
-          if (def.root != null) @as([]const u8, "{root}") else null);
+        const wrap = try self.pushWithKey("DEF", def.name.content, null);
         switch (def.content) {
           .func => try self.emitLine("=FUNC", .{}),
           .@"type" => |t| try self.processType(t),
@@ -1012,7 +1011,22 @@ const AstEmitter = struct {
       .schema_def => |sd| {
         const def = try self.push("SCHEMA_DEF");
         for (sd.defs) |item| try self.process(item.node());
+        try self.emitLine(">ROOT", .{});
+        try self.process(sd.root);
+        if (sd.backends.len > 0) {
+          try self.emitLine(">BACKENDS", .{});
+          for (sd.backends) |item| try self.process(item.node());
+        }
         try def.pop();
+      },
+      .schema_ext => |se| {
+        const ext = try self.push("SCHEMA_EXT");
+        for (se.defs) |item| try self.process(item.node());
+        if (se.backends.len > 0) {
+          try self.emitLine(">BACKENDS", .{});
+          for (se.backends) |item| try self.process(item.node());
+        }
+        try ext.pop();
       },
       .seq => |seq| {
         const lvl = try self.push("SEQUENCE");

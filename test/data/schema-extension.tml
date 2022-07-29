@@ -50,7 +50,7 @@
     caption: \Text
   \end(Record)
 
-  ChapterContent |= \intersection(\Image)
+  ChapterContent |= \Intersection(\Image)
 :backends:|\doc|
   html = \backend:
   :funcs:
@@ -66,7 +66,7 @@
 \end(SchemaExt)
 --- input
 \standalone(
-  schema = \import(Document)::use(extensions=\import(Document-graphics))
+  schema = \import(Document)::use(html, extensions=\import(Document-graphics))
 )
 
 \Document(Article with graphics):

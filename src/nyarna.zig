@@ -327,7 +327,7 @@ pub const Processor = struct {
     try globals.known_modules.put(
       globals.storage.allocator(), system_ny.name, .{.loaded = module});
 
-    var checker = lib.system.Checker.init(&globals.types, logger);
+    var checker = lib.system.Checker.init(globals, logger);
     for (module.symbols) |sym| checker.check(sym);
     checker.finish(source, globals.types);
   }

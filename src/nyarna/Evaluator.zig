@@ -1172,8 +1172,20 @@ fn coerce(
         }
         return coerced.value();
       },
-      // these are virtual types and thus can never be the expected type.
-      .intersection, .optional => unreachable,
+      // can never directly be the expected type but can exist as inner type.
+      .intersection => |*inter| {
+        if (value_type.isScalar()) {
+          return try self.coerce(value, inter.scalar.?);
+        }
+        std.debug.assert(
+          for (inter.types) |t| {
+            if (value_type.eql(t)) break true;
+          } else false
+        );
+        return value;
+      },
+      // can never be the expected type of a coercion.
+      .optional => unreachable,
       .list => |*list| {
         const coerced = try self.ctx.values.list(value.origin, list);
         for (value.data.list.content.items) |item| {

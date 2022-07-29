@@ -2079,6 +2079,17 @@ fn tryInterpretVarmap(
   vm   : *model.Node.Varmap,
   stage: Stage,
 ) nyarna.Error!?*model.Expression {
+  if (stage.kind == .resolve) {
+    for (vm.content.items) |item| {
+      switch (item.key) {
+        .node   => |node| _ = try self.tryInterpret(node, stage),
+        .direct => {},
+      }
+      _ = try self.tryInterpret(item.value, stage);
+    }
+    return null;
+  }
+
   var seen_poison = false;
   var seen_unfinished = false;
   for (vm.content.items) |item| {

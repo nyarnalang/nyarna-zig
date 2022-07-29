@@ -28,7 +28,7 @@ pub const GenericParserError = enum {
   CannotCallLibraryImport, UnexpectedBlockNameExpr, NotABackend, EmptyBackend,
   BackendOutsideSchemaDef, InvalidCollector, UnexpectedCaptureVars,
   SuperfluousSubscript, MissingSubscript, NonPositionalSubscript,
-  MergeNotAllowedHere,
+  MergeNotAllowedHere, CannotMergeThisDefinitionKind,
 };
 
 pub const WrongItemError = enum {
@@ -103,6 +103,7 @@ pub const PreviousOccurenceError = enum {
   MissingEndCommand, CannotAssignToConst, DuplicateEnumValue,
   MultipleModuleKinds, DuplicateMappingKey, DuplicateSuffix,
   FactorsTooFarApart, DuplicateBlockVar, DuplicateMatchType,
+  MergeSubjectsIncompatible,
 };
 
 pub const PositionChainError = enum {
@@ -164,7 +165,7 @@ pub const ConstructionError = enum {
 };
 
 pub const RuntimeError = enum {
-  IndexError
+  IndexError, NodePrematurelyProcessed,
 };
 
 pub const SystemNyError = enum {

@@ -1428,6 +1428,7 @@ pub fn containsAst(t: model.Type) bool {
     .structural => |struc| switch (struc.*) {
       .list     => |*lst| return containsAst(lst.inner),
       .optional => |*opt| return containsAst(opt.inner),
+      .hashmap  => |*map| return containsAst(map.key) or containsAst(map.value),
       else => false,
     },
   };

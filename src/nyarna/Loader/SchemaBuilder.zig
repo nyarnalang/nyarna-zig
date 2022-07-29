@@ -6,6 +6,7 @@ const nyarna          = @import("../../nyarna.zig");
 const Globals         = @import("../Globals.zig");
 
 const Interpreter = nyarna.Interpreter;
+const lib         = nyarna.lib;
 const model       = nyarna.model;
 const Types       = nyarna.Types;
 
@@ -33,14 +34,14 @@ const BackendBuilder = struct {
     // create the variable referencing the document, as specified by :<val \x>
     // on the backends block, if any.
     if (doc_var) |v| {
-      const sym = try self.intpr.ctx.global().create(model.Symbol);
+      const doc_sym = try self.intpr.ctx.global().create(model.Symbol);
       // because the SchemaDef and Extensions have separate block capture
       // variables, we will have multiple variables referencing the same stack
       // position. For this reason, we do not increase the num_values of the
       // container here; it is instead calculated to be the sum of all given
       // vars in all backends, so that the symbol is at the end of the container
       // as it is expected for function parameters.
-      sym.* = .{
+      doc_sym.* = .{
         .defined_at = v.pos,
         .name       = v.name,
         .data       = .{.variable = .{
@@ -51,7 +52,7 @@ const BackendBuilder = struct {
         }},
       };
       const ns = self.intpr.namespace(0);
-      _ = try ns.tryRegister(self.intpr, sym);
+      _ = try ns.tryRegister(self.intpr, doc_sym);
       defer ns.data.shrinkRetainingCapacity(ns.data.count() - 1);
 
       if (backend.vars) |vars| {
@@ -113,6 +114,10 @@ pub fn destroy(self: *SchemaBuilder) void {
   globals.backing_allocator.destroy(self);
 }
 
+fn intpr(self: *SchemaBuilder) *nyarna.Interpreter {
+  return self.loader.interpreter;
+}
+
 fn pushBackend(
   self: *SchemaBuilder,
   node: *model.Node,
@@ -148,7 +153,7 @@ fn procBackend(
     .start     = model.Cursor.unknown(),
     .command   = undefined,
     .fullast   = false,
-    .sym_start = self.loader.interpreter.symbols.items.len,
+    .sym_start = self.intpr().symbols.items.len,
     .capture   = &.{},
   };
 
@@ -163,11 +168,11 @@ fn procBackend(
 
   for (self.backends.items) |def| if (def.backend.vars) |vars| {
     // TODO: does this suffice to properly handle name clashes in variables?
-    try self.loader.interpreter.collectLocations(vars, &var_locs);
+    try self.intpr().collectLocations(vars, &var_locs);
   };
-  try self.loader.interpreter.var_containers.append(
+  try self.intpr().var_containers.append(
     self.loader.storage.allocator(), .{
-      .offset    = self.loader.interpreter.symbols.items.len,
+      .offset    = self.intpr().symbols.items.len,
       .container = container,
     });
 
@@ -205,7 +210,7 @@ fn procBackend(
   // merge the content of all given backends.
   var builder = BackendBuilder{
     .container = container,
-    .intpr     = self.loader.interpreter,
+    .intpr     = self.intpr(),
     .doc_type  = doc_type,
   };
   for (self.backends.items) |bd| {
@@ -214,21 +219,19 @@ fn procBackend(
   }
 
   // create all variables in the container.
-  var var_proc = try nyarna.lib.system.VarProc.init(
-      self.loader.interpreter, 0, undefined);
+  var var_proc = try nyarna.lib.system.VarProc.init(self.intpr(), 0, undefined);
   for (var_locs.items) |item| switch (item) {
     .node => |n| {
       var_proc.keyword_pos = n.node().pos;
-      try level.append(self.loader.interpreter, try var_proc.node(n.node()));
+      try level.append(self.intpr(), try var_proc.node(n.node()));
     },
     .expr => |expr| {
       var_proc.keyword_pos = expr.pos;
-      try level.append(self.loader.interpreter, try var_proc.expression(expr));
+      try level.append(self.intpr(), try var_proc.expression(expr));
     },
     .value => |val| {
       var_proc.keyword_pos = val.value().origin;
-      try level.append(
-        self.loader.interpreter, try var_proc.value(val.value()));
+      try level.append(self.intpr(), try var_proc.value(val.value()));
     },
     .poison => {},
   };
@@ -245,7 +248,7 @@ fn procBackend(
   // instantiate the functions so that they may be referred to in the output
   // expressions.
   var dres = try CycleResolution.create(
-    self.loader.interpreter, builder.funcs.items, 0, null);
+    self.intpr(), builder.funcs.items, 0, null);
   try dres.execute();
 
   // ensure that CycleResolution doesn't put additional variables in here,
@@ -268,8 +271,7 @@ fn procBackend(
       .defined_at = output.root.pos,
       .variables  = output.container.?,
       .data       = .{.ny = .{
-        .body = try self.loader.interpreter.interpretAs(
-          output.root, ret_type.predef()),
+        .body = try self.intpr().interpretAs(output.root, ret_type.predef()),
       }},
     };
     const target =
@@ -284,13 +286,11 @@ fn procBackend(
       }},
       .expected_type = ret_type,
     };
-    try level.append(
-      self.loader.interpreter,
-      try self.loader.interpreter.node_gen.expression(expr));
+    try level.append(self.intpr(), try self.intpr().node_gen.expression(expr));
   }
 
   const content = (
-    try level.finalizeParagraph(self.loader.interpreter)
+    try level.finalizeParagraph(self.intpr())
   ) orelse {
     self.loader.logger.EmptyBackend(self.backends.items[0].backend.node().pos);
     return null;
@@ -311,12 +311,52 @@ fn procBackend(
     .variables  = container,
     .data = .{
       .ny = .{
-        .body = try self.loader.interpreter.interpretAs(
-          content, ret_type.predef()),
+        .body = try self.intpr().interpretAs(content, ret_type.predef()),
       },
     },
   };
   return func;
+}
+
+/// merging nodes always acts on resolved calls. this function ensures that a
+/// node participating in a merge is a resolved call, and reports an error and
+/// returns null if it isn't.
+fn getCall(self: *SchemaBuilder, node: *model.Node) !?*model.Node.ResolvedCall {
+  switch (node.data) {
+    .unresolved_call => {
+      // there can't be a symbol that was unavailable previously, so this node
+      // is guaranteed to fail on interpretation. Do that to report the error.
+      const res = try self.intpr().interpret(node);
+      std.debug.assert(res.expected_type.isNamed(.poison));
+      return null;
+    },
+    .resolved_call => |*rc| return rc,
+    .poison        => return null,
+    else           => {
+      self.loader.logger.NodePrematurelyProcessed(
+        node.pos, @tagName(node.data));
+      return null;
+    },
+  }
+}
+
+/// returns the called symbol if it is a valid keyword for a definition.
+/// else logs error and returns null.
+fn sym(self: *SchemaBuilder, call: *model.Node.ResolvedCall) !?*model.Symbol {
+  return if (call.sig.returns.isNamed(.ast)) (
+    call.target.data.resolved_symref.sym
+  ) else {
+    const expr = try self.intpr().interpret(call.target);
+    if (!expr.expected_type.isNamed(.poison)) {
+      self.loader.logger.InvalidDefinitionValue(
+        &.{expr.expected_type.at(expr.pos)});
+    }
+    return null;
+  };
+}
+
+fn getVarargs(call: *model.Node.ResolvedCall) *model.Node.Varargs {
+  return &call.args[0].data.expression.data.value.data.ast.root.data.varargs;
 }
 
 fn mergeNode(
@@ -324,9 +364,52 @@ fn mergeNode(
   target: *model.Node,
   ext   : *model.Node,
 ) !void {
-  // TODO
-  std.debug.print("mergeNode({s}, {s})\n", .{@tagName(target.data), @tagName(ext.data)});
-  _ = self;
+  const tCall = (try self.getCall(target)) orelse {
+    if (try self.getCall(ext)) |eCall| _ = try self.sym(eCall);
+    return;
+  };
+  const eCall = (try self.getCall(ext)) orelse {
+    _ = try self.sym(tCall);
+    return;
+  };
+  const tSym = (try self.sym(tCall)) orelse {
+    _ = try self.sym(eCall);
+    return;
+  };
+  const eSym = (try self.sym(eCall)) orelse return;
+
+  if (tSym != eSym) {
+    self.loader.logger.MergeSubjectsIncompatible(
+      eSym.name, ext.pos, target.pos);
+    return;
+  }
+
+  if (
+    switch (tSym.data) {
+      .func => |f| blk: {
+        const index = f.data.ext.impl_index;
+        if (index == self.loader.data.system_keywords.matcher) {
+          std.debug.print(
+            "matcher node: {s}\n", .{@tagName(tCall.args[0].data)});
+          return;
+        }
+
+        break :blk false;
+      },
+      .prototype => |pt| switch (pt) {
+        .intersection => true,
+        .record       => false, // TODO: extend records (?)
+        else          => false,
+      },
+      else => false,
+    }
+  ) {
+    try getVarargs(tCall).content.appendSlice(
+      self.intpr().ctx.global(), getVarargs(eCall).content.items);
+
+  } else {
+    self.loader.logger.CannotMergeThisDefinitionKind(ext.pos);
+  }
 }
 
 pub fn pushExt(
@@ -346,7 +429,7 @@ pub fn pushExt(
       };
       try self.mergeNode(target_def.content, def.content);
     } else {
-      try self.defs.append(self.loader.interpreter.allocator(), def);
+      try self.defs.append(self.intpr().allocator(), def);
     }
   }
   if (self.b_name) |name| for (ext.backends) |b| {
@@ -365,10 +448,9 @@ pub fn finalize(
   defer if (self.loader.logger.count > 0) {
     self.loader.data.seen_error = true;
   };
-  var dres = try CycleResolution.create(
-    self.loader.interpreter, self.defs.items, 0, null);
+  var dres = try CycleResolution.create(self.intpr(), self.defs.items, 0, null);
   try dres.execute();
-  const expr = try self.loader.interpreter.interpretAs(
+  const expr = try self.intpr().interpretAs(
     self.root, self.loader.ctx().types().@"type"().predef());
   switch ((try self.loader.ctx().evaluator().evaluate(expr)).data) {
     .@"type" => |*tv| {

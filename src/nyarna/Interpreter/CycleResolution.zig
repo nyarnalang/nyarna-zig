@@ -635,7 +635,9 @@ pub fn execute(self: *CycleResolution) !void {
 
     // ensure no more unresolved calls or expressions exist
     for (defs) |def| switch (def.content.data) {
-      .unresolved_call, .unresolved_symref => {
+      // if content is given as fullast, resolved_call may call a keyword.
+      // this call must also be resolved here.
+      .unresolved_call, .unresolved_symref, .resolved_call => {
         // could be function defined in a previous component (that would be
         // fine). Try resolving.
         if (

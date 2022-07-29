@@ -97,7 +97,7 @@
 
   backend = \keyword:
     vars    : \Optional(\Ast) {primary}:<syntax locations>
-    funcs   : \Optional(\Ast) {}:<syntax definitions>
+    funcs   : \Optional(\Ast) {}:<syntax definitions, fullast>
     body    : \Optional(\FrameRoot)
   \end(keyword)
 

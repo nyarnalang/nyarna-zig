@@ -1,6 +1,7 @@
 const std = @import("std");
 
 const CycleResolution = @import("../Interpreter/CycleResolution.zig");
+const Globals         = @import("../Globals.zig");
 const nyarna          = @import("../../nyarna.zig");
 
 const errors      = nyarna.errors;
@@ -1000,12 +1001,12 @@ pub const Impl = lib.Provider.Wrapper(struct {
     for (extensions.content.items) |val| {
       try builder.pushExt(&val.data.schema_ext);
     }
-    const val = (
+    const schema = (
       try builder.finalize(pos)
     ) orelse {
       return intpr.node_gen.poison(pos);
     };
-    return try intpr.genValueNode(val.value());
+    return try intpr.genValueNode(schema.value());
   }
 });
 
@@ -1021,7 +1022,10 @@ pub const Checker = struct {
     },
     seen: bool = false,
     /// pointer into types.Lattice where the type should be hooked into
-    hook: ?*model.Type = null,
+    t_hook: ?*model.Type = null,
+    /// pointer into Globals where the index of the function implementation
+    /// should be hooked into.
+    f_hook: ?*usize = null,
   };
 
   fn ExpectedData(tuples: anytype) type {
@@ -1032,7 +1036,7 @@ pub const Checker = struct {
     }});
     return struct {
       const Array = ArrayType;
-      fn init(types: *nyarna.Types) ArrayType {
+      fn init(types: *nyarna.Types, data: *Globals) ArrayType {
         var ret: ArrayType = undefined;
         inline for (tuples) |tuple, i| {
           if (i > 0) if (stringOrder(tuple.@"0", tuples[i-1].@"0") != .gt) {
@@ -1044,16 +1048,22 @@ pub const Checker = struct {
           } else if (
             comptime std.mem.eql(u8, @tagName(tuple.@"1"), "keyword")
           ) {
-            ret[i] = .{.name = tuple.@"0", .kind = .keyword};
+            ret[i] = .{
+              .name   = tuple.@"0",
+              .kind   = .keyword,
+              .f_hook = if (tuple.len == 3)
+                &@field(data.system_keywords, @tagName(tuple.@"2"))
+              else null,
+            };
           } else if (
             comptime std.mem.eql(u8, @tagName(tuple.@"1"), "builtin")
           ) {
             ret[i] = .{.name = tuple.@"0", .kind = .builtin};
           } else {
             ret[i] = .{
-              .name = tuple.@"0",
-              .kind = .{.@"type" = tuple.@"1"},
-              .hook = if (tuple.len == 3)
+              .name   = tuple.@"0",
+              .kind   = .{.@"type" = tuple.@"1"},
+              .t_hook = if (tuple.len == 3)
                 &@field(types.system, @tagName(tuple.@"2"))
               else null
             };
@@ -1104,7 +1114,7 @@ pub const Checker = struct {
     .{"library",         .keyword},
     .{"map",             .keyword},
     .{"match",           .keyword},
-    .{"matcher",         .keyword},
+    .{"matcher",         .keyword, .matcher},
     .{"standalone",      .keyword},
   });
 
@@ -1113,11 +1123,11 @@ pub const Checker = struct {
   buffer: [256]u8 = undefined,
 
   pub fn init(
-    types : *nyarna.Types,
+    data  : *Globals,
     logger: *nyarna.errors.Handler,
   ) Checker {
     return .{
-      .data   = ExpectedDataInst.init(types),
+      .data   = ExpectedDataInst.init(&data.types, data),
       .logger = logger,
     };
   }
@@ -1155,15 +1165,19 @@ pub const Checker = struct {
               .@"type" => |st| if (
                 st == .named and st.named.data == t
               ) {
-                if (cur.hook) |target| target.* = st;
+                if (cur.t_hook) |target| target.* = st;
               } else {
                 self.logger.WrongType(sym.defined_at, impl_name);
               },
               else => self.logger.ShouldBeType(sym.defined_at, impl_name),
             },
             .keyword => if (
-              sym.data != .func or !sym.data.func.callable.sig.isKeyword()
-            ) self.logger.ShouldBeKeyword(sym.defined_at, impl_name),
+              sym.data == .func and sym.data.func.callable.sig.isKeyword()
+            ) {
+              if (cur.f_hook) |target| {
+                target.* = sym.data.func.data.ext.impl_index;
+              }
+            } else self.logger.ShouldBeKeyword(sym.defined_at, impl_name),
             .builtin => if (
               sym.data != .func or sym.data.func.callable.sig.isKeyword()
             ) self.logger.ShouldBeBuiltin(sym.defined_at, impl_name),
