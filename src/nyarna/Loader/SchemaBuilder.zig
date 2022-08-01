@@ -377,6 +377,26 @@ fn getVarmap(call: *model.Node.ResolvedCall) *model.Node.Varmap {
   return &call.args[0].data.expression.data.value.data.ast.root.data.varmap;
 }
 
+fn getOptional(call: *model.Node.ResolvedCall, index: usize) **model.Value {
+  return &call.args[index].data.expression.data.value;
+}
+
+fn mergeOptionals(
+  intpr: *Interpreter,
+  left : **model.Value,
+  right: *model.Value,
+  name : []const u8,
+) void {
+  if (right.data == .void) return;
+  std.debug.assert(right.data == .ast);
+  switch (left.*.data) {
+    .void => left.* = right,
+    .ast  => intpr.ctx.logger.DuplicateParameterArgument(
+      name, right.origin, left.*.origin),
+    else => unreachable,
+  }
+}
+
 fn mergeNode(
   intpr : *Interpreter,
   target: *model.Node,
@@ -402,32 +422,37 @@ fn mergeNode(
     return;
   }
 
-  if (
-    switch (tSym.data) {
-      .func => |f| blk: {
-        const index = f.data.ext.impl_index;
-        if (index == intpr.ctx.data.system_keywords.matcher) {
-          try getVarmap(tCall).content.appendSlice(
-            intpr.ctx.global(), getVarmap(eCall).content.items);
-          return;
-        }
 
-        break :blk false;
+  switch (tSym.data) {
+    .func => |f| {
+      const index = f.data.ext.impl_index;
+      if (index == intpr.ctx.data.system_keywords.matcher) {
+        try getVarmap(tCall).content.appendSlice(
+          intpr.ctx.global(), getVarmap(eCall).content.items);
+        return;
+      }
+    },
+    .prototype => |pt| switch (pt) {
+      .intersection => {
+        try getVarargs(tCall).content.appendSlice(
+          intpr.ctx.global(), getVarargs(eCall).content.items);
+        return;
       },
-      .prototype => |pt| switch (pt) {
-        .intersection => true,
-        .record       => false, // TODO: extend records (?)
-        else          => false,
+      .sequence => {
+        try getVarargs(tCall).content.appendSlice(
+          intpr.ctx.global(), getVarargs(eCall).content.items);
+        mergeOptionals(
+          intpr, getOptional(tCall, 1), getOptional(eCall, 1).*, "direct");
+        mergeOptionals(
+          intpr, getOptional(tCall, 2), getOptional(eCall, 2).*, "auto");
+        return;
       },
-      else => false,
-    }
-  ) {
-    try getVarargs(tCall).content.appendSlice(
-      intpr.ctx.global(), getVarargs(eCall).content.items);
-
-  } else {
-    intpr.ctx.logger.CannotMergeThisDefinitionKind(ext.pos);
+      .record                  => {}, // TODO: extend records (?)
+      else                     => {},
+    },
+    else => {},
   }
+  intpr.ctx.logger.CannotMergeThisDefinitionKind(ext.pos);
 }
 
 pub fn pushExt(
