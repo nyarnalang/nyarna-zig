@@ -11,3 +11,4 @@ type_test
 interpret_test
 load_test
 output_test
+result

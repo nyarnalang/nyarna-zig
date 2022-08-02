@@ -80,7 +80,7 @@ fn genTests(dir: *std.fs.Dir, sets: []TestSet) !void {
 
 pub fn main() !void {
   var datadir = try std.fs.cwd().openDir(
-    "data", .{.access_sub_paths = true, .iterate = true, .no_follow = true});
+    "test/data", .{.access_sub_paths = true, .iterate = true, .no_follow = true});
   defer datadir.close();
   var sets = [_]TestSet{
     .{
@@ -114,15 +114,15 @@ pub fn main() !void {
       .err_func_name = "outputErrorTest",
     },
   };
-  sets[0].file = try std.fs.cwd().createFile("lex_test.zig", .{});
+  sets[0].file = try std.fs.cwd().createFile("test/lex_test.zig", .{});
   defer sets[0].file.close();
-  sets[1].file = try std.fs.cwd().createFile("parse_test.zig", .{});
+  sets[1].file = try std.fs.cwd().createFile("test/parse_test.zig", .{});
   defer sets[1].file.close();
-  sets[2].file = try std.fs.cwd().createFile("interpret_test.zig", .{});
+  sets[2].file = try std.fs.cwd().createFile("test/interpret_test.zig", .{});
   defer sets[2].file.close();
-  sets[3].file = try std.fs.cwd().createFile("load_test.zig", .{});
+  sets[3].file = try std.fs.cwd().createFile("test/load_test.zig", .{});
   defer sets[3].file.close();
-  sets[4].file = try std.fs.cwd().createFile("output_test.zig", .{});
+  sets[4].file = try std.fs.cwd().createFile("test/output_test.zig", .{});
   defer sets[4].file.close();
   try genTests(&datadir, &sets);
 }
