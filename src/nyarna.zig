@@ -314,9 +314,16 @@ pub const Processor = struct {
     globals: *Globals,
   ) !void {
     // load system.ny.
-    const system_ny = (try self.resolvers.items[1].resolver.resolve(
-      globals.storage.allocator(), "system", model.Position.intrinsic(),
-      logger)).?;
+    const system_ny = (
+      try self.resolvers.items[1].resolver.resolve(
+        globals.storage.allocator(), "system", model.Position.intrinsic(),
+        logger)
+    ) orelse {
+      logger.CannotFindSystemNy(model.Position.intrinsic(),
+        "unable to find system.ny. Check your NYARNA_STDLIB_PATH.");
+      globals.seen_error = true;
+      return;
+    };
     const system_loader = try Loader.Module.create(
       globals, system_ny, self.resolvers.items[1].resolver,
       model.Locator.parse(".std.system") catch unreachable,

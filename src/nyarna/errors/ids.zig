@@ -176,6 +176,7 @@ pub const SystemNyError = enum {
   MissingType, MissingPrototype, MissingKeyword, MissingBuiltin,
   ShouldBeType, ShouldBePrototype, ShouldBeKeyword, ShouldBeBuiltin,
   WrongType, UnknownSystemSymbol, MissingConstructor, WrongNumberOfEnumValues,
+  CannotFindSystemNy,
 };
 
 pub const FileError = enum {

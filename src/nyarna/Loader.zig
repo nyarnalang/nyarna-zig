@@ -23,6 +23,7 @@ pub const Main               = @import("Loader/Main.zig");
 pub const Module             = @import("Loader/Module.zig");
 pub const ParamResolver      = @import("Loader/ParamResolver.zig");
 pub const SchemaBuilder      = @import("Loader/SchemaBuilder.zig");
+pub const SingleResolver     = @import("Loader/SingleResolver.zig");
 
 const Loader = @This();
 

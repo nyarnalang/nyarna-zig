@@ -5,6 +5,47 @@ const clap = @import("clap");
 const generated = @import("generated.zig");
 const nyarna    = @import("nyarna.zig");
 
+const Input = union(enum) {
+  file: struct {
+    fs_res : nyarna.Loader.FileSystemResolver,
+    name   : []const u8,
+  },
+  stdin: nyarna.Loader.SingleResolver,
+
+  fn fromName(input: []const u8, alloc: std.mem.Allocator) !Input {
+    if (std.mem.eql(u8, input, "-")) {
+      var list = std.ArrayList(u8).init(alloc);
+      try std.io.getStdIn().reader().readAllArrayList(&list, 65535);
+      try list.appendSlice("\x04\x04\x04\x04");
+      return Input{
+        .stdin = nyarna.Loader.SingleResolver.init(list.items),
+      };
+    } else {
+      const dirname = std.fs.path.dirname(input).?;
+      // strip ".ny" from file name
+      const filename = std.fs.path.basename(input);
+      return Input{.file = .{
+        .fs_res = nyarna.Loader.FileSystemResolver.init(dirname),
+        .name   = filename[0..filename.len - 3],
+      }};
+    }
+  }
+
+  fn name(self: @This()) []const u8 {
+    return switch (self) {
+      .stdin => "",
+      .file  => |f| f.name,
+    };
+  }
+
+  fn resolver(self: *@This()) *nyarna.Loader.Resolver {
+    return switch (self.*) {
+      .stdin => |*s| &s.api,
+      .file  => |*f| &f.fs_res.api,
+    };
+  }
+};
+
 pub fn main() !void {
   var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
   defer arena.deinit();
@@ -25,7 +66,7 @@ pub fn main() !void {
     .diagnostic = &diag,
   };
 
-  var main_path: ?[]const u8 = null;
+  var main_path: []const u8 = "-";
 
   while (parser.next() catch |err| {
     diag.report(std.io.getStdErr().writer(), err) catch unreachable;
@@ -49,13 +90,32 @@ pub fn main() !void {
       ++ "\n");
       return hr;
     } else if (arg.param == &params[1]) {
-      try std.io.getStdOut().writer().writeAll(
+      try std.io.getStdOut().writer().print(
         \\ nyarna-zig, reference Nyarna implementation
-        \\ Version:
-      ++ " " ++ generated.version ++ "\n");
+        \\ Version: {s}
+        \\ Stdlib : {s}
+      ++ "\n", .{generated.version, generated.stdlib_path});
       return;
     } else if (arg.param == &params[2]) {
-      main_path = try std.fs.realpathAlloc(arena.allocator(), arg.value.?);
+      if (!std.mem.eql(u8, arg.value.?, "-")) {
+        main_path = (
+          std.fs.realpathAlloc(arena.allocator(), arg.value.?)
+        ) catch |err| {
+          const writer = std.io.getStdErr().writer();
+          switch (err) {
+            error.FileNotFound => try writer.print(
+              "unknown file: {s}\n", .{arg.value.?}),
+            error.AccessDenied => try writer.print(
+              "cannot access file: {s}\n", .{arg.value.?}),
+            error.FileTooBig => try writer.print(
+              "file too big: {s}\n", .{arg.value.?}),
+            error.IsDir => try writer.print(
+              "given path is a directory: {s}\n", .{arg.value.?}),
+            else => return err,
+          }
+          std.os.exit(1);
+        };
+      }
       parser.state = .rest_are_positional;
     } else if (arg.param == &params[3]) {
       std.debug.panic("command line arguments not implemented", .{});
@@ -72,14 +132,8 @@ pub fn main() !void {
     &stdlib_resolver.api);
   defer proc.deinit();
 
-  var fs_resolver =
-    nyarna.Loader.FileSystemResolver.init(std.fs.path.dirname(main_path.?).?);
-
-  // strip ".ny" from file name
-  var module_name = std.fs.path.basename(main_path.?);
-  module_name = module_name[0..module_name.len - 3];
-
-  var loader =try proc.startLoading(&fs_resolver.api, module_name);
+  var input = try Input.fromName(main_path, arena.allocator());
+  var loader =try proc.startLoading(input.resolver(), input.name());
   if (try loader.finalize()) |container| {
     defer container.destroy();
     if (try container.process()) {
@@ -89,7 +143,8 @@ pub fn main() !void {
         var writer = if (std.mem.eql(u8, output.name.content, "")) (
           std.io.getStdOut().writer()
         ) else blk: {
-          const f = try std.fs.openFileAbsolute(main_path.?, .{.write = true});
+          const f = try std.fs.cwd().openFile(
+            output.name.content, .{.write = true});
           file = f;
           break :blk f.writer();
         };

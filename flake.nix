@@ -90,6 +90,12 @@
           cwd = ''''${workspaceFolder}'';
           externalConsole = false;
           MIMode = "lldb";
+          environment = [
+            {
+              name  = "NYARNA_STDLIB_PATH";
+              value = ''''${workspaceFolder}/lib'';
+            }
+          ];
         }) testList;
       };
       postConfigure = ''

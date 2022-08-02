@@ -2,6 +2,7 @@
 *.a
 *.exe
 zig-cache
+zig-out
 testgen
 src/nyarna/errors/Handler.zig
 src/generated.zig
