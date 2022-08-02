@@ -52,6 +52,7 @@
       root = ./.;
       exclude = [ ./flake.nix ./flake.lock ];
     };
+    testList = ["lex" "parse" "interpret" "load" "output"];
     generators = pkgs.buildZig {
       pname = "nyarna-codegen";
       inherit version src;
@@ -77,7 +78,20 @@
         description = "Run ${kind} tests";
         file = "test/${kind}_test.zig";
         dependencies = [ zigPkgs.nyarna zigPkgs.testing ];
-      }) ["lex" "parse" "interpret" "load" "output"];
+      }) testList;
+      vscode_launch_json = builtins.toJSON {
+        version = "0.2.0";
+        configurations = builtins.map(name: {
+          name = "(lldb) ${name}Test";
+          type = "lldb";
+          request = "launch";
+          program = ''''${workspaceFolder}/${name}Test'';
+          args = [ "${pkgs.zig}/bin/zig" ];
+          cwd = ''''${workspaceFolder}'';
+          externalConsole = false;
+          MIMode = "lldb";
+        }) testList;
+      };
       postConfigure = ''
         cat <<EOF >src/generated.zig
         pub const version = "${version}";
@@ -87,6 +101,12 @@
         ${generators}/bin/handler_gen
         echo "generating tests…"
         ${generators}/bin/test_gen
+        mkdir -p .vscode
+        printenv vscode_launch_json >.vscode/launch.json
+      '';
+      preInstall = ''
+        mkdir -p $out/share
+        cp -r lib $out/share/
       '';
     };
   in {

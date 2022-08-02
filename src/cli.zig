@@ -52,7 +52,7 @@ pub fn main() !void {
       try std.io.getStdOut().writer().writeAll(
         \\ nyarna-zig, reference Nyarna implementation
         \\ Version:
-      ++ generated.version ++ "\n");
+      ++ " " ++ generated.version ++ "\n");
       return;
     } else if (arg.param == &params[2]) {
       main_path = try std.fs.realpathAlloc(arena.allocator(), arg.value.?);
@@ -73,11 +73,13 @@ pub fn main() !void {
   defer proc.deinit();
 
   var fs_resolver =
-    nyarna.Loader.FileSystemResolver.init(std.fs.path.basename(main_path.?));
+    nyarna.Loader.FileSystemResolver.init(std.fs.path.dirname(main_path.?).?);
 
-  _ = fs_resolver;
+  // strip ".ny" from file name
+  var module_name = std.fs.path.basename(main_path.?);
+  module_name = module_name[0..module_name.len - 3];
 
-  var loader = try proc.startLoading(&fs_resolver.api, main_path.?);
+  var loader =try proc.startLoading(&fs_resolver.api, module_name);
   if (try loader.finalize()) |container| {
     defer container.destroy();
     if (try container.process()) {
