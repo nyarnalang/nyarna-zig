@@ -28,17 +28,29 @@ pub const CallableReprFinder = struct {
     };
   }
 
+  fn checkParamName(self: *Self, name: []const u8) void {
+    if (name.len > 0 and name[0] == 'p') {
+      var buf: [16]u8 = undefined;
+      const num = std.fmt.bufPrint(&buf, "{}", .{self.count}) catch unreachable;
+      if (!std.mem.eql(u8, num, name[1..])) {
+        self.needs_different_repr = true;
+      }
+    } else self.needs_different_repr = true;
+  }
+
   pub fn push(self: *Self, loc: *model.Value.Location) !void {
     self.count += 1;
     try self.iter.descend(loc.spec.t, loc.borrow != null);
     if (loc.default != null or loc.primary != null or loc.varargs != null or
-        loc.varmap != null or loc.header != null)
+        loc.varmap != null or loc.header != null) {
       self.needs_different_repr = true;
+    } else self.checkParamName(loc.name.content);
   }
 
-  pub fn pushType(self: *Self, t: model.Type) !void {
+  pub fn pushType(self: *Self, t: model.Type, name: []const u8) !void {
     self.count += 1;
     try self.iter.descend(t, false);
+    self.checkParamName(name);
   }
 
   pub fn finish(self: *Self, returns: model.Type, is_type: bool) !Result {
@@ -144,7 +156,7 @@ pub const SigBuilder = struct {
     pos : model.Position,
     name: []const u8,
     spec: model.SpecType,
-  ) void {
+  ) !void {
     const param = &self.val.parameters[self.next_param];
     param.* = .{
       .pos     = pos,
@@ -155,10 +167,32 @@ pub const SigBuilder = struct {
       .config  = null,
     };
     if (self.repr) |sig| {
+      const repr_name = try std.fmt.allocPrint(
+        self.ctx.global(), "p{}", .{self.next_param + 1});
       sig.parameters[self.next_param] = .{
         .pos     = pos,
-        .name    = name,
+        .name    = repr_name,
         .spec    = spec,
+        .capture = .default,
+        .default = null,
+        .config  = null,
+      };
+    }
+    self.next_param += 1;
+  }
+
+  pub fn pushParam(
+    self : *Self,
+    param: model.Signature.Parameter,
+  ) !void {
+    self.val.parameters[self.next_param] = param;
+    if (self.repr) |sig| {
+      const repr_name = try std.fmt.allocPrint(
+        self.ctx.global(), "p{}", .{self.next_param + 1});
+      sig.parameters[self.next_param] = .{
+        .pos     = param.pos,
+        .name    = repr_name,
+        .spec    = param.spec,
         .capture = .default,
         .default = null,
         .config  = null,
@@ -220,9 +254,11 @@ pub const SigBuilder = struct {
       }
     }
     if (self.repr) |sig| {
+      const repr_name = try std.fmt.allocPrint(
+        self.ctx.global(), "p{}", .{self.next_param + 1});
       sig.parameters[self.next_param] = .{
         .pos     = loc.value().origin,
-        .name    = loc.name.content,
+        .name    = repr_name,
         .spec    = t.at(loc.spec.pos),
         .capture = .default,
         .default = null,

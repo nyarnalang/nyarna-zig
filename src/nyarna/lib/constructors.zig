@@ -396,12 +396,17 @@ pub const Prototypes = lib.Provider.Wrapper(struct {
   }
 
   pub fn @"Record"(
-    intpr : *Interpreter,
-    pos   : model.Position,
-    fields: ?*model.Node,
+    intpr   : *Interpreter,
+    pos     : model.Position,
+    embed   : *model.Node,
+    abstract: ?*model.Node,
+    fields  : ?*model.Node,
   ) nyarna.Error!*model.Node {
     const fnode = fields orelse try (intpr.node_gen.void(pos));
-    return (try intpr.node_gen.tgRecord(pos, fnode)).node();
+    return (
+      try intpr.node_gen.tgRecord(
+        pos, try nodeToVarargsItemList(intpr, embed), abstract, fnode)
+    ).node();
   }
 
   pub fn @"Sequence"(

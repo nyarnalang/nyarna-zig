@@ -161,6 +161,8 @@ pub const TypeError = enum {
    UnfitForMapFunction,
    /// gives one type.
    NotIterable,
+   /// gives one type.
+   InvalidEmbed,
 };
 
 pub const ConstructionError = enum {

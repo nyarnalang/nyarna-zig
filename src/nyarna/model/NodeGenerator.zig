@@ -401,9 +401,21 @@ pub fn copy(self: Self, node: *Node) std.mem.Allocator.Error!*Node {
       ).node();
     },
     .gen_prototype => unreachable, // occurs only in system.ny
-    .gen_record => |*tgr| (
-      try self.tgRecord(node.pos, try self.copy(tgr.fields.unresolved))
-    ).node(),
+    .gen_record => |*tgr| {
+      var embed = try self.allocator.alloc(Node.Varargs.Item, tgr.embed.len);
+      for (tgr.embed) |item, index| {
+        embed[index] = .{
+          .direct = item.direct,
+          .node   = try self.copy(item.node),
+        };
+      }
+      return (
+        try self.tgRecord(
+          node.pos, embed,
+          if (tgr.abstract) |anode| try self.copy(anode) else null,
+          try self.copy(tgr.fields.unresolved))
+      ).node();
+    },
     .gen_textual => |*tgt| {
       var categories = try self.allocator.alloc(
         Node.Varargs.Item, tgt.categories.len);
@@ -815,12 +827,16 @@ pub fn tgPrototype(
 }
 
 pub fn tgRecord(
-  self  : Self,
-  pos   : Position,
-  fields: *Node,
+  self    : Self,
+  pos     : Position,
+  embed   : []Node.Varargs.Item,
+  abstract: ?*Node,
+  fields  : *Node,
 ) !*Node.tg.Record {
   return &(try self.newNode(pos, .{.gen_record = .{
-    .fields = .{.unresolved = fields},
+    .embed    = embed,
+    .abstract = abstract,
+    .fields   = .{.unresolved = fields},
   }})).data.gen_record;
 }
 

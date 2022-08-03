@@ -24,6 +24,13 @@
       +DEF Data
         +RCALL
           =SYMREF .std.system.Record
+          >ARG embed
+          +AST
+            +VARARGS
+            -VARARGS
+          -AST
+          >ARG abstract
+          =VOID
           >ARG fields
           +AST
             +LOC

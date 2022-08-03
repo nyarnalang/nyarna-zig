@@ -496,6 +496,8 @@ pub const tg = struct {
     pub fn node(self: *@This()) *Node {return Node.parent(self);}
   };
   pub const Record = struct {
+    embed    : []Node.Varargs.Item,
+    abstract : ?*Node,
     fields   : locations.List(void),
     generated: ?*Type.Named = null,
     pub fn node(self: *@This()) *Node {return Node.parent(self);}

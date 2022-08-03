@@ -28,7 +28,7 @@ pub const Callable = struct {
   kind: Kind,
   /// representative of this type in the type lattice.
   /// the representative has no primary, varmap, or auto_swallow value, and
-  /// its parameters have empty names, always default-capture, and have
+  /// its parameters have names "p1", "p2" etc, always default-capture, and have
   /// neither config nor default.
   ///
   /// undefined for keywords which cannot be used as Callable values and
@@ -209,9 +209,20 @@ pub const Sequence = struct {
 
 /// A Record type. Its fields are defined by its constructor's signature.
 pub const Record = struct {
+  /// an Record embedded in this one.
+  pub const Embed = struct {
+    t          : *Record,
+    /// first field declared directly by the embedded record (not its embeds).
+    first_field: usize,
+  };
+
   /// Constructor signature.
   /// Serves as type of the Record when used as type value.
   constructor: *Callable,
+  embeds     : []Embed,
+  /// first field in the constructor that belongs to this record.
+  first_own  : usize,
+  abstract   : bool,
 
   pub fn pos(self: *@This()) Position {
     return Named.pos(self);

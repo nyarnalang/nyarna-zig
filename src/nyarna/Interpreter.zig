@@ -1069,12 +1069,12 @@ fn tryForBodyToFunc(
       self.ctx, std.math.min(2, f_node.captures.len), expr.expected_type,
       false);
     if (f_node.captures.len > 0) {
-      builder.pushUnwrapped(
+      try builder.pushUnwrapped(
         f_node.captures[0].pos, f_node.captures[0].name,
         input.item_type.at(f_node.input.pos));
     }
     if (f_node.captures.len > 1) {
-      builder.pushUnwrapped(
+      try builder.pushUnwrapped(
         f_node.captures[1].pos, f_node.captures[1].name,
         self.ctx.types().system.positive.predef());
     }
@@ -1923,11 +1923,11 @@ pub fn tryPregenMatcherFunc(
     matcher.variable.spec = input_type.at(matcher.node().pos);
 
     var finder = Types.CallableReprFinder.init(self.ctx.types());
-    try finder.pushType(input_type);
+    try finder.pushType(input_type, matcher.variable.sym().name);
     const finder_res = try finder.finish(ret_type, false);
     var builder = try Types.SigBuilder.init(
       self.ctx, 1, ret_type, finder_res.needs_different_repr);
-    builder.pushUnwrapped(
+    try builder.pushUnwrapped(
       matcher.node().pos, matcher.variable.sym().name, matcher.variable.spec);
     const builder_res = builder.finish();
 
@@ -2744,6 +2744,14 @@ fn tryGenSequence(
   gs   : *model.Node.tg.Sequence,
   stage: Stage,
 ) nyarna.Error!?*model.Expression {
+  if (stage.kind == .resolve) {
+    for (gs.inner) |item| _ = try self.tryInterpret(item.node, stage);
+    for ([_]?*model.Node{gs.direct, gs.auto}) |cur| if (cur) |node| {
+      _ = try self.tryInterpret(node, stage);
+    };
+    return null;
+  }
+
   var failed_some = false;
   var seen_poison = false;
   for ([_]?*model.Node{gs.direct, gs.auto}) |cur| {
@@ -2907,6 +2915,28 @@ fn tryGenPrototype(
   return true;
 }
 
+const EmbedsMap = std.HashMapUnmanaged(
+  model.Type, usize, model.Type.HashContext,
+  std.hash_map.default_max_load_percentage);
+
+fn addEmbeds(
+  self  : *Interpreter,
+  embeds: *EmbedsMap,
+  spec  : model.SpecType,
+) std.mem.Allocator.Error!void {
+  var res = try embeds.getOrPut(self.allocator(), spec.t);
+  if (!res.found_existing) {
+    if (spec.t.isNamed(.record)) {
+      for (spec.t.named.data.record.embeds) |inner| {
+        try self.addEmbeds(embeds, inner.t.typedef().at(spec.pos));
+      }
+      res.value_ptr.* = embeds.count() - 1;
+    } else {
+      self.ctx.logger.InvalidEmbed(&.{spec});
+    }
+  }
+}
+
 fn tryGenRecord(
   self : *Interpreter,
   gr   : *model.Node.tg.Record,
@@ -2921,9 +2951,75 @@ fn tryGenRecord(
       },
       .pregen => {},
     }
+    if (gr.abstract) |abstract| _ = try self.tryInterpret(abstract, stage);
+    for (gr.embed) |item| _ = try self.tryInterpret(item.node, stage);
     return null;
   }
   var failed_parts = false;
+  var abstract = false;
+  if (gr.abstract) |anode| if (
+    try self.interpretWithTargetScalar(
+      anode, self.ctx.types().system.boolean.predef(), stage)
+  ) |expr| {
+    anode.data = .{.expression = expr};
+    const value = try self.ctx.evaluator().evaluate(expr);
+    expr.data = .{.value = value};
+    switch (value.data) {
+      .poison  => {},
+      .@"enum" => |*e| abstract = e.index == 1,
+      else     => unreachable,
+    }
+  };
+
+  var seen_poison = false;
+  var embeds = EmbedsMap{};
+
+  const list_type = (try self.ctx.types().list(self.ctx.types().@"type"())).?;
+  for (gr.embed) |item| {
+    if (item.direct) {
+      if (
+        try self.associate(item.node, list_type.predef(), stage)
+      ) |expr| {
+        const value = try self.ctx.evaluator().evaluate(expr);
+        expr.data = .{.value = value};
+        switch (value.data) {
+          .list   => |*lst| for (lst.content.items) |v| {
+            try self.addEmbeds(&embeds, v.data.@"type".t.at(v.origin));
+          },
+          .poison => expr.expected_type = self.ctx.types().poison(),
+          else    => unreachable,
+        }
+      } else failed_parts = true;
+      continue;
+    }
+    const t: model.SpecType = switch (
+      try self.tryGetType(
+        item.node.data.expression.data.value.data.ast.root, stage)
+    ) {
+      .finished, .unfinished => |t| t.at(item.node.pos),
+      .expression  => |expr| blk: {
+        const value = try self.ctx.evaluator().evaluate(expr);
+        switch (value.data) {
+          .@"type" => |tv| break :blk tv.t.at(expr.pos),
+          .poison => {
+            seen_poison = true;
+            continue;
+          },
+          else => unreachable,
+        }
+      },
+      .unavailable => {
+        failed_parts = true;
+        continue;
+      },
+      .failed => {
+        seen_poison = true;
+        continue;
+      }
+    };
+    try self.addEmbeds(&embeds, t);
+  }
+
   while (!failed_parts) switch (gr.fields) {
     .unresolved => {
       if (!try self.tryInterpretLocationsList(&gr.fields, stage)) {
@@ -2932,15 +3028,48 @@ fn tryGenRecord(
     },
     .resolved => |*res| {
       var finder = Types.CallableReprFinder.init(self.ctx.types());
+
+      var i: usize = 0; while (i < embeds.count()) : (i += 1) {
+        var iter = embeds.iterator();
+        while (iter.next()) |entry| {
+          if (entry.value_ptr.* == i) {
+            const rec = &entry.key_ptr.named.data.record;
+            for (rec.constructor.sig.parameters[rec.first_own..]) |param| {
+              try finder.pushType(param.spec.t, param.name);
+            }
+            break;
+          }
+        }
+      }
+      const first_own = finder.count;
+
       if (!(try self.processLocations(&res.locations, stage, &finder))) {
         return null;
       }
+      const embed_list = try self.ctx.global().alloc(
+        model.Type.Record.Embed, embeds.count());
+      var iter = embeds.iterator();
+      var field_index: usize = 0;
+      while (iter.next()) |entry| {
+        const rec = &entry.key_ptr.named.data.record;
+        embed_list[entry.value_ptr.*] = .{
+          .t           = rec,
+          .first_field = field_index,
+        };
+        field_index += rec.constructor.sig.parameters.len - rec.first_own;
+      }
+
       const target = &(gr.generated orelse blk: {
         const named = try self.ctx.global().create(model.Type.Named);
         named.* = .{
           .at   = gr.node().pos,
           .name = null,
-          .data = .{.record = .{.constructor = undefined}},
+          .data = .{.record = .{
+            .constructor = undefined,
+            .embeds      = embed_list,
+            .first_own   = first_own,
+            .abstract    = abstract,
+          }},
         };
         gr.generated = named;
         break :blk named;
@@ -2950,6 +3079,11 @@ fn tryGenRecord(
       std.debug.assert(finder_res.found.* == null);
       var b = try Types.SigBuilder.init(self.ctx, res.locations.len,
         target_type, finder_res.needs_different_repr);
+      for (embed_list) |embed| {
+        for (embed.t.constructor.sig.parameters[embed.t.first_own..]) |param| {
+          try b.pushParam(param);
+        }
+      }
       for (res.locations) |*loc| switch (loc.*) {
         .node => unreachable,
         .expr => |expr| switch (

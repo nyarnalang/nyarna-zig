@@ -693,7 +693,7 @@ pub fn execute(self: *CycleResolution) !void {
           named.* = .{
             .at   = def.content.pos,
             .name = null,
-            .data = .{.record = .{.constructor = undefined}},
+            .data = .{.record = undefined},
           };
           gr.generated = named;
           continue :alloc_types;

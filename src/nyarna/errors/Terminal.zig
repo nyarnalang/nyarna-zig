@@ -387,6 +387,9 @@ fn typeError(
     },
     .NotIterable => {
       self.renderError("expression of type {} is not iterable", .{main});
+    },
+    .InvalidEmbed => {
+      self.renderError("invalid embedded type (must be Record): {}", .{main});
     }
   }
 }

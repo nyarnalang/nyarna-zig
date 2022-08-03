@@ -198,16 +198,21 @@ fn procBackend(
 
     var finder = Types.CallableReprFinder.init(&self.loader.data.types);
     // input name
-    try finder.pushType(name_type.t);
+    try finder.pushType(name_type.t, "name");
     // document root
-    try finder.pushType(root.t);
+    try finder.pushType(root.t, "root");
 
     const named =
       try self.loader.data.storage.allocator().create(model.Type.Named);
     named.* = .{
       .at   = root.pos,
       .name = null,
-      .data = .{.record = .{.constructor = undefined}},
+      .data = .{.record = .{
+        .embeds      = &.{},
+        .first_own   = 0,
+        .abstract    = false,
+        .constructor = undefined,
+      }},
     };
     const target_type = model.Type{.named = named};
 
@@ -215,8 +220,8 @@ fn procBackend(
 
     var sb = try Types.SigBuilder.init(
       self.loader.ctx(), 2, target_type, finder_res.needs_different_repr);
-    sb.pushUnwrapped(model.Position.intrinsic(), "name", name_type);
-    sb.pushUnwrapped(model.Position.intrinsic(), "root", root);
+    try sb.pushUnwrapped(model.Position.intrinsic(), "name", name_type);
+    try sb.pushUnwrapped(model.Position.intrinsic(), "root", root);
     const sb_res = sb.finish();
     named.data.record.constructor = try sb_res.createCallable(
       self.loader.data.storage.allocator(), .@"type");
@@ -312,7 +317,7 @@ fn procBackend(
 
   // build the signature of the backend function
   sig_builder = try Types.SigBuilder.init(ctx, 1, ret_type, true);
-  sig_builder.pushUnwrapped(
+  try sig_builder.pushUnwrapped(
     model.Position.intrinsic(), "doc", doc_type.typedef().predef());
   const callable =
     try sig_builder.finish().createCallable(ctx.global(), .function);

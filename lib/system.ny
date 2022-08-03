@@ -135,7 +135,9 @@
   \end(prototype)
 
   Record = \prototype:
-    fields: \Optional(\Ast) {primary}:<syntax locations>
+    embed    : \List(\Ast) {varargs}
+    abstract : \Optional(\Ast)
+    fields   : \Optional(\Ast) {primary}:<syntax locations>
   \end(prototype)
 
   Intersection = \prototype:
