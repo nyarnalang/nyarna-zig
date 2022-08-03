@@ -66,39 +66,48 @@ pub fn main() !void {
     .diagnostic = &diag,
   };
 
-  var main_path: []const u8 = "-";
+  const stdlib_path =
+    std.os.getenv("NYARNA_STDLIB_PATH") orelse generated.stdlib_path;
+  var stdlib_resolver = nyarna.Loader.FileSystemResolver.init(stdlib_path);
+  var terminal = nyarna.errors.Terminal.init(std.io.getStdErr());
 
-  while (parser.next() catch |err| {
-    diag.report(std.io.getStdErr().writer(), err) catch unreachable;
-    std.os.exit(1);
-  }) |arg| {
-    if (arg.param == &params[0]) {
-      try std.io.getStdOut().writer().writeAll(
-        \\nyarna [<option>...] <file> [<arg>...]
-        \\Reference Nyarna interpreter.
-        \\
-      ++ "\n");
-      const hr = clap.help(std.io.getStdOut().writer(), &params);
-      try std.io.getStdOut().writer().writeAll(
-        \\
-        \\<arg>... can contain argument names like `--<name>`, which make the
-        \\following argument value a named argument. Restrictions on positional
-        \\after named arguments apply just like in Nyarna code.
+  var proc = try nyarna.Processor.init(
+    std.heap.page_allocator, nyarna.default_stack_size, &terminal.reporter,
+    &stdlib_resolver.api);
+  defer proc.deinit();
 
-        \\Argument values are parsed as Nyarna code with the types in
-        \\the Schema of <file> implicitly imported.
-      ++ "\n");
-      return hr;
-    } else if (arg.param == &params[1]) {
-      try std.io.getStdOut().writer().print(
-        \\ nyarna-zig, reference Nyarna implementation
-        \\ Version: {s}
-        \\ Stdlib : {s}
-      ++ "\n", .{generated.version, generated.stdlib_path});
-      return;
-    } else if (arg.param == &params[2]) {
-      if (!std.mem.eql(u8, arg.value.?, "-")) {
-        main_path = (
+  var loader: *nyarna.Loader.Main = blk: {
+    var cur_loader: ?*nyarna.Loader.Main = null;
+    var cur_name: ?[]const u8 = null;
+    while (parser.next() catch |err| {
+      diag.report(std.io.getStdErr().writer(), err) catch unreachable;
+      std.os.exit(1);
+    }) |arg| {
+      if (arg.param == &params[0]) {
+        try std.io.getStdOut().writer().writeAll(
+          \\nyarna [<option>...] <file> [<arg>...]
+          \\Reference Nyarna interpreter.
+          \\
+        ++ "\n");
+        const hr = clap.help(std.io.getStdOut().writer(), &params);
+        try std.io.getStdOut().writer().writeAll(
+          \\
+          \\<arg>... must be an alternating list of `--<name> <value>`.
+          \\Unnamed values are not allowed.
+          \\
+          \\Argument values are parsed as Nyarna code with the types in
+          \\the Schema of <file> implicitly imported.
+        ++ "\n");
+        return hr;
+      } else if (arg.param == &params[1]) {
+        try std.io.getStdOut().writer().print(
+          \\ nyarna-zig, reference Nyarna implementation
+          \\ Version: {s}
+          \\ Stdlib : {s}
+        ++ "\n", .{generated.version, generated.stdlib_path});
+        return;
+      } else if (arg.param == &params[2] and cur_loader == null) {
+        const main_path = if (std.mem.eql(u8, arg.value.?, "-")) "-" else (
           std.fs.realpathAlloc(arena.allocator(), arg.value.?)
         ) catch |err| {
           const writer = std.io.getStdErr().writer();
@@ -115,25 +124,32 @@ pub fn main() !void {
           }
           std.os.exit(1);
         };
+        var input = try Input.fromName(main_path, arena.allocator());
+        cur_loader = try proc.startLoading(input.resolver(), input.name());
+        parser.state = .rest_are_positional;
+      } else {
+        if (cur_name) |name| {
+          try cur_loader.?.pushArg(name, arg.value.?);
+          cur_name = null;
+        } else {
+          const content = arg.value.?;
+          if (content.len < 3 or !std.mem.eql(u8, "--", content[0..2])) {
+            const writer = std.io.getStdErr().writer();
+            try writer.print(
+              \\invalid param name: '{s}' (must start with '--' and have non-empty name)
+            ++ "\n", .{content});
+            std.os.exit(1);
+          }
+          cur_name = content[2..];
+        }
       }
-      parser.state = .rest_are_positional;
-    } else if (arg.param == &params[3]) {
-      std.debug.panic("command line arguments not implemented", .{});
-    } else unreachable;
-  }
+    }
+    break :blk cur_loader orelse {
+      var input = try Input.fromName("-", arena.allocator());
+      break :blk try proc.startLoading(input.resolver(), input.name());
+    };
+  };
 
-  const stdlib_path =
-    std.os.getenv("NYARNA_STDLIB_PATH") orelse generated.stdlib_path;
-  var stdlib_resolver = nyarna.Loader.FileSystemResolver.init(stdlib_path);
-
-  var terminal = nyarna.errors.Terminal.init(std.io.getStdErr());
-  var proc = try nyarna.Processor.init(
-    std.heap.page_allocator, nyarna.default_stack_size, &terminal.reporter,
-    &stdlib_resolver.api);
-  defer proc.deinit();
-
-  var input = try Input.fromName(main_path, arena.allocator());
-  var loader =try proc.startLoading(input.resolver(), input.name());
   if (try loader.finalize()) |container| {
     defer container.destroy();
     if (try container.process()) {
@@ -149,7 +165,11 @@ pub fn main() !void {
           break :blk f.writer();
         };
         switch (output.body.data) {
-          .text => |*txt| try writer.writeAll(txt.content),
+          .text => |*txt| {
+            try writer.writeAll(txt.content);
+            // unix requirement: all text files are to end with a line break.
+            try writer.writeByte('\n');
+          },
           else => {
             std.debug.panic("unsupported non-text output: {s}",
               .{@tagName(output.body.data)});
