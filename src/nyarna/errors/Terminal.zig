@@ -294,7 +294,7 @@ fn typeError(
       for (types[1..]) |item| {
         const prev = item.t.formatter();
         self.writer.print(
-          "  {s} previous type: {}", .{item.pos, prev}
+          "  {s} previous type: {}\n", .{item.pos, prev}
         ) catch unreachable;
       }
     },
@@ -327,7 +327,7 @@ fn typeError(
         .{main});
       const field = types[1].t.formatter();
       self.writer.print(
-        "  {s} field defined here with type '{}'",
+        "  {s} field defined here with type '{}'\n",
         .{types[1].pos, field}) catch unreachable;
     },
     .InvalidMappingKeyType => {
@@ -337,7 +337,7 @@ fn typeError(
       self.renderError("expression would force a sequence", .{});
       const prev = types[1].t.formatter();
       self.writer.print(
-        "  {s} previous expression of type '{}' cannot be part of a sequence",
+        "  {s} previous expression of type '{}' cannot be part of a sequence\n",
         .{types[1].pos, prev}) catch unreachable;
     },
     .InvalidDefinitionValue => {

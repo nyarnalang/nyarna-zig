@@ -10,7 +10,7 @@
 --- errors:expr
 5:10 - 5:11 IllegalItem
   expected = {<node>}
-  got = '1'
+  got = identifier
 5:11 - 5:11 PrematureToken
   expected = {<node>}
   got = ws_break

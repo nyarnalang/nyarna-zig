@@ -8,7 +8,6 @@
 
 \Integer(42)::double()
 --- errors:expr
-5:5 - 5:19 IllegalItem
-  expected = {identifier}
-  got = <node>
+5:5 - 5:10 UnknownSymbol
+  repr = this
 9:1 - 9:13 TooManyArguments

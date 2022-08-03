@@ -155,9 +155,9 @@ pub const SymbolDefs = struct {
   ) std.mem.Allocator.Error!?Processor.Action {
     switch (item) {
       .space, .newlines => return .none,
-      .node => {
-        self.logger().IllegalItem(pos,
-          &[_]errors.WrongItemError.ItemDescr{.{.token = .identifier}}, .node);
+      .node => |node| {
+        try self.produced.append(self.intpr.allocator(), node);
+        self.state = afterNodeVal;
         return .none;
       },
       .escaped => {
@@ -755,6 +755,30 @@ pub const SymbolDefs = struct {
       },
       .block_header => unreachable,
     }
+  }
+
+  fn afterNodeVal(
+    self: *SymbolDefs,
+    pos : model.Position,
+    item: SpecialSyntax.Item,
+  ) std.mem.Allocator.Error!?Processor.Action {
+    switch (item) {
+      .space => return .none,
+      .newlines => {
+        self.state = initial;
+        return Processor.Action.none;
+      },
+      .special_char => |c| switch (c) {
+        ';' => {
+          self.state = initial;
+          return Processor.Action.none;
+        },
+        else => {},
+      },
+      else => {},
+    }
+    // generate same error as atEnd
+    return try self.atEnd(pos, item);
   }
 
   fn push(

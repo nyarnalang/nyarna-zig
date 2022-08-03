@@ -1,0 +1,39 @@
+=== Locations as Values
+--- input
+\declare:
+  locs = \func:
+  :body:<syntax locations>
+    a: \Text
+    b: \Integer
+  \end(func)
+\end(declare)
+
+\declare:
+  f1 = \func:
+    \locs()
+  :body:
+    f1: a=\a, b=\b
+  \end(func)
+
+  f2 = \func:
+    c: \Text
+    \locs()
+  :body:
+    f2: a=\a, b=\b, c=\c
+  \end(func)
+
+  f3 = \func:
+    \locs()
+    d: \Text
+  :body:
+    f3: a=\a, b=\b, d=\d
+  \end(func)
+\end(declare)
+
+\f1(droggel, 1)
+\f2(droggel, jug, 2)
+\f3(droggel, 3, jug)
+--- output
+f1: a=droggel, b=1
+f2: a=jug, b=2, c=droggel
+f3: a=droggel, b=3, d=jug

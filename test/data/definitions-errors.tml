@@ -30,9 +30,9 @@
   expected = {<node>}
   got = ws_break
 14:12 - 14:12 MissingSymbolType
-12:1 - 14:25 IllegalItem
-  expected = {identifier}
-  got = <node>
 3:2 - 3:9 MissingEndCommand
   repr = declare
   previous = input(15:1)
+12:1 - 14:25 ExpectedExprOfTypeXGotY
+  main = Void
+  other = .std.intrinsic Definition

@@ -1253,7 +1253,7 @@ fn genCommand(
 /// true.
 fn readIdentifier(self: *Lexer, cur: *u21) bool {
   const name_start = self.walker.before.byte_offset;
-  while (unicode.L.contains(unicode.category(cur.*))) {
+  while (unicode.LN.contains(unicode.category(cur.*))) {
     cur.* = self.walker.nextInline() catch |e| {
       self.cur_stored = e;
       const len = self.walker.before.byte_offset - name_start;

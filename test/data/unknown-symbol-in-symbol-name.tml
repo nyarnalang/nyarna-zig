@@ -13,15 +13,17 @@
 
 Lorem ipsum
 --- errors:expr
-4:3 - 4:7 IllegalItem
-  expected = {identifier}
-  got = <node>
-4:8 - 4:8 PrematureToken
-  expected = {identifier}
+4:8 - 4:9 IllegalItem
+  expected = {';', ws_break}
   got = '='
+4:10 - 7:13 IllegalItem
+  expected = {';', ws_break}
+  got = <node>
 8:5 - 8:9 IllegalItem
   expected = {',', '{', '='}
   got = <node>
 8:11 - 8:11 MissingToken
   expected = {','}
   got = identifier
+4:3 - 4:7 UnknownSymbol
+  repr = foo
