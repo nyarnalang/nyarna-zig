@@ -1177,7 +1177,8 @@ pub fn typeType(self: *Self, t: model.Type) !model.Type {
         ) orelse return self.@"type"();
         return constructor.typedef();
       },
-      .record  => |*rec| rec.constructor.typedef(),
+      .record  => |*rec|
+        if (rec.abstract) self.@"type"() else  rec.constructor.typedef(),
       .location, .definition, .schema_def, .schema_ext, .void, .output =>
         // callable may be null if currently processing system.ny. In that
         // case, the type is not callable.
