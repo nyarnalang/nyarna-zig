@@ -4,6 +4,7 @@ const CycleResolution = @import("../Interpreter/CycleResolution.zig");
 const ContentLevel    = @import("../Parser/ContentLevel.zig");
 const nyarna          = @import("../../nyarna.zig");
 const Globals         = @import("../Globals.zig");
+const Resolver        = @import("../Interpreter/Resolver.zig");
 
 const Interpreter = nyarna.Interpreter;
 const lib         = nyarna.lib;
@@ -55,15 +56,8 @@ const BackendBuilder = struct {
       _ = try ns.tryRegister(self.intpr, doc_sym);
       defer ns.data.shrinkRetainingCapacity(ns.data.count() - 1);
 
-      if (backend.vars) |vars| {
-        _ = try self.intpr.tryInterpret(vars, .{.kind = .resolve});
-      }
-      for (backend.funcs) |def| {
-        _ = try self.intpr.tryInterpret(def.content, .{.kind = .resolve});
-      }
-      if (backend.body) |body| {
-        _ = try self.intpr.tryInterpret(body.root, .{.kind = .resolve});
-      }
+      try Resolver.init(self.intpr, .{.kind = .intermediate}).resolve(
+        backend.node());
     }
 
     const alloc = self.intpr.allocator();

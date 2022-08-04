@@ -17,11 +17,11 @@ const Interpreter = nyarna.Interpreter;
 const lib         = nyarna.lib;
 const model       = nyarna.model;
 
-pub const Resolver           = @import("Loader/Resolver.zig");
 pub const FileSystemResolver = @import("Loader/FileSystemResolver.zig");
 pub const Main               = @import("Loader/Main.zig");
 pub const Module             = @import("Loader/Module.zig");
 pub const ParamResolver      = @import("Loader/ParamResolver.zig");
+pub const Resolver           = @import("Loader/Resolver.zig");
 pub const SchemaBuilder      = @import("Loader/SchemaBuilder.zig");
 pub const SingleResolver     = @import("Loader/SingleResolver.zig");
 

@@ -3,9 +3,9 @@
 
 const std = @import("std");
 
-const chains    = @import("chains.zig");
-const graph     = @import("graph.zig");
-const nyarna    = @import("../../nyarna.zig");
+const graph    = @import("graph.zig");
+const nyarna   = @import("../../nyarna.zig");
+const Resolver = @import("Resolver.zig");
 
 const Interpreter = nyarna.Interpreter;
 const lib         = nyarna.lib;
@@ -34,12 +34,12 @@ fn subjectIsType(uacc: *model.Node.UnresolvedAccess, t: model.Type) bool {
   };
 }
 
-/// A graph.ResolutionContext that resolves symbol references to type symbols
+/// A Resolver.Context that resolves symbol references to type symbols
 /// within the same \declare call. The referenced types are unfinished and must
 /// only be used to construct types, never be called or used as value while this
 /// context is active.
 const TypeResolver = struct {
-  ctx     : graph.ResolutionContext,
+  ctx     : Resolver.Context,
   dres    : *CycleResolution,
   worklist: std.ArrayListUnmanaged(*model.Node) = .{},
   ns_data : *Interpreter.Namespace,
@@ -55,15 +55,15 @@ const TypeResolver = struct {
     };
   }
 
-  fn uStruct(gen: anytype) graph.ResolutionContext.Result {
+  fn uStruct(gen: anytype) Resolver.Context.Result {
     return .{.unfinished_type = .{.structural = gen.generated.?}};
   }
 
   fn linkTypes(
-    ctx     : *graph.ResolutionContext,
+    ctx     : *Resolver.Context,
     name    : []const u8,
     name_pos: model.Position,
-  ) nyarna.Error!graph.ResolutionContext.Result {
+  ) nyarna.Error!Resolver.Context.Result {
     const self = @fieldParentPtr(TypeResolver, "ctx", ctx);
     for (self.dres.defs) |def| {
       if (std.mem.eql(u8, def.name.content, name)) {
@@ -75,22 +75,22 @@ const TypeResolver = struct {
           .gen_map          => |*gm| return uStruct(gm),
           .gen_optional     => |*go| return uStruct(go),
           .gen_sequence     => |*gp| return uStruct(gp),
-          .gen_record       => |*gr| return graph.ResolutionContext.Result{
+          .gen_record       => |*gr| return Resolver.Context.Result{
             .unfinished_type = .{.named = gr.generated.?},
           },
-          .gen_unique => |*gu| return graph.ResolutionContext.Result{
+          .gen_unique => |*gu| return Resolver.Context.Result{
             .unfinished_type = gu.generated,
           },
           .builtingen, .funcgen, .gen_prototype => {
             self.dres.intpr.ctx.logger.NotAType(name_pos);
-            return graph.ResolutionContext.Result.failed;
+            return Resolver.Context.Result.failed;
           },
           .expression => |expr| switch (expr.data) {
-            .poison => return graph.ResolutionContext.Result.failed,
+            .poison => return Resolver.Context.Result.failed,
             .value => |value| switch (value.data) {
-              .poison => return graph.ResolutionContext.Result.failed,
+              .poison => return Resolver.Context.Result.failed,
               .@"type" => |vt| {
-                return graph.ResolutionContext.Result{
+                return Resolver.Context.Result{
                   .unfinished_type = vt.t,
                 };
               },
@@ -98,17 +98,17 @@ const TypeResolver = struct {
                 const tt = self.dres.intpr.ctx.types().@"type"();
                 self.dres.intpr.ctx.logger.ExpectedExprOfTypeXGotY(
                   &.{expr.expected_type.at(expr.pos), tt.predef()});
-                return graph.ResolutionContext.Result.failed;
+                return Resolver.Context.Result.failed;
               }
             },
             else => unreachable,
           },
-          .poison => return graph.ResolutionContext.Result.failed,
+          .poison => return Resolver.Context.Result.failed,
           else => unreachable,
         }
       }
     }
-    return graph.ResolutionContext.Result.unknown;
+    return Resolver.Context.Result.unknown;
   }
 
   fn process(self: *TypeResolver, def: *model.Node.Definition) !void {
@@ -132,7 +132,7 @@ const TypeResolver = struct {
     defer _ = self.worklist.pop();
 
     const sym = if (try self.dres.intpr.tryInterpret(def.content,
-        .{.kind = .final, .resolve = &self.ctx})) |expr| blk: {
+        .{.kind = .final, .resolve_ctx = &self.ctx})) |expr| blk: {
       const value = try self.dres.intpr.ctx.evaluator().evaluate(expr);
       switch (value.data) {
         .poison => {
@@ -155,13 +155,13 @@ const TypeResolver = struct {
   }
 };
 
-/// A graph.ResolutionContext that returns the current return type of a
+/// A Resolver.Context that returns the current return type of a
 /// referenced, unfinished function. That type must only be used to calculate
 /// the return type of other unfinished functions. Only when a fixpoint is
 /// reached will the calculated type become the definite return type of the
 /// function.
 const FixpointContext = struct {
-  ctx: graph.ResolutionContext,
+  ctx: Resolver.Context,
   dres: *CycleResolution,
 
   fn init(dres: *CycleResolution) FixpointContext {
@@ -175,21 +175,21 @@ const FixpointContext = struct {
   }
 
   fn funcReturns(
-    ctx     : *graph.ResolutionContext,
+    ctx     : *Resolver.Context,
     name    : []const u8,
     name_pos: model.Position,
-  ) nyarna.Error!graph.ResolutionContext.Result {
+  ) nyarna.Error!Resolver.Context.Result {
     const self = @fieldParentPtr(TypeResolver, "ctx", ctx);
     for (self.dres.defs) |def| {
       if (std.mem.eql(u8, def.name.content, name)) {
         switch (def.content.data) {
-          .gen_record => |*gr| return graph.ResolutionContext.Result{
+          .gen_record => |*gr| return Resolver.Context.Result{
             .unfinished_function = .{.named = gr.generated.?},
           },
-          .funcgen => |*fgen| return graph.ResolutionContext.Result{
+          .funcgen => |*fgen| return Resolver.Context.Result{
             .unfinished_function = fgen.cur_returns,
           },
-          .matcher => |*matcher| return graph.ResolutionContext.Result{
+          .matcher => |*matcher| return Resolver.Context.Result{
             .unfinished_function = matcher.cur_returns,
           },
           // types other than gen_record are guaranteed to have been
@@ -200,7 +200,7 @@ const FixpointContext = struct {
       }
     }
     self.dres.intpr.ctx.logger.UnknownSymbol(name_pos, name);
-    return graph.ResolutionContext.Result.failed;
+    return Resolver.Context.Result.failed;
   }
 
   fn probeFunc(fc: *FixpointContext, fgen: *model.Node.Funcgen) !bool {
@@ -214,14 +214,14 @@ const FixpointContext = struct {
       }
     } else (
       try fc.dres.intpr.probeType(
-        fgen.body, .{.kind = .intermediate, .resolve = &fc.ctx}, false)
+        fgen.body, .{.kind = .intermediate, .resolve_ctx = &fc.ctx}, false)
       ) orelse blk: {
         // this happens if there are still unknown symbols in the function
         // body. These are errors since everything resolvable has been
         // resolved at this point. we call interpret solely for issuing error
         // messages.
         _ = try fc.dres.intpr.tryInterpret(
-          fgen.body, .{.kind = .final, .resolve = &fc.ctx});
+          fgen.body, .{.kind = .final, .resolve_ctx = &fc.ctx});
         fgen.body.data = .poison;
         break :blk fc.dres.intpr.ctx.types().poison();
       };
@@ -236,7 +236,7 @@ const FixpointContext = struct {
   fn probeMatcher(fc: *FixpointContext, matcher: *model.Node.Matcher) !bool {
     const new_type = (
       try fc.dres.intpr.probeType(matcher.body.node(), .{
-        .kind = .intermediate, .resolve = &fc.ctx,
+        .kind = .intermediate, .resolve_ctx = &fc.ctx,
       }, false)
     ) orelse fc.dres.intpr.ctx.types().poison();
     if (new_type.eql(matcher.cur_returns)) {
@@ -253,9 +253,9 @@ const Processor = graph.Processor(*CycleResolution);
 
 defs             : []*model.Node.Definition,
 processor        : Processor,
-dep_discovery_ctx: graph.ResolutionContext,
+dep_discovery_ctx: Resolver.Context,
 intpr            : *Interpreter,
-in               : graph.ResolutionContext.Target,
+in               : Resolver.Context.Target,
 
 pub fn create(
   intpr : *Interpreter,
@@ -263,7 +263,7 @@ pub fn create(
   ns    : u15,
   parent: ?model.Type,
 ) !*CycleResolution {
-  const in: graph.ResolutionContext.Target =
+  const in: Resolver.Context.Target =
     if (parent) |ptype| .{.t = ptype} else .{.ns = ns};
   for (defs) |def| {
     if (def.merge) |pos| {
@@ -345,11 +345,11 @@ fn genConstructor(
   params  : *model.locations.List(void),
   ret_type: model.Type,
   provider: *const lib.Provider,
-  resolve : ?*graph.ResolutionContext,
+  ctx     : ?*Resolver.Context,
 ) !?nyarna.Types.Constructor {
   if (
     (try self.intpr.tryInterpretLocationsList(
-      params, .{.kind = .final, .resolve = resolve}))
+      params, .{.kind = .final, .resolve_ctx = ctx}))
   ) {
     var finder = nyarna.Types.CallableReprFinder.init(self.intpr.ctx.types());
     if (
@@ -768,7 +768,7 @@ pub fn execute(self: *CycleResolution) !void {
           .builtingen => |*bgen| {
             if (
               (try self.intpr.tryInterpretLocationsList(
-                &bgen.params, .{.kind = .final, .resolve = &tr.ctx}))
+                &bgen.params, .{.kind = .final, .resolve_ctx = &tr.ctx}))
             ) blk: {
               switch (bgen.returns) {
                 .expr => continue,
@@ -792,7 +792,7 @@ pub fn execute(self: *CycleResolution) !void {
           .gen_record => |*rgen| {
             if (
               !(try self.intpr.tryInterpretLocationsList(
-                &rgen.fields, .{.kind = .final, .resolve = &tr.ctx}))
+                &rgen.fields, .{.kind = .final, .resolve_ctx = &tr.ctx}))
             ) {
               const sym = try self.genSym(def.name, .poison, def.public);
               _ = try ns_data.tryRegister(self.intpr, sym);
@@ -826,7 +826,7 @@ pub fn execute(self: *CycleResolution) !void {
           .funcgen => |*fgen| {
             if (fgen.params == .unresolved) {
               const success = try self.intpr.tryInterpretFuncParams(
-                  fgen, .{.kind = .final, .resolve = &tr.ctx});
+                  fgen, .{.kind = .final, .resolve_ctx = &tr.ctx});
               if (!success) {
                 const sym = try self.genSym(def.name, .poison, def.public);
                 _ = try ns_data.tryRegister(self.intpr, sym);
@@ -1053,10 +1053,9 @@ pub fn collectDeps(
   edges: *[]usize,
 ) !void {
   self.dep_discovery_ctx.dependencies = .{};
-  if (try self.intpr.tryInterpret(self.defs[index].content,
-    .{.kind = .resolve, .resolve = &self.dep_discovery_ctx})) |expr| {
-    self.defs[index].content.data = .{.expression = expr};
-  }
+  const stage = Interpreter.Stage{
+    .kind = .intermediate, .resolve_ctx = &self.dep_discovery_ctx};
+  try Resolver.init(self.intpr, stage).resolve(self.defs[index].content);
   edges.* = self.dep_discovery_ctx.dependencies.items;
 }
 
@@ -1071,16 +1070,16 @@ pub fn swap(self: *CycleResolution, x: usize, y: usize) void {
 //----------------------------
 
 fn discoverDependencies(
-  ctx : *graph.ResolutionContext,
+  ctx : *Resolver.Context,
   name: []const u8,
   _   : model.Position,
-) nyarna.Error!graph.ResolutionContext.Result {
+) nyarna.Error!Resolver.Context.Result {
   const self = @fieldParentPtr(CycleResolution, "dep_discovery_ctx", ctx);
   for (self.defs) |def, i| if (std.mem.eql(u8, def.name.content, name)) {
-    return graph.ResolutionContext.Result{.known = @intCast(u21, i)};
+    return Resolver.Context.Result{.known = @intCast(u21, i)};
   };
   // we don't know whether this is actually known but it would be a
   // function variable, so we'll leave reporting a potential error to later
   // steps.
-  return graph.ResolutionContext.Result.unknown;
+  return Resolver.Context.Result.unknown;
 }

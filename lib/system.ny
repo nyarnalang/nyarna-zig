@@ -59,6 +59,53 @@
 \end(declare)
 
 \declare:
+  # the following two definitions must come first to make the implementation
+  # happy. There are some circular references in our type definitions here and
+  # the order of types tells the interpreter in which order to resolve them so
+  # that everything works.Z
+
+  Enum = \prototype:
+    values: \List(\Ast) {varargs}
+  :constructor:
+    input: \Literal {primary}
+  \end(prototype)
+
+  Numeric = \prototype:
+    backend : \Ast
+    min, max: \Optional(\Ast)
+    suffixes: \HashMap(\Literal, \Ast) {varmap}
+  :constructor:
+    input: \Literal {primary}
+  :funcs:
+    add = \builtin(return=\This):
+      values: \List(\This) {varargs}
+    \end(builtin)
+    sub = \builtin(return=\This):
+      minuend, subtrahend: \This
+    \end(builtin)
+    mult = \builtin(return=\This):
+      values: \List(\This) {varargs}
+    \end(builtin)
+    lt = \builtin(return=\Bool):
+      left, right: \This
+    \end(builtin)
+    gt = \builtin(return=\Bool):
+      left, right: \This
+    \end(builtin)
+    lte = \builtin(return=\Bool):
+      left, right: \This
+    \end(builtin)
+    gte = \builtin(return=\Bool):
+      left, right: \This
+    \end(builtin)
+    eq = \builtin(return=\Bool):
+      left, right: \This
+    \end(builtin)
+    neq = \builtin(return=\Bool):
+      left, right: \This
+    \end(builtin)
+  \end(prototype)
+
   Type = \unique()
   Void = \unique:
     # has a constructor that takes no parameters
@@ -155,48 +202,6 @@
     \end(builtin)
   \end(prototype)
 
-  Numeric = \prototype:
-    backend : \Ast
-    min, max: \Optional(\Ast)
-    suffixes: \HashMap(\Literal, \Ast) {varmap}
-  :constructor:
-    input: \Literal {primary}
-  :funcs:
-    add = \builtin(return=\This):
-      values: \List(\This) {varargs}
-    \end(builtin)
-    sub = \builtin(return=\This):
-      minuend, subtrahend: \This
-    \end(builtin)
-    mult = \builtin(return=\This):
-      values: \List(\This) {varargs}
-    \end(builtin)
-    lt = \builtin(return=\Bool):
-      left, right: \This
-    \end(builtin)
-    gt = \builtin(return=\Bool):
-      left, right: \This
-    \end(builtin)
-    lte = \builtin(return=\Bool):
-      left, right: \This
-    \end(builtin)
-    gte = \builtin(return=\Bool):
-      left, right: \This
-    \end(builtin)
-    eq = \builtin(return=\Bool):
-      left, right: \This
-    \end(builtin)
-    neq = \builtin(return=\Bool):
-      left, right: \This
-    \end(builtin)
-  \end(prototype)
-
-  Enum = \prototype:
-    values: \List(\Ast) {varargs}
-  :constructor:
-    input: \Literal {primary}
-  \end(prototype)
-
   library    = \keyword:
     options: \Optional(\Ast) {primary}:<syntax locations>
   \end(keyword)
@@ -229,6 +234,12 @@
     input    : \Ast
     collector: \Optional(\Ast)
     body     : \FrameRoot      {primary}
+  \end(keyword)
+
+  unroll = \keyword:
+    input    : \Ast
+    collector: \Optional(\Ast)
+    body     : \Ast {primary}:<fullast>
   \end(keyword)
 
   match = \keyword:

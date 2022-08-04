@@ -445,13 +445,9 @@ pub fn createMatchCases(
     .node => |node| {
       const ast = &case.value.data.expression.data.value.data.ast;
       const T = std.meta.fieldInfo(model.Node.Match.Case, .variable).field_type;
-      const variable: T = if (ast.capture.len == 0) .none else blk: {
-        if (ast.capture.len > 1) {
-          intpr.ctx.logger.UnexpectedCaptureVars(
-            ast.capture[1].pos.span(last(ast.capture).pos));
-        }
-        break :blk T{.def = ast.capture[0]};
-      };
+      lib.reportCaptures(intpr, ast, 1);
+      const variable: T =
+        if (ast.capture.len == 0) .none else T{.def = ast.capture[0]};
       try collected.append(.{
         .t        = node,
         .content  = ast,
@@ -760,6 +756,34 @@ pub const Impl = lib.Provider.Wrapper(struct {
         ).node();
       }
     }
+    return try intpr.node_gen.poison(pos);
+  }
+
+  pub fn unroll(
+    intpr    : *Interpreter,
+    pos      : model.Position,
+    input    : *model.Node,
+    collector: ?*model.Node,
+    body     : *model.Value.Ast,
+  ) nyarna.Error!*model.Node {
+    lib.reportCaptures(intpr, body, 2);
+    const expr = (
+      try intpr.tryInterpret(input, .{.kind = .keyword})
+    ) orelse try return intpr.node_gen.poison(pos);
+    if (
+      !switch (expr.expected_type) {
+        .structural => |strct| switch (strct.*) {
+          .concat, .list, .optional, .sequence => true,
+          else => false,
+        },
+        .named => false,
+      }
+    ) {
+      intpr.ctx.logger.NotIterable(&.{expr.expected_type.at(expr.pos)});
+      return try intpr.node_gen.poison(pos);
+    }
+    // TODO
+    _ = collector;
     return try intpr.node_gen.poison(pos);
   }
 
@@ -1116,6 +1140,7 @@ pub const Checker = struct {
     .{"match",           .keyword},
     .{"matcher",         .keyword, .matcher},
     .{"standalone",      .keyword},
+    .{"unroll",          .keyword},
   });
 
   data  : ExpectedDataInst.Array,

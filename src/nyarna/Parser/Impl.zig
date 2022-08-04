@@ -8,13 +8,13 @@ const builtin = @import("builtin");
 
 const BlockConfig  = @import("BlockConfig.zig");
 const ContentLevel = @import("ContentLevel.zig");
-const chains       = @import("../Interpreter/chains.zig");
 const Globals      = @import("../Globals.zig");
 const Lexer        = @import("Lexer.zig");
 const nyarna       = @import("../../nyarna.zig");
 const ModuleEntry  = @import("../Globals.zig").ModuleEntry;
 const Parser       = @import("../Parser.zig");
 const PipeCapture  = @import("PipeCapture.zig");
+const Resolver     = @import("../Interpreter/Resolver.zig");
 const syntaxes     = @import("syntaxes.zig");
 const unicode      = @import("../unicode.zig");
 
@@ -670,9 +670,9 @@ fn procCommand(self: *@This()) !void {
           try lvl.command.startImportCall(self.intpr(), import);
         },
         else => {
-          const ctx = try chains.CallContext.fromChain(
-            self.intpr(), target, try chains.Resolver.init(
-              self.intpr(), .{.kind = .intermediate}).resolve(target));
+          const ctx = try Resolver.CallContext.fromChain(
+            self.intpr(), target, try Resolver.init(
+              self.intpr(), .{.kind = .intermediate}).resolveChain(target));
           switch (ctx) {
             .known => |call_context| {
               try lvl.command.startResolvedCall(self.intpr(),
