@@ -432,7 +432,7 @@ fn tryInterpretPath(
   var seen_poison = false;
   var seen_unfinished = false;
   for (path) |item| switch (item) {
-    .field     => |index| cur_t = Types.descend(cur_t, index),
+    .field     => |field| cur_t = Types.descend(field.t.typedef(), field.index),
     .subscript => |node| {
       const req_t = switch (cur_t.structural.*) {
         .concat => |*con| blk: {
@@ -461,7 +461,9 @@ fn tryInterpretPath(
   const expr_path = try self.ctx.global().alloc(
     model.Expression.Access.PathItem, path.len);
   for (path) |item, i| switch (item) {
-    .field => |index| expr_path[i] = .{.field = index},
+    .field => |field| expr_path[i] = .{
+      .field = .{.index = field.index, .t = field.t},
+    },
     .subscript => |node| expr_path[i] = .{.subscript = node.data.expression},
   };
   return PathResult{.success = .{.path = expr_path, .t = cur_t}};
@@ -2923,14 +2925,15 @@ fn addEmbeds(
   self  : *Interpreter,
   embeds: *EmbedsMap,
   spec  : model.SpecType,
+  offset: usize,
 ) std.mem.Allocator.Error!void {
   var res = try embeds.getOrPut(self.allocator(), spec.t);
   if (!res.found_existing) {
     if (spec.t.isNamed(.record)) {
       for (spec.t.named.data.record.embeds) |inner| {
-        try self.addEmbeds(embeds, inner.t.typedef().at(spec.pos));
+        try self.addEmbeds(embeds, inner.t.typedef().at(spec.pos), offset + 1);
       }
-      res.value_ptr.* = embeds.count() - 1;
+      res.value_ptr.* = embeds.count() - 1 - offset;
     } else {
       self.ctx.logger.InvalidEmbed(&.{spec});
     }
@@ -2984,7 +2987,7 @@ fn tryGenRecord(
         expr.data = .{.value = value};
         switch (value.data) {
           .list   => |*lst| for (lst.content.items) |v| {
-            try self.addEmbeds(&embeds, v.data.@"type".t.at(v.origin));
+            try self.addEmbeds(&embeds, v.data.@"type".t.at(v.origin), 0);
           },
           .poison => expr.expected_type = self.ctx.types().poison(),
           else    => unreachable,
@@ -3017,7 +3020,7 @@ fn tryGenRecord(
         continue;
       }
     };
-    try self.addEmbeds(&embeds, t);
+    try self.addEmbeds(&embeds, t, 0);
   }
 
   while (!failed_parts) switch (gr.fields) {
@@ -3049,14 +3052,17 @@ fn tryGenRecord(
       const embed_list = try self.ctx.global().alloc(
         model.Type.Record.Embed, embeds.count());
       var iter = embeds.iterator();
-      var field_index: usize = 0;
       while (iter.next()) |entry| {
-        const rec = &entry.key_ptr.named.data.record;
         embed_list[entry.value_ptr.*] = .{
-          .t           = rec,
-          .first_field = field_index,
+          .t           = &entry.key_ptr.named.data.record,
+          .first_field = undefined,
         };
-        field_index += rec.constructor.sig.parameters.len - rec.first_own;
+      }
+      var field_index: usize = 0;
+      for (embed_list) |*embed| {
+        embed.first_field = field_index;
+        field_index +=
+          embed.t.constructor.sig.parameters.len - embed.t.first_own;
       }
 
       const target = &(gr.generated orelse blk: {
@@ -3064,24 +3070,33 @@ fn tryGenRecord(
         named.* = .{
           .at   = gr.node().pos,
           .name = null,
-          .data = .{.record = .{
-            .constructor = undefined,
-            .embeds      = embed_list,
-            .first_own   = first_own,
-            .abstract    = abstract,
-          }},
+          .data = .{.record = undefined},
         };
         gr.generated = named;
         break :blk named;
       }).data.record;
+      target.embeds = embed_list;
+      target.first_own = first_own;
+      target.abstract = abstract;
+
+      var names = std.StringHashMapUnmanaged(model.Position){};
+
       const target_type = model.Type{.named = target.named()};
       const finder_res = try finder.finish(target_type, true);
       std.debug.assert(finder_res.found.* == null);
-      var b = try Types.SigBuilder.init(self.ctx, res.locations.len,
+      var b = try Types.SigBuilder.init(
+        self.ctx, res.locations.len + field_index,
         target_type, finder_res.needs_different_repr);
       for (embed_list) |embed| {
         for (embed.t.constructor.sig.parameters[embed.t.first_own..]) |param| {
-          try b.pushParam(param);
+          const nres = try names.getOrPut(self.allocator(), param.name);
+          if (nres.found_existing) {
+            self.ctx.logger.DuplicateSymbolName(
+              param.name, param.pos, nres.value_ptr.*);
+          } else {
+            try b.pushParam(param);
+            nres.value_ptr.* = param.pos;
+          }
         }
       }
       for (res.locations) |*loc| switch (loc.*) {
@@ -3091,12 +3106,20 @@ fn tryGenRecord(
         ) {
           .location => |*lval| {
             loc.* = .{.value = lval};
-            try b.push(lval);
+            if (names.get(lval.name.content)) |pos| {
+              self.ctx.logger.DuplicateSymbolName(
+                lval.name.content, lval.value().origin, pos);
+            } else try b.push(lval);
+            // no need to push the name name into names because duplicate names
+            // within locations have already been accounted for.
           },
           .poison => {},
           else => unreachable,
         },
-        .value => |lval| try b.push(lval),
+        .value => |lval| if (names.get(lval.name.content)) |pos| {
+          self.ctx.logger.DuplicateSymbolName(
+            lval.name.content, lval.value().origin, pos);
+        } else try b.push(lval),
         .poison => {},
       };
       const builder_res = b.finish();
@@ -3770,7 +3793,7 @@ pub fn probeType(
     .resolved_access => |*ra| {
       var t = (try self.probeType(ra.base, stage, sloppy)).?;
       for (ra.path) |item| t = switch(item) {
-        .field     => |index| Types.descend(t, index),
+        .field     => |field| Types.descend(field.t.typedef(), field.index),
         .subscript => switch (t.structural.*) {
           .concat    => |*con| con.inner,
           .list      => |*lst| lst.inner,

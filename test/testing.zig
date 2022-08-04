@@ -235,9 +235,9 @@ const AstEmitter = struct {
   ) anyerror!void {
     var t = start;
     for (path) |item| switch (item) {
-      .field => |index| {
+      .field => |field| {
         const param =
-          &t.named.data.record.constructor.sig.parameters[index];
+          &field.t.constructor.sig.parameters[field.t.first_own + field.index];
         try self.emitLine("=FIELD {s}", .{param.name});
         t = param.spec.t;
       },
@@ -436,8 +436,10 @@ const AstEmitter = struct {
         const racc = try self.push("RACCESS");
         try self.process(ra.base);
         for (ra.path) |item| switch (item) {
-          .field => |index| {
-            try self.emitLine("=DESCEND {}", .{index});
+          .field => |field| {
+            const param = field.t.constructor.sig.parameters[
+              field.t.first_own + field.index];
+            try self.emitLine("=DESCEND {s}", .{param.name});
           },
           .subscript => |node| {
             const desc = try self.push("DESCEND");
@@ -649,9 +651,9 @@ const AstEmitter = struct {
   ) anyerror!void {
     var t = start;
     for (path) |item| switch (item) {
-      .field => |index| {
+      .field => |field| {
         const param =
-          &t.named.data.record.constructor.sig.parameters[index];
+          &field.t.constructor.sig.parameters[field.t.first_own + field.index];
         try self.emitLine("=FIELD {s}", .{param.name});
         t = param.spec.t;
       },

@@ -23,7 +23,10 @@ const Node = @This();
 /// Assignment Node.
 pub const Assign = struct {
   pub const PathItem = union(enum) {
-    field    : usize,
+    field: struct {
+      t    : *model.Type.Record,
+      index: usize,
+    },
     subscript: *Node,
   };
   /// The node that is assigned to. If unresolved, is simply another node.

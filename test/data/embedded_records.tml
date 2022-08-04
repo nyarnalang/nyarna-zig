@@ -1,0 +1,41 @@
+=== Embedded Records
+--- input
+\declare:
+  Base = \Record:
+    a: \Text
+  \end(Record)
+
+  Ext = \Record(\Base):
+    b: \Text
+  \end(Record)
+
+  Sec = \Record(\Ext):
+    c: \Text
+  \end(Record)
+\end(declare)
+
+\declare(\Base):
+  double = \func:
+    this: \Base
+  :body:
+    \this::a\this::a
+  \end(func)
+\end(declare)
+
+\declare(\Ext):
+  triple = \func:
+    this: \Ext
+  :body:
+    \this::b\this::b\this::b
+  \end(func)
+\end(declare)
+
+\var:
+  s = \Sec(droggel, jug, spam)
+\end(var)
+
+\s::a \s::b \s::c
+\s::double() \s::triple()
+--- output
+droggel jug spam
+droggeldroggel jugjugjug

@@ -14,7 +14,13 @@ const Expression = @This();
 /// retrieval of the value of a substructure
 pub const Access = struct {
   pub const PathItem = union(enum) {
-    field    : usize,
+    field    : struct {
+      /// the record as which we see the subject value when accessing it.
+      /// important in the case of accessing a record via an embed view.
+      t: *model.Type.Record,
+      /// index into that type's fields, with 0 being the first_own field.
+      index: usize,
+    },
     subscript: *Expression,
   };
 

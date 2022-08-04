@@ -1354,6 +1354,15 @@ pub fn convertible(self: *Self, from: model.Type, to: model.Type) bool {
         .literal, .space, .textual => true,
         else => false,
       } else false,
+      .record => |*from_rec| switch (to) {
+        .named => |to_named| switch (to_named.data) {
+          .record => |*to_rec| for (from_rec.embeds) |embed| {
+            if (embed.t == to_rec) break true;
+          } else false,
+          else => false,
+        },
+        .structural => false,
+      },
       .schema_def => return to.isNamed(.schema),
       .space => to.isStruc(.concat) or to.isStruc(.sequence),
       .literal => to_scalar != null,
@@ -1489,7 +1498,8 @@ pub fn allowedAsOptionalInner(t: model.Type) bool {
 
 pub fn descend(t: model.Type, index: usize) model.Type {
   // update this if we ever allow descending into other types.
-  return t.named.data.record.constructor.sig.parameters[index].spec.t;
+  const rec = &t.named.data.record;
+  return rec.constructor.sig.parameters[rec.first_own + index].spec.t;
 }
 
 /// returns true if the given type is .ast, .frame_root or an Optional or List

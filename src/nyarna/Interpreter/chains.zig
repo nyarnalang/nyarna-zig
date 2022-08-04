@@ -91,8 +91,11 @@ pub const Resolution = union(enum) {
 pub const Resolver = struct {
   const SearchResult = union(enum) {
     field: struct {
-      index: usize,
-      t    : model.Type,
+      access: struct {
+        t    : *model.Type.Record,
+        index: usize,
+      },
+      t: model.Type,
     },
     symbol: *model.Symbol,
   };
@@ -109,14 +112,19 @@ pub const Resolver = struct {
     intpr: *Interpreter,
     t    : model.Type,
     name : []const u8
-  ) !?SearchResult {
+  ) nyarna.Error!?SearchResult {
     switch (t) {
       .named => |named| switch (named.data) {
         .record => |*rec| {
-          for (rec.constructor.sig.parameters) |*field, index| {
+          for (
+            rec.constructor.sig.parameters[rec.first_own..]
+          ) |field, index| {
             if (std.mem.eql(u8, field.name, name)) {
               return SearchResult{
-                .field = .{.index = index, .t = field.spec.t},
+                .field = .{
+                  .access = .{.t = rec, .index = index},
+                  .t = field.spec.t,
+                },
               };
             }
           }
@@ -132,6 +140,19 @@ pub const Resolver = struct {
       if (try funcs.find(intpr.ctx, name)) |sym| {
         return SearchResult{.symbol = sym};
       }
+    }
+    switch (t) {
+      .named => |named| switch (named.data) {
+        .record => |*rec| {
+          for (rec.embeds) |embed| {
+            if (try searchAccessible(intpr, embed.t.typedef(), name)) |res| {
+              return res;
+            }
+          }
+        },
+        else => {},
+      },
+      else => {},
     }
     return null;
   }
@@ -220,7 +241,10 @@ pub const Resolver = struct {
               return .poison;
             } else {
               try rc.indexes.append(
-                self.intpr.allocator(), .{.field = field.index});
+                self.intpr.allocator(), .{.field = .{
+                  .t     = field.access.t,
+                  .index = field.access.index,
+                }});
               rc.t = field.t;
               return res;
             }

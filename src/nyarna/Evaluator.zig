@@ -319,7 +319,16 @@ fn walkPath(
 ) !?**model.Value {
   var cur = base;
   for (path) |item| switch (item) {
-    .field     => |index| cur = &cur.*.data.record.fields[index],
+    .field     => |field| {
+      const rval = &cur.*.data.record;
+      cur = if (rval.t == field.t) (
+        &rval.fields[rval.t.first_own + field.index]
+      ) else for (rval.t.embeds) |embed| {
+        if (embed.t == field.t) {
+          break &rval.fields[embed.first_field + field.index];
+        }
+      } else unreachable;
+    },
     .subscript => |expr| {
       const value = try self.evaluate(expr);
       if (value.data == .poison) return null;
@@ -500,6 +509,9 @@ fn doConvert(
         std.debug.assert(from.isNamed(.void));
         return (try self.ctx.values.textScalar(value.origin, to, "")).value();
       },
+      // this is a conversion from a record to one of its embeds. We *will* need
+      // the original value for accessing it since fields may be reordered.
+      .record => return value,
       .schema  => {
         std.debug.assert(from.isNamed(.schema_def));
         const sd = &value.data.schema_def;
@@ -1017,9 +1029,13 @@ fn evalVarRetr(
   retr: *model.Expression.VarRetrieval,
 ) nyarna.Error!*model.Value {
   const ret = retr.variable.curPtr().*;
+  const v_type = try self.ctx.types().valueType(ret);
   if (
-    !self.ctx.types().lesserEqual(
-      try self.ctx.types().valueType(ret), retr.variable.spec.t)
+    !self.ctx.types().lesserEqual(v_type, retr.variable.spec.t) and
+    (!v_type.isNamed(.record) or !retr.variable.spec.t.isNamed(.record) or
+     !for (v_type.named.data.record.embeds) |embed| {
+      if (embed.t == &retr.variable.spec.t.named.data.record) break true;
+     } else false)
   ) {
     std.debug.print("corrupted stack! stack contents:\n", .{});
     const stack_len = (
@@ -1301,6 +1317,12 @@ fn coerce(
                 value.origin, expected_type, content)
           }
         ).value();
+      },
+      .record => |*rec| {
+        std.debug.assert(for (value_type.named.data.record.embeds) |embed| {
+          if (embed.t == rec) break true;
+        } else false);
+        return value;
       },
       // other coercions can never happen.
       else => {
