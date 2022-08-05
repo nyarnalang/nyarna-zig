@@ -5,6 +5,7 @@ const ContentLevel    = @import("../Parser/ContentLevel.zig");
 const nyarna          = @import("../../nyarna.zig");
 const Globals         = @import("../Globals.zig");
 const Resolver        = @import("../Interpreter/Resolver.zig");
+const VarProcessor    = @import("../Interpreter/VarProcessor.zig");
 
 const Interpreter = nyarna.Interpreter;
 const lib         = nyarna.lib;
@@ -234,7 +235,7 @@ fn procBackend(
   }
 
   // create all variables in the container.
-  var var_proc = try nyarna.lib.system.VarProc.init(self.ip(), 0, undefined);
+  var var_proc = try VarProcessor.init(self.ip(), 0, undefined);
   for (var_locs.items) |item| switch (item) {
     .node => |n| {
       var_proc.keyword_pos = n.node().pos;

@@ -26,12 +26,14 @@ pub const Context = struct {
     /// The name resolves to an unfinished function. The returned type may be
     /// used to calculate the type of calls to this function.
     unfinished_function: model.Type,
-    /// The symbol has been resolved to a type which has not yet been finalized.
+    /// The name has been resolved to a type which has not yet been finalized.
     /// The returned type may be used as inner type to construct another type,
     /// but must not be used for anything else since it is unfinished.
     unfinished_type: model.Type,
-    /// The symbol's name has been resolved to the given variable.
+    /// The name has been resolved to the given variable.
     variable: *model.Symbol.Variable,
+    /// The name resolves to a comptime parameter, given as node.
+    node: *model.Node,
     /// The symbol's name can be resolved to a sibling symbol but no type
     /// information is currently available. The value is the index of the
     /// target sibling node. It is used when building up a dependency graph
@@ -51,6 +53,7 @@ pub const Context = struct {
     unfinished_function: model.Type,
     unfinished_type    : model.Type,
     variable           : *model.Symbol.Variable,
+    node               : *model.Node,
     /// subject *may* be resolvable in the future but currently isn't.
     unknown,
     /// subject is guaranteed to be poison and an error message has been logged.
@@ -91,9 +94,10 @@ pub const Context = struct {
   ) !StrippedResult {
     return switch (res) {
       .unfinished_function => |t| StrippedResult{.unfinished_function = t},
-      .unfinished_type => |t| StrippedResult{.unfinished_type = t},
-      .variable => |v| StrippedResult{.variable = v},
-      .known => |index| {
+      .unfinished_type     => |t| StrippedResult{.unfinished_type = t},
+      .variable            => |v| StrippedResult{.variable = v},
+      .node                => |n| StrippedResult{.node = n},
+      .known               => |index| {
         for (ctx.dependencies.items) |item| {
           if (item == index) return StrippedResult.unknown;
         }
@@ -173,6 +177,35 @@ pub const Context = struct {
       }
     }
     return AccessData{.result = .unknown, .is_prefix = false};
+  }
+};
+
+/// A Context that can resolve comptime variables (during unroll or in macros).
+pub const ComptimeContext = struct {
+  ctx: Context,
+  entries: std.StringHashMap(*model.Node),
+
+  pub fn init(ns: u15, allocator: std.mem.Allocator) ComptimeContext {
+    return .{
+      .entries = std.StringHashMap(*model.Node).init(allocator),
+      .ctx = .{
+        .resolveNameFn = resolveName,
+        .target        = .{.ns = ns},
+      },
+    };
+  }
+
+  fn resolveName(
+    ctx     : *Context,
+    name    : []const u8,
+    name_pos: model.Position,
+  ) nyarna.Error!Context.Result {
+    _ = name_pos;
+    const self = @fieldParentPtr(ComptimeContext, "ctx", ctx);
+    if (self.entries.get(name)) |node| {
+      return Context.Result{.node = node};
+    }
+    return Context.Result.unknown;
   }
 };
 

@@ -1,8 +1,11 @@
 const std = @import("std");
 
 const CycleResolution = @import("../Interpreter/CycleResolution.zig");
+const DefCollector    = @import("../Interpreter/DefCollector.zig");
 const Globals         = @import("../Globals.zig");
 const nyarna          = @import("../../nyarna.zig");
+const Resolver        = @import("../Interpreter/Resolver.zig");
+const VarProcessor    = @import("../Interpreter/VarProcessor.zig");
 
 const errors      = nyarna.errors;
 const Interpreter = nyarna.Interpreter;
@@ -11,376 +14,6 @@ const model       = nyarna.model;
 
 const last        = @import("../helpers.zig").last;
 const stringOrder = @import("../helpers.zig").stringOrder;
-
-pub const DefCollector = struct {
-  count: usize = 0,
-  defs : []*model.Node.Definition = undefined,
-  dt   : model.Type,
-
-  pub fn collect(self: *@This(), node: *model.Node, intpr: *Interpreter) !void {
-    switch (node.data) {
-      .void, .poison => {},
-      .definition => self.count += 1,
-      .concat => |*con| self.count += con.items.len,
-      else => {
-        const expr = (
-          try intpr.associate(node, (
-            try intpr.ctx.types().concat(self.dt)
-          ).?.predef(), .{.kind = .keyword})
-        ) orelse {
-          node.data = .void;
-          return;
-        };
-        const value = try intpr.ctx.evaluator().evaluate(expr);
-        if (value.data == .poison) {
-          node.data = .poison;
-          return;
-        }
-        self.count += value.data.concat.content.items.len;
-        expr.data = .{.value = value};
-        node.data = .{.expression = expr};
-      }
-    }
-  }
-
-  pub fn allocate(self: *@This(), allocator: std.mem.Allocator) !void {
-    self.defs = try allocator.alloc(*model.Node.Definition, self.count);
-    self.count = 0;
-  }
-
-  pub fn checkName(
-    self    : *@This(),
-    name    : []const u8,
-    name_pos: model.Position,
-    ctx     : nyarna.Context,
-  ) bool {
-    var i: usize = 0; while (i < self.count) : (i += 1) {
-      if (std.mem.eql(u8, self.defs[i].name.content, name)) {
-        ctx.logger.DuplicateSymbolName(
-          name, name_pos, self.defs[i].name.node().pos);
-        return false;
-      }
-    }
-    return true;
-  }
-
-  fn asNode(
-    intpr: *Interpreter,
-    gen  : model.NodeGenerator,
-    def  : *model.Node.Definition,
-  ) !*model.Node.Definition {
-    if (gen.allocator.ptr == intpr.allocator().ptr) return def;
-    return &(try gen.copy(def.node())).data.definition;
-  }
-
-  fn appendValue(
-    self : *@This(),
-    value: *model.Value,
-    ctx  : nyarna.Context,
-    pdef : bool,
-    gen  : model.NodeGenerator,
-  ) nyarna.Error!void {
-    switch (value.data) {
-      .concat => |*con| for (con.content.items) |item| {
-        try self.appendValue(item, ctx, pdef, gen);
-      },
-      .definition => |*def| {
-        if (
-          self.checkName(
-            def.name.content, def.name.value().origin, ctx)
-        ) {
-          const content_value = switch (def.content) {
-            .func => |f|
-              (try ctx.values.funcRef(def.value().origin, f)).value(),
-            .@"type" => |t|
-              (try ctx.values.@"type"(def.value().origin, t)).value(),
-          };
-          const def_node = try gen.definition(def.value().origin, .{
-            .name = try gen.literal(def.name.value().origin, .{
-              .kind = .text, .content = def.name.content,
-            }),
-            .content = try gen.expression(
-              try ctx.createValueExpr(content_value)
-            ),
-            .merge  = def.merge,
-            .public = pdef,
-          });
-          self.defs[self.count] = def_node;
-          self.count += 1;
-        }
-      },
-      .poison => {},
-      else => {
-        ctx.logger.ExpectedExprOfTypeXGotY(&.{
-          try ctx.types().valueSpecType(value),
-          ctx.types().definition().predef(),
-        });
-      },
-    }
-  }
-
-  pub fn append(
-    self : *@This(),
-    node : *model.Node,
-    intpr: *Interpreter,
-    pdef : bool,
-    gen  : model.NodeGenerator,
-  ) nyarna.Error!void {
-    switch (node.data) {
-      .void, .poison => {},
-      .definition => |*def| {
-        if (self.checkName(def.name.content, def.name.node().pos, intpr.ctx)) {
-          if (pdef) def.public = true;
-          self.defs[self.count] = try asNode(intpr, gen, def);
-          self.count += 1;
-        }
-      },
-      .concat => |*con| for (con.items) |item| {
-        try self.append(item, intpr, pdef, gen);
-      },
-      .expression => |expr| {
-        const value = try intpr.ctx.evaluator().evaluate(expr);
-        try self.appendValue(value, intpr.ctx, pdef, gen);
-      },
-      else => {
-        const expr = try intpr.interpret(node);
-        node.data = .{.expression = expr};
-        try self.appendValue(
-          try intpr.ctx.evaluator().evaluate(expr), intpr.ctx, pdef, gen);
-      },
-    }
-  }
-
-  pub fn finish(self: *@This()) []*model.Node.Definition {
-    return self.defs[0..self.count];
-  }
-};
-
-pub const VarProc = struct {
-  ip         : *Interpreter,
-  keyword_pos: model.Position,
-  concat_loc : model.Type,
-  ac         : *Interpreter.ActiveVarContainer,
-  namespace  : *Interpreter.Namespace,
-  ns_index   : u15,
-
-  pub fn init(
-    ip         : *Interpreter,
-    index      : u15,
-    keyword_pos: model.Position,
-  ) !@This() {
-    return @This(){
-      .ip = ip,
-      .keyword_pos = keyword_pos,
-      .concat_loc =
-        (try ip.ctx.types().concat(ip.ctx.types().location())).?,
-      .ac = &ip.var_containers.items[ip.var_containers.items.len - 1],
-      .namespace = ip.namespace(index),
-      .ns_index = index,
-    };
-  }
-
-  fn empty(self: @This()) !*model.Node {
-    return try self.ip.node_gen.void(self.keyword_pos);
-  }
-
-  pub fn node(self: @This(), n: *model.Node) nyarna.Error!*model.Node {
-    switch (n.data) {
-      .location => |*loc| {
-        const name_expr = (
-          try self.ip.associate(loc.name,
-            self.ip.ctx.types().literal().predef(), .{.kind = .keyword})
-        ) orelse return try self.empty();
-        loc.name.data = .{.expression = name_expr};
-        const name = switch (
-          (try self.ip.ctx.evaluator().evaluate(name_expr)).data
-        ) {
-          .text   => |*txt| txt.content,
-          .poison => return try self.empty(),
-          else => unreachable,
-        };
-
-        const spec: model.SpecType = if (loc.@"type") |tnode| blk: {
-          const expr = (try self.ip.associate(
-            tnode, self.ip.ctx.types().@"type"().predef(),
-            .{.kind = .keyword}
-          )) orelse return self.empty();
-          const val = try self.ip.ctx.evaluator().evaluate(expr);
-          switch (val.data) {
-            .poison => return try self.empty(),
-            .@"type" => |*tv| break :blk tv.t.at(val.origin),
-            else => unreachable,
-          }
-        } else if (
-          try self.ip.probeType(
-            loc.default.?, .{.kind = .intermediate}, false)
-        ) |t| t.at(loc.default.?.pos)
-        else self.ip.ctx.types().every().predef();
-        return try self.variable(loc.name.pos, spec, name,
-          loc.default orelse (try self.defaultValue(spec.t, n.pos)) orelse {
-            self.ip.ctx.logger.MissingInitialValue(loc.name.pos);
-            return try self.empty();
-          });
-      },
-      .concat => |*con| {
-        const items =
-          try self.ip.allocator().alloc(*model.Node, con.items.len);
-        for (con.items) |item, index| items[index] = try self.node(item);
-        return (try self.ip.node_gen.concat(
-          self.keyword_pos, .{.items = items})).node();
-      },
-      .expression => |expr| return self.expression(expr),
-      .poison, .void => return try self.empty(),
-      else => {
-        const expr = (
-          try self.ip.tryInterpret(n, .{.kind = .keyword})
-        ) orelse return self.empty();
-        return self.expression(expr);
-      }
-    }
-  }
-
-  pub fn expression(
-    self: @This(),
-    expr: *model.Expression,
-  ) nyarna.Error!*model.Node {
-    if (expr.data == .poison) return try self.empty();
-    if (!self.ip.ctx.types().lesserEqual(
-        expr.expected_type, self.concat_loc)) {
-      self.ip.ctx.logger.ExpectedExprOfTypeXGotY(&[_]model.SpecType{
-        expr.expected_type.at(expr.pos), self.concat_loc.predef(),
-      });
-      return try self.empty();
-    }
-    expr.expected_type = self.concat_loc;
-    const val = try self.ip.ctx.evaluator().evaluate(expr);
-    return try self.value(val);
-  }
-
-  pub fn value(self: @This(), val: *model.Value) !*model.Node {
-    switch (val.data) {
-      .poison => return try self.empty(),
-      .concat => |*con| {
-        const items =
-          try self.ip.allocator().alloc(*model.Node, con.content.items.len);
-        for (con.content.items) |item, index| {
-          const loc = &item.data.location;
-          const initial = if (loc.default) |expr|
-            try self.ip.node_gen.expression(expr)
-          else (try self.defaultValue(
-              loc.spec.t, item.origin)) orelse {
-            self.ip.ctx.logger.MissingInitialValue(loc.name.value().origin);
-            items[index] =
-              try self.ip.node_gen.void(loc.name.value().origin);
-            continue;
-          };
-          items[index] = try self.variable(
-            loc.name.value().origin, loc.spec, loc.name.content, initial);
-        }
-        return (try self.ip.node_gen.concat(
-          self.keyword_pos, .{.items = items})).node();
-      },
-      else => unreachable,
-    }
-  }
-
-  fn variable(
-    self    : @This(),
-    name_pos: model.Position,
-    spec    : model.SpecType,
-    name    : []const u8,
-    initial : *model.Node,
-  ) !*model.Node {
-    const sym = try self.ip.ctx.global().create(model.Symbol);
-    const offset = @intCast(u15, self.ip.symbols.items.len - self.ac.offset);
-    sym.* = .{
-      .defined_at = name_pos,
-      .name       = name,
-      .data       = .{.variable = .{
-        .spec       = spec,
-        .container  = self.ac.container,
-        .offset     = offset,
-        .kind       = .assignable,
-      }},
-      .parent_type = null,
-    };
-    if (try self.namespace.tryRegister(self.ip, sym)) {
-      if (offset + 1 > self.ac.container.num_values) {
-        self.ac.container.num_values = offset + 1;
-      }
-      const replacement = if (spec.t.isNamed(.every))
-        // t being .every means that it depends on the initial expression,
-        // and that expression can't be interpreted right now. This commonly
-        // happens if an argument value is assigned (argument variables are
-        // established after a function body has been read in). To
-        // accomodate for that, we create a variable but with „every“ type.
-        // references to this variable mustn't be resolved until the type
-        // has been update. Updating the type happens by using the special
-        // VarTypeSetter node, which we create here for the initial
-        // assignment.
-        try self.ip.node_gen.vtSetter(&sym.data.variable, initial)
-      else initial;
-      return (try self.ip.node_gen.assign(initial.pos, .{
-        .target = .{.resolved = .{
-          .target = &sym.data.variable,
-          .path = &.{},
-          .spec = spec,
-          .pos = initial.pos,
-        }},
-        .replacement = replacement,
-      })).node();
-    } else return try self.empty();
-  }
-
-  fn defaultValue(
-    self: @This(),
-    t   : model.Type,
-    vpos: model.Position,
-  ) !?*model.Node {
-    return switch (t) {
-      .structural => |strct| switch (strct.*) {
-        .concat, .optional, .sequence => try self.ip.node_gen.void(vpos),
-        .hashmap => |*hm| try self.ip.genValueNode(
-          (try self.ip.ctx.values.hashMap(vpos, hm)).value()
-        ),
-        .list => |*lst| try self.ip.genValueNode(
-          (try self.ip.ctx.values.list(vpos, lst)).value()
-        ),
-        .callable, .intersection => null,
-      },
-      .named => |named| switch (named.data) {
-        .textual, .space, .literal => (
-          try self.ip.node_gen.literal(vpos, .{
-            .kind = .space,
-            .content = "",
-          })
-        ).node(),
-        .int => |*int| {
-          const val: i64 = if (int.min <= 0)
-            if (int.max >= 0) 0 else int.max
-          else int.min;
-          const ival = try self.ip.ctx.values.int(vpos, int, val, 0);
-          return try self.ip.genValueNode(ival.value());
-        },
-        .float => |*fl| {
-          const val: f64 = if (fl.min <= 0)
-            if (fl.max >= 0) 0 else fl.max
-          else fl.min;
-          const fval = try self.ip.ctx.values.float(vpos, fl, val, 0);
-          return try self.ip.genValueNode(fval.value());
-        },
-        .@"enum" => |*en| {
-          const eval = try self.ip.ctx.values.@"enum"(vpos, en, 0);
-          return try self.ip.genValueNode(eval.value());
-        },
-        .record => null,
-        .ast, .frame_root, .void, .every =>
-          try self.ip.node_gen.void(vpos),
-        else => return null,
-      },
-    };
-  }
-};
 
 const Comparer = union(enum) {
   floats: struct {left: f64, right: f64},
@@ -782,9 +415,61 @@ pub const Impl = lib.Provider.Wrapper(struct {
       intpr.ctx.logger.NotIterable(&.{expr.expected_type.at(expr.pos)});
       return try intpr.node_gen.poison(pos);
     }
-    // TODO
-    _ = collector;
-    return try intpr.node_gen.poison(pos);
+    var value = try intpr.ctx.evaluator().evaluate(expr);
+    var generated = std.ArrayListUnmanaged(*model.Node){};
+    try generated.ensureTotalCapacityPrecise(intpr.allocator(),
+      switch (value.data) {
+      .concat   => |*con| con.content.items.len,
+      .list     => |*lst| lst.content.items.len,
+      .seq      => |*seq| seq.content.items.len,
+      .poison   => return try intpr.node_gen.poison(pos),
+      // next two can occur when input has been optional
+      .void     => 0,
+      else      => 1,
+    });
+
+    var ns =
+      if (body.capture.len > 0) body.capture[0].ns else std.math.maxInt(u15);
+    // TODO: allow different namespaces (?)
+    std.debug.assert(body.capture.len <= 1 or body.capture[1].ns == ns);
+
+    var cctx = Resolver.ComptimeContext.init(ns, intpr.allocator());
+    var resolver =
+      Resolver.init(intpr, .{.kind = .intermediate, .resolve_ctx = &cctx.ctx});
+
+    var iter = model.Iterator.init(&value);
+    var i: i64 = 0; while (iter.next()) |val| : (i += 1) {
+      if (body.capture.len > 0) {
+        try cctx.entries.put(body.capture[0].name, try intpr.genValueNode(val));
+      }
+      if (body.capture.len > 1) {
+        const int_val = try intpr.ctx.intAsValue(
+          value.origin, i, 0, &intpr.ctx.types().system.integer.named.data.int);
+        try cctx.entries.put(
+          body.capture[1].name, try intpr.genValueNode(int_val));
+      }
+      const root = try intpr.node_gen.copy(body.root);
+      try resolver.resolve(root);
+      generated.appendAssumeCapacity(root);
+    }
+
+    if (collector) |cnode| {
+      const cexpr = try intpr.interpret(cnode);
+      const cvalue = try intpr.ctx.evaluator().evaluate(cexpr);
+      switch (cvalue.data) {
+        .poison    => return intpr.node_gen.poison(pos),
+        .prototype => |pv| switch (pv.pt) {
+          .concat =>
+            return (try intpr.node_gen.concat(pos, generated.items)).node(),
+          .list, .sequence =>
+            std.debug.panic("unrolling into non-concat not implemented", .{}),
+          else => {},
+        },
+        else => {},
+      }
+      intpr.ctx.logger.InvalidCollector(expr.pos);
+      return intpr.node_gen.poison(pos);
+    } else return (try intpr.node_gen.concat(pos, generated.items)).node();
   }
 
   pub fn @"var"(
@@ -793,7 +478,7 @@ pub const Impl = lib.Provider.Wrapper(struct {
     ns   : u15,
     defs : *model.Node,
   ) nyarna.Error!*model.Node {
-    return try (try VarProc.init(intpr, ns, pos)).node(defs);
+    return try (try VarProcessor.init(intpr, ns, pos)).node(defs);
   }
 
   //---------------------

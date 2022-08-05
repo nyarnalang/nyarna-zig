@@ -2,6 +2,7 @@ const std = @import("std");
 const lib = @import("../lib.zig");
 
 const constructors = @import("constructors.zig");
+const DefCollector = @import("../Interpreter/DefCollector.zig");
 const nyarna       = @import("../../nyarna.zig");
 const system       = @import("system.zig");
 
@@ -51,7 +52,7 @@ const Impl = lib.Provider.Wrapper(struct {
     ns   : u15,
     arg  : *model.Node,
   ) nyarna.Error!*model.Node {
-    var collector = system.DefCollector{.dt = intpr.ctx.types().definition()};
+    var collector = DefCollector{.dt = intpr.ctx.types().definition()};
     try collector.collect(arg, intpr);
     try collector.allocate(intpr.allocator());
     try collector.append(arg, intpr, false, intpr.node_gen);

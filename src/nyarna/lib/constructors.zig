@@ -1,7 +1,8 @@
 const std = @import("std");
 
-const nyarna    = @import("../../nyarna.zig");
-const system    = @import("system.zig");
+const DefCollector = @import("../Interpreter/DefCollector.zig");
+const nyarna       = @import("../../nyarna.zig");
+const system       = @import("system.zig");
 
 const Context     = nyarna.Context;
 const Evaluator   = nyarna.Evaluator;
@@ -174,7 +175,7 @@ pub const Types = lib.Provider.Wrapper(struct {
     // finalization of current module's interpreter.
     const gen = model.NodeGenerator.init(intpr.ctx.global(), intpr.ctx);
 
-    var collector = system.DefCollector{.dt = intpr.ctx.types().definition()};
+    var collector = DefCollector{.dt = intpr.ctx.types().definition()};
     for ([_]?*model.Node{public, private}) |item| {
       if (item) |node| try collector.collect(node, intpr);
     }
@@ -197,7 +198,7 @@ pub const Types = lib.Provider.Wrapper(struct {
         else => bnode,
       };
 
-      collector = system.DefCollector{.dt = intpr.ctx.types().definition()};
+      collector = DefCollector{.dt = intpr.ctx.types().definition()};
       try collector.collect(content, intpr);
       try collector.allocate(intpr.ctx.global());
       try collector.append(content, intpr, false, gen);
@@ -220,7 +221,7 @@ pub const Types = lib.Provider.Wrapper(struct {
     // finalization of current module's interpreter.
     const gen = model.NodeGenerator.init(intpr.ctx.global(), intpr.ctx);
 
-    var collector = system.DefCollector{.dt = intpr.ctx.types().definition()};
+    var collector = DefCollector{.dt = intpr.ctx.types().definition()};
     for ([_]?*model.Node{public, private}) |item| {
       if (item) |node| try collector.collect(node, intpr);
     }
@@ -243,7 +244,7 @@ pub const Types = lib.Provider.Wrapper(struct {
         else => bnode,
       };
 
-      collector = system.DefCollector{.dt = intpr.ctx.types().definition()};
+      collector = DefCollector{.dt = intpr.ctx.types().definition()};
       try collector.collect(content, intpr);
       try collector.allocate(intpr.ctx.global());
       try collector.append(content, intpr, false, gen);

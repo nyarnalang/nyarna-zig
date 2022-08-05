@@ -289,7 +289,7 @@ pub fn finalizeParagraph(
     },
     else => (try intpr.node_gen.concat(
       self.nodes.items[0].pos.span(last(self.nodes.items).*.pos),
-      .{.items = self.nodes.items})).node(),
+      self.nodes.items)).node(),
   };
 }
 

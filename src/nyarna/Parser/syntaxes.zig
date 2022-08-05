@@ -797,8 +797,7 @@ pub const SymbolDefs = struct {
       _ = try p.push(
         p, self.last_item.after(), SpecialSyntax.Item{.newlines = 1});
     }
-    return (try self.intpr.node_gen.concat(
-      pos, .{.items = self.produced.items})).node();
+    return (try self.intpr.node_gen.concat(pos, self.produced.items)).node();
   }
 
   fn genLineNode(

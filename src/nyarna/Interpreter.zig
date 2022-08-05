@@ -2038,10 +2038,14 @@ fn tryGetType(
   node : *model.Node,
   stage: Stage,
 ) !TypeResult {
-  switch (node.data) {
+  while (true) switch (node.data) {
     .unresolved_symref => |*usym| {
       if (stage.resolve_ctx) |ctx| {
         switch (try ctx.resolveSymbol(self, usym)) {
+          .node => |repl| {
+            node.data = repl.data;
+            continue;
+          },
           .unfinished_function => {
             self.ctx.logger.CantCallUnfinished(node.pos);
             return TypeResult.failed;
@@ -2086,7 +2090,7 @@ fn tryGetType(
     ) |expr| {
       return TypeResult{.expression = expr};
     } else return TypeResult.unavailable,
-  }
+  };
 }
 
 /// try to generate a structural type with one inner type.

@@ -116,7 +116,7 @@ pub fn copy(self: Self, node: *Node) std.mem.Allocator.Error!*Node {
     .concat => |*con| {
       const items = try self.allocator.alloc(*Node, con.items.len);
       for (con.items) |item, index| items[index] = try self.copy(item);
-      return (try self.concat(node.pos, .{.items = items})).node();
+      return (try self.concat(node.pos, items)).node();
     },
     .definition => |*def| (
       try self.definition(node.pos, .{
@@ -491,9 +491,9 @@ pub fn capture(
 pub fn concat(
   self   : Self,
   pos    : Position,
-  content: Node.Concat,
+  items  : []*model.Node,
 ) !*Node.Concat {
-  return &(try self.newNode(pos, .{.concat = content})).data.concat;
+  return &(try self.newNode(pos, .{.concat = .{.items = items}})).data.concat;
 }
 
 pub fn definition(

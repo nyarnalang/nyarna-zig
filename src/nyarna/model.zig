@@ -1,6 +1,7 @@
 const std = @import("std");
 
 pub const locations      = @import("model/locations.zig");
+pub const Iterator       = @import("model/Iterator.zig");
 pub const Node           = @import("model/Node.zig");
 pub const NodeGenerator  = @import("model/NodeGenerator.zig");
 pub const Type           = @import("model/types.zig").Type;

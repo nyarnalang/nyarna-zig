@@ -3,9 +3,10 @@
 
 const std = @import("std");
 
-const graph    = @import("graph.zig");
-const nyarna   = @import("../../nyarna.zig");
-const Resolver = @import("Resolver.zig");
+const DefCollector = @import("DefCollector.zig");
+const graph        = @import("graph.zig");
+const nyarna       = @import("../../nyarna.zig");
+const Resolver     = @import("Resolver.zig");
 
 const Interpreter = nyarna.Interpreter;
 const lib         = nyarna.lib;
@@ -520,9 +521,7 @@ fn definePrototype(
   };
   pt.var_container = container;
   if (gp.funcs) |funcs| {
-    var collector = lib.system.DefCollector{
-      .dt = types.definition(),
-    };
+    var collector = DefCollector{.dt = types.definition()};
     try collector.collect(funcs, self.intpr);
     try collector.allocate(self.intpr.allocator());
     try collector.append(funcs, self.intpr, false, self.intpr.node_gen);
