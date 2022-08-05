@@ -1,0 +1,21 @@
+=== Unroll
+--- input
+\import(meta)
+
+\declare:
+  Data = \Record:
+    a: \Text
+    b: \Identifier
+    c: \Integer
+  \end(Record)
+\end(declare)
+
+\var:
+  d = \Data(droggel, jug, 42)
+\end(var)
+
+\unroll(\params(\Data)):|\p|
+  \access(\d, \p::name())
+\end(unroll)
+--- output
+droggeljug42

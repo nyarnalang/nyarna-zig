@@ -69,6 +69,8 @@ pub const SigBuilderResult = struct {
   /// if build_repr has been set in init(), the representative signature
   /// for the type lattice. else null.
   repr: ?*model.Signature,
+  /// list of location values that represent this signature's parameters.
+  locations: []*model.Value,
 
   pub fn createCallable(
     self     : @This(),
@@ -79,9 +81,10 @@ pub const SigBuilderResult = struct {
     errdefer allocator.destroy(strct);
     strct.* = .{
       .callable = .{
-        .sig  = self.sig,
-        .kind = kind,
-        .repr = undefined,
+        .sig       = self.sig,
+        .kind      = kind,
+        .repr      = undefined,
+        .locations = self.locations,
       },
     };
     strct.callable.repr = if (self.repr) |repr_sig| blk: {
@@ -89,9 +92,10 @@ pub const SigBuilderResult = struct {
       errdefer allocator.destroy(repr);
       repr.* = .{
         .callable = .{
-          .sig  = repr_sig,
-          .kind = kind,
-          .repr = undefined,
+          .sig       = repr_sig,
+          .kind      = kind,
+          .repr      = undefined,
+          .locations = self.locations,
         },
       };
       repr.callable.repr = &repr.callable;
@@ -107,6 +111,7 @@ pub const SigBuilder = struct {
   val       : *model.Signature,
   repr      : ?*model.Signature,
   ctx       : nyarna.Context,
+  locations : []*model.Value,
   next_param: u21,
 
   const Self = @This();
@@ -128,6 +133,7 @@ pub const SigBuilder = struct {
           try ctx.global().create(model.Signature)
       ) else null,
       .ctx        = ctx,
+      .locations  = try ctx.global().alloc(*model.Value, num_params),
       .next_param = 0,
     };
     ret.val.* = .{
@@ -151,6 +157,19 @@ pub const SigBuilder = struct {
     return ret;
   }
 
+  fn addParamLoc(
+    self : *Self,
+    param: model.Signature.Parameter,
+  ) !void {
+    const loc = try self.ctx.values.location(
+      param.pos, try self.ctx.values.textScalar(
+        param.pos, self.ctx.types().system.identifier,
+        try self.ctx.global().dupe(u8, param.name)
+      ),
+      param.spec);
+    self.locations[self.next_param] = loc.value();
+  }
+
   pub fn pushUnwrapped(
     self: *Self,
     pos : model.Position,
@@ -166,6 +185,7 @@ pub const SigBuilder = struct {
       .default = null,
       .config  = null,
     };
+    try self.addParamLoc(param.*);
     if (self.repr) |sig| {
       const repr_name = try std.fmt.allocPrint(
         self.ctx.global(), "p{}", .{self.next_param + 1});
@@ -186,6 +206,7 @@ pub const SigBuilder = struct {
     param: model.Signature.Parameter,
   ) !void {
     self.val.parameters[self.next_param] = param;
+    try self.addParamLoc(param);
     if (self.repr) |sig| {
       const repr_name = try std.fmt.allocPrint(
         self.ctx.global(), "p{}", .{self.next_param + 1});
@@ -212,6 +233,7 @@ pub const SigBuilder = struct {
       .default = loc.default,
       .config  = if (loc.header) |bh| bh.config else null,
     };
+    self.locations[self.next_param] = loc.value();
     const t: model.Type =
       if (!self.val.isKeyword() and Types.containsAst(loc.spec.t)) blk: {
         self.ctx.logger.AstNodeInNonKeyword(loc.value().origin);
@@ -271,8 +293,9 @@ pub const SigBuilder = struct {
   pub fn finish(self: *Self) Result {
     std.debug.assert(self.next_param == self.val.parameters.len);
     return Result{
-      .sig  = self.val,
-      .repr = self.repr,
+      .sig       = self.val,
+      .repr      = self.repr,
+      .locations = self.locations,
     };
   }
 };

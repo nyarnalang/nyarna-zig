@@ -138,26 +138,27 @@ pub const Context = struct {
 
   /// try to resolve an unresolved access node in the context.
   pub fn resolveAccess(
-    ctx  : *Context,
-    intpr: *Interpreter,
-    item : *model.Node.UnresolvedAccess,
-    stage: Interpreter.Stage,
+    ctx    : *Context,
+    intpr  : *Interpreter,
+    subject: *model.Node,
+    name   : *model.Node.Literal,
+    stage  : Interpreter.Stage,
   ) !AccessData {
     switch (ctx.target) {
       .ns => {},
       .t => |t| {
-        switch (item.subject.data) {
+        switch (subject.data) {
           .resolved_symref => |*rsym| switch (rsym.sym.data) {
             .@"type" => |st| if (t.eql(st)) return AccessData{
               .result = try ctx.strip(intpr.allocator(),
-                try ctx.resolveNameFn(ctx, item.id, item.id_pos)),
+                try ctx.resolveNameFn(ctx, name.content, name.node().pos)),
               .is_prefix = false,
             },
             else => {},
           },
           else => {},
         }
-        const pt = (try intpr.probeType(item.subject, stage, false)) orelse {
+        const pt = (try intpr.probeType(subject, stage, false)) orelse {
           // typically means that we hit a variable in a function body. If so,
           // we just assume that this variable has the \declare type.
           // This means we'll resolve the name of this access in our defs to
@@ -166,12 +167,12 @@ pub const Context = struct {
           // we ignore the result and return .unknown to avoid linking to a
           // possibly wrong function.
           _ = try ctx.strip(intpr.allocator(),
-            try ctx.resolveNameFn(ctx, item.id, item.id_pos));
+            try ctx.resolveNameFn(ctx, name.content, name.node().pos));
           return AccessData{.result = .unknown, .is_prefix = true};
         };
         if (t.eql(pt)) return AccessData{
           .result = try ctx.strip(intpr.allocator(),
-            try ctx.resolveNameFn(ctx, item.id, item.id_pos)),
+            try ctx.resolveNameFn(ctx, name.content, name.node().pos)),
           .is_prefix = true,
         };
       }
@@ -491,8 +492,12 @@ fn fromResult(
   name_pos: model.Position,
   res     : Context.StrippedResult,
   stage   : Interpreter.Stage,
-) Chain {
+) nyarna.Error!Chain {
   switch (res) {
+    .node     => |n| {
+      node.data = n.data;
+      return try self.resolveChain(node);
+    },
     .variable => |v| {
       node.data = .{.resolved_symref = .{
         .sym = v.sym(),
@@ -524,6 +529,31 @@ fn resolveUAccess(
   self: Resolver,
   uacc: *model.Node.UnresolvedAccess,
 ) nyarna.Error!Chain {
+  const name_lit: ?*model.Node.Literal = switch (uacc.name.data) {
+    .literal => |*lit| lit,
+    .poison  => null,
+    else     => if (
+      try self.intpr.associate(
+        uacc.name, self.intpr.ctx.types().text().predef(), self.stage)
+    ) |expr| blk: {
+      const value = try self.intpr.ctx.evaluator().evaluate(expr);
+      switch (value.data) {
+        .text   => |*txt| {
+          uacc.name.data = .{.literal = .{
+            .kind    = .text,
+            .content = txt.content,
+          }};
+          break :blk &uacc.name.data.literal;
+        },
+        .poison => {
+          uacc.name.data = .poison;
+          break :blk null;
+        },
+        else => unreachable,
+      }
+    } else null
+  };
+
   var res = try self.resolveChain(uacc.subject);
   const ns = switch (res) {
     // access on an unknown function. can't be resolved.
@@ -541,8 +571,10 @@ fn resolveUAccess(
       };
 
       if (
-        try searchAccessible(
-          self.intpr, if (type_val) |tv| tv.t else rc.t, uacc.id)
+        if (name_lit) |name| (
+          try searchAccessible(
+            self.intpr, if (type_val) |tv| tv.t else rc.t, name.content)
+        ) else @as(?AccessResult, null)
       ) |sr| switch (sr) {
         .field => |field| {
           if (type_val != null) {
@@ -569,7 +601,7 @@ fn resolveUAccess(
               uacc.node().pos, rc.base, rc.indexes.items, rc.last_name_pos,
               rc.ns)).node();
           return Chain.symRef(
-            rc.ns, sym, subject, uacc.id_pos, rc.preliminary);
+            rc.ns, sym, subject, uacc.name.pos, rc.preliminary);
         },
       };
       break :blk rc.ns;
@@ -582,21 +614,25 @@ fn resolveUAccess(
       switch (ref.sym.data) {
         .func => |func| {
           const target = (
-            try searchAccessible(
-              self.intpr, func.callable.typedef(), uacc.id)
+            if (name_lit) |name| (
+              try searchAccessible(
+                self.intpr, func.callable.typedef(), name.content)
+            ) else @as(?AccessResult, null)
           ) orelse break :blk ref.ns;
           switch (target) {
             .field => unreachable, // OPPORTUNITY: do functions have fields?
             .symbol => |sym| {
               if (sym.data == .poison) return .poison;
               return Chain.symRef(
-                ref.ns, sym, uacc.subject, uacc.id_pos, ref.preliminary);
+                ref.ns, sym, uacc.subject, uacc.name.pos, ref.preliminary);
             },
           }
         },
         .@"type" => |t| {
           const target = (
-            try searchAccessible(self.intpr, t, uacc.id)
+            if (name_lit) |name| (
+              try searchAccessible(self.intpr, t, name.content)
+            ) else @as(?AccessResult, null)
           ) orelse break :blk ref.ns;
           switch (target) {
             .field => {
@@ -618,15 +654,22 @@ fn resolveUAccess(
     .poison => return res,
   };
 
-  if (self.stage.kind != .intermediate) {
-    // in .resolve stage there may still be unresolved accesses to the
-    // current type's namespace, so we don't poison in that case yet.
-    self.intpr.ctx.logger.UnknownSymbol(uacc.id_pos, uacc.id);
+  // during resolution there may still be unresolved accesses to the
+  // current type's namespace, so we don't poison in that case yet.
+  if (self.stage.kind != .intermediate or uacc.name.data == .poison) {
+    if (name_lit) |name| {
+      self.intpr.ctx.logger.UnknownSymbol(uacc.name.pos, name.content);
+    }
     return Chain.poison;
   } else if (self.stage.resolve_ctx) |ctx| {
-    return self.fromResult(uacc.node(), ns, uacc.id, uacc.id_pos,
-      (try ctx.resolveAccess(self.intpr, uacc, self.stage)).result, self.stage);
-  } else return Chain{.failed = ns};
+    if (name_lit) |name| {
+      const ares = try ctx.resolveAccess(
+        self.intpr, uacc.subject, name, self.stage);
+      return try self.fromResult(
+        uacc.node(), ns, name.content, uacc.name.pos, ares.result, self.stage);
+    }
+  }
+  return Chain{.failed = ns};
 }
 
 pub fn trySubscript(
@@ -782,7 +825,7 @@ pub fn resolveChain(
         }};
         return self.resolveSymref(&chain.data.resolved_symref);
       } else if (self.stage.resolve_ctx) |ctx| {
-        return self.fromResult(chain, usym.ns, usym.name, name_pos,
+        return try self.fromResult(chain, usym.ns, usym.name, name_pos,
           try ctx.resolveSymbol(self.intpr, usym), self.stage);
       } else switch (self.stage.kind) {
         .keyword => {
@@ -971,7 +1014,10 @@ pub fn resolve(
       if (rd.params) |pnode| try self.resolve(pnode);
     },
     .seq => |seq| for (seq.items) |item| try self.resolve(item.content),
-    .unresolved_access => |uacc| try self.resolve(uacc.subject),
+    .unresolved_access => |uacc| {
+      try self.resolve(uacc.subject);
+      try self.resolve(uacc.name);
+    },
     .unresolved_call   => |ucall| {
       _ = try self.resolveChain(ucall.target);
       for (ucall.proto_args) |arg| try self.resolve(arg.content);

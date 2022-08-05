@@ -11,6 +11,7 @@ const model       = nyarna.model;
 
 pub const system       = @import("lib/system.zig");
 pub const constructors = @import("lib/constructors.zig");
+pub const meta         = @import("lib/meta.zig");
 
 const last = @import("helpers.zig").last;
 

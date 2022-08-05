@@ -90,9 +90,8 @@ fn appendValue(
             (try ctx.values.@"type"(def.value().origin, t)).value(),
         };
         const def_node = try gen.definition(def.value().origin, .{
-          .name = try gen.literal(def.name.value().origin, .{
-            .kind = .text, .content = def.name.content,
-          }),
+          .name = try gen.literal(
+            def.name.value().origin, .text, def.name.content),
           .content = try gen.expression(
             try ctx.createValueExpr(content_value)
           ),

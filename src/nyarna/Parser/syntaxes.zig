@@ -183,8 +183,7 @@ pub const SymbolDefs = struct {
       .space   => return .none,
       .literal => |name| {
         try self.names.append(self.intpr.allocator(),
-          try self.intpr.node_gen.literal(
-            pos, .{.kind = .text, .content = name}));
+          try self.intpr.node_gen.literal(pos, .text, name));
         self.state = afterName;
         return .none;
       },

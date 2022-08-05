@@ -284,3 +284,12 @@
     extensions: \List(\SchemaExt)      {varargs}
   \end(keyword)
 \end(declare)
+
+\declare(\Location):
+  name = \builtin(return=\Identifier):
+    this: \Location
+  \end(builtin)
+  type = \builtin(return=\Type):
+    this: \Location
+  \end(builtin)
+\end(declare)

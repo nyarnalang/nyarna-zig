@@ -1,0 +1,34 @@
+=== Meta Param Names
+--- input
+\import(meta)
+
+\declare:
+  f1 = \func:
+    droggel: \Text
+    jug    : \Integer
+  :body:
+    \droggel\jug
+  \end(func)
+
+  T1 = \Record:
+    juggel: \Text
+    drog  : \Integer
+  \end(Record)
+\end(declare)
+
+f1:
+\for(\params(\f1), collector=\Concat):|\p|
+  \p::name()\
+\end(for)
+T1:
+\for(\params(\T1), collector=\Concat):|\p|
+  \p::name()\
+\end(for)
+--- output
+f1:
+droggel
+jug
+
+T1:
+juggel
+drog

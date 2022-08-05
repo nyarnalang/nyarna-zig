@@ -571,12 +571,10 @@ const AstEmitter = struct {
       },
       .unresolved_access => |a| {
         const access = try self.push("ACCESS");
-        {
-          const target = try self.push("SUBJECT");
-          try self.process(a.subject);
-          try target.pop();
-        }
-        try self.emitLine("=ID \"{s}\"", .{a.id});
+        try self.emitLine(">SUBJECT", .{});
+        try self.process(a.subject);
+        try self.emitLine(">NAME", .{});
+        try self.process(a.name);
         try access.pop();
       },
       .unresolved_call => |uc| {

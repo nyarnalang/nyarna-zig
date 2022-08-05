@@ -168,8 +168,7 @@ pub const ToSignature = struct {
         }
         if (self.signature.varmap) |index| {
           self.last_key = (
-            try self.intpr.node_gen.literal(
-              pos, .{.kind = .text, .content = name})
+            try self.intpr.node_gen.literal(pos, .text, name)
           ).node();
           return Cursor{
             .param  = .{.index = index},
@@ -339,34 +338,36 @@ pub const ToSignature = struct {
       else => param.spec,
     };
     const behavior = ArgBehavior.calc(target_spec.t);
-    const arg = switch (behavior) {
-      .ast_node => try self.intpr.genValueNode(
-        (try self.intpr.ctx.values.ast(content, null, &.{}, &.{})).value()),
-      .frame_root => blk: {
-        const ac = self.intpr.var_containers.pop();
-        var capture: []model.Value.Ast.VarDef = &.{};
-        const inner = switch (content.data) {
-          .capture => |*cpt| iblk: {
-            capture = cpt.vars;
-            break :iblk cpt.content;
-          },
-          else => content,
-        };
-        break :blk try self.intpr.genValueNode((
-          try self.intpr.ctx.values.ast(
-            inner, ac.container,
-            self.intpr.symbols.items[ac.offset..self.intpr.symbols.items.len],
-            capture)
-        ).value());
-      },
-      else => blk: {
-        if (
-          try self.intpr.associate(
-            content, target_spec, .{.kind = .intermediate})
-        ) |expr| {
-          content.data = .{.expression = expr};
+    const arg = blk: {
+      var capture: []model.Value.Ast.VarDef = &.{};
+      const inner = switch (content.data) {
+        .capture => |*cpt| iblk: {
+          capture = cpt.vars;
+          break :iblk cpt.content;
+        },
+        else => content,
+      };
+      switch (behavior) {
+        .ast_node => break :blk try self.intpr.genValueNode(
+          (try self.intpr.ctx.values.ast(inner, null, &.{}, capture)).value()),
+        .frame_root => {
+          const ac = self.intpr.var_containers.pop();
+          break :blk try self.intpr.genValueNode((
+            try self.intpr.ctx.values.ast(
+              inner, ac.container,
+              self.intpr.symbols.items[ac.offset..self.intpr.symbols.items.len],
+              capture)
+          ).value());
+        },
+        else => {
+          if (
+            try self.intpr.associate(
+              content, target_spec, .{.kind = .intermediate})
+          ) |expr| {
+            content.data = .{.expression = expr};
+          }
+          break :blk content;
         }
-        break :blk content;
       }
     };
     if (self.varmapAt(at.param.index)) {

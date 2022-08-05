@@ -175,7 +175,9 @@ pub const Import = struct {
 };
 
 pub const Literal = struct {
-  kind: enum {text, space},
+  pub const Kind = enum {text, space};
+
+  kind   : Kind,
   content: []const u8,
 
   pub fn node(self: *@This()) *Node {
@@ -330,8 +332,7 @@ pub const RootDef = struct {
 
 pub const UnresolvedAccess = struct {
   subject: *Node,
-  id     : []const u8,
-  id_pos : model.Position,
+  name   : *Node,
   ns     : u15,
 
   pub fn node(self: *@This()) *Node {
@@ -621,7 +622,7 @@ pub fn lastIdPos(self: *Node) model.Position {
   return switch (self.data) {
     .resolved_access => |*racc| racc.last_name_pos,
     .resolved_symref => |*rsym| rsym.name_pos,
-    .unresolved_access => |*uacc| uacc.id_pos,
+    .unresolved_access => |*uacc| uacc.name.pos,
     .unresolved_symref => |*usym| usym.namePos(),
     else => model.Position{
       .source = self.pos.source,

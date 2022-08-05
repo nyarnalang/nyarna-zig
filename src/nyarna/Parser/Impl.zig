@@ -522,10 +522,9 @@ fn procTextual(self: *@This()) !void {
         }
       }
     } else {
-      const node = (try self.intpr().node_gen.literal(pos, .{
-        .kind = if (non_space_len > 0) .text else .space,
-        .content = content.items
-      })).node();
+      const node = (try self.intpr().node_gen.literal(pos,
+        if (non_space_len > 0) .text else .space, content.items
+      )).node();
       // dangling space will be postponed for the case of a following,
       // swallowing command that ends the current level.
       if (non_space_len > 0) try lvl.append(self.intpr(), node)
@@ -619,14 +618,13 @@ fn procCommand(self: *@This()) !void {
       const start = self.lexer.recent_end;
       self.advance();
       lvl.command.info.unknown = if (self.cur == .identifier) blk: {
+        const name_node = try self.intpr().node_gen.literal(
+          self.lexer.walker.posFrom(start), .text, self.lexer.recent_id);
         const access_node = try self.intpr().node_gen.uAccess(
           self.lexer.walker.posFrom(lvl.command.info.unknown.pos.start),
-          .{
-            .subject = lvl.command.info.unknown,
-            .id = self.lexer.recent_id,
-            .id_pos = self.lexer.walker.posFrom(start),
-            .ns = self.lexer.ns,
-          }
+          lvl.command.info.unknown,
+          name_node.node(),
+          self.lexer.ns,
         );
         self.advance();
         break :blk access_node.node();

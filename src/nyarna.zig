@@ -408,14 +408,6 @@ pub const Processor = struct {
     try ret.loader.data.work();
     return ret;
   }
-
-  /// parse a command-line argument, be it a direct string or a reference to a
-  /// file.
-  pub fn parseArg(self: *Self, source: *const model.Source) !*model.Node {
-    const loader = try Loader.Module.create(self.loader.data, source);
-    defer loader.destroy();
-    return try loader.loadAsNode(true);
-  }
 };
 
 /// A DocumentContainer is created by loading a main module.

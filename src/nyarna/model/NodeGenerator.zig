@@ -162,9 +162,8 @@ pub fn copy(self: Self, node: *Node) std.mem.Allocator.Error!*Node {
     ).node(),
     .import  => unreachable, // not allowed inside of schemadef /extensiondef
     .literal => |*lit| (
-      try self.literal(node.pos, .{
-        .kind = lit.kind, .content = try self.allocator.dupe(u8, lit.content),
-      })
+      try self.literal(
+        node.pos, lit.kind, try self.allocator.dupe(u8, lit.content))
     ).node(),
     .location => |*loc| {
       const additionals = if (loc.additionals) |src| blk: {
@@ -282,12 +281,8 @@ pub fn copy(self: Self, node: *Node) std.mem.Allocator.Error!*Node {
       return (try self.seq(node.pos, .{.items = items})).node();
     },
     .unresolved_access => |*ua| (
-      try self.uAccess(node.pos, .{
-        .subject = try self.copy(ua.subject),
-        .id      = try self.allocator.dupe(u8, ua.id),
-        .id_pos  = ua.id_pos,
-        .ns      = ua.ns,
-      })
+      try self.uAccess(
+        node.pos, try self.copy(ua.subject), try self.copy(ua.name), ua.ns)
     ).node(),
     .unresolved_call => |*uc| {
       const proto_args = try self.allocator.alloc(
@@ -560,9 +555,12 @@ pub fn import(
 pub fn literal(
   self   : Self,
   pos    : Position,
-  content: Node.Literal,
+  kind   : Node.Literal.Kind,
+  content: []const u8,
 ) !*Node.Literal {
-  return &(try self.newNode(pos, .{.literal = content})).data.literal;
+  return &(try self.newNode(pos, .{.literal = .{
+    .kind = kind, .content = content,
+  }})).data.literal;
 }
 
 pub fn location(
@@ -867,10 +865,16 @@ pub fn tgUnique(
 pub fn uAccess(
   self   : Self,
   pos    : Position,
-  content: Node.UnresolvedAccess,
+  subject: *Node,
+  name   : *Node,
+  ns     : u15,
 ) !*Node.UnresolvedAccess {
   return &(try self.newNode(
-    pos, .{.unresolved_access = content})).data.unresolved_access;
+    pos, .{.unresolved_access = .{
+      .subject = subject,
+      .name    = name,
+      .ns      = ns,
+    }})).data.unresolved_access;
 }
 
 pub fn uCall(

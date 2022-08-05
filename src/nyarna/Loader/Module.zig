@@ -319,7 +319,8 @@ pub fn searchModule(
   if (!res.found_existing) {
     const module_loader = try create(
       data, descriptor, resolver,
-      model.Locator.parse(abs_locator) catch unreachable, false, null);
+      model.Locator.parse(abs_locator) catch unreachable, false,
+      data.known_providers.get(abs_locator));
     res.value_ptr.* = .{.require_options = module_loader};
   }
   return res.index;

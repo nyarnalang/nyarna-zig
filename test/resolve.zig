@@ -45,12 +45,7 @@ pub const TestDataResolver = struct {
   ) std.mem.Allocator.Error!?*Loader.Resolver.Cursor {
     const self = @fieldParentPtr(TestDataResolver, "api", res);
     const name = if (std.mem.eql(u8, "input", path)) "" else path;
-    const item = self.source.params.input.getPtr(name) orelse {
-      std.debug.print("failed to fetch '{s}'\nexisting inputs:\n", .{path});
-      var iter = self.source.params.input.keyIterator();
-      while (iter.next()) |key| std.debug.print("  \"{s}\"\n", .{key.*});
-      return null;
-    };
+    const item = self.source.params.input.getPtr(name) orelse return null;
     const ret = try allocator.create(Cursor);
     ret.* = .{
       .api = .{.name = path},

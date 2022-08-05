@@ -698,6 +698,26 @@ pub const Impl = lib.Provider.Wrapper(struct {
   // unique type functions
   //----------------------
 
+  pub fn @"Location::name"(
+    eval: *nyarna.Evaluator,
+    pos : model.Position,
+    this: *model.Value.Location,
+  ) nyarna.Error!*model.Value {
+    _ = eval; _ = pos;
+    return this.name.value();
+  }
+
+  pub fn @"Location::type"(
+    eval: *nyarna.Evaluator,
+    pos : model.Position,
+    this: *model.Value.Location,
+  ) nyarna.Error!*model.Value {
+    _ = pos;
+    return (
+      try eval.ctx.values.@"type"(this.spec.pos, this.spec.t)
+    ).value();
+  }
+
   pub fn @"SchemaDef::use"(
     intpr     : *Interpreter,
     pos       : model.Position,
@@ -795,6 +815,8 @@ pub const Checker = struct {
     .{"Intersection",    .prototype},
     .{"List",            .prototype},
     .{"Location",        .location},
+    .{"Location::name",  .builtin},
+    .{"Location::type",  .builtin},
     .{"Natural",         .int, .natural},
     .{"Numeric",         .prototype},
     .{"NumericImpl",     .@"enum", .numeric_impl},

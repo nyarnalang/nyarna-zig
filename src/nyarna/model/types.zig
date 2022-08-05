@@ -6,6 +6,7 @@ const unicode = @import("../unicode.zig");
 const Expression = model.Expression;
 const Position   = model.Position;
 const Symbol     = model.Symbol;
+const Value      = model.Value;
 
 const offset = @import("../helpers.zig").offset;
 
@@ -34,6 +35,8 @@ pub const Callable = struct {
   /// undefined for keywords which cannot be used as Callable values and
   /// therefore never interact with the type lattice.
   repr: *Callable,
+  /// list of Location values that represent this callable's parameters.
+  locations: []*Value,
 
   pub fn typedef(self: *const @This()) Type {
     return Structural.typedef(self);

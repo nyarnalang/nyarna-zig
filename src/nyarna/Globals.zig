@@ -67,6 +67,9 @@ stack_ptr: [*]model.StackItem,
 ///
 /// This list is also used to catch cyclic references.
 known_modules: std.StringArrayHashMapUnmanaged(ModuleEntry) = .{},
+/// known providers of keyword and builtin functions.
+/// keys are absolute locators.
+known_providers: std.StringArrayHashMapUnmanaged(*const lib.Provider) = .{},
 /// known resolvers.
 resolvers: []ResolverEntry,
 /// set to true if any module encountered errors
@@ -107,6 +110,8 @@ pub fn create(
   if (logger.count > 0) {
     return nyarna.Error.init_error;
   }
+  try ret.known_providers.put(
+    ret.storage.allocator(), ".std.meta", &lib.meta.instance.provider);
   return ret;
 }
 

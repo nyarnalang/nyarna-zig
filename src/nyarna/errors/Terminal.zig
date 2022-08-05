@@ -390,7 +390,10 @@ fn typeError(
     },
     .InvalidEmbed => {
       self.renderError("invalid embedded type (must be Record): {}", .{main});
-    }
+    },
+    .HasNoParameters => {
+      self.renderError("this type has no parameters: {}", .{main});
+    },
   }
 }
 

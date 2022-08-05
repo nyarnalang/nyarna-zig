@@ -163,6 +163,8 @@ pub const TypeError = enum {
    NotIterable,
    /// gives one type.
    InvalidEmbed,
+   /// gives one type.
+   HasNoParameters,
 };
 
 pub const ConstructionError = enum {

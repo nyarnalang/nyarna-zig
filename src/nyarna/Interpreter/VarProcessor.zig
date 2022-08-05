@@ -199,10 +199,7 @@ fn defaultValue(
     },
     .named => |named| switch (named.data) {
       .textual, .space, .literal => (
-        try self.ip.node_gen.literal(vpos, .{
-          .kind = .space,
-          .content = "",
-        })
+        try self.ip.node_gen.literal(vpos, .space, "")
       ).node(),
       .int => |*int| {
         const val: i64 = if (int.min <= 0)

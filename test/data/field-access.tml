@@ -60,17 +60,17 @@
           +AST
             =LIT text "("
             +ACCESS
-              +SUBJECT
-                =SYMREF [0]data
-              -SUBJECT
-              =ID "a"
+              >SUBJECT
+              =SYMREF [0]data
+              >NAME
+              =LIT text "a"
             -ACCESS
             =LIT text ", "
             +ACCESS
-              +SUBJECT
-                =SYMREF [0]data
-              -SUBJECT
-              =ID "b"
+              >SUBJECT
+              =SYMREF [0]data
+              >NAME
+              =LIT text "b"
             -ACCESS
             =LIT text ")"
           -AST

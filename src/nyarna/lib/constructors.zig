@@ -169,7 +169,7 @@ pub const Types = lib.Provider.Wrapper(struct {
     root    : *model.Node,
     public  : ?*model.Node,
     private : ?*model.Node,
-    backends: ?*model.Node,
+    backends: ?*model.Value.Ast,
   ) nyarna.Error!*model.Node {
     // we generate the nodes into the global storage so that they survive the
     // finalization of current module's interpreter.
@@ -185,23 +185,14 @@ pub const Types = lib.Provider.Wrapper(struct {
     var defs = collector.finish();
 
     var doc_var: ?model.Value.Ast.VarDef = null;
-    var backend_defs: []*model.Node.Definition = if (backends) |bnode| blk: {
-      var content = switch (bnode.data) {
-        .capture => |*cap| cblk: {
-          if (cap.vars.len > 1) {
-            intpr.ctx.logger.UnexpectedCaptureVars(
-              cap.vars[1].pos.span(last(cap.vars).pos));
-          }
-          doc_var = cap.vars[0];
-          break :cblk cap.content;
-        },
-        else => bnode,
-      };
+    var backend_defs: []*model.Node.Definition = if (backends) |bval| blk: {
+      lib.reportCaptures(intpr, bval, 1);
+      if (bval.capture.len > 0) doc_var = bval.capture[0];
 
       collector = DefCollector{.dt = intpr.ctx.types().definition()};
-      try collector.collect(content, intpr);
+      try collector.collect(bval.root, intpr);
       try collector.allocate(intpr.ctx.global());
-      try collector.append(content, intpr, false, gen);
+      try collector.append(bval.root, intpr, false, gen);
       break :blk collector.finish();
     } else &.{};
 
@@ -215,7 +206,7 @@ pub const Types = lib.Provider.Wrapper(struct {
     pos     : model.Position,
     public  : ?*model.Node,
     private : ?*model.Node,
-    backends: ?*model.Node,
+    backends: ?*model.Value.Ast,
   ) nyarna.Error!*model.Node {
     // we generate the nodes into the global storage so that they survive the
     // finalization of current module's interpreter.
@@ -231,23 +222,14 @@ pub const Types = lib.Provider.Wrapper(struct {
     var defs = collector.finish();
 
     var doc_var: ?model.Value.Ast.VarDef = null;
-    var backend_defs: []*model.Node.Definition = if (backends) |bnode| blk: {
-      var content = switch (bnode.data) {
-        .capture => |*cap| cblk: {
-          if (cap.vars.len > 1) {
-            intpr.ctx.logger.UnexpectedCaptureVars(
-              cap.vars[1].pos.span(last(cap.vars).pos));
-          }
-          doc_var = cap.vars[0];
-          break :cblk cap.content;
-        },
-        else => bnode,
-      };
+    var backend_defs: []*model.Node.Definition = if (backends) |bval| blk: {
+      lib.reportCaptures(intpr, bval, 1);
+      if (bval.capture.len > 0) doc_var = bval.capture[0];
 
       collector = DefCollector{.dt = intpr.ctx.types().definition()};
-      try collector.collect(content, intpr);
+      try collector.collect(bval.root, intpr);
       try collector.allocate(intpr.ctx.global());
-      try collector.append(content, intpr, false, gen);
+      try collector.append(bval.root, intpr, false, gen);
       break :blk collector.finish();
     } else &.{};
 
