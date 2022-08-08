@@ -928,3 +928,18 @@ pub fn poison(self: Self, pos: Position) !*Node {
 pub fn @"void"(self: Self, pos: Position) !*Node {
   return self.newNode(pos, .void);
 }
+
+/// converts the node given to a list of varargs items.
+pub fn toVarargsItemList(
+  self: Self,
+  node: *model.Node,
+) ![]model.Node.Varargs.Item {
+  return switch (node.data) {
+    .varargs => |*va| va.content.items,
+    else => blk: {
+      const arr = try self.allocator.alloc(model.Node.Varargs.Item, 1);
+      arr[0] = .{.direct = true, .node = node};
+      break :blk arr;
+    }
+  };
+}

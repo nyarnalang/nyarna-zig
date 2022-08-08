@@ -1262,7 +1262,12 @@ pub fn instanceFuncsOf(self: *Self, t: model.Type) !?*funcs.InstanceFuncs {
       .concat       => &self.prototype_funcs.concat,
       .hashmap      => &self.prototype_funcs.hashmap,
       .intersection => &self.prototype_funcs.intersection,
-      .list         => &self.prototype_funcs.list,
+      .list         => |*lst| blk: {
+        // can't generate instance functions for \List(\Ast) et al, because
+        // \Ast is forbidden as parameter type for non-keywords.
+        if (containsAst(lst.inner)) return null;
+        break :blk &self.prototype_funcs.list;
+      },
       .optional     => &self.prototype_funcs.optional,
       .sequence     => &self.prototype_funcs.sequence,
     },

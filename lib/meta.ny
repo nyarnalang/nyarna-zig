@@ -3,6 +3,7 @@
 \declare:
   params = \keyword:
     callable: \Ast
+    exclude : \List(\Ast) {varargs}
   \end(keyword)
 
   access = \keyword:

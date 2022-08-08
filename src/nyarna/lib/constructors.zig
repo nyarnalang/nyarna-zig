@@ -12,20 +12,6 @@ const model       = nyarna.model;
 
 const last = @import("../helpers.zig").last;
 
-fn nodeToVarargsItemList(
-  intpr: *Interpreter,
-  node: *model.Node,
-) ![]model.Node.Varargs.Item {
-  return switch (node.data) {
-    .varargs => |*va| va.content.items,
-    else => blk: {
-      const arr = try intpr.allocator().alloc(model.Node.Varargs.Item, 1);
-      arr[0] = .{.direct = true, .node = node};
-      break :blk arr;
-    }
-  };
-}
-
 pub const Types = lib.Provider.Wrapper(struct {
 
   pub fn @"Definition"(
@@ -283,7 +269,7 @@ pub const Prototypes = lib.Provider.Wrapper(struct {
     values: *model.Node,
   ) nyarna.Error!*model.Node {
     return (try intpr.node_gen.tgEnum(
-      pos, try nodeToVarargsItemList(intpr, values))).node();
+      pos, try intpr.node_gen.toVarargsItemList(values))).node();
   }
 
   pub fn @"Intersection"(
@@ -292,7 +278,7 @@ pub const Prototypes = lib.Provider.Wrapper(struct {
     input_types: *model.Node,
   ) nyarna.Error!*model.Node {
     return (try intpr.node_gen.tgIntersection(
-      pos, try nodeToVarargsItemList(intpr, input_types))).node();
+      pos, try intpr.node_gen.toVarargsItemList(input_types))).node();
   }
 
   pub fn @"List"(
@@ -388,7 +374,7 @@ pub const Prototypes = lib.Provider.Wrapper(struct {
     const fnode = fields orelse try (intpr.node_gen.void(pos));
     return (
       try intpr.node_gen.tgRecord(
-        pos, try nodeToVarargsItemList(intpr, embed), abstract, fnode)
+        pos, try intpr.node_gen.toVarargsItemList(embed), abstract, fnode)
     ).node();
   }
 
@@ -400,7 +386,7 @@ pub const Prototypes = lib.Provider.Wrapper(struct {
     auto  : ?*model.Node,
   ) nyarna.Error!*model.Node {
     return (try intpr.node_gen.tgSequence(
-      pos, direct, try nodeToVarargsItemList(intpr, inner), auto)).node();
+      pos, direct, try intpr.node_gen.toVarargsItemList(inner), auto)).node();
   }
 
   pub fn @"Textual"(
@@ -411,7 +397,8 @@ pub const Prototypes = lib.Provider.Wrapper(struct {
     exclude: ?*model.Node,
   ) nyarna.Error!*model.Node {
     return (try intpr.node_gen.tgTextual(
-      pos, try nodeToVarargsItemList(intpr, cats), include, exclude)).node();
+      pos, try intpr.node_gen.toVarargsItemList(cats), include, exclude)
+    ).node();
   }
 });
 
