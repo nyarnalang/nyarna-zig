@@ -47,7 +47,9 @@ pub const Assignment = struct {
   }
 };
 
-// if or switch expression
+// if or switch expression that takes an enum expression as input and returns
+// the evaluated branch identified by the enum value. Not used for \if on
+// optionals (see IfOpt).
 pub const Branches = struct {
   condition: *Expression,
   branches : []*Expression,
@@ -69,6 +71,8 @@ pub const Call = struct {
   }
 };
 
+pub const Concatenation = []*Expression;
+
 pub const Conversion = struct {
   inner      : *Expression,
   target_type: model.Type,
@@ -77,9 +81,6 @@ pub const Conversion = struct {
     return Expression.parent(self);
   }
 };
-
-/// concatenation
-pub const Concatenation = []*Expression;
 
 /// expression that generates a Location. This is necessary for locations of
 /// prototype functions that may contain references to the prototype's params.
@@ -94,10 +95,11 @@ pub const Location = struct {
   }
 };
 
-pub const Output = struct {
-  name  : *Expression,
-  schema: ?*Value.Schema,
-  body  : *Expression,
+pub const IfOpt = struct {
+  condition: *Expression,
+  then     : *Expression,
+  @"else"  : ?*Expression,
+  variable : ?*Symbol.Variable,
 
   pub fn expr(self: *@This()) *Expression {
     return Expression.parent(self);
@@ -130,6 +132,16 @@ pub const Match = struct {
 
   subject: *Expression,
   cases  : HashMap,
+
+  pub fn expr(self: *@This()) *Expression {
+    return Expression.parent(self);
+  }
+};
+
+pub const Output = struct {
+  name  : *Expression,
+  schema: ?*Value.Schema,
+  body  : *Expression,
 
   pub fn expr(self: *@This()) *Expression {
     return Expression.parent(self);
@@ -240,6 +252,7 @@ pub const Data = union(enum) {
   call         : Call,
   concatenation: Concatenation,
   conversion   : Conversion,
+  ifopt        : IfOpt,
   location     : Location,
   map          : Map,
   match        : Match,
@@ -271,6 +284,7 @@ fn parent(it: anytype) *Expression {
     Branches      => offset(Data, "branches"),
     Call          => offset(Data, "call"),
     Concatenation => offset(Data, "concatenation"),
+    IfOpt         => offset(Data, "ifopt"),
     Location      => offset(Data, "location"),
     Map           => offset(Data, "map"),
     Match         => offset(Data, "match"),

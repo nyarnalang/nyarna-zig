@@ -142,7 +142,7 @@ pub const TypeError = enum {
    /// gives one type.
    InvalidDefinitionValue,
    /// gives one type.
-   CannotBranchOn,
+   InvalidIfCondType,
    /// gives one type.
    VarmapRequiresMap,
    /// gives one type.

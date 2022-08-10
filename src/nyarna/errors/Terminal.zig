@@ -345,8 +345,10 @@ fn typeError(
         "given value for symbol definition is a {} " ++
         "which cannot be made into a symbol", .{main});
     },
-    .CannotBranchOn => {
-      self.renderError("cannot branch on expression of type '{}'", .{main});
+    .InvalidIfCondType => {
+      self.renderError(
+        "invalid type for `if` condition (expected optional or bool): '{}'",
+        .{main});
     },
     .VarmapRequiresMap => {
       self.renderError("`varmap` requires mapping type, got '{}'", .{main});

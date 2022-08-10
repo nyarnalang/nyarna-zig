@@ -1,0 +1,17 @@
+=== IfOpt
+--- input
+\var:
+  data: \Optional(\Text)
+\end(var)
+
+\if(\data, has text, no text)
+
+\data:=(some text)
+
+\if(\data, else = no text):|\t|
+  \t
+\end(if)
+--- output
+no text
+
+some text

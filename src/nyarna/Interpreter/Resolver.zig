@@ -875,9 +875,10 @@ pub fn resolve(
       for (ba.funcs) |def|   try self.resolve(def.content);
       if  (ba.body)  |bval|  try self.resolve(bval.root);
     },
-    .branches => |br| {
-      try self.resolve(br.condition);
-      for (br.branches) |item| try self.resolve(item);
+    .@"if" => |ifn| {
+      try self.resolve(ifn.condition);
+      try self.resolve(ifn.then.root);
+      if (ifn.@"else") |en| try self.resolve(en);
     },
     .concat     => |con| for (con.items) |item| try self.resolve(item),
     .builtingen => |bgen| {

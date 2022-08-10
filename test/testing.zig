@@ -292,15 +292,6 @@ const AstEmitter = struct {
         }
         try b.pop();
       },
-      .branches => |b| {
-        const branches = try self.push("BRANCHES");
-        try self.process(b.condition);
-        for (b.branches) |branch, i| {
-          try self.emitLine(">BRANCH {}", .{i});
-          try self.process(branch);
-        }
-        try branches.pop();
-      },
       .builtingen => |bg| {
         const lvl = try self.push("BUILTINGEN");
         switch (bg.returns) {
@@ -329,6 +320,19 @@ const AstEmitter = struct {
         try def.pop();
       },
       .expression => |e| try self.processExpr(e),
+      .@"if" => |ifn| {
+        const lvl = try self.push("IF");
+        try self.process(ifn.condition);
+        if (ifn.then.capture.len > 0) {
+          try self.emitLine(">THEN |{s}|", .{ifn.then.capture[0].name});
+        } else try self.emitLine(">THEN", .{});
+        try self.process(ifn.then.root);
+        if (ifn.@"else") |en| {
+          try self.emitLine(">ELSE", .{});
+          try self.process(en);
+        }
+        try lvl.pop();
+      },
       .import => |i| {
         try self.emitLine("=IMPORT {s}", .{
           self.data.known_modules.keys()[i.module_index]});
@@ -713,6 +717,19 @@ const AstEmitter = struct {
         const conv = try self.pushWithType("CONVERT", c.target_type);
         try self.processExpr(c.inner);
         try conv.pop();
+      },
+      .ifopt    => |ifopt| {
+        const lvl = try self.push("IFOPT");
+        try self.processExpr(ifopt.condition);
+        if (ifopt.variable) |v| {
+          try self.emitLine(">THEN |{s}|", .{v.sym().name});
+        } else try self.emitLine(">THEN", .{});
+        try self.processExpr(ifopt.then);
+        if (ifopt.@"else") |ee| {
+          try self.emitLine(">ELSE", .{});
+          try self.processExpr(ee);
+        }
+        try lvl.pop();
       },
       .location => |loc| {
         const l = try self.push("LOC");

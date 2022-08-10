@@ -15,6 +15,8 @@ ac         : *Interpreter.ActiveVarContainer,
 namespace  : *Interpreter.Namespace,
 ns_index   : u15,
 
+const last = @import("../helpers.zig").last;
+
 pub fn init(
   ip         : *Interpreter,
   index      : u15,
@@ -25,7 +27,7 @@ pub fn init(
     .keyword_pos = keyword_pos,
     .concat_loc =
       (try ip.ctx.types().concat(ip.ctx.types().location())).?,
-    .ac = &ip.var_containers.items[ip.var_containers.items.len - 1],
+    .ac = last(ip.var_containers.items),
     .namespace = ip.namespace(index),
     .ns_index = index,
   };

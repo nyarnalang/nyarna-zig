@@ -3164,14 +3164,12 @@ pub fn tryInterpret(
         return expr;
       } else return null;
     },
-    .branches => self.tryProbeAndInterpret(input, stage),
     .builtingen => |*bg| {
       _ = try self.tryInterpretBuiltin(bg, stage);
       return null;
     },
     .capture => |*cpt|    self.tryInterpretCapture(cpt),
     .concat  => self.tryProbeAndInterpret(input, stage),
-    .seq     => self.tryProbeAndInterpret(input, stage),
     .definition => |*def| self.tryInterpretDef(def, stage),
     .expression => |expr| return expr,
     .@"for" => |*f| try self.tryInterpretFor(f, stage),
@@ -3182,6 +3180,7 @@ pub fn tryInterpret(
       break :blk try self.ctx.createValueExpr(
         (try self.ctx.values.funcRef(input.pos, val)).value());
     },
+    .@"if" => self.tryProbeAndInterpret(input, stage),
     .import => unreachable, // this must always be handled directly
                             // by the parser.
     .literal => |lit| return switch (stage.kind) {
@@ -3206,6 +3205,7 @@ pub fn tryInterpret(
     .resolved_access   => |*ra| self.tryInterpretRAccess(ra, stage),
     .resolved_symref   => |*rs| self.tryInterpretSymref(rs),
     .resolved_call     => |*rc| self.tryInterpretCall(rc, stage),
+    .seq               =>       self.tryProbeAndInterpret(input, stage),
     .gen_concat        => |*gc| self.tryGenConcat(gc, stage),
     .gen_enum          => |*ge| self.tryGenEnum(ge, stage),
     .gen_intersection  => |*gi| self.tryGenIntersection(gi, stage),
@@ -3384,6 +3384,76 @@ fn typeFromSymbol(self: *Interpreter, sym: *model.Symbol) !model.Type {
   return callable.typedef();
 }
 
+fn tryResolveIfCond(
+  self : *Interpreter,
+  ifn  : *model.Node.If,
+  stage: Stage,
+) nyarna.Error!CheckResult {
+  if (ifn.variable_state != .unprocessed) {
+    if (ifn.condition.data.expression.expected_type.isNamed(.poison)) {
+      return .poison;
+    } else return .success;
+  }
+  const cond_type = if (
+    try self.interpretWithTargetScalar(
+      ifn.condition, self.ctx.types().system.boolean.predef(), stage)
+  ) |expr| blk: {
+    ifn.condition.data = .{.expression = expr};
+    break :blk expr.expected_type;
+  } else return .unfinished;
+  switch (cond_type) {
+    .structural => |strct| switch (strct.*) {
+      .optional => |opt| {
+        lib.reportCaptures(self, ifn.then, 1);
+        ifn.variable_state = if (ifn.then.capture.len > 0) blk: {
+          const container =
+            try self.ctx.global().create(model.VariableContainer);
+          container.* = .{.num_values = 1};
+          const cap = ifn.then.capture[0];
+          const sym = try self.ctx.global().create(model.Symbol);
+          sym.* = .{
+            .defined_at = cap.pos,
+            .name       = cap.name,
+            .data       = .{.variable = .{
+              .spec       = opt.inner.at(cap.pos),
+              .container  = container,
+              .offset     = 0,
+              .kind       = .given,
+            }},
+            .parent_type = null,
+          };
+
+          const mark = self.markSyms();
+          if (try self.namespace(cap.ns).tryRegister(self, sym)) {
+            try Resolver.init(self, .{.kind = .intermediate}).resolve(
+              ifn.then.root);
+            self.resetSyms(mark);
+          }
+
+          break :blk .{.generated = &sym.data.variable};
+        } else .none;
+        return .success;
+      },
+      else => {},
+    },
+    .named => |named| switch (named.data) {
+      .@"enum" => |*enum_type| if (
+        enum_type == &self.ctx.types().system.boolean.named.data.@"enum"
+      ) {
+        lib.reportCaptures(self, ifn.then, 0);
+        ifn.variable_state = .none;
+        return .success;
+      },
+      else => {},
+    }
+  }
+  self.ctx.logger.InvalidIfCondType(&.{
+    ifn.condition.data.expression.expected_type.at(ifn.condition.pos)
+  });
+  ifn.variable_state = .none;
+  return .poison;
+}
+
 /// Returns the given node's type, if it can be calculated. If the node or its
 /// substructures cannot be fully interpreted, null is returned.
 ///
@@ -3415,8 +3485,6 @@ pub fn probeType(
       return expr.expected_type;
     } else return null,
     .backend => return null,
-    .branches => |br|
-      return try self.probeNodeList(br.branches, stage, sloppy),
     .capture => |cpt| return try self.probeType(cpt.content, stage, sloppy),
     .concat  => |con| {
       var inner =
@@ -3435,6 +3503,15 @@ pub fn probeType(
     .definition    => return self.ctx.types().definition(),
     .expression    => |e| return e.expected_type,
     .gen_prototype => return self.ctx.types().prototype(),
+    .@"if"         => |*ifn| switch (try self.tryResolveIfCond(ifn, stage)) {
+      .success => if (ifn.@"else") |en| {
+        return try self.probeNodeList(&.{ifn.then.root, en}, stage, sloppy);
+      } else {
+        return try self.probeType(ifn.then.root, stage, sloppy);
+      },
+      .poison     => return self.ctx.types().poison(),
+      .unfinished => return null,
+    },
     .literal       => |l| if (l.kind == .space) {
       return self.ctx.types().space();
     } else {
@@ -3859,57 +3936,6 @@ pub fn interpretWithTargetScalar(
       }
       return null;
     },
-    .branches => |br| {
-      const condition = cblk: {
-        if (br.cond_type) |ct| {
-          if (
-            try self.interpretWithTargetScalar(
-              br.condition, ct.predef(), stage)
-          ) |expr| break :cblk expr
-          else return null;
-        } else {
-          const expr = (
-            try self.tryInterpret(br.condition, stage)
-          ) orelse return null;
-          if (expr.expected_type.isNamed(.@"enum")) {
-            break :cblk expr;
-          } else if (!expr.expected_type.isNamed(.poison)) {
-            self.ctx.logger.CannotBranchOn(
-              &.{expr.expected_type.at(br.condition.pos)});
-          }
-          return try
-            self.ctx.createValueExpr(try self.ctx.values.poison(input.pos));
-        }
-      };
-      var seen_unfinished = false;
-      for (br.branches) |item| {
-        if (try self.interpretWithTargetScalar(item, spec, stage)) |expr| {
-          item.data = .{.expression = expr};
-        } else seen_unfinished = true;
-      }
-      if (seen_unfinished) return null;
-      const exprs =
-        try self.ctx.global().alloc(*model.Expression, br.branches.len);
-      var actual_type = self.ctx.types().every();
-      var seen_poison = false;
-      for (br.branches) |item, i| {
-        exprs[i] = item.data.expression;
-        if (
-          !(try self.mixIfCompatible(
-            &actual_type, exprs[i].expected_type, exprs, i))
-        ) seen_poison = true;
-      }
-      const expr = try self.ctx.global().create(model.Expression);
-      expr.* = .{
-        .pos = input.pos,
-        .data = if (seen_poison) .poison else .{
-          .branches = .{.condition = condition, .branches = exprs}
-        },
-        .expected_type =
-          if (seen_poison) self.ctx.types().poison() else actual_type,
-      };
-      return expr;
-    },
     .concat => |con| {
       // force non-concatenable scalars to coerce to Raw
       const inner_scalar = switch (spec.t) {
@@ -4047,6 +4073,94 @@ pub fn interpretWithTargetScalar(
       expr.data = .{.value = try self.createTextLiteral(l, spec)};
       expr.expected_type = spec.t;
       return expr;
+    },
+    .@"if" => |*ifn| {
+      var seen_unfinished = false;
+      var seen_poison = false;
+
+      switch (try self.tryResolveIfCond(ifn, stage)) {
+        .success    => {},
+        .poison     => seen_poison     = true,
+        .unfinished => seen_unfinished = true,
+      }
+
+      if (
+        try self.interpretWithTargetScalar(ifn.then.root, spec, stage)
+      ) |expr| {
+        ifn.then.root.data = .{.expression = expr};
+        if (expr.expected_type.isNamed(.poison)) seen_poison = true;
+      } else seen_unfinished = true;
+      if (ifn.@"else") |en| {
+        if (try self.interpretWithTargetScalar(en, spec, stage)) |expr| {
+          en.data = .{.expression = expr};
+          if (expr.expected_type.isNamed(.poison)) seen_poison = true;
+        } else seen_unfinished = true;
+      }
+
+      if (seen_unfinished) return null;
+      if (seen_poison) {
+        input.data = .poison;
+        return null;
+      }
+
+      const tt =
+        ifn.then.root.data.expression.expected_type.at(ifn.then.root.pos);
+      const et = if (ifn.@"else") |en| (
+        en.data.expression.expected_type.at(en.pos)
+      ) else self.ctx.types().@"void"().at(input.pos);
+      const out_type = try self.ctx.types().sup(tt.t, et.t);
+      if (out_type.isNamed(.poison)) {
+        self.ctx.logger.IncompatibleTypes(&.{et, tt});
+        input.data = .poison;
+        return null;
+      }
+
+      const res = try self.ctx.global().create(model.Expression);
+      switch (ifn.condition.data.expression.expected_type) {
+        .structural => |strct| switch (strct.*) {
+          .optional => {
+            res.* = .{
+              .pos  = input.pos,
+              .data = .{.ifopt = .{
+                .condition = ifn.condition.data.expression,
+                .then      = ifn.then.root.data.expression,
+                .@"else"   = if (ifn.@"else") |en| en.data.expression else null,
+                .variable  = switch (ifn.variable_state) {
+                  .generated   => |v| v,
+                  .none        => null,
+                  .unprocessed => unreachable,
+                },
+              }},
+              .expected_type = out_type,
+            };
+            return res;
+          },
+          else => unreachable,
+        },
+        .named => {
+          const else_expr = if (ifn.@"else") |en| en.data.expression else b: {
+            const ve = try self.ctx.global().create(model.Expression);
+            ve.* = .{
+              .pos           = input.pos,
+              .data          = .void,
+              .expected_type = self.ctx.types().@"void"(),
+            };
+            break :b ve;
+          };
+          const arr = try self.ctx.global().alloc(*model.Expression, 2);
+          arr[1] = ifn.then.root.data.expression;
+          arr[0] = else_expr;
+          res.* = .{
+            .pos = input.pos,
+            .data = .{.branches = .{
+              .condition = ifn.condition.data.expression,
+              .branches  = arr,
+            }},
+            .expected_type = out_type,
+          };
+          return res;
+        }
+      }
     },
     .seq => |*seq| {
       var seen_unfinished = false;

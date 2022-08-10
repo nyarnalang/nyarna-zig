@@ -222,23 +222,17 @@ pub const Impl = lib.Provider.Wrapper(struct {
     intpr    : *Interpreter,
     pos      : model.Position,
     condition: *model.Node,
-    then     : ?*model.Node,
+    then     : *model.Value.Ast,
     @"else"  : ?*model.Node,
   ) nyarna.Error!*model.Node {
-    const nodes = try intpr.allocator().alloc(*model.Node, 2);
-    nodes[1] = then orelse try intpr.node_gen.void(pos);
-    nodes[0] = @"else" orelse try intpr.node_gen.void(pos);
-
     const ret = try intpr.allocator().create(model.Node);
     ret.* = .{
       .pos = pos,
-      .data = .{
-        .branches = .{
-          .condition = condition,
-          .cond_type = intpr.ctx.types().system.boolean,
-          .branches  = nodes,
-        },
-      },
+      .data = .{.@"if" = .{
+        .condition = condition,
+        .then      = then,
+        .@"else"   = @"else",
+      }},
     };
     return ret;
   }

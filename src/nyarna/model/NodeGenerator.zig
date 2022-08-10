@@ -90,17 +90,6 @@ pub fn copy(self: Self, node: *Node) std.mem.Allocator.Error!*Node {
         ) else null,
       )
     ).node(),
-    .branches => |*br| (
-      try self.branches(node.pos, .{
-        .condition = try self.copy(br.condition),
-        .cond_type = br.cond_type,
-        .branches  = blk: {
-          const arr = try self.allocator.alloc(*Node, br.branches.len);
-          for (br.branches) |b, i| arr[i] = try self.copy(b);
-          break :blk arr;
-        },
-      })
-    ).node(),
     .builtingen => |*bg| (
       try self.builtinGen(
         node.pos, try self.copy(bg.params.unresolved), switch (bg.returns) {
@@ -159,6 +148,12 @@ pub fn copy(self: Self, node: *Node) std.mem.Allocator.Error!*Node {
         if (fg.returns) |returns| try self.copy(returns) else null,
         try self.copy(fg.params.unresolved), fg.params_ns,
         try self.copy(fg.body), fg.variables)
+    ).node(),
+    .@"if" => |*ifn| (
+      try self.@"if"(node.pos, try self.copy(ifn.condition),
+        try self.ctx.values.ast(try self.copy(ifn.then.root), null, &.{},
+          try self.copyVarDefs(ifn.then.capture)),
+        if (ifn.@"else") |en| try self.copy(en) else null)
     ).node(),
     .import  => unreachable, // not allowed inside of schemadef /extensiondef
     .literal => |*lit| (
@@ -452,14 +447,6 @@ pub fn backend(
   }})).data.backend;
 }
 
-pub fn branches(
-  self   : Self,
-  pos    : Position,
-  content: Node.Branches,
-) !*Node.Branches {
-  return &(try self.newNode(pos, .{.branches = content})).data.branches;
-}
-
 pub fn builtinGen(
   self   : Self,
   pos    : Position,
@@ -538,6 +525,20 @@ pub fn funcgen(
     .params_ns = params_ns, .body = body,
     .variables = variables, .cur_returns = self.ctx.types().every(),
   }})).data.funcgen;
+}
+
+pub fn @"if"(
+  self     : Self,
+  pos      : Position,
+  condition: *Node,
+  then     : *Value.Ast,
+  @"else"  : ?*Node,
+) !*Node.If {
+  return &(try self.newNode(pos, .{.@"if" = .{
+    .condition = condition,
+    .then      = then,
+    .@"else"   = @"else",
+  }})).data.@"if";
 }
 
 pub fn import(

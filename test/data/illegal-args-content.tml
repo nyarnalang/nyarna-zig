@@ -15,7 +15,6 @@
 7:11 - 7:17 KeywordMustBeCalled
 9:1 - 9:12 InvalidEndCommand
 9:19 - 9:20 IllegalBlocksStartInArgs
-9:20 - 9:21 IncompatibleTypes
-  main = Literal
-  other = input(9:14) [type] (Literal) -> Text
+7:7 - 7:7 InvalidIfCondType
+  main = Void
 11:20 - 11:21 IllegalNameSep

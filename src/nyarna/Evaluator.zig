@@ -609,6 +609,30 @@ fn evalConversion(
   return self.doConvert(inner_val, convert.target_type);
 }
 
+fn evalIfOpt(
+  self : *Evaluator,
+  ifopt: *model.Expression.IfOpt,
+) nyarna.Error!*model.Value {
+  const cond = try self.evaluate(ifopt.condition);
+  switch (cond.data) {
+    .void   => if (ifopt.@"else") |en| {
+      return try self.evaluate(en);
+    } else return try self.ctx.values.void(ifopt.expr().pos),
+    .poison => return cond,
+    else    => {
+      if (ifopt.variable) |v| {
+        const frame = try self.allocateStackFrame(1, v.container.cur_frame);
+        v.container.cur_frame = frame;
+        (frame + 1).* = .{.value = cond};
+      }
+      defer if (ifopt.variable) |v| {
+        self.resetStackFrame(&v.container.cur_frame, 1, false);
+      };
+      return try self.evaluate(ifopt.then);
+    }
+  }
+}
+
 fn evalLocation(
   self: *Evaluator,
   loc : *model.Expression.Location,
@@ -1167,6 +1191,7 @@ fn doEvaluate(
     .call          => |*call|       return self.evalCall(self, call),
     .concatenation => |concat|      self.evalConcatenation(expr, concat),
     .conversion    => |*convert|    self.evalConversion(convert),
+    .ifopt         => |*ifopt|      self.evalIfOpt(ifopt),
     .location      => |*loc|        self.evalLocation(loc),
     .map           => |*map|        self.evalMap(map),
     .match         => |*match|      self.evalMatch(match),
