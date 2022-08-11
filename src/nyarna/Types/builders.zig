@@ -171,7 +171,7 @@ pub const IntersectionBuilder = struct {
       } else break;
     }
     switch (tcount) {
-      0 => return scalar.?,
+      0 => return scalar orelse types.every(),
       1 => if (scalar == null) return input[0].types[0],
       else => {},
     }

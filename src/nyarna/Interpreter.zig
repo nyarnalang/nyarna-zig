@@ -1851,7 +1851,10 @@ pub fn tryInterpretMatcher(
 ) nyarna.Error!?*model.Function {
   const pregen_func = if (matcher.pregen) |pregen| pregen else (
     if (try self.probeType(matcher.body.node(), stage, false)) |ret_type| (
-      (
+      if (ret_type.isNamed(.poison)) {
+        matcher.node().data = .poison;
+        return null;
+      } else (
         try self.tryPregenMatcherFunc(matcher, ret_type, stage)
       ) orelse return null
     ) else return null
@@ -2177,8 +2180,7 @@ fn tryGenEnum(
     } else {
       const expr = (
         try self.associate(
-          item.node.data.expression.data.value.data.ast.root,
-          self.ctx.types().literal().predef(), stage)
+          item.node, self.ctx.types().literal().predef(), stage)
       ) orelse {
         if (result.kind != .poison) result.kind = .failed;
         continue;
@@ -2278,16 +2280,17 @@ fn tryGenIntersection(
         else => unreachable,
       }
     } else {
-      const inner = switch (
-        try self.tryGetType(
-          item.node.data.expression.data.value.data.ast.root, stage)
-      ) {
+      const inner = switch (try self.tryGetType(item.node, stage)) {
         .finished   => |t| t,
         .unfinished => |t| t,
         .expression => |expr| switch (
           (try self.ctx.evaluator().evaluate(expr)).data
         ) {
-          .@"type" => |tv| tv.t,
+          .@"type" => |*tv| blk: {
+            expr.data = .{.value = tv.value()};
+            item.node.data = .{.expression = expr};
+            break :blk tv.t;
+          },
           .poison => {
             if (result.kind != .poison) result.kind = .failed;
             continue;
@@ -2628,12 +2631,10 @@ fn tryGenSequence(
       failed_some = true;
       continue;
     } else blk: {
-      const inner = switch (
-        try self.tryGetType(
-          item.node.data.expression.data.value.data.ast.root, stage)
-      ) {
-        .finished, .unfinished => |t| try self.ctx.createValueExpr(
-          (try self.ctx.values.@"type"(item.node.pos, t)).value()),
+      const inner = switch (try self.tryGetType(item.node, stage)) {
+        .finished, .unfinished => |t| try self.ctx.createValueExprWithType(
+          (try self.ctx.values.@"type"(item.node.pos, t)).value(),
+          self.ctx.types().@"type"()),
         .expression  => |expr| expr,
         .unavailable => {
           failed_some = true;
@@ -2809,13 +2810,12 @@ fn tryGenRecord(
       } else failed_parts = true;
       continue;
     }
-    const t: model.SpecType = switch (
-      try self.tryGetType(
-        item.node.data.expression.data.value.data.ast.root, stage)
-    ) {
+    const t: model.SpecType = switch (try self.tryGetType(item.node, stage)) {
       .finished, .unfinished => |t| t.at(item.node.pos),
       .expression  => |expr| blk: {
         const value = try self.ctx.evaluator().evaluate(expr);
+        expr.data = .{.value = value};
+        item.node.data = .{.expression = expr};
         switch (value.data) {
           .@"type" => |tv| break :blk tv.t.at(expr.pos),
           .poison => {
@@ -3057,14 +3057,13 @@ fn tryGenTextual(
         else => unreachable,
       }
     } else {
-      const root = item.node.data.expression.data.value.data.ast.root;
       const expr = (
-        try self.associate(root, unicode_category.predef(), stage)
+        try self.associate(item.node, unicode_category.predef(), stage)
       ) orelse {
         failed_some = true;
         continue;
       };
-      root.data = .{.expression = expr};
+      item.node.data = .{.expression = expr};
       const val = try self.ctx.evaluator().evaluate(expr);
       if (!putIntoCategories(val, &categories)) seen_poison = true;
     }

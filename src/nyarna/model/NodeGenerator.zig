@@ -935,12 +935,22 @@ pub fn toVarargsItemList(
   self: Self,
   node: *model.Node,
 ) ![]model.Node.Varargs.Item {
-  return switch (node.data) {
-    .varargs => |*va| va.content.items,
-    else => blk: {
+  switch (node.data) {
+    .varargs => |*va| {
+      const arr =
+        try self.allocator.alloc(model.Node.Varargs.Item, va.content.items.len);
+      for (va.content.items) |item, index| {
+        arr[index] = .{
+          .direct = item.direct,
+          .node   = item.node.data.expression.data.value.data.ast.root,
+        };
+      }
+      return arr;
+    },
+    else => {
       const arr = try self.allocator.alloc(model.Node.Varargs.Item, 1);
       arr[0] = .{.direct = true, .node = node};
-      break :blk arr;
+      return arr;
     }
-  };
+  }
 }

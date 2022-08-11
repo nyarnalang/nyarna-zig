@@ -1,6 +1,6 @@
 === Schema extension
 --- input:Document
-\fragment(\SchemaDef)
+\standalone(schema=\import(Schema))
 
 \SchemaDef(root=\Document):
   ChapterContent = \Intersection(\Text)

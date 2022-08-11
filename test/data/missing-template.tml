@@ -1,6 +1,6 @@
 === Missing template
 --- input:Bikes
-\fragment(\SchemaDef)
+\standalone(schema=\import(Schema))
 
 \SchemaDef(root=\List(\Bike)):
   Bike = \Record:

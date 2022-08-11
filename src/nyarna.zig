@@ -74,6 +74,20 @@ pub const Context = struct {
     return e;
   }
 
+  pub fn createValueExprWithType(
+    self   : Context,
+    content: *model.Value,
+    @"type": model.Type,
+  ) !*model.Expression {
+    const e = try self.global().create(model.Expression);
+    e.* = .{
+      .pos           = content.origin,
+      .data          = .{.value = content},
+      .expected_type = @"type",
+    };
+    return e;
+  }
+
   pub fn evaluator(self: *const Context) Evaluator {
     return Evaluator{.ctx = self.*};
   }

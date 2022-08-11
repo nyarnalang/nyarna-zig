@@ -1,6 +1,6 @@
 === Schema document
 --- input:Document
-\fragment(\SchemaDef)
+\standalone(schema=\import(Schema))
 
 \SchemaDef(root=\Document):
   Author = \Record:

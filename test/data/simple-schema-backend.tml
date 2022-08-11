@@ -1,6 +1,6 @@
 === Simple Schema Backend
 --- input:Document
-\fragment(\SchemaDef)
+\standalone(schema=\import(Schema))
 
 \SchemaDef(root=\Sequence(\Section)):
   Section = \Record:
