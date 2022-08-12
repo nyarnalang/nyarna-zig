@@ -51,10 +51,11 @@ pub fn main() !void {
   defer arena.deinit();
 
   const params = comptime [_]clap.Param(clap.Help){
-    clap.parseParam("-h, --help     Display this help and exit.") catch unreachable,
-    clap.parseParam("-v, --version  Output version information and exit.") catch unreachable,
-    clap.parseParam("<file>         The file to be interpreted. '-' for stdin.") catch unreachable,
-    clap.parseParam("<arg>...       Nyarna arguments for interpreting <file>.") catch unreachable,
+    clap.parseParam("-h, --help         Display this help and exit.") catch unreachable,
+    clap.parseParam("-v, --version      Output version information and exit.") catch unreachable,
+    clap.parseParam("-o, --output <DIR> Write output documents to <DIR>. default: cwd") catch unreachable,
+    clap.parseParam("<file>             The file to be interpreted. '-' for stdin.") catch unreachable,
+    clap.parseParam("<arg>...           Nyarna arguments for interpreting <file>.") catch unreachable,
   };
 
   var iter = try clap.args.OsIterator.init(arena.allocator());
@@ -75,6 +76,9 @@ pub fn main() !void {
     std.heap.page_allocator, nyarna.default_stack_size, &terminal.reporter,
     &stdlib_resolver.api);
   defer proc.deinit();
+
+  var target_dir: ?std.fs.Dir = null;
+  defer if (target_dir) |*dir| dir.close();
 
   var loader: *nyarna.Loader.Main = blk: {
     var cur_loader: ?*nyarna.Loader.Main = null;
@@ -106,7 +110,26 @@ pub fn main() !void {
           \\ Stdlib : {s}
         ++ "\n", .{generated.version, generated.stdlib_path});
         return;
-      } else if (arg.param == &params[2] and cur_loader == null) {
+      } else if (arg.param == &params[2]) {
+        if (target_dir != null) {
+          std.io.getStdErr().writer().print(
+            "only one --output directory allowed\n", .{}) catch unreachable;
+            std.os.exit(1);
+        }
+        const dir_opts = std.fs.Dir.OpenDirOptions{
+          .access_sub_paths = false, .no_follow = false,
+        };
+        target_dir = (
+          if (std.fs.path.isAbsolute(arg.value.?)) (
+            std.fs.openDirAbsolute(arg.value.?, dir_opts)
+          ) else std.fs.cwd().openDir(arg.value.?, dir_opts)
+        ) catch |err| {
+          std.io.getStdErr().writer().print(
+            "cannot access output directory '{s}':\n  {s}\n",
+            .{arg.value.?, @errorName(err)}) catch unreachable;
+          std.os.exit(1);
+        };
+      } else if (arg.param == &params[3] and cur_loader == null) {
         const main_path = if (std.mem.eql(u8, arg.value.?, "-")) "-" else (
           std.fs.realpathAlloc(arena.allocator(), arg.value.?)
         ) catch |err| {
@@ -153,14 +176,32 @@ pub fn main() !void {
   if (try loader.finalize()) |container| {
     defer container.destroy();
     if (try container.process()) {
+      const base_dir = target_dir orelse std.fs.cwd();
       for (container.documents.items) |output| {
+        if (
+          if (output.schema) |schema| schema.backend != null else false
+        ) continue;
         var file: ?std.fs.File = null;
         defer if (file) |f| f.close();
         var writer = if (std.mem.eql(u8, output.name.content, "")) (
           std.io.getStdOut().writer()
         ) else blk: {
-          const f = try std.fs.cwd().openFile(
-            output.name.content, .{.write = true});
+          if (std.fs.path.dirname(output.name.content)) |dir_path| {
+            base_dir.makePath(dir_path) catch |err| {
+              std.io.getStdErr().writer().print(
+                "unable to create output path: '{s}'\n  {s}\n",
+                .{output.name.content, @errorName(err)}) catch unreachable;
+              std.os.exit(1);
+            };
+          }
+          const f = base_dir.createFile(
+            output.name.content, .{.truncate = true}
+          ) catch |err| {
+            std.io.getStdErr().writer().print(
+              "unable to create output file: '{s}'\n  {s}\n",
+              .{output.name.content, @errorName(err)}) catch unreachable;
+            std.os.exit(1);
+          };
           file = f;
           break :blk f.writer();
         };

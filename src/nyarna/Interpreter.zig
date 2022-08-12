@@ -3393,14 +3393,15 @@ fn tryResolveIfCond(
       return .poison;
     } else return .success;
   }
-  const cond_type = if (
-    try self.interpretWithTargetScalar(
-      ifn.condition, self.ctx.types().system.boolean.predef(), stage)
-  ) |expr| blk: {
-    ifn.condition.data = .{.expression = expr};
-    break :blk expr.expected_type;
-  } else return .unfinished;
-  switch (cond_type) {
+  const cond_expr = (
+    if (ifn.condition.data == .literal) (
+      try self.interpretWithTargetScalar(
+        ifn.condition, self.ctx.types().system.boolean.predef(), stage)
+    ) else try self.tryInterpret(ifn.condition, stage)
+  ) orelse return .unfinished;
+  ifn.condition.data = .{.expression = cond_expr};
+
+  switch (cond_expr.expected_type) {
     .structural => |strct| switch (strct.*) {
       .optional => |opt| {
         lib.reportCaptures(self, ifn.then, 1);

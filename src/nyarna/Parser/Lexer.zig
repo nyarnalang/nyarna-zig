@@ -1212,12 +1212,12 @@ fn genCommand(
     },
     '\t', ' ' => {
       self.recent_id = self.walker.lastUtf8Unit();
+      self.walker.mark();
       cur.* = self.walker.nextInline() catch |e| {
         self.cur_stored = e;
         self.recent_end = self.walker.before;
         return .{.token = .escape};
       };
-      self.walker.mark();
       while (cur.* == '\t' or cur.* == ' ') {
         cur.* = self.walker.nextInline() catch {
           break;
