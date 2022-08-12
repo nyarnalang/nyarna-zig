@@ -13,8 +13,10 @@ const Error = error {
   no_match,
 };
 
+const FileTerm = errors.Terminal(std.fs.File.Writer, true);
+
 pub fn lexTest(data: *TestDataResolver) !void {
-  var r = errors.Terminal.init(std.io.getStdOut());
+  var r = FileTerm.init(std.io.getStdOut().writer());
   var proc = try nyarna.Processor.init(
     std.testing.allocator, nyarna.default_stack_size, &r.reporter,
     &data.stdlib.api);
@@ -1390,7 +1392,7 @@ const Checker = struct {
 pub fn parseTest(data: *TestDataResolver) !void {
   var checker = Checker.init(data, "rawast");
   defer checker.deinit();
-  var r = errors.Terminal.init(std.io.getStdOut());
+  var r = FileTerm.init(std.io.getStdOut().writer());
   var proc = try nyarna.Processor.init(
     std.testing.allocator, nyarna.default_stack_size, &r.reporter,
     &data.stdlib.api);
@@ -1423,7 +1425,7 @@ pub fn parseErrorTest(data: *TestDataResolver) !void {
 pub fn interpretTest(data: *TestDataResolver) !void {
   var checker = Checker.init(data, "expr");
   defer checker.deinit();
-  var r = errors.Terminal.init(std.io.getStdOut());
+  var r = FileTerm.init(std.io.getStdOut().writer());
   var proc = try nyarna.Processor.init(
     std.testing.allocator, nyarna.default_stack_size, &r.reporter,
     &data.stdlib.api);
@@ -1456,7 +1458,7 @@ pub fn interpretErrorTest(data: *TestDataResolver) !void {
 pub fn loadTest(data: *TestDataResolver) !void {
   var checker = Checker.init(data, "document");
   defer checker.deinit();
-  var r = errors.Terminal.init(std.io.getStdOut());
+  var r = FileTerm.init(std.io.getStdOut().writer());
   var proc = try nyarna.Processor.init(
     std.testing.allocator, nyarna.default_stack_size, &r.reporter,
     &data.stdlib.api);
@@ -1491,7 +1493,7 @@ pub fn loadErrorTest(data: *TestDataResolver) !void {
 }
 
 pub fn outputTest(data: *TestDataResolver) !void {
-  var r = errors.Terminal.init(std.io.getStdOut());
+  var r = FileTerm.init(std.io.getStdOut().writer());
   var proc = try nyarna.Processor.init(
     std.testing.allocator, nyarna.default_stack_size, &r.reporter,
     &data.stdlib.api);

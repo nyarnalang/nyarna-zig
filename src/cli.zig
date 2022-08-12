@@ -70,7 +70,8 @@ pub fn main() !void {
   const stdlib_path =
     std.os.getenv("NYARNA_STDLIB_PATH") orelse generated.stdlib_path;
   var stdlib_resolver = nyarna.Loader.FileSystemResolver.init(stdlib_path);
-  var terminal = nyarna.errors.Terminal.init(std.io.getStdErr());
+  var terminal = nyarna.errors.Terminal(std.fs.File.Writer, true).init(
+    std.io.getStdErr().writer());
 
   var proc = try nyarna.Processor.init(
     std.heap.page_allocator, nyarna.default_stack_size, &terminal.reporter,

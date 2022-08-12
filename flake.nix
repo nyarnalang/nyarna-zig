@@ -73,6 +73,10 @@
         file         = "src/cli.zig";
         dependencies = [ zigPkgs.clap ];
       } ];
+      zigLibraries = [ {
+        name         = "wasm";
+        file         = "src/wasm.zig";
+      } ];
       zigTests = builtins.map (kind: {
         name = "${kind}Test";
         description = "Run ${kind} tests";

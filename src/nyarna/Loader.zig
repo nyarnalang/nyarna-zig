@@ -19,6 +19,7 @@ const model       = nyarna.model;
 
 pub const FileSystemResolver = @import("Loader/FileSystemResolver.zig");
 pub const Main               = @import("Loader/Main.zig");
+pub const MapResolver        = @import("Loader/MapResolver.zig");
 pub const Module             = @import("Loader/Module.zig");
 pub const ParamResolver      = @import("Loader/ParamResolver.zig");
 pub const Resolver           = @import("Loader/Resolver.zig");
