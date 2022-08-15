@@ -3311,6 +3311,7 @@ fn probeNodeList(
     }
     const new = try self.ctx.types().sup(sup, t);
     if (new.isNamed(.poison)) {
+      if (self.ctx.types().convertible(t, sup)) continue;
       already_poison = true;
       const found = for (nodes[0..i]) |prev| {
         const prev_t = (
@@ -3321,7 +3322,6 @@ fn probeNodeList(
           self.ctx.logger.IncompatibleTypes(&.{
             t.at(node.pos), prev_t.at(prev.pos),
           });
-          break true;
         }
       } else false;
       if (!found) {
@@ -3443,6 +3443,10 @@ fn tryResolveIfCond(
         lib.reportCaptures(self, ifn.then, 0);
         ifn.variable_state = .none;
         return .success;
+      },
+      .poison => {
+        ifn.variable_state = .none;
+        return .poison;
       },
       else => {},
     }
@@ -3863,6 +3867,19 @@ fn mixIfCompatible(
   if (add.isNamed(.poison)) return false;
   const new = try self.ctx.types().sup(target.*, add);
   if (new.isNamed(.poison)) {
+    if (self.ctx.types().convertible(add, target.*)) {
+      const conv = try self.ctx.global().create(model.Expression);
+      conv.* = .{
+        .pos = exprs[index].pos,
+        .data = .{.conversion = .{
+          .inner       = exprs[index],
+          .target_type = target.*,
+        }},
+        .expected_type = target.*,
+      };
+      exprs[index] = conv;
+      return true;
+    }
     for (exprs[0..index]) |prev| {
       const mixed =
         try self.ctx.types().sup(prev.expected_type, add);
