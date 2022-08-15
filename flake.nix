@@ -65,24 +65,67 @@
         dependencies = [ zigPkgs.tml ];
       } ];
     };
-    nyarna_cli = pkgs.buildZig {
-      pname = "nyarna";
+    buildNyarna = {
+      pname, ...
+    }@args: pkgs.buildZig (args // {
       inherit version src;
-      zigExecutables = [ {
-        name         = "nyarna";
-        file         = "src/cli.zig";
-        dependencies = [ zigPkgs.clap ];
-      } ];
-      zigLibraries = [ {
-        name         = "wasm";
-        file         = "src/wasm.zig";
-      } ];
       zigTests = builtins.map (kind: {
         name = "${kind}Test";
         description = "Run ${kind} tests";
         file = "test/${kind}_test.zig";
         dependencies = [ zigPkgs.nyarna zigPkgs.testing ];
       }) testList;
+      postConfigure = ''
+        cat <<EOF >src/generated.zig
+        pub const version = "${version}";
+        pub const stdlib_path = "$targetSharePath/lib";
+        EOF
+        echo "generating error handler…"
+        ${generators}/bin/handler_gen
+        echo "generating tests…"
+        ${generators}/bin/test_gen
+      '';
+    });
+
+    cliExecutable = {
+      name         = "nyarna";
+      description  = "Nyarna CLI interpreter";
+      file         = "src/cli.zig";
+      dependencies = [ zigPkgs.clap ];
+    };
+    wasmLibrary = {
+      name         = "wasm";
+      description  = "Nyarna WASM library";
+      file         = "src/wasm.zig";
+    };
+
+    nyarna_cli = buildNyarna {
+      pname = "nyarna";
+      zigExecutables = [ cliExecutable ];
+      preInstall = ''
+        mkdir -p $out/share
+        cp -r lib $out/share/
+      '';
+    };
+
+    nyarna_wasm = (buildNyarna {
+      pname = "nyarna-wasm";
+      inherit version src;
+      zigLibraries = [ wasmLibrary ];
+      ZIG_TARGET = "wasm32-freestanding";
+    }).overrideAttrs (_: {
+      installPhase = ''
+        mkdir -p $out/www
+        cp zig-out/lib/wasm.wasm $out/www/nyarna.wasm
+        cp src/nyarna.js $out/www/nyarna.js
+      '';
+    });
+
+    devShell = buildNyarna {
+      pname = "nyarna-devenv";
+      inherit version src;
+      zigExecutables = [ cliExecutable ];
+      zigLibraries = [ wasmLibrary ];
       vscode_launch_json = builtins.toJSON {
         version = "0.2.0";
         configurations = builtins.map(name: {
@@ -102,27 +145,21 @@
           ];
         }) testList;
       };
-      postConfigure = ''
-        cat <<EOF >src/generated.zig
-        pub const version = "${version}";
-        pub const stdlib_path = "$targetSharePath/lib";
-        EOF
-        echo "generating error handler…"
-        ${generators}/bin/handler_gen
-        echo "generating tests…"
-        ${generators}/bin/test_gen
+      preConfigure = ''
         mkdir -p .vscode
         printenv vscode_launch_json >.vscode/launch.json
       '';
-      preInstall = ''
-        mkdir -p $out/share
-        cp -r lib $out/share/
+      installPhase = ''
+        echo "dev env doesn't support install, use `zig build`."
+        exit 1
       '';
     };
   in {
     packages = {
-      nyarna = nyarna_cli;
+      cli  = nyarna_cli;
+      wasm = nyarna_wasm;
     };
     defaultPackage = nyarna_cli;
+    inherit devShell;
   });
 }

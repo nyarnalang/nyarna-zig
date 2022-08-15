@@ -18,9 +18,6 @@ fn registerMagicFunc(
 ) !void {
   try intpr.ctx.data.generic_symbols.append(intpr.ctx.global(), sym);
   const res = try namespace.data.getOrPut(intpr.allocator(), sym.name);
-  if (res.found_existing) {
-    std.debug.print("magic: overriding '{s}'\n", .{sym.name});
-  }
   res.value_ptr.* = sym;
 }
 

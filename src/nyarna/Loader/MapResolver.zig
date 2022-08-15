@@ -19,13 +19,13 @@ const model  = nyarna.model;
 api    : Resolver,
 content: std.StringHashMap([]const u8),
 
-pub fn init() @This() {
+pub fn init(allocator: std.mem.Allocator) @This() {
   return .{
     .api = .{
       .resolveFn = resolve,
       .getSourceFn = getSource,
     },
-    .content = std.StringHashMap([]const u8).init(std.heap.page_allocator),
+    .content = std.StringHashMap([]const u8).init(allocator),
   };
 }
 

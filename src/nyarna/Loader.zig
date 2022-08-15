@@ -7,7 +7,8 @@
 //!  * Loader.Module loads a module from an input stream.
 //!  * Loader.Schema loads a Schema from a SchemaDef.
 
-const std = @import("std");
+const builtin = @import("builtin");
+const std     = @import("std");
 
 const Globals = @import("Globals.zig");
 const nyarna  = @import("../nyarna.zig");
@@ -17,7 +18,9 @@ const Interpreter = nyarna.Interpreter;
 const lib         = nyarna.lib;
 const model       = nyarna.model;
 
-pub const FileSystemResolver = @import("Loader/FileSystemResolver.zig");
+pub const FileSystemResolver =
+  if (builtin.cpu.arch == .wasm32 or builtin.cpu.arch == .wasm64) struct {}
+  else @import("Loader/FileSystemResolver.zig");
 pub const Main               = @import("Loader/Main.zig");
 pub const MapResolver        = @import("Loader/MapResolver.zig");
 pub const Module             = @import("Loader/Module.zig");

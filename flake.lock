@@ -90,11 +90,11 @@
         "zig-flake": "zig-flake"
       },
       "locked": {
-        "lastModified": 1660332677,
-        "narHash": "sha256-tkszkA1gv5J+brY2Y9J74BMMx2zfpBkJlrCSuPWcxrQ=",
+        "lastModified": 1660553813,
+        "narHash": "sha256-wAXAoUt/VKCF2do7vvVjZz7hbGbloTBgXZAL+bUT4KI=",
         "owner": "flyx",
         "repo": "Zicross",
-        "rev": "81b18f29a98a63a54571012d5d103d5280dc9954",
+        "rev": "42a2d6bef928c27d42b3be5b82a73ad510adb849",
         "type": "github"
       },
       "original": {

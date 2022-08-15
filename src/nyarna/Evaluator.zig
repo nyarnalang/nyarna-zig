@@ -1,6 +1,7 @@
 //! The Evaluator implements evaluation of expressions, which returns values.
 
-const std = @import("std");
+const builtin = @import("builtin");
+const std     = @import("std");
 
 const nyarna      = @import("../nyarna.zig");
 
@@ -1061,32 +1062,34 @@ fn evalVarRetr(
       if (embed.t == &retr.variable.spec.t.named.data.record) break true;
      } else false)
   ) {
-    std.debug.print("corrupted stack! stack contents:\n", .{});
-    const stack_len = (
-      @ptrToInt(self.ctx.data.stack_ptr) - @ptrToInt(self.ctx.data.stack.ptr)
-    ) / @sizeOf(model.StackItem);
-    for (self.ctx.data.stack[0..stack_len]) |item, index| {
-      std.debug.print("{}: ", .{index});
-      if (
-        if (item.frame_ref) |ptr| (
-          @ptrToInt(ptr) >= @ptrToInt(self.ctx.data.stack.ptr) and
-          @ptrToInt(ptr) < @ptrToInt(self.ctx.data.stack_ptr)
-        ) else true
-      ) {
-        if (item.frame_ref) |ptr| {
-          std.debug.print("[ header -> {} ]\n", .{
-            @divExact(
-              @ptrToInt(ptr) - @ptrToInt(self.ctx.data.stack.ptr),
-              @sizeOf(model.StackItem)
-            )
-          });
+    if (comptime builtin.cpu.arch != .wasm32 and builtin.cpu.arch != .wasm64) {
+      std.log.info("corrupted stack! stack contents:\n", .{});
+      const stack_len = (
+        @ptrToInt(self.ctx.data.stack_ptr) - @ptrToInt(self.ctx.data.stack.ptr)
+      ) / @sizeOf(model.StackItem);
+      for (self.ctx.data.stack[0..stack_len]) |item, index| {
+        std.log.info("{}: ", .{index});
+        if (
+          if (item.frame_ref) |ptr| (
+            @ptrToInt(ptr) >= @ptrToInt(self.ctx.data.stack.ptr) and
+            @ptrToInt(ptr) < @ptrToInt(self.ctx.data.stack_ptr)
+          ) else true
+        ) {
+          if (item.frame_ref) |ptr| {
+            std.log.info("[ header -> {} ]\n", .{
+              @divExact(
+                @ptrToInt(ptr) - @ptrToInt(self.ctx.data.stack.ptr),
+                @sizeOf(model.StackItem)
+              )
+            });
+          } else {
+            std.log.info("[ header -> null ]\n", .{});
+          }
         } else {
-          std.debug.print("[ header -> null ]\n", .{});
+          const pos = item.value.origin.formatter();
+          const fmt = (try self.ctx.types().valueType(item.value)).formatter();
+          std.log.info("[ {}: {} ]\n", .{pos, fmt});
         }
-      } else {
-        const pos = item.value.origin.formatter();
-        const fmt = (try self.ctx.types().valueType(item.value)).formatter();
-        std.debug.print("[ {}: {} ]\n", .{pos, fmt});
       }
     }
     std.debug.panic("aborting due to stack corruption", .{});
