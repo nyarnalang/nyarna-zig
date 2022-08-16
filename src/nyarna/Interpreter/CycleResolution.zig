@@ -1023,13 +1023,17 @@ pub fn execute(self: *CycleResolution) !void {
           };
         },
         .matcher => |*m| {
-          const func = (
+          const func_val = if (
             try self.intpr.tryInterpretMatcher(m, .{.kind = .final})
-          ).?;
-          def.content.data = .{.expression =
-            try self.intpr.ctx.createValueExpr((
-              try self.intpr.ctx.values.funcRef(def.content.pos, func)
-            ).value()),
+          ) |expr| (
+            (try self.intpr.ctx.values.funcRef(def.content.pos, expr)).value()
+          ) else blk: {
+            const sym = try self.genSym(def.name, .poison, def.public);
+            _ = try ns_data.tryRegister(self.intpr, sym);
+            break :blk try self.intpr.ctx.values.poison(def.content.pos);
+          };
+          def.content.data = .{
+            .expression = try self.intpr.ctx.createValueExpr(func_val),
           };
         },
         else => {}

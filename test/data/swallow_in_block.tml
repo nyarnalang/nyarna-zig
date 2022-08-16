@@ -1,0 +1,57 @@
+=== Swallow in Block
+--- input
+\declare:
+  Split = \Record:
+    first: \Sequence(\Section) {primary}
+    second: \Sequence(\Section)
+  \end(Record)
+
+  Section = \Record:
+    title  : \Text
+    content: \Text {primary}:1>
+  \end(Record)
+\end(declare)
+
+\fragment(\Split)
+
+\Split:
+  \Section(s1)
+
+  lorem
+
+  \Section(s2)
+
+  ipsum
+:second:
+  \Section(s3)
+
+  dolor
+\end(Split)
+--- document
++RECORD Split
+  >FIELD first
+  +SEQUENCE
+    +RECORD Section
+      >FIELD title
+      =TEXT Text "s1"
+      >FIELD content
+      =TEXT Text "lorem"
+    -RECORD
+    =SEP 2
+    +RECORD Section
+      >FIELD title
+      =TEXT Text "s2"
+      >FIELD content
+      =TEXT Text "ipsum"
+    -RECORD
+  -SEQUENCE
+  >FIELD second
+  +SEQUENCE
+    +RECORD Section
+      >FIELD title
+      =TEXT Text "s3"
+      >FIELD content
+      =TEXT Text "dolor"
+    -RECORD
+  -SEQUENCE
+-RECORD

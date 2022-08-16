@@ -332,7 +332,23 @@ fn skipOverBlockConfig(self: *@This()) !void {
   if (check_swallow) _ = self.checkSwallow(colon_start);
 }
 
+fn finishSwallowing(self: *@This()) !void {
+  var parent = &self.levels.items[self.levels.items.len - 2];
+  while (parent.command.swallow_depth != null) {
+    // end level that is swallowed
+    try self.leaveLevel();
+    // finalize swallowing command
+    try parent.command.shift(
+      self.intpr(), self.source(), self.cur_start, parent.fullast);
+    try parent.append(self.intpr(), parent.command.info.unknown);
+
+    parent = &self.levels.items[self.levels.items.len - 2];
+  }
+}
+
 fn procBlockNameStart(self: *@This()) !void {
+  try self.finishSwallowing();
+
   if (self.levels.items.len == 1) {
     const start = self.cur_start;
     while (true) {
@@ -386,6 +402,8 @@ fn procBlockNameExprStart(self: *@This()) !void {
 }
 
 fn procEndCommand(self: *@This()) !void {
+  try self.finishSwallowing();
+
   self.advance();
   const do_shift = switch (self.cur) {
     .call_id => blk: {

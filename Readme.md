@@ -8,7 +8,7 @@ This is the reference [Nyarna][3] implementation, written in Zig.
 Refer to the linked documentation for instructions on enabling Nix Flakes.
 Released source tarballs contain all generated files so that you can compile the source without Nix (useful for OSes without Nix support, e.g. Windows).
 
-`nix build .#nyarna_cli` builds the command-line executable.
+`nix build .#cli` builds the command-line executable.
 
 `nix develop` starts a bash session where you can do:
 
@@ -25,10 +25,11 @@ After configuring, you can generate the tests and can also debug them:
 
  * `zig build outputTest -Demit_bin=true` will give you an executable `outputTest`
  * use `-Dtest-filter="Schema extension"` to run only a specific test.
- * use `lldb -- ./outputTest $(which zig)` to debug a test executable (lldb is not available by default).
+ * use `lldb -- ./outputTest $(which zig)` to debug a test executable (needs lldb on your system).
 
-The `configurePhase` also generates a `.vscode` folder usable with [Visual Studio Code][4]. It requires `lldb` available on your PATH.
-With this, you can debug the test binaries in VSCode – you need to have generated them before as described above.
+The `configurePhase` also generates a `.vscode` folder usable with [Visual Studio Code][4] that contains debug configurations.
+They require `lldb` available on your PATH.
+There is a configuration avaiable for each test executable – you need to have generated the executable manually as described above.
 
 ## License
 
