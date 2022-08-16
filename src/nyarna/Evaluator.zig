@@ -405,13 +405,14 @@ fn convertIntoConcat(
     .concat => |*vcon| {
       for (vcon.content.items) |item| try self.convertIntoConcat(item, into);
     },
-    .text, .int, .float, .@"enum", .record, .void => {
+    .text, .int, .float, .@"enum", .void => {
       if (into.scalar_type) |stype| {
         try into.push(try self.doConvert(value, stype));
       } else {
         std.debug.assert(value.data.text.t.isNamed(.space));
       }
     },
+    .record => try into.push(value),
     .seq => |*seq| {
       for (seq.content.items) |p, index| {
         try self.convertIntoConcat(p.content, into);
