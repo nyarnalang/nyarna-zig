@@ -260,5 +260,6 @@ pub fn reportCaptures(
   if (ast.capture.len > allowed) {
     intpr.ctx.logger.UnexpectedCaptureVars(
       ast.capture[allowed].pos.span(last(ast.capture).pos));
+    ast.capture = ast.capture[0..allowed];
   }
 }

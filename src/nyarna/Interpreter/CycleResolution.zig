@@ -1016,7 +1016,16 @@ pub fn execute(self: *CycleResolution) !void {
           func.data.ny.body = (
             try self.intpr.tryInterpretFuncBody(
               fgen, fgen.cur_returns.predef(), .{.kind = .final})
-          ).?;
+          ) orelse {
+            const sym = try self.genSym(def.name, .poison, def.public);
+            _ = try ns_data.tryRegister(self.intpr, sym);
+            def.content.data = .{.expression =
+              try self.intpr.ctx.createValueExpr(
+                try self.intpr.ctx.values.poison(def.content.pos)
+              )
+            };
+            continue;
+          };
           // so that following components can call it
           def.content.data = .{.expression =
             try self.intpr.ctx.createValueExpr((

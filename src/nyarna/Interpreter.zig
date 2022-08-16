@@ -948,6 +948,7 @@ fn inspectForInput(
         if (f_node.captures.len > 2) {
           self.ctx.logger.UnexpectedCaptureVars(
             f_node.captures[2].pos.span(last(f_node.captures).pos));
+          f_node.captures = f_node.captures[0..1];
         }
         try Resolver.init(self, .{.kind = .intermediate}).resolve(f_node.body);
       }
