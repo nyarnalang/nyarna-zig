@@ -1410,9 +1410,12 @@ pub fn processBackends(
       call_expr.expected_type = backend.callable.sig.returns;
       const outputs = try self.evalCall(self, call);
 
-      // always returns a concatenation of Output.
-      for (outputs.data.concat.content.items) |item| {
-        try container.documents.append(self.ctx.global(), &item.data.output);
+      switch (outputs.data) {
+        .concat => |*con| for (con.content.items) |item| {
+          try container.documents.append(self.ctx.global(), &item.data.output);
+        },
+        .poison => {},
+        else    => unreachable,
       }
     };
   }

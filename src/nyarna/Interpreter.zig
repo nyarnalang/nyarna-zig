@@ -3338,7 +3338,11 @@ fn probeNodeList(
     for (nodes) |node| {
       const t = (try self.probeType(node, stage, sloppy)) orelse continue;
       const new = try self.ctx.types().sup(sup, t);
-      if (new.isNamed(.poison)) node.data = .poison else sup = new;
+      if (new.isNamed(.poison)) {
+        if (try self.tryInterpret(node, .{.kind = .final})) |expr| {
+          node.data = .{.expression = expr};
+        } else node.data = .poison;
+      } else sup = new;
     }
   }
 
@@ -3552,7 +3556,11 @@ pub fn probeType(
             },
             else => null,
           },
-          .function_returning => |fr| fr.returns.at(func.pos),
+          .function_returning => |fr| (
+            if (fr.returns.isNamed(.poison)) (
+              self.ctx.types().every()
+            ) else fr.returns
+          ).at(func.pos),
           .failed => return null,
           .poison => null,
         }
@@ -3643,11 +3651,26 @@ pub fn probeType(
         },
         .success => {
           var ret = self.ctx.types().every();
-          for (match.cases) |case| {
+          var seen_poison = false;
+          for (match.cases) |case, i| {
             if (try self.probeType(case.content.root, stage, sloppy)) |t| {
-              ret = try self.ctx.types().sup(ret, t);
+              if (t.isNamed(.poison)) {
+                seen_poison = true;
+              } else {
+                const new = try self.ctx.types().sup(ret, t);
+                if (new.isNamed(.poison)) {
+                  seen_poison = true;
+                  case.content.root.data = .poison;
+                  self.ctx.logger.IncompatibleTypes(&.{
+                    t.at(case.content.root.pos),
+                    ret.at(match.cases[0].content.root.pos.span(
+                      match.cases[i-1].content.root.pos))
+                  });
+                } else ret = new;
+              }
             } else return null;
           }
+          if (seen_poison) return self.ctx.types().poison();
           return ret;
         }
       }

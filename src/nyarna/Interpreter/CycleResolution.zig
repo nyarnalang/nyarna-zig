@@ -239,7 +239,9 @@ const FixpointContext = struct {
       try fc.dres.intpr.probeType(matcher.body.node(), .{
         .kind = .intermediate, .resolve_ctx = &fc.ctx,
       }, false)
-    ) orelse fc.dres.intpr.ctx.types().poison();
+    ) orelse (
+      fc.dres.intpr.ctx.types().poison()
+    );
     if (new_type.eql(matcher.cur_returns)) {
       return false;
     } else {
