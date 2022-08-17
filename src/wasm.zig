@@ -35,12 +35,21 @@ pub const Result = struct {
   documents   : []Output   = &.{},
 };
 
-extern fn consoleLog(message: [*]const u8, length: u8) void;
+extern fn consoleLog(
+  descr: [*]const u8,
+  descr_len: usize,
+  message: [*]const u8,
+  length: usize,
+) void;
+
+fn jsLog(descr: []const u8, message: []const u8) void {
+  consoleLog(descr.ptr, descr.len, message.ptr, message.len);
+}
 
 export fn allocStr(self: *Input, len: usize) ?[*]u8 {
   const ret = self.storage.allocator().alloc(u8, len) catch |err| {
     const name = @errorName(err);
-    consoleLog(name.ptr, @intCast(u8, name.len));
+    jsLog("error while allocating:", name);
     return null;
   };
   return ret.ptr;
@@ -49,7 +58,7 @@ export fn allocStr(self: *Input, len: usize) ?[*]u8 {
 export fn createInput() ?*Input {
   const ret = std.heap.page_allocator.create(Input) catch |err| {
     const name = @errorName(err);
-    consoleLog(name.ptr, @intCast(u8, name.len));
+    jsLog("error while creating input:", name);
     return null;
   };
   ret.* = .{
@@ -78,8 +87,7 @@ export fn pushInput(
   self.resolver.content.put(
     name[0..name_len], content[0..content_len]
   ) catch |err| {
-    const en = @errorName(err);
-    consoleLog(en.ptr, @intCast(u8, en.len));
+    jsLog("error while adding input:", @errorName(err));
     return false;
   };
   return true;
@@ -95,8 +103,19 @@ export fn pushArg(
   self.args.append(self.storage.allocator(), .{
     .name = name[0..name_len], .content = content[0..content_len],
   }) catch |err| {
-    const en = @errorName(err);
-    consoleLog(en.ptr, @intCast(u8, en.len));
+    jsLog("error while adding arg:", @errorName(err));
+    return false;
+  };
+  return true;
+}
+
+fn pushStdlib(
+  self: *nyarna.Loader.MapResolver,
+  name: []const u8,
+  content: []const u8,
+) bool {
+  self.content.put(name, content) catch |err| {
+    jsLog("error while building stdlib:", @errorName(err));
     return false;
   };
   return true;
@@ -107,66 +126,53 @@ export fn process(self: *Input, main: [*]const u8, main_len: usize) ?*Result {
   var term = errors.Terminal(@TypeOf(error_out).Writer, false).init(
     error_out.writer());
 
+  jsLog("debug", "initializing stdlib");
   var stdlib = nyarna.Loader.MapResolver.init(self.storage.allocator());
-  stdlib.content.put("system", system_ny) catch |err| {
-    const name = @errorName(err);
-    consoleLog(name.ptr, @intCast(u8, name.len));
-    return null;
-  };
-  stdlib.content.put("meta", meta_ny) catch |err| {
-    const name = @errorName(err);
-    consoleLog(name.ptr, @intCast(u8, name.len));
-    return null;
-  };
-  stdlib.content.put("Schema", schema_ny) catch |err| {
-    const name = @errorName(err);
-    consoleLog(name.ptr, @intCast(u8, name.len));
-    return null;
-  };
+  if (!pushStdlib(&stdlib, "system", system_ny)) return null;
+  if (!pushStdlib(&stdlib, "meta", meta_ny)) return null;
+  if (!pushStdlib(&stdlib, "Schema", schema_ny)) return null;
 
+  jsLog("debug", "initializing processor");
   var proc = nyarna.Processor.init(
     self.storage.allocator(), nyarna.default_stack_size, &term.reporter,
     &stdlib.api
   ) catch |err| {
-    const name = @errorName(err);
-    consoleLog(name.ptr, @intCast(u8, name.len));
+    jsLog("error while initializing Processor:", @errorName(err));
     return null;
   };
   defer proc.deinit();
 
+  jsLog("debug", "start loading");
   var loader = proc.startLoading(
     &self.resolver.api, main[0..main_len]
   ) catch |err| {
-    const name = @errorName(err);
-    consoleLog(name.ptr, @intCast(u8, name.len));
+    jsLog("error while starting to load main module:", @errorName(err));
     return null;
   };
 
+  jsLog("debug", "push args");
   for (self.args.items) |item| {
     loader.pushArg(item.name, item.content) catch |err| {
-      const name = @errorName(err);
-      consoleLog(name.ptr, @intCast(u8, name.len));
+      jsLog("error while pushing argument:", @errorName(err));
       return null;
     };
   }
 
+  jsLog("debug", "finalize loading");
   if (
     loader.finalize() catch |err| {
-      const name = @errorName(err);
-      consoleLog(name.ptr, @intCast(u8, name.len));
+      jsLog("error while finalizing loader:", @errorName(err));
       return null;
     }
   ) |container| {
     defer container.destroy();
     const res = self.storage.allocator().create(Result) catch |err| {
-      const name = @errorName(err);
-      consoleLog(name.ptr, @intCast(u8, name.len));
+      jsLog("error while allocating Result:", @errorName(err));
       return null;
     };
     if (
       !(container.process() catch |err| {
-        const name = @errorName(err);
-        consoleLog(name.ptr, @intCast(u8, name.len));
+        jsLog("error while processing containers:", @errorName(err));
         return null;
       })
     ) {
@@ -183,30 +189,23 @@ export fn process(self: *Input, main: [*]const u8, main_len: usize) ?*Result {
       const name = self.storage.allocator().dupe(
         u8, output.name.content
       ) catch |err| {
-        const name = @errorName(err);
-        consoleLog(name.ptr, @intCast(u8, name.len));
+        jsLog("error while allocating output name:", @errorName(err));
         return null;
       };
       const content = switch (output.body.data) {
         .text => |*txt| (
           self.storage.allocator().dupe(u8, txt.content)
         ) catch |err| {
-          const en = @errorName(err);
-          consoleLog(en.ptr, @intCast(u8, en.len));
+          jsLog("error while allocating output content:", @errorName(err));
           return null;
         },
         else => {
-          const msg = std.fmt.allocPrint(
-            self.storage.allocator(), "unsupported non-text output: {s}",
-            .{@tagName(output.body.data)}
-          ) catch |err| @as([]const u8, @errorName(err));
-          consoleLog(msg.ptr, @intCast(u8, msg.len));
+          jsLog("unsupported non-text output:", @tagName(output.body.data));
           return null;
         },
       };
       docs.append(.{.name = name, .content = content}) catch |err| {
-        const en = @errorName(err);
-        consoleLog(en.ptr, @intCast(u8, en.len));
+        jsLog("error while appending output document:", @errorName(err));
         return null;
       };
     }
@@ -246,10 +245,11 @@ export fn documentContent(result: *Result, index: usize) [*]const u8 {
   return result.documents[index].content.ptr;
 }
 
+extern fn throwPanic(msg: [*]const u8, msg_size: usize) noreturn;
+
 pub fn panic(
   msg: []const u8,
   _  : ?*std.builtin.StackTrace,
 ) noreturn {
-  consoleLog(msg.ptr, @intCast(u8, msg.len));
-  unreachable;
+  throwPanic(msg.ptr, msg.len);
 }

@@ -5,11 +5,16 @@ class Nyarna {
 
   static async instantiate(wasmPath) {
     if (!this.instance) {
-      this.instance = await WebAssembly.instantiate(fetch(wasmPath), {
-        imports: {
+      const result = await WebAssembly.instantiateStreaming(fetch(wasmPath), {
+        env: {
           consoleLog: this.consoleLogZig,
+          memcpy: this.memcpyZig,
+          memset: this.memsetZig,
+          fmod: this.fmodZig,
+          throwPanic: this.throwPanicZig,
         }
       });
+      this.instance = result.instance;
     }
     return new Nyarna();
   }
@@ -20,27 +25,38 @@ class Nyarna {
     this.memory = Nyarna.instance.exports.memory;
   }
 
-  static consoleLogZig(location, size) {
-    console.log(new Nyarna().stringFromZig(location, size));
+  static consoleLogZig(desc, descSize, msg, msgSize) {
+    const ny = new Nyarna();
+    console.log("[nyarna-wasm]", ny.stringFromZig(desc, descSize),
+      ny.stringFromZig(msg, msgSize));
+  }
+
+  static memcpyZig(dest, src, count) {
+    const ny = new Nyarna();
+    const srcBuf = new Uint8Array(ny.memory.buffer, src, count);
+    const destBuf = new Uint8Array(ny.memory.buffer, dest, count);
+    destBuf.set(srcBuf);
+    return dest;
+  }
+
+  static memsetZig(dest, ch, count) {
+    const buffer = new Uint8Array(new Nyarna().memory.buffer, dest, count);
+    buffer.fill(ch);
+    return dest;
+  }
+
+  static fmodZig(x, y) {
+    return Number((x - (Math.floor(x / y) * y)).toPrecision(8));
+  }
+
+  static throwPanicZig(msg, msgSize) {
+    throw new Error(new Nyarna().stringFromZig(msg, msgSize));
   }
 
   stringFromZig(ptr, size) {
     const buffer = new Uint8Array(this.memory.buffer, ptr, size);
     const decoder = new TextDecoder();
     return decoder.decode(buffer);
-  }
-
-  // returns an Uint8Array containing the UTF-8 encoded string.
-  // if owned == true, Uint8Array must be free'd explicitly.
-  stringToZig(val, owned) {
-    const encoder = new TextEncoder();
-    const buffer = encoder.encode(val);
-    if (owned) {
-      const ptr = this.instance.exports.allocStr(buffer.byteLength);
-      const ret = new Uint8Array(this.memory.buffer, ptr, buffer.byteLength + 1);
-      ret.set(buffer);
-      return ret;
-    } else return buffer;
   }
 }
 
@@ -58,23 +74,23 @@ class Input {
   }
 
   pushInput(name, content) {
-    const zigName = this.nyarna.stringToZig(name, true);
-    const zigContent = this.nyarna.stringToZig(content, true);
+    const zigName = this.stringToZig(name, true);
+    const zigContent = this.stringToZig(content, true);
     Nyarna.instance.exports.pushInput(
-      this.ptr, zigName.ptr, zigName.byteLength, zigContent.ptr, zigContent.byteLength);
+      this.ptr, zigName.byteOffset, zigName.byteLength, zigContent.byteOffset, zigContent.byteLength);
   }
 
   pushArg(name, content) {
-    const zigName = this.nyarna.stringToZig(name, true);
-    const zigContent = this.nyarna.stringToZig(content, true);
+    const zigName = this.stringToZig(name, true);
+    const zigContent = this.stringToZig(content, true);
     Nyarna.instance.exports.pushArg(
-      this.ptr, zigName.ptr, zigName.byteLength, zigContent.ptr, zigContent.byteLength);
+      this.ptr, zigName.byteOffset, zigName.byteLength, zigContent.byteOffset, zigContent.byteLength);
   }
 
   process(main) {
-    const zigMain = this.nyarna.stringToZig(main, true);
+    const zigMain = this.stringToZig(main, true);
     const resultPtr = Nyarna.instance.exports.process(
-      this.ptr, zigMain.ptr, zigMain.byteLength);
+      this.ptr, zigMain.byteOffset, zigMain.byteLength);
     let result = null;
     if (resultPtr == null) {
       console.error("processing failed!");
@@ -83,6 +99,21 @@ class Input {
     }
     this.destroy();
     return result;
+  }
+
+  // --- internal stuff ---
+
+  // returns an Uint8Array containing the UTF-8 encoded string.
+  // if owned == true, Uint8Array must be free'd explicitly.
+  stringToZig(val, owned) {
+    const encoder = new TextEncoder();
+    const buffer = encoder.encode(val);
+    if (owned) {
+      const ptr = Nyarna.instance.exports.allocStr(this.ptr, buffer.byteLength);
+      const ret = new Uint8Array(this.nyarna.memory.buffer, ptr, buffer.byteLength + 1);
+      ret.set(buffer);
+      return ret;
+    } else return buffer;
   }
 }
 
@@ -110,3 +141,5 @@ class Result {
     }
   }
 }
+
+export {Nyarna, Input, Result};

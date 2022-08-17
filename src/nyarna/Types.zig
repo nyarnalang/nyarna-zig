@@ -1403,7 +1403,7 @@ pub fn convertible(self: *Self, from: model.Type, to: model.Type) bool {
             else => return false,
           },
           .structural => |to_struc| switch (to_struc.*) {
-            .concat, .sequence => {},
+            .concat, .optional, .sequence, => {},
             else => return false,
           }
         }

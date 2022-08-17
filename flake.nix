@@ -48,14 +48,20 @@
       };
     };
     version = if release then version_base else "${version_base}-${self.shortRev or self.lastModifiedDate}";
-    src = filter.lib.filter {
-      root = ./.;
-      exclude = [ ./flake.nix ./flake.lock ];
-    };
     testList = ["lex" "parse" "interpret" "load" "output"];
     generators = pkgs.buildZig {
       pname = "nyarna-codegen";
-      inherit version src;
+      inherit version;
+      src = filter.lib.filter {
+        root = ./.;
+        include = [
+          (filter.lib.inDirectory ./build)
+          ./src/nyarna/errors/ids.zig
+          ./src/nyarna/model/lexing.zig
+          (filter.lib.inDirectory ./test)
+        ];
+      };
+
       zigExecutables = [ {
         name = "handler_gen";
         file = "build/gen_errorhandler.zig";
@@ -66,7 +72,7 @@
       } ];
     };
     buildNyarna = {
-      pname, ...
+      pname, src, genTests ? false, ...
     }@args: pkgs.buildZig (args // {
       inherit version src;
       zigTests = builtins.map (kind: {
@@ -82,8 +88,10 @@
         EOF
         echo "generating error handler…"
         ${generators}/bin/handler_gen
+        ${if genTests then ''
         echo "generating tests…"
         ${generators}/bin/test_gen
+        '' else ""}
       '';
     });
 
@@ -101,6 +109,11 @@
 
     nyarna_cli = buildNyarna {
       pname = "nyarna";
+      src = filter.lib.filter {
+        root = ./.;
+        exclude = [ ./flake.nix ./flake.lock ./build ./src/wasm.zig ./src/nyarna.js ];
+      };
+      genTests = true;
       zigExecutables = [ cliExecutable ];
       preInstall = ''
         mkdir -p $out/share
@@ -110,7 +123,12 @@
 
     nyarna_wasm = (buildNyarna {
       pname = "nyarna-wasm";
-      inherit version src;
+      inherit version;
+      src = filter.lib.filter {
+        root = ./.;
+        exclude = [ ./flake.nix ./flake.lock ./build ./src/cli.zig ./test ];
+      };
+
       zigLibraries = [ wasmLibrary ];
       ZIG_TARGET = "wasm32-freestanding";
     }).overrideAttrs (_: {
@@ -123,7 +141,11 @@
 
     devShell = buildNyarna {
       pname = "nyarna-devenv";
-      inherit version src;
+      inherit version;
+      src = filter.lib.filter {
+        root = ./.;
+        exclude = [ ./flake.nix ./flake.lock ];
+      };
       zigExecutables = [ cliExecutable ];
       zigLibraries = [ wasmLibrary ];
       vscode_launch_json = builtins.toJSON {
