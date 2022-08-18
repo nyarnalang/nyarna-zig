@@ -132,11 +132,11 @@ class Result {
       this.documents = [];
       for (let i = 0; i < Nyarna.instance.exports.outputLength(ptr); i++) {
         this.documents.push({
-          name: this.nyarna.stringFromZig(
+          name: nyarna.stringFromZig(
             Nyarna.instance.exports.documentName(ptr, i),
             Nyarna.instance.exports.documentNameLength(ptr, i)
           ),
-          content: this.nyarna.stringFromZig(
+          content: nyarna.stringFromZig(
             Nyarna.instance.exports.documentContent(ptr, i),
             Nyarna.instance.exports.documentContentLength(ptr, i)
           ),

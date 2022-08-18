@@ -2049,9 +2049,13 @@ fn tryGetType(
           .unfinished_type => |t| return TypeResult{.unfinished = t},
           .unknown => if (stage.kind == .keyword or stage.kind == .final) {
             self.ctx.logger.UnknownSymbol(node.pos, usym.name);
+            node.data = .poison;
             return TypeResult.failed;
           } else return TypeResult.unavailable,
-          .poison => return TypeResult.failed,
+          .poison => {
+            node.data = .poison;
+            return TypeResult.failed;
+          },
           .variable => |v| {
             if (
               self.ctx.types().lesserEqual(

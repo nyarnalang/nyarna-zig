@@ -172,13 +172,9 @@
           ];
         }) testList;
       };
-      vscode_settings_json = builtins.toJSON {
-        "lldb.library" = "${pkgs.lldb_14}";
-      };
       preConfigure = ''
         mkdir -p .vscode
         printenv vscode_launch_json >.vscode/launch.json
-        printenv vscode_settings_json > .vscode/settings.json
       '';
       installPhase = ''
         echo "dev env doesn't support install, use `zig build`."

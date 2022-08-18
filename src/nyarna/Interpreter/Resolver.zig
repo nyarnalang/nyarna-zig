@@ -507,7 +507,10 @@ fn fromResult(
       std.debug.assert(!v.spec.t.isNamed(.every));
       return Chain.runtime(ns, node, .{}, v.spec.t, name_pos, false);
     },
-    .poison  => return Chain.poison,
+    .poison  => {
+      node.data = .poison;
+      return Chain.poison;
+    },
     .unknown => switch (stage.kind) {
       .keyword => {
         self.intpr.ctx.logger.CannotResolveImmediately(node.pos);
@@ -515,6 +518,7 @@ fn fromResult(
       },
       .final => {
         self.intpr.ctx.logger.UnknownSymbol(node.pos, name);
+        node.data = .poison;
         return Chain.poison;
       },
       .assumed => unreachable,
@@ -659,6 +663,8 @@ fn resolveUAccess(
   if (self.stage.kind != .intermediate or uacc.name.data == .poison) {
     if (name_lit) |name| {
       self.intpr.ctx.logger.UnknownSymbol(uacc.name.pos, name.content);
+      const node = uacc.node();
+      node.data = .poison;
     }
     return Chain.poison;
   } else if (self.stage.resolve_ctx) |ctx| {
@@ -834,6 +840,7 @@ pub fn resolveChain(
         },
         .final => {
           self.intpr.ctx.logger.UnknownSymbol(chain.pos, usym.name);
+          chain.data = .poison;
           return Chain.poison;
         },
         .assumed => unreachable,
