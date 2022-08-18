@@ -17,7 +17,6 @@ const IntersectionChecker = @import("Interpreter/IntersectionChecker.zig");
 const MatchBuilder        = @import("Interpreter/MatchBuilder.zig");
 const nyarna              = @import("../nyarna.zig");
 const Parser              = @import("Parser.zig");
-const Resolver            = @import("Interpreter/Resolver.zig");
 const syntaxes            = @import("Parser/syntaxes.zig");
 const unicode             = @import("unicode.zig");
 
@@ -28,6 +27,8 @@ const model  = nyarna.model;
 const Types  = nyarna.Types;
 
 const last = @import("helpers.zig").last;
+
+pub const Resolver = @import("Interpreter/Resolver.zig");
 
 pub const Errors = error {
   referred_source_unavailable,
@@ -102,6 +103,11 @@ const IterableInput = struct {
   item_type: model.Type,
 };
 
+pub const ModuleInOut = struct {
+  params: []model.locations.Ref,
+  root  : model.Type,
+};
+
 const Interpreter = @This();
 
 pub const ActiveVarContainer = struct {
@@ -159,12 +165,12 @@ specified_content: union(enum) {
   library: model.Position,
   standalone: struct {
     pos     : model.Position,
-    callable: *model.Type.Callable,
     schema  : ?*model.Value.Schema,
+    in_out  : ModuleInOut,
   },
   fragment: struct {
     pos     : model.Position,
-    callable: *model.Type.Callable,
+    in_out  : ModuleInOut,
   },
   unspecified,
 } = .unspecified,
@@ -346,37 +352,23 @@ fn tryInterpretRootDef(
         }
       } else break :blk self.ctx.types().text();
     };
-    var finder = Types.CallableReprFinder.init(self.ctx.types());
 
     var list = std.ArrayList(model.locations.Ref).init(self.allocator());
     if (rdef.params) |params| {
       if (try self.locationsCanGenVars(params, .{.kind = .final})) {
         try self.collectLocations(params, &list);
-        const variables = try self.variablesFromLocations(
-          list.items, self.var_containers.items[0].container);
-        const ns = self.namespace(0);
-        for (variables) |v| _ = try ns.tryRegister(self, v.sym());
-        _ =
-          try self.processLocations(&list.items, .{.kind = .final}, &finder);
       }
     }
 
-    const finder_res = try finder.finish(root, false);
-    var builder = try Types.SigBuilder.init(
-      self.ctx, list.items.len, root, finder_res.needs_different_repr);
-    for (list.items) |loc| try builder.push(loc.value);
-    const builder_res = builder.finish();
     self.specified_content = switch (rdef.kind) {
       .fragment => .{.fragment = .{
         .pos      = rdef.node().pos,
-        .callable =
-          try builder_res.createCallable(self.ctx.global(), .function),
+        .in_out   = .{.params = list.items, .root = root},
       }},
       .standalone => .{.standalone = .{
         .pos      = rdef.node().pos,
         .schema   = schema,
-        .callable =
-          try builder_res.createCallable(self.ctx.global(), .function),
+        .in_out   = .{.params = list.items, .root = root},
       }},
       .library => unreachable,
     };
@@ -1327,7 +1319,7 @@ pub fn tryInterpretLocationsList(
   return true;
 }
 
-fn variablesFromLocations(
+pub fn variablesFromLocations(
   self     : *Interpreter,
   locs     : []model.locations.Ref,
   container: *model.VariableContainer,

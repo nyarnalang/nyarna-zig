@@ -127,14 +127,14 @@ pub const Provider = struct {
         comptime decl    : std.builtin.TypeInfo.Declaration,
         comptime Ret     : type,
       ) type {
+        const item = @typeInfo(@TypeOf(@field(impls, decl.name)));
         return struct {
           fn wrapper(
             ctx: FirstArg,
             pos: model.Position,
             stack_frame: [*]model.StackItem,
           ) nyarna.Error!*Ret {
-            var unwrapped: Params(@typeInfo(decl.data.Fn.fn_type).Fn) =
-              undefined;
+            var unwrapped: Params(item.Fn) = undefined;
             inline for (
               @typeInfo(@TypeOf(unwrapped)).Struct.fields
             ) |f, index| {
@@ -156,14 +156,14 @@ pub const Provider = struct {
         return struct {
           fn getImpl(name: []const u8) ?F {
             inline for (decls) |decl| {
-              if (decl.data != .Fn) {
+              const item = @typeInfo(@TypeOf(@field(impls, decl.name)));
+              if (item != .Fn) {
                 std.debug.panic("unexpected item in provider " ++
-                  "(expected only fn decls): {s}", .{@tagName(decl.data)});
+                  "(expected only fn decls): {s}", .{@tagName(item)});
                 unreachable;
               }
               if (
-                @typeInfo(decl.data.Fn.fn_type).Fn.args[0].arg_type.? !=
-                FirstArg
+                item.Fn.args[0].arg_type.? != FirstArg
               ) continue;
               if (std.hash_map.eqlString(name, decl.name)) {
                 return SingleWrapper(FirstArg, decl,

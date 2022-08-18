@@ -8,7 +8,7 @@ const TestSet = struct {
   err_func_name: []const u8,
 };
 
-fn genTests(dir: *std.fs.Dir, sets: []TestSet) !void {
+fn genTests(dir: *std.fs.IterableDir, sets: []TestSet) !void {
   var i = dir.iterate();
 
   for (sets) |set| {
@@ -32,9 +32,10 @@ fn genTests(dir: *std.fs.Dir, sets: []TestSet) !void {
         continue :files;
       }
     }
-    var file = try dir.openFile(entry.name, .{});
+    var file = try dir.dir.openFile(entry.name, .{});
     defer file.close();
-    var content = try tml.File.loadFile(dir, entry.name, &file);
+    var content = try tml.File.loadFile(
+      std.heap.page_allocator, &dir.dir, entry.name, &file);
     defer content.deinit();
     for (sets) |*set| {
       const is_output = std.mem.eql(u8, "output", set.tml_item);
@@ -79,8 +80,8 @@ fn genTests(dir: *std.fs.Dir, sets: []TestSet) !void {
 }
 
 pub fn main() !void {
-  var datadir = try std.fs.cwd().openDir(
-    "test/data", .{.access_sub_paths = true, .iterate = true, .no_follow = true});
+  var datadir = try std.fs.cwd().openIterableDir(
+    "test/data", .{.access_sub_paths = true, .no_follow = true});
   defer datadir.close();
   var sets = [_]TestSet{
     .{

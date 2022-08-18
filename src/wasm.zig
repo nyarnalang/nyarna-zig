@@ -90,6 +90,7 @@ export fn pushInput(
     jsLog("error while adding input:", @errorName(err));
     return false;
   };
+  jsLog("pushed input:", name[0..name_len]);
   return true;
 }
 
@@ -159,17 +160,17 @@ export fn process(self: *Input, main: [*]const u8, main_len: usize) ?*Result {
   }
 
   jsLog("debug", "finalize loading");
+  const res = self.storage.allocator().create(Result) catch |err| {
+    jsLog("error while allocating Result:", @errorName(err));
+    return null;
+  };
+  res.* = .{};
   if (
     loader.finalize() catch |err| {
       jsLog("error while finalizing loader:", @errorName(err));
       return null;
     }
   ) |container| {
-    defer container.destroy();
-    const res = self.storage.allocator().create(Result) catch |err| {
-      jsLog("error while allocating Result:", @errorName(err));
-      return null;
-    };
     if (
       !(container.process() catch |err| {
         jsLog("error while processing containers:", @errorName(err));
@@ -179,7 +180,7 @@ export fn process(self: *Input, main: [*]const u8, main_len: usize) ?*Result {
       res.* = .{.error_output = error_out.items};
       return res;
     }
-    res.* = .{};
+    defer container.destroy();
     var docs = std.ArrayList(Result.Output).init(self.storage.allocator());
     defer docs.deinit();
     for (container.documents.items) |output| {
@@ -214,7 +215,9 @@ export fn process(self: *Input, main: [*]const u8, main_len: usize) ?*Result {
     };
     return res;
   }
-  return null; // TODO: missing_inputs
+  // TODO: missing inputs
+  res.* = .{.error_output = error_out.items};
+  return res;
 }
 
 export fn errorLength(result: *Result) usize {

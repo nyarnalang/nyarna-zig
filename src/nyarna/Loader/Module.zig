@@ -30,6 +30,7 @@ const errors      = nyarna.errors;
 const Interpreter = nyarna.Interpreter;
 const lib         = nyarna.lib;
 const model       = nyarna.model;
+const Types       = nyarna.Types;
 
 const Module = @This();
 
@@ -146,11 +147,13 @@ pub fn work(self: *Module) !bool {
     },
     .interpreting => |node| {
       if (self.fullast) return true;
-      const callable = switch (self.loader.interpreter.specified_content) {
+      const intpr = self.loader.interpreter;
+
+      var in_out = switch (intpr.specified_content) {
         .unspecified => unreachable,
-        .standalone  => |*s| s.callable,
+        .standalone  => |*s| &s.in_out,
         .library     => {
-          const root = self.loader.interpreter.interpretAs(
+          const root = intpr.interpretAs(
             node, self.loader.data.types.@"void"().predef()
           ) catch |e| return self.handleError(e);
           // TODO: in case of library, ensure that content contains no statements
@@ -159,8 +162,27 @@ pub fn work(self: *Module) !bool {
           self.state = .{.finished = null};
           return true;
         },
-        .fragment    => |*f| f.callable,
+        .fragment    => |*f| &f.in_out,
       };
+
+      var finder = Types.CallableReprFinder.init(intpr.ctx.types());
+      if (in_out.params.len > 0) {
+        const variables = try intpr.variablesFromLocations(
+            in_out.params, intpr.var_containers.items[0].container);
+          const ns = intpr.namespace(0);
+          for (variables) |v| _ = try ns.tryRegister(intpr, v.sym());
+          _ =
+            try intpr.processLocations(&in_out.params, .{.kind = .final}, &finder);
+        try Interpreter.Resolver.init(intpr, .{.kind = .final}).resolve(node);
+
+      }
+      const finder_res = try finder.finish(in_out.root, false);
+      var builder = try Types.SigBuilder.init(intpr.ctx,
+        in_out.params.len, in_out.root, finder_res.needs_different_repr);
+      for (in_out.params) |loc| try builder.push(loc.value);
+      const builder_res = builder.finish();
+      const callable =
+        try builder_res.createCallable(intpr.ctx.global(), .function);
 
       const root = self.loader.interpreter.interpretAs(
         node, callable.sig.returns.predef()

@@ -380,14 +380,15 @@ pub const Processor = struct {
     }
 
     // now setup loading of the main module
-    const desc = (try doc_resolver.resolve(
-      globals.storage.allocator(), main_module, model.Position.intrinsic(),
-      &ret.loader.logger)).?;
+    const desc = (
+      try doc_resolver.resolve(
+        globals.storage.allocator(), main_module, model.Position.intrinsic(),
+        &ret.loader.logger)
+    ) orelse std.debug.panic("unknown main module: '{s}'", .{main_module});
     const locator =
       try globals.storage.allocator().alloc(u8, main_module.len + 5);
     std.mem.copy(u8, locator, ".doc.");
     std.mem.copy(u8, locator[5..], main_module);
-    // TODO: what if main_module is misnamed?
     const ml = try Loader.Module.create(
       globals, desc, doc_resolver,
       model.Locator.parse(locator) catch unreachable, fullast, null);

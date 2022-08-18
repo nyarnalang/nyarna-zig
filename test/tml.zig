@@ -44,27 +44,32 @@ pub const File = struct {
     return f.arena.allocator();
   }
 
-  pub fn loadPath(path: []const u8) !File {
+  pub fn loadPath(alloc: std.mem.Allocator, path: []const u8) !File {
     const file = try std.fs.cwd().openFile(path, .{});
     defer file.close();
     const file_contents = try std.fs.cwd().readFileAlloc(
-      std.testing.allocator, path, (try file.stat()).size + 1);
-    defer std.testing.allocator.free(file_contents);
-    return load(path, file_contents);
+      alloc, path, (try file.stat()).size + 1);
+    defer alloc.free(file_contents);
+    return load(alloc, path, file_contents);
   }
 
   pub fn loadFile(
-    dir : *std.fs.Dir,
-    path: []const u8,
-    file: *std.fs.File,
+    alloc: std.mem.Allocator,
+    dir  : *std.fs.Dir,
+    path : []const u8,
+    file : *std.fs.File,
   ) !File {
     const file_contents = try dir.readFileAlloc(
-      std.testing.allocator, path, (try file.stat()).size + 1);
-    defer std.testing.allocator.free(file_contents);
-    return load(path, file_contents);
+      alloc, path, (try file.stat()).size + 1);
+    defer alloc.free(file_contents);
+    return load(alloc, path, file_contents);
   }
 
-  pub fn load(name: []const u8, input: []const u8) !File {
+  pub fn load(
+    alloc: std.mem.Allocator,
+    name : []const u8,
+    input: []const u8,
+  ) !File {
     var lines = std.mem.split(u8, input, "\n");
 
     var line = lines.next() orelse {
@@ -75,7 +80,7 @@ pub const File = struct {
       return failWith(name, "file does not start with `=== `", .{});
     }
     var ret: File = undefined;
-    ret.arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    ret.arena = std.heap.ArenaAllocator.init(alloc);
     errdefer ret.deinit();
     ret.items = Values.init(ret.allocator());
     ret.params = .{

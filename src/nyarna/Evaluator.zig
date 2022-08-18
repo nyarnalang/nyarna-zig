@@ -1064,12 +1064,16 @@ fn evalVarRetr(
      } else false)
   ) {
     if (comptime builtin.cpu.arch != .wasm32 and builtin.cpu.arch != .wasm64) {
-      std.log.info("corrupted stack! stack contents:\n", .{});
+      std.debug.print("{}: corrupted stack at {}! stack contents:\n", .{
+        retr.expr().pos.formatter(),
+        @ptrToInt(retr.variable.container.cur_frame.?) + 1 +
+        retr.variable.offset - @ptrToInt(self.ctx.data.stack.ptr)
+      });
       const stack_len = (
         @ptrToInt(self.ctx.data.stack_ptr) - @ptrToInt(self.ctx.data.stack.ptr)
       ) / @sizeOf(model.StackItem);
       for (self.ctx.data.stack[0..stack_len]) |item, index| {
-        std.log.info("{}: ", .{index});
+        std.debug.print("{}: ", .{index});
         if (
           if (item.frame_ref) |ptr| (
             @ptrToInt(ptr) >= @ptrToInt(self.ctx.data.stack.ptr) and
@@ -1077,19 +1081,19 @@ fn evalVarRetr(
           ) else true
         ) {
           if (item.frame_ref) |ptr| {
-            std.log.info("[ header -> {} ]\n", .{
+            std.debug.print("[ header -> {} ]\n", .{
               @divExact(
                 @ptrToInt(ptr) - @ptrToInt(self.ctx.data.stack.ptr),
                 @sizeOf(model.StackItem)
               )
             });
           } else {
-            std.log.info("[ header -> null ]\n", .{});
+            std.debug.print("[ header -> null ]\n", .{});
           }
         } else {
           const pos = item.value.origin.formatter();
           const fmt = (try self.ctx.types().valueType(item.value)).formatter();
-          std.log.info("[ {}: {} ]\n", .{pos, fmt});
+          std.debug.print("[ {}: {} ]\n", .{pos, fmt});
         }
       }
     }

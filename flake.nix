@@ -14,7 +14,11 @@
     pkgs = import nixpkgs {
       inherit system;
       overlays = [
-        zicross.overlays.zig
+        (zicross.lib.zigOverlayFor {
+          version = "2022-08-16";
+          master = true;
+          patchArmHeader = false;
+        })
         zicross.overlays.debian
         zicross.overlays.windows
       ];
@@ -22,8 +26,8 @@
     zig-clap = pkgs.fetchFromGitHub {
       owner = "Hejsil";
       repo  = "zig-clap";
-      rev   = "511b357b9fd6480f46cf2a52b1d168471d1ec015";
-      sha256 = "28RH8i4hWzx2nqseIUZ+Qy+juhZx4Ix+bAlzZu6ZHtk=";
+      rev   = "1c09e0dc31918dd716b1032ad3e1d1c080cbbff1";
+      sha256 = "5fUOIWsIS9G9TET0YfZH51SQVQUHp2DJfglmSERxql4=";
     };
     zigPkgs = rec {
       clap = {
@@ -142,6 +146,7 @@
     devShell = buildNyarna {
       pname = "nyarna-devenv";
       inherit version;
+      genTests = true;
       src = filter.lib.filter {
         root = ./.;
         exclude = [ ./flake.nix ./flake.lock ];
@@ -152,7 +157,7 @@
         version = "0.2.0";
         configurations = builtins.map(name: {
           name = "(lldb) ${name}Test";
-          type = "lldb";
+          type = "cppdbg";
           request = "launch";
           program = ''''${workspaceFolder}/${name}Test'';
           args = [ "${pkgs.zig}/bin/zig" ];
@@ -167,9 +172,13 @@
           ];
         }) testList;
       };
+      vscode_settings_json = builtins.toJSON {
+        "lldb.library" = "${pkgs.lldb_14}";
+      };
       preConfigure = ''
         mkdir -p .vscode
         printenv vscode_launch_json >.vscode/launch.json
+        printenv vscode_settings_json > .vscode/settings.json
       '';
       installPhase = ''
         echo "dev env doesn't support install, use `zig build`."

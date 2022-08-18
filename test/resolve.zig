@@ -27,7 +27,7 @@ pub const TestDataResolver = struct {
         .getSourceFn = getSource,
       },
       .stdlib = Loader.FileSystemResolver.init(abs_path),
-      .source = try tml.File.loadPath(path),
+      .source = try tml.File.loadPath(std.testing.allocator, path),
     };
   }
 

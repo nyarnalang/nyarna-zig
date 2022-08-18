@@ -75,9 +75,10 @@ class Input {
 
   pushInput(name, content) {
     const zigName = this.stringToZig(name, true);
-    const zigContent = this.stringToZig(content, true);
+    const zigContent = this.stringToZig(content, true, true);
     Nyarna.instance.exports.pushInput(
-      this.ptr, zigName.byteOffset, zigName.byteLength, zigContent.byteOffset, zigContent.byteLength);
+      this.ptr, zigName.byteOffset, zigName.byteLength,
+      zigContent.byteOffset, zigContent.byteLength);
   }
 
   pushArg(name, content) {
@@ -105,13 +106,16 @@ class Input {
 
   // returns an Uint8Array containing the UTF-8 encoded string.
   // if owned == true, Uint8Array must be free'd explicitly.
-  stringToZig(val, owned) {
+  stringToZig(val, owned, addPadding) {
     const encoder = new TextEncoder();
     const buffer = encoder.encode(val);
     if (owned) {
       const ptr = Nyarna.instance.exports.allocStr(this.ptr, buffer.byteLength);
-      const ret = new Uint8Array(this.nyarna.memory.buffer, ptr, buffer.byteLength + 1);
+      const ret = new Uint8Array(this.nyarna.memory.buffer, ptr, buffer.byteLength + (addPadding ? 4 : 0));
       ret.set(buffer);
+      if (addPadding) {
+        ret.set([4, 4, 4, 4], buffer.byteLength);
+      }
       return ret;
     } else return buffer;
   }

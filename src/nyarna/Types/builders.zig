@@ -133,7 +133,7 @@ pub const IntersectionBuilder = struct {
       }
     }
     self.push(@ptrCast([*]const model.Type, t)[0..1]);
-    self.sources[self.filled -1].pos = pos;
+    self.sources[self.filled - 1].pos = pos;
     return null;
   }
 

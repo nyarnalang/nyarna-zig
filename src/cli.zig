@@ -58,10 +58,12 @@ pub fn main() !void {
     clap.parseParam("<arg>...           Nyarna arguments for interpreting <file>.") catch unreachable,
   };
 
-  var iter = try clap.args.OsIterator.init(arena.allocator());
+  var iter = try std.process.ArgIterator.initWithAllocator(arena.allocator());
   defer iter.deinit();
+  _ = iter.next();
+
   var diag = clap.Diagnostic{};
-  var parser = clap.StreamingClap(clap.Help, clap.args.OsIterator){
+  var parser = clap.streaming.Clap(clap.Help, std.process.ArgIterator){
     .params     = &params,
     .iter       = &iter,
     .diagnostic = &diag,
@@ -94,7 +96,8 @@ pub fn main() !void {
           \\Reference Nyarna interpreter.
           \\
         ++ "\n");
-        const hr = clap.help(std.io.getStdOut().writer(), &params);
+        const hr =
+          clap.help(std.io.getStdOut().writer(), clap.Help, &params, .{});
         try std.io.getStdOut().writer().writeAll(
           \\
           \\<arg>... must be an alternating list of `--<name> <value>`.

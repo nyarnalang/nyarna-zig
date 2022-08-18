@@ -1,0 +1,48 @@
+=== Tour: Introduction
+--- input
+#!/usr/bin/env nyarna --
+# with a shebang, this is directly executable.
+
+# This document can be processed standalone.
+\standalone:
+:params:
+  # takes a single argument of type Text
+  who: \Text
+\end(standalone)
+
+# output text, refer to the argument
+Hello, \who!
+
+# declare your own types and functions
+\declare:
+  Bus = \Record:
+    fits: \Natural
+    name: \Text
+  \end(Record)
+
+  Buses = \List(\Bus)
+
+  busFor = \func:
+    num: \Natural
+  :body:
+    \Bus(fits=\num, name=Bus for \num persons)
+  \end(func)
+\end(declare)
+
+# have variables
+\var:
+  smallBus = \busFor(10)
+  largeBus = \busFor(42)
+\end(var)
+
+# do loops
+\for(\Buses(\smallBus, \largeBus), collector=\Concat):|\b|
+  The \b::name fits \b::fits persons.\
+\end(for)
+--- inline:who {strip}
+World
+--- output
+Hello, World!
+
+The Bus for 10 persons fits 10 persons.
+The Bus for 42 persons fits 42 persons.
