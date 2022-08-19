@@ -110,8 +110,9 @@ class Input {
     const encoder = new TextEncoder();
     const buffer = encoder.encode(val);
     if (owned) {
-      const ptr = Nyarna.instance.exports.allocStr(this.ptr, buffer.byteLength);
-      const ret = new Uint8Array(this.nyarna.memory.buffer, ptr, buffer.byteLength + (addPadding ? 5 : 0));
+      const len = buffer.byteLength + (addPadding ? 5 : 0);
+      const ptr = Nyarna.instance.exports.allocStr(this.ptr, len);
+      const ret = new Uint8Array(this.nyarna.memory.buffer, ptr, len);
       ret.set(buffer);
       if (addPadding) {
         ret.set([10, 4, 4, 4, 4], buffer.byteLength);
