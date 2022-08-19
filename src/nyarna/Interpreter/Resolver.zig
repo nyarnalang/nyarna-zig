@@ -952,7 +952,14 @@ pub fn resolve(
         .unresolved => |unode| try self.resolve(unode),
         .resolved   => |res| for (res.locations) |lref| switch (lref) {
           .node => |lnode| try self.resolve(lnode.node()),
-          .expr, .value, .poison => {},
+          .expr => |expr| switch (expr.data) {
+            .value => |value| switch (value.data) {
+              .ast => |ast| try self.resolve(ast.root),
+              else => {},
+            },
+            else => {},
+          },
+          .value, .poison => {},
         },
         .pregen => {},
       }
@@ -965,7 +972,14 @@ pub fn resolve(
         .unresolved => |unode| try self.resolve(unode),
         .resolved   => |res| for (res.locations) |lref| switch (lref) {
           .node => |lnode| try self.resolve(lnode.node()),
-          .expr, .value, .poison => {},
+          .expr => |expr| switch (expr.data) {
+            .value => |value| switch (value.data) {
+              .ast => |ast| try self.resolve(ast.root),
+              else => {},
+            },
+            else => {},
+          },
+          .value, .poison => {},
         },
         .pregen => {},
       }
@@ -990,6 +1004,7 @@ pub fn resolve(
     },
     .import, .literal => {},
     .location => |loc| {
+      try self.resolve(loc.name);
       if (loc.@"type") |tnode| try self.resolve(tnode);
       if (loc.default) |dnode| try self.resolve(dnode);
     },

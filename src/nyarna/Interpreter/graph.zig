@@ -20,7 +20,7 @@ pub fn Processor(comptime Graph: type) type {
       assigned_index: ?u21 = null,
       lowlink: u21 = undefined,
       /// outgoing edges. calculated in the first step. contains indexes into
-      /// node_model.
+      /// node_data.
       edges: []usize = undefined,
       on_stack: bool = false,
       /// this is a reference so that
@@ -91,10 +91,9 @@ pub fn Processor(comptime Graph: type) type {
         self.stack[self.stack_top] = v;
         self.stack_top += 1;
         v.on_stack = true;
-        defer v.on_stack = false;
 
-        for (v.edges) |w_graph_index| {
-          const w = self.proc.node_data[w_graph_index].reverse_lookup;
+        for (v.edges) |w_orig_index| {
+          const w = &self.proc.node_data[w_orig_index];
           if (w.assigned_index) |w_index| {
             if (w.on_stack) {
               v.lowlink = std.math.min(v.lowlink, w_index);
@@ -110,6 +109,7 @@ pub fn Processor(comptime Graph: type) type {
           while (true) {
             const w = self.stack[self.stack_top - 1];
             self.stack_top -= 1;
+            w.on_stack = false;
             const target_position =
               self.proc.node_data[self.first_unsorted].reverse_lookup;
             const w_old_index = w.index_in_graph;

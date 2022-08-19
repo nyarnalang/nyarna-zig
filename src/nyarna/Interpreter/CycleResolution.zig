@@ -77,7 +77,12 @@ const TypeResolver = struct {
           .gen_optional     => |*go| return uStruct(go),
           .gen_sequence     => |*gp| return uStruct(gp),
           .gen_record       => |*gr| return Resolver.Context.Result{
-            .unfinished_type = .{.named = gr.generated.?},
+            .unfinished_type = .{
+              .named = gr.generated orelse std.debug.panic(
+                "{}: reference to type '{s}' " ++
+                "that should have been allocated but wasn't",
+                .{name_pos.formatter(), name}),
+            },
           },
           .gen_unique => |*gu| return Resolver.Context.Result{
             .unfinished_type = gu.generated,
@@ -117,7 +122,10 @@ const TypeResolver = struct {
       .expression, .poison, .gen_record, .gen_unique, .funcgen => return,
       .gen_concat, .gen_intersection, .gen_list, .gen_map, .gen_optional,
       .gen_sequence, .gen_prototype => {},
-      else => unreachable,
+      else => std.debug.panic(
+        "{}: unexpected definition content: {s}", .{
+          def.content.pos.formatter(), @tagName(def.content.data)
+        }),
     }
     for (self.worklist.items) |wli, index| if (wli == def.content) {
       const pos_list = try self.dres.intpr.allocator().alloc(
@@ -1077,6 +1085,10 @@ pub fn swap(self: *CycleResolution, x: usize, y: usize) void {
   const tmp = self.defs[x];
   self.defs[x] = self.defs[y];
   self.defs[y] = tmp;
+}
+
+pub fn nodeName(self: *CycleResolution, index: usize) []const u8 {
+  return self.defs[index].name.content;
 }
 
 //----------------------------

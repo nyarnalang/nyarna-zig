@@ -58,7 +58,7 @@ pub const Definition = struct {
   content_pos: model.Position,
   content    : union(enum) {
     /// might be a keyword function, which is why content is not simply a Value.
-    func: *model.Function,
+    func   : *model.Function,
     @"type": model.Type,
   },
   merge: ?model.Position = null,
@@ -173,9 +173,9 @@ pub const IntNum = struct {
       try writer.writeByte(decimal_sep);
       var rem_decimals = max_decimals;
       while (rem != 0 and rem_decimals > 0) : (rem_decimals -= 1) {
-        rem = rem * 10;
+        rem   = rem * 10;
         trunc = @mod(@divTrunc(rem, unit.factor), 10);
-        rem = @rem(rem, unit.factor);
+        rem   = @rem(rem, unit.factor);
         try writer.writeByte('0' + @intCast(u8, trunc));
       }
     }
@@ -202,7 +202,7 @@ pub const IntNum = struct {
 
 /// a List value
 pub const List = struct {
-  t: *const Type.List,
+  t      : *const Type.List,
   content: std.ArrayList(*Value),
 
   pub fn value(self: *@This()) *Value {
@@ -401,7 +401,7 @@ const HashContext = struct {
 };
 
 origin: model.Position,
-data: Data,
+data  : Data,
 
 fn parent(it: anytype) *Value {
   const t = @typeInfo(@TypeOf(it)).Pointer.child;
