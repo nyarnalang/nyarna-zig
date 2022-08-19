@@ -101,7 +101,7 @@ pub const Walker = struct {
 
   pub fn contentFrom(w: *Walker, start: usize) []const u8 {
     const len = w.before.byte_offset - start;
-    return (w.cur - len - 1)[0..len];
+    return (w.cur - len - w.recent_length)[0..len];
   }
 
   pub fn contentIn(w: *Walker, pos: model.Position) []const u8 {

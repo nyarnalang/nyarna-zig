@@ -1,0 +1,36 @@
+=== Non ASCII
+--- input
+wololo “test”
+droggel“\if(true, jug)”
+--- tokens
+3:1[0] literal
+3:7[6] space
+3:8[7] literal
+3:14[17] ws_break
+4:1[18] literal
+4:9[28] symref
+4:12[31] list_start
+4:13[32] literal
+4:17[36] comma
+4:18[37] space
+4:19[38] literal
+4:22[41] list_end
+4:23[42] literal
+4:24[45] ws_break
+5:1[46] end_source
+--- rawast
+=LIT text "wololo \xe2\x80\x9ctest\xe2\x80\x9d\ndroggel\xe2\x80\x9c"
++RCALL
+  =SYMREF .std.system.if
+  >ARG condition
+  +AST
+    =LIT text "true"
+  -AST
+  >ARG then
+  +AST
+    =LIT text "jug"
+  -AST
+  >ARG else
+  =VOID
+-RCALL
+=LIT text "\xe2\x80\x9d"
