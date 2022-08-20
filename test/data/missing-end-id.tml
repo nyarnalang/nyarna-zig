@@ -1,0 +1,19 @@
+=== Missing End Id
+--- input
+\declare:
+  A = \Record:
+    b: \Text
+  \end(\Record)
+\end(declare)
+--- errors:rawast
+6:8 - 6:8 WrongCallId
+  expected = 'Record'
+  got = ''
+  defined_at = input(4:7)
+6:8 - 6:8 MissingClosingParenthesis
+6:8 - 6:15 IllegalItem
+  expected = {';', ws_break}
+  got = <node>
+6:15 - 6:16 IllegalItem
+  expected = {';', ws_break}
+  got = ')'

@@ -17,12 +17,12 @@
 \end(foo)
 --- errors:expr
 11:6 - 11:13 SkippingCallId
-  expected = if
-  got = declare
+  expected = 'if'
+  got = 'declare'
   defined_at = input(7:5)
 17:6 - 17:9 SkippingCallId
-  expected = if
-  got = foo
+  expected = 'if'
+  got = 'foo'
   defined_at = input(15:9)
 14:3 - 17:6 ExpectedExprOfTypeXGotY
   main = Text

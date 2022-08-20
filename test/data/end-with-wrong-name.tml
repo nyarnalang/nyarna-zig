@@ -10,6 +10,6 @@
 \foo()
 --- errors:expr
 8:6 - 8:12 WrongCallId
-  expected = declare
-  got = declar
+  expected = 'declare'
+  got = 'declar'
   defined_at = input(3:1)

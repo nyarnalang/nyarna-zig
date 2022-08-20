@@ -21,8 +21,8 @@
 8:1[32] end_source
 --- errors:expr
 5:6 - 5:11 WrongCallId
-  expected = block
-  got = flock
+  expected = 'block'
+  got = 'flock'
   defined_at = input(3:1)
 7:1 - 7:5 UnknownSymbol
   repr = bar

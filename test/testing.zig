@@ -1206,8 +1206,8 @@ const ErrorEmitter = struct {
   ) void {
     const self = @fieldParentPtr(ErrorEmitter, "api", reporter);
     self.forwardError(id, pos);
-    self.forwardArg("expected", "{s}", expected);
-    self.forwardArg("got", "{s}", got);
+    self.forwardArg("expected", "'{s}'", expected);
+    self.forwardArg("got", "'{s}'", got);
     self.forwardArgAt("defined_at", defined_at, "", void);
   }
 

@@ -281,7 +281,7 @@ pub fn init(intpr: *Interpreter, source: *model.Source) !Lexer {
       try std.ArrayListUnmanaged(Level).initCapacity(intpr.allocator(), 32),
     .level = .{
       .indentation = 0,
-      .id          = undefined,
+      .id          = "<root>",
       .end_char    = undefined,
       .special     = .disabled,
     },
