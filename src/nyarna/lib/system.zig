@@ -489,6 +489,47 @@ pub const Impl = lib.Provider.Wrapper(struct {
       @intCast(i64, self.content.len), 0)).value();
   }
 
+  pub fn @"Textual::eq"(
+    eval : *nyarna.Evaluator,
+    pos  : model.Position,
+    self : *model.Value.TextScalar,
+    other: *model.Value.TextScalar,
+  ) nyarna.Error!*model.Value {
+    const index =
+      if (std.mem.eql(u8, self.content, other.content)) @as(usize, 1) else 0;
+    return (
+      try eval.ctx.values.@"enum"(
+        pos, &eval.ctx.types().system.boolean.named.data.@"enum", index)
+    ).value();
+  }
+
+  pub fn @"Textual::slice"(
+    eval : *nyarna.Evaluator,
+    pos  : model.Position,
+    self : *model.Value.TextScalar,
+    start: ?*model.Value.IntNum,
+    end  : ?*model.Value.IntNum,
+  ) nyarna.Error!*model.Value {
+    const from: usize =
+      if (start) |num| @intCast(usize, num.content - 1) else 0;
+    const to: usize =
+      if (end) |num| @intCast(usize, num.content - 1) else self.content.len;
+    if (from > to) {
+      const msg = try std.fmt.allocPrint(
+        eval.ctx.global(), "invalid slice: {}..{}", .{from + 1, to + 1});
+      eval.ctx.logger.IndexError(pos, msg);
+      return try eval.ctx.values.poison(pos);
+    } else if (to > self.content.len) {
+      const msg = try std.fmt.allocPrint(
+        eval.ctx.global(), "index out of range: {}", .{to + 1});
+      eval.ctx.logger.IndexError(pos, msg);
+      return try eval.ctx.values.poison(pos);
+    }
+    return (
+      try eval.ctx.values.textScalar(pos, self.t, self.content[from..to])
+    ).value();
+  }
+
   pub fn @"Numeric::add"(
     eval: *nyarna.Evaluator,
     pos : model.Position,

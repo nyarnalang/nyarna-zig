@@ -1,0 +1,11 @@
+=== Textual Funcs
+--- input
+\Text(one)::eq(one)
+\Text(two)::eq(one)
+\Text(droggeljug)::slice(8)
+\Text(droggeljug)::slice(end=8)
+--- output
+true
+false
+jug
+droggel

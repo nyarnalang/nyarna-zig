@@ -200,6 +200,13 @@
     len = \builtin(return=\Natural):
       self: \This
     \end(builtin)
+    eq = \builtin(return=\Bool):
+      self, other: \This
+    \end(builtin)
+    slice = \builtin(return=\This):
+      self: \This
+      start, end: \Optional(\Positive)
+    \end(builtin)
   \end(prototype)
 
   library    = \keyword:
