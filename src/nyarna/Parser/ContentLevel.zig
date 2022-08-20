@@ -32,7 +32,6 @@ const Command = struct {
     import_call    : Mapper.ToImport,
     assignment     : Mapper.ToAssignment,
   },
-  mapper: *Mapper,
   cur_cursor: union(enum) {
     mapped: Mapper.Cursor,
     failed,
@@ -44,6 +43,16 @@ const Command = struct {
   /// when a parent scope ends.
   swallow_depth: ?u21 = null,
 
+  pub fn mapper(self: *@This()) *Mapper {
+    return switch (self.info) {
+      .unknown         => unreachable,
+      .resolved_call   => |*rc| &rc.mapper,
+      .unresolved_call => |*uc| &uc.mapper,
+      .import_call     => |*ic| &ic.mapper,
+      .assignment      => |*ac| &ac.mapper,
+    };
+  }
+
   pub fn pushName(
     self  : *Command,
     pos   : model.Position,
@@ -52,7 +61,7 @@ const Command = struct {
     flag  : Mapper.ProtoArgFlag,
   ) !void {
     self.cur_cursor = if (
-      try self.mapper.map(
+      try self.mapper().map(
         pos, if (direct) .{.direct = name} else .{.named = name}, flag)
     ) |mapped| .{
       .mapped = mapped,
@@ -65,7 +74,7 @@ const Command = struct {
     with_config: bool,
   ) !void {
     self.cur_cursor = if (
-      try self.mapper.map(
+      try self.mapper().map(
         node.pos, .{.name_expr = node},
         if (with_config) .block_with_config else .block_no_config)
     ) |mapped| .{
@@ -79,14 +88,14 @@ const Command = struct {
       .mapped => |val| val,
       .failed => return,
       .not_pushed =>
-        (try self.mapper.map(arg.pos, .position, .flow)) orelse return,
+        (try self.mapper().map(arg.pos, .position, .flow)) orelse return,
     };
-    try self.mapper.push(cursor, arg);
+    try self.mapper().push(cursor, arg);
   }
 
   pub fn pushPrimary(self: *Command, pos: model.Position, config: bool) !void {
     self.cur_cursor = if (
-      try self.mapper.map(pos, .primary,
+      try self.mapper().map(pos, .primary,
         if (config) .block_with_config else .block_no_config
     )) |cursor| .{
       .mapped = cursor,
@@ -120,7 +129,7 @@ const Command = struct {
     fullast: bool,
   ) !void {
     const newNode =
-      try self.mapper.finalize(source.between(self.start, end));
+      try self.mapper().finalize(source.between(self.start, end));
     switch (newNode.data) {
       .resolved_call => |*rcall| {
         if (rcall.sig.isKeyword()) {
@@ -151,7 +160,6 @@ const Command = struct {
   pub fn startAssignment(self: *Command, intpr: *Interpreter) void {
     const subject = self.info.unknown;
     self.info = .{.assignment = Mapper.ToAssignment.init(subject, intpr)};
-    self.mapper = &self.info.assignment.mapper;
     self.cur_cursor = .not_pushed;
   }
 
@@ -165,7 +173,6 @@ const Command = struct {
     self.info = .{.resolved_call =
       try Mapper.ToSignature.init(intpr, target, ns, sig),
     };
-    self.mapper = &self.info.resolved_call.mapper;
     self.cur_cursor = .not_pushed;
   }
 
@@ -174,7 +181,6 @@ const Command = struct {
     self.info = .{
       .unresolved_call = Mapper.Collect.init(subject, intpr),
     };
-    self.mapper = &self.info.unresolved_call.mapper;
     self.cur_cursor = .not_pushed;
   }
 
@@ -184,14 +190,13 @@ const Command = struct {
     target: *model.Node.Import,
   ) !void {
     self.info = .{.import_call = Mapper.ToImport.init(target, intpr)};
-    self.mapper = &self.info.import_call.mapper;
     self.cur_cursor = .not_pushed;
   }
 
   pub fn choseAstNodeParam(self: *Command) bool {
     return switch (self.cur_cursor) {
       .mapped => |cursor|
-        if (self.mapper.paramType(cursor)) |t| (
+        if (self.mapper().paramType(cursor)) |t| (
           t.isNamed(.ast) or t.isNamed(.frame_root)
         ) else false,
       else => false,
@@ -295,7 +300,7 @@ pub fn finalizeParagraph(
 
 pub fn implicitBlockConfig(self: *ContentLevel) ?*model.BlockConfig {
   return switch (self.command.cur_cursor) {
-    .mapped => |c| self.command.mapper.config(c),
+    .mapped => |c| self.command.mapper().config(c),
     else => null,
   };
 }

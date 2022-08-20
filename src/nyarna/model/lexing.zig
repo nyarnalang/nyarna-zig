@@ -36,8 +36,10 @@ pub const Token = enum(u16) {
   /// Assignment start ':=', must be followed by arglist or block [7.6.4]
   assign,
   /// '(' that is starting a list of arguments [7.9]
+  /// or ':(' that is starting a block name expression
   list_start,
   /// ')' that is closing a list of arguments [7.9]
+  /// or '):' that is closing a block name expression
   list_end,
   /// ',' separating list arguments [7.9]
   comma,

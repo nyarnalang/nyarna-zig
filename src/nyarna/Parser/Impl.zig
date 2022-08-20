@@ -252,7 +252,7 @@ fn procEndSource(self: *@This()) !void {
     try self.leaveLevel();
     const parent = self.curLevel();
     if (parent.command.swallow_depth == null) {
-      const spos = parent.command.mapper.subject_pos;
+      const spos = parent.command.mapper().subject_pos;
       if (self.lexer.paren_depth > 0) {
         self.logger().MissingClosingParenthesis(
           self.lexer.walker.posFrom(self.cur_start));
@@ -261,7 +261,7 @@ fn procEndSource(self: *@This()) !void {
           if (spos.end.byte_offset - spos.start.byte_offset > 0)
             self.lexer.walker.contentIn(spos) else "<unnamed>";
         self.logger().MissingEndCommand(
-          name, parent.command.mapper.subject_pos,
+          name, parent.command.mapper().subject_pos,
           self.lexer.walker.posFrom(self.cur_start));
       }
     }
@@ -283,7 +283,6 @@ fn procSymref(self: *@This()) !void {
         self.lexer.recent_id
       ),
     },
-    .mapper = undefined,
     .cur_cursor = undefined,
   };
   self.state = .command;
@@ -385,19 +384,20 @@ fn enterBlockNameExpr(self: *@This(), valid: bool) !void {
       .unknown =
         try self.intpr().node_gen.@"void"(self.source().at(start)),
     },
-    .mapper     = undefined,
     .cur_cursor = undefined,
   };
   lvl.command.startAssignment(self.intpr());
   self.state = .possible_start;
-  self.advance();
 }
 
 fn procBlockNameExprStart(self: *@This()) !void {
+  try self.finishSwallowing();
+
   const valid = if (self.levels.items.len > 1) blk: {
     try self.leaveLevel();
     break :blk true;
   } else false;
+  self.advance();
   try self.enterBlockNameExpr(valid);
 }
 
@@ -811,6 +811,7 @@ fn procAfterBlocksStart(self: *@This()) !void {
         .yes => try self.leaveLevel(),
       }
       if (self.cur == .list_start) {
+        self.advance();
         try self.enterBlockNameExpr(true);
       } else {
         self.state = .block_name;
@@ -1207,25 +1208,10 @@ fn closeSwallowing(self: *@This(), target_depth: usize) !void {
     // (which has not been touched).
     const tl = &self.levels.items[target_level];
     tl.command = parent.command;
-    tl.command.mapper = switch (tl.command.info) {
-      .assignment      => |*as| &as.mapper,
-      .import_call     => |*ic| &ic.mapper,
-      .resolved_call   => |*sm| &sm.mapper,
-      .unknown         => unreachable,
-      .unresolved_call => |*uc| &uc.mapper,
-    };
     tl.dangling = dangling;
 
     // finally, shift the new level on top of the target_level
     self.levels.items[target_level + 1] = last(self.levels.items).*;
-    const ll = &self.levels.items[target_level + 1];
-    ll.command.mapper = switch (ll.command.info) {
-      .assignment      => |*as| &as.mapper,
-      .import_call     => |*ic| &ic.mapper,
-      .resolved_call   => |*sm| &sm.mapper,
-      .unknown         => unreachable,
-      .unresolved_call => |*uc| &uc.mapper,
-    };
     try self.levels.resize(self.allocator(), target_level + 2);
   }
 }
