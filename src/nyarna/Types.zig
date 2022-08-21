@@ -1335,9 +1335,15 @@ pub fn litType(self: *Self, lit: *model.Node.Literal) model.Type {
   return if (lit.kind == .text) self.literal() else self.space();
 }
 
-/// returns whether there exists a semantic conversion from `from` to `to`.
-pub fn convertible(self: *Self, from: model.Type, to: model.Type) bool {
-  if (self.lesserEqual(from, to)) return true;
+fn innerConvertible(
+  self        : *Self,
+  from        : model.Type,
+  to          : model.Type,
+  ignore_space: bool,
+) bool {
+  if (self.lesserEqual(from, to) or (ignore_space and from.isNamed(.space))) {
+    return true;
+  }
 
   // check whether the given type can be consumed by a Sequence type with
   // auto set.
@@ -1346,7 +1352,9 @@ pub fn convertible(self: *Self, from: model.Type, to: model.Type) bool {
       .sequence => |*seq| if (seq.auto) |auto| {
         const sig = seq.inner[auto.index].constructor.sig;
         const param = sig.parameters[sig.primary.?];
-        if (self.convertible(from, param.spec.t)) return true;
+        if (self.innerConvertible(from, param.spec.t, ignore_space)) {
+          return true;
+        }
       },
       else => {},
     },
@@ -1382,20 +1390,29 @@ pub fn convertible(self: *Self, from: model.Type, to: model.Type) bool {
     .structural => |from_struc| switch (from_struc.*) {
       .concat => |*con| switch (to) {
         .structural => |to_struc| switch (to_struc.*) {
-          .concat   => |*to_con| self.convertible(con.inner, to_con.inner),
+          .concat   => |*to_con|
+            self.innerConvertible(con.inner, to_con.inner, true),
           .sequence => |*to_seq|
-            if (to_seq.direct) |dir| self.convertible(from, dir) else false,
+            if (to_seq.direct) |dir| (
+              self.innerConvertible(from, dir, true)
+            ) else false,
           else => false,
         },
         .named => false,
       },
-      .intersection => |*int|
-        (if (int.scalar) |s| self.convertible(s, to) else true) and
-        (for (int.types) |t| {
+      .intersection => |*int| (
+        if (int.scalar) |s| (
+          self.innerConvertible(s, to, ignore_space)
+         ) else true
+      ) and (
+        for (int.types) |t| {
           if (!self.lesserEqual(t, to)) break false;
-          } else true),
-      .optional => |*opt|
-        self.convertible(self.void(), to) and self.convertible(opt.inner, to),
+        } else true
+      ),
+      .optional => |*opt| (
+        self.convertible(self.void(), to) and
+        self.innerConvertible(opt.inner, to, true)
+      ),
       .sequence => |*seq| {
         switch (to) {
           .named => |to_inst| switch (to_inst.data) {
@@ -1407,7 +1424,9 @@ pub fn convertible(self: *Self, from: model.Type, to: model.Type) bool {
             else => return false,
           }
         }
-        if (seq.direct) |d| if (!self.convertible(d, to)) return false;
+        if (seq.direct) |d| {
+          if (!self.innerConvertible(d, to, true)) return false;
+        }
         for (seq.inner) |item| {
           if (!self.lesserEqual(item.typedef(), to)) return false;
         }
@@ -1416,6 +1435,11 @@ pub fn convertible(self: *Self, from: model.Type, to: model.Type) bool {
       else => false,
     },
   };
+}
+
+/// returns whether there exists a semantic conversion from `from` to `to`.
+pub fn convertible(self: *Self, from: model.Type, to: model.Type) bool {
+  return self.innerConvertible(from, to, false);
 }
 
 /// replaces the scalar type in t with scalar_type and returns the resulting
