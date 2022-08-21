@@ -179,13 +179,13 @@ fn evalExtFuncCall(
   }
   defer self.resetStackFrame(
     &func.variables.cur_frame, func.variables.num_values, ef.ns_dependent);
-  if (func.name) |fname| if (fname.parent_type) |ptype| {
-    self.target_type = ptype;
-  };
   if (
     try self.fillParameterStackFrame(args, frame_ptr)
   ) {
     func.variables.cur_frame = target_frame;
+    if (func.name) |fname| if (fname.parent_type) |ptype| {
+      self.target_type = ptype;
+    };
     return target_impl(impl_ctx, pos, func.argStart(target_frame));
   } else {
     // required for resetStackFrame to work properly
@@ -1357,6 +1357,15 @@ fn coerce(
         } else false);
         return value;
       },
+      // if coercion to a numeric type has been generated, it is guaranteed that
+      // the target type contains all values of the input type, and has no unit.
+      .int => |*int| return (
+        try self.ctx.values.int(value.origin, int, value.data.int.content, 0)
+      ).value(),
+      .float => |*float| return (
+        try self.ctx.values.float(
+          value.origin, float, value.data.float.content, 0)
+      ).value(),
       // other coercions can never happen.
       else => {
         const p = value.origin.formatter();
