@@ -1485,6 +1485,10 @@ pub fn loadErrorTest(data: *TestDataResolver) !void {
     &data.stdlib.api);
   defer proc.deinit();
   var loader = try proc.startLoading(&data.api, "input");
+  var iter = data.source.params.@"inline".iterator();
+  while (iter.next()) |item| {
+    try loader.pushArg(item.key_ptr.*, item.value_ptr.content.items);
+  }
   if (try loader.finalize()) |container| {
     container.destroy();
     return error.TestUnexpectedResult;

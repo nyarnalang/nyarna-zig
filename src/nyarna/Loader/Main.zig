@@ -80,6 +80,10 @@ pub fn finalize(self: *Main) !?*nyarna.DocumentContainer {
       const res = try ml.work();
       std.debug.assert(res);
       const node = try ml.finalizeNode();
+      if (ml.loader.logger.count > 0) {
+        self.destroy();
+        return null;
+      }
       if (
         try mapper.mapper.map(
           callsite_pos, .{.named = node.pos.source.name}, .flow)

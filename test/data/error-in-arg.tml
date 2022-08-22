@@ -1,0 +1,15 @@
+=== Error in arg
+--- input
+\standalone:
+:params:
+  who: \Text
+\end(standalone)
+
+Hello, who!
+
+--- inline:who {strip}
+\Text(\Text)
+--- errors:document
+1:7 - 1:12 ExpectedExprOfTypeXGotY
+  main = [type] (Literal) -> Text
+  other = .std.system Literal
