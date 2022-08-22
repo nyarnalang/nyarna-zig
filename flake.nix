@@ -52,50 +52,35 @@
       };
     };
     version = if release then version_base else "${version_base}-${self.shortRev or self.lastModifiedDate}";
-    testList = ["lex" "parse" "interpret" "load" "output"];
-    generators = pkgs.buildZig {
-      pname = "nyarna-codegen";
-      inherit version;
-      src = filter.lib.filter {
-        root = ./.;
-        include = [
-          (filter.lib.inDirectory ./build)
-          ./src/nyarna/errors/ids.zig
-          ./src/nyarna/model/lexing.zig
-          (filter.lib.inDirectory ./test)
-        ];
-      };
-
-      zigExecutables = [ {
-        name = "handler_gen";
-        file = "build/gen_errorhandler.zig";
-      } {
-        name = "test_gen";
-        file = "build/gen_tests.zig";
-        dependencies = [ zigPkgs.tml ];
-      } ];
+    handler_gen = {
+      name = "handler_gen";
+      file = "build/gen_errorhandler.zig";
+      description = "generates error handler functions";
+      target = { };
     };
+    test_gen = {
+      name = "test_gen";
+      file = "build/gen_tests.zig";
+      description = "generates unit tests from test/data";
+      target = { };
+      dependencies = [ zigPkgs.tml ];
+    };
+    testList = builtins.map (kind: {
+      name = "${kind}Test";
+      description = "Run ${kind} tests";
+      file = "test/${kind}_test.zig";
+      dependencies = [ zigPkgs.nyarna zigPkgs.testing ];
+      generators   = [ handler_gen test_gen ];
+    }) ["lex" "parse" "interpret" "load" "output"];
     buildNyarna = {
       pname, src, genTests ? false, ...
     }@args: pkgs.buildZig (args // {
       inherit version src;
-      zigTests = builtins.map (kind: {
-        name = "${kind}Test";
-        description = "Run ${kind} tests";
-        file = "test/${kind}_test.zig";
-        dependencies = [ zigPkgs.nyarna zigPkgs.testing ];
-      }) testList;
       postConfigure = ''
         cat <<EOF >src/generated.zig
         pub const version = "${version}";
         pub const stdlib_path = "$targetSharePath/lib";
         EOF
-        echo "generating error handler…"
-        ${generators}/bin/handler_gen
-        ${if genTests then ''
-        echo "generating tests…"
-        ${generators}/bin/test_gen
-        '' else ""}
       '';
     });
 
@@ -104,21 +89,30 @@
       description  = "Nyarna CLI interpreter";
       file         = "src/cli.zig";
       dependencies = [ zigPkgs.clap ];
+      generators   = [ handler_gen ];
+      install      = true;
     };
     wasmLibrary = {
       name         = "wasm";
       description  = "Nyarna WASM library";
       file         = "src/wasm.zig";
+      target       = {
+        cpu_arch = "wasm32";
+        os_tag = "freestanding";
+      };
+      install = true;
+      generators = [ handler_gen ];
     };
 
     nyarna_cli = buildNyarna {
       pname = "nyarna";
       src = filter.lib.filter {
         root = ./.;
-        exclude = [ ./flake.nix ./flake.lock ./build ./src/wasm.zig ./src/nyarna.js ];
+        exclude = [ ./flake.nix ./flake.lock ./src/wasm.zig ./src/nyarna.js ];
       };
       genTests = true;
-      zigExecutables = [ cliExecutable ];
+      zigExecutables = [ handler_gen test_gen cliExecutable ];
+      zigTests = testList;
       preInstall = ''
         mkdir -p $out/share
         cp -r lib $out/share/
@@ -130,12 +124,12 @@
       inherit version;
       src = filter.lib.filter {
         root = ./.;
-        exclude = [ ./flake.nix ./flake.lock ./build ./src/cli.zig ./test ];
+        exclude = [ ./flake.nix ./flake.lock ./build/gen_tests.zig ./src/cli.zig ./test ];
       };
-
+      zigExecutables = [ handler_gen ];
       zigLibraries = [ wasmLibrary ];
-      ZIG_TARGET = "wasm32-freestanding";
     }).overrideAttrs (_: {
+      checkPhase = "";
       installPhase = ''
         mkdir -p $out/www
         cp zig-out/lib/wasm.wasm $out/www/nyarna.wasm
@@ -151,15 +145,16 @@
         root = ./.;
         exclude = [ ./flake.nix ./flake.lock ];
       };
-      zigExecutables = [ cliExecutable ];
+      zigExecutables = [ handler_gen test_gen cliExecutable ];
       zigLibraries = [ wasmLibrary ];
+      zigTests = testList;
       vscode_launch_json = builtins.toJSON {
         version = "0.2.0";
-        configurations = builtins.map(name: {
-          name = "(lldb) ${name}Test";
+        configurations = builtins.map(test: {
+          name = "(lldb) ${test.name}";
           type = "cppdbg";
           request = "launch";
-          program = ''''${workspaceFolder}/${name}Test'';
+          program = ''''${workspaceFolder}/${test.name}'';
           args = [ "${pkgs.zig}/bin/zig" ];
           cwd = ''''${workspaceFolder}'';
           externalConsole = false;
@@ -184,6 +179,9 @@
   in {
     packages = {
       cli  = nyarna_cli;
+      cli_win64 = pkgs.packageForWindows nyarna_cli {
+        targetSystem = "x86_64-windows";
+      };
       wasm = nyarna_wasm;
     };
     defaultPackage = nyarna_cli;

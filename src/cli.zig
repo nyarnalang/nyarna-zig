@@ -69,8 +69,14 @@ pub fn main() !void {
     .diagnostic = &diag,
   };
 
-  const stdlib_path =
-    std.os.getenv("NYARNA_STDLIB_PATH") orelse generated.stdlib_path;
+
+
+  const stdlib_path = std.process.getEnvVarOwned(
+    arena.allocator(), "NYARNA_STDLIB_PATH"
+  ) catch |err| switch (err) {
+    error.EnvironmentVariableNotFound => generated.stdlib_path,
+    else => return err,
+  };
   var stdlib_resolver = nyarna.Loader.FileSystemResolver.init(stdlib_path);
   var terminal = nyarna.errors.Terminal(std.fs.File.Writer, true).init(
     std.io.getStdErr().writer());
