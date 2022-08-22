@@ -2160,8 +2160,14 @@ fn tryGenEnum(
   ge   : *model.Node.tg.Enum,
   stage: Stage,
 ) nyarna.Error!?*model.Expression {
+  // bootstrapping for system.ny
+  const no_identifier =
+    std.mem.eql(u8, ".std.system", ge.node().pos.source.locator.repr);
+
   var result = try self.tryProcessVarargs(
-    ge.values, self.ctx.types().system.identifier, stage);
+    ge.values, if (no_identifier) (
+      self.ctx.types().literal()
+    ) else self.ctx.types().system.identifier, stage);
 
   var builder = try Types.EnumBuilder.init(self.ctx, ge.node().pos);
 
