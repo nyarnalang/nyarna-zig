@@ -83,7 +83,7 @@ class Input {
 
   pushArg(name, content) {
     const zigName = this.stringToZig(name, true);
-    const zigContent = this.stringToZig(content, true);
+    const zigContent = this.stringToZig(content, true, true);
     Nyarna.instance.exports.pushArg(
       this.ptr, zigName.byteOffset, zigName.byteLength, zigContent.byteOffset, zigContent.byteLength);
   }
