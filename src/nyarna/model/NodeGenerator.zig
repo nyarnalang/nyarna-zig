@@ -64,6 +64,21 @@ fn copyPath(
   return items;
 }
 
+fn copySymDefs(
+  self: Self,
+  defs: []const Symbol.Definition,
+) ![]Symbol.Definition {
+  const ret = try self.allocator.alloc(Symbol.Definition, defs.len);
+  for (defs) |def, inner_index| {
+    ret[inner_index] = .{
+      .ns    = def.ns,
+      .sym   = def.sym,
+      .alive = def.alive,
+    };
+  }
+  return ret;
+}
+
 pub fn copy(self: Self, node: *Node) std.mem.Allocator.Error!*Node {
   return switch (node.data) {
     .assign => |*ass| (
@@ -149,6 +164,32 @@ pub fn copy(self: Self, node: *Node) std.mem.Allocator.Error!*Node {
         try self.copy(fg.params.unresolved), fg.params_ns,
         try self.copy(fg.body), fg.variables)
     ).node(),
+    .highlight => |*hl| {
+      const renderers = try self.allocator.alloc(
+        Node.Highlight.Renderer, hl.renderers.len);
+      for (hl.renderers) |renderer, index| {
+        const inner_syms = try self.copySymDefs(renderer.content.inner_syms);
+        const cpt = try self.copyVarDefs(renderer.content.capture);
+        renderers[index] = .{
+          .name    = try self.allocator.dupe(u8, renderer.name),
+          .content = try self.ctx.values.ast(
+            try self.copy(renderer.content.root),
+            renderer.content.container, inner_syms, cpt),
+          .variable = switch (renderer.variable) {
+            .def => |def| .{.def = Value.Ast.VarDef{
+              .ns   = def.ns,
+              .name = try self.allocator.dupe(u8, def.name),
+              .pos  = def.pos,
+            }},
+            .sym => |sym| .{.sym = sym},
+            .none => .none,
+          },
+        };
+      }
+      return (
+        try self.highlight(node.pos, try self.copy(hl.syntax), renderers)
+      ).node();
+    },
     .@"if" => |*ifn| (
       try self.@"if"(node.pos, try self.copy(ifn.condition),
         try self.ctx.values.ast(try self.copy(ifn.then.root), null, &.{},
@@ -181,55 +222,29 @@ pub fn copy(self: Self, node: *Node) std.mem.Allocator.Error!*Node {
     },
     .map => |*mn| return (
       try self.map(node.pos, try self.copy(mn.input),
-        if (mn.func) |func| try self.copy(func) else null,
+        if (mn.func)      |func| try self.copy(func) else null,
         if (mn.collector) |coll| try self.copy(coll) else null)
     ).node(),
     .match => |*mat| {
       const cases = try self.allocator.alloc(Node.Match.Case, mat.cases.len);
       for (mat.cases) |case, index| {
-        const inner_syms = try self.allocator.alloc(
-          model.Symbol.Definition, case.content.inner_syms.len);
-        for (case.content.inner_syms) |def, inner_index| {
-          inner_syms[inner_index] = .{
-            .ns    = def.ns,
-            .sym   = def.sym,
-            .alive = def.alive,
-          };
-        }
+        const inner_syms = try self.copySymDefs(case.content.inner_syms);
         const cpt = try self.copyVarDefs(case.content.capture);
-        switch (case.variable) {
-          .def => |def| {
-            cases[index] = .{
-              .t       = try self.copy(case.t),
-              .content = try self.ctx.values.ast(
-                try self.copy(case.content.root), case.content.container,
-                inner_syms, cpt),
-              .variable = .{.def = Value.Ast.VarDef{
-                .ns   = def.ns,
-                .name = try self.allocator.dupe(u8, def.name),
-                .pos  = def.pos,
-              }},
-            };
+        cases[index] = .{
+          .t       = try self.copy(case.t),
+          .content = try self.ctx.values.ast(
+            try self.copy(case.content.root), case.content.container,
+            inner_syms, cpt),
+          .variable = switch (case.variable) {
+            .def => |def| .{.def = Value.Ast.VarDef{
+              .ns   = def.ns,
+              .name = try self.allocator.dupe(u8, def.name),
+              .pos  = def.pos,
+            }},
+            .sym  => |sym| .{.sym = sym},
+            .none => .none,
           },
-          .sym => |sym| {
-            cases[index] = .{
-              .t       = try self.copy(case.t),
-              .content = try self.ctx.values.ast(
-                try self.copy(case.content.root), case.content.container,
-                inner_syms, cpt),
-              .variable = .{.sym = sym},
-            };
-          },
-          .none => {
-            cases[index] = .{
-              .t       = try self.copy(case.t),
-              .content = try self.ctx.values.ast(
-                try self.copy(case.content.root), case.content.container,
-                inner_syms, cpt),
-              .variable = .none,
-            };
-          },
-        }
+        };
       }
       return (
         try self.match(node.pos, try self.copy(mat.subject), cases)
@@ -525,6 +540,18 @@ pub fn funcgen(
     .params_ns = params_ns, .body = body,
     .variables = variables, .cur_returns = self.ctx.types().every(),
   }})).data.funcgen;
+}
+
+pub fn highlight(
+  self     : Self,
+  pos      : Position,
+  syntax   : *Node,
+  renderers: []Node.Highlight.Renderer,
+) !*Node.Highlight {
+  return &(try self.newNode(pos, .{.highlight = .{
+    .syntax    = syntax,
+    .renderers = renderers,
+  }})).data.highlight;
 }
 
 pub fn @"if"(

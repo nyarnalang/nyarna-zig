@@ -1595,6 +1595,15 @@ pub fn tryInterpretFunc(
   }
 }
 
+pub fn tryInterpretHighlight(
+  self : *Interpreter,
+  hl   : *model.Node.Highlight,
+  stage: Stage,
+) nyarna.Error!?*model.Expression {
+  _ = self; _ = hl; _ = stage;
+  std.debug.panic("highlight not implemented", .{});
+}
+
 /// never creates an Expression because builtins may only occur as node in a
 /// definition, where they are handled directly. Returns true iff all
 /// components have been resolved. Issues error if called in .keyword or
@@ -3182,6 +3191,7 @@ pub fn tryInterpret(
       break :blk try self.ctx.createValueExpr(
         (try self.ctx.values.funcRef(input.pos, val)).value());
     },
+    .highlight => |*hl| try self.tryInterpretHighlight(hl, stage),
     .@"if" => self.tryProbeAndInterpret(input, stage),
     .import => unreachable, // this must always be handled directly
                             // by the parser.
@@ -3490,8 +3500,8 @@ pub fn probeType(
       node.data = .{.expression = expr};
       return expr.expected_type;
     } else return null,
-    .assign, .builtingen, .import, .@"for", .funcgen, .matcher, .root_def,
-    .vt_setter => if (try self.tryInterpret(node, stage)) |expr| {
+    .assign, .builtingen, .@"for", .funcgen, .highlight, .import, .matcher,
+    .root_def, .vt_setter => if (try self.tryInterpret(node, stage)) |expr| {
       node.data = .{.expression = expr};
       return expr.expected_type;
     } else return null,
@@ -3946,9 +3956,9 @@ pub fn interpretWithTargetScalar(
     .location, .map, .match, .matcher, .output, .resolved_access,
     .resolved_symref, .resolved_call, .gen_concat, .gen_enum, .gen_intersection,
     .gen_list, .gen_map, .gen_numeric, .gen_optional, .gen_sequence,
-    .gen_prototype, .gen_record, .gen_textual, .gen_unique, .root_def,
-    .unresolved_access, .unresolved_call, .unresolved_symref, .varargs,
-    .varmap => {
+    .gen_prototype, .gen_record, .gen_textual, .gen_unique, .highlight,
+    .root_def, .unresolved_access, .unresolved_call, .unresolved_symref,
+    .varargs, .varmap => {
       if (try self.tryInterpret(input, stage)) |expr| {
         if (Types.containedScalar(expr.expected_type)) |scalar_type| {
           if (self.ctx.types().lesserEqual(scalar_type, spec.t)) return expr;

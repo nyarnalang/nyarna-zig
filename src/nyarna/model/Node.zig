@@ -150,6 +150,27 @@ pub const Funcgen = struct {
   }
 };
 
+pub const Highlight = struct {
+  pub const Renderer = struct {
+    name: []const u8,
+    content  : *Value.Ast,
+    /// if given, is initially def, which will transition to sym. sym will not
+    /// have its container set yet. .none if no capture was given for the block.
+    variable : union(enum) {
+      def: Value.Ast.VarDef,
+      sym: *model.Symbol.Variable,
+      none
+    },
+  };
+
+  syntax   : *model.Node,
+  renderers: []Renderer,
+
+  pub fn node(self: *@This()) *Node {
+    return Node.parent(self);
+  }
+};
+
 // Generated from \if calls. `condition` must be interpreted into an expression
 // having either an enum or an optional type. `then` may have a capture variable
 // but only if `condition` is optional.
@@ -206,18 +227,6 @@ pub const Location = struct {
   @"type"    : ?*Node,
   default    : ?*Node,
   additionals: ?*Additionals,
-
-  pub fn node(self: *@This()) *Node {
-    return Node.parent(self);
-  }
-};
-pub const Seq = struct {
-  pub const Item = struct {
-    content : *Node,
-    lf_after: usize
-  };
-  // lf_after of last item is ignored.
-  items: []Item,
 
   pub fn node(self: *@This()) *Node {
     return Node.parent(self);
@@ -328,6 +337,19 @@ pub const RootDef = struct {
   kind  : enum { library, fragment, standalone },
   root  : ?*Node,
   params: ?*Node,
+
+  pub fn node(self: *@This()) *Node {
+    return Node.parent(self);
+  }
+};
+
+pub const Seq = struct {
+  pub const Item = struct {
+    content : *Node,
+    lf_after: usize
+  };
+  // lf_after of last item is ignored.
+  items: []Item,
 
   pub fn node(self: *@This()) *Node {
     return Node.parent(self);
@@ -548,6 +570,7 @@ pub const Data = union(enum) {
   gen_record       : tg.Record,
   gen_textual      : tg.Textual,
   gen_unique       : tg.Unique,
+  highlight        : Highlight,
   @"if"            : If,
   import           : Import,
   literal          : Literal,
@@ -586,6 +609,7 @@ fn parent(it: anytype) *Node {
     *Expression      => offset(Data, "expression"),
     For              => offset(Data, "for"),
     Funcgen          => offset(Data, "funcgen"),
+    Highlight        => offset(Data, "highlight"),
     If               => offset(Data, "if"),
     Import           => offset(Data, "import"),
     Literal          => offset(Data, "literal"),

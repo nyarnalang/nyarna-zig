@@ -275,6 +275,20 @@
   block = \keyword:
     content: \Ast {primary}
   \end(keyword)
+
+  # Returns a callable that can syntax highlight input of the given syntax.
+  # The returned callable has the following signature:
+  #   content: \Text            {primary}:<off>
+  #   before : \Optional(\Text) {       }:<off>
+  # `content` is the text to be highlighted, `before` can be additional text
+  # that should be parsed before `content` to set up the correct syntax context.
+  # the return type is inferred from the given renderers.
+  highlight = \keyword:
+    # name of the syntax to highlight.
+    syntax    : \Ast
+    #
+    renderers : \HashMap(\Literal, \FrameRoot) {varmap}
+  \end(keyword)
 :private:
   FrameRoot   = \unique()
   Literal     = \unique()

@@ -91,6 +91,53 @@ pub fn createMatchCases(
   return collected.items;
 }
 
+pub fn createRenderers(
+  intpr    : *Interpreter,
+  renderers: *model.Node.Varmap,
+) nyarna.Error![]model.Node.Highlight.Renderer {
+  const map_type = (
+    try intpr.ctx.types().hashMap(
+      intpr.ctx.types().literal(), intpr.ctx.types().ast())
+  ).?;
+  var collected = try std.ArrayList(model.Node.Highlight.Renderer).initCapacity(
+    intpr.allocator(), renderers.content.items.len);
+  for (renderers.content.items) |renderer| switch (renderer.key) {
+    .direct => {
+      const res = try intpr.interpret(renderer.value);
+      if (!res.expected_type.isNamed(.poison)) {
+        intpr.ctx.logger.ExpectedExprOfTypeXGotY(&.{
+          res.expected_type.at(res.pos), map_type.predef()});
+      }
+    },
+    .node => |node| {
+      const name_expr = (
+        try intpr.associate(
+          node, intpr.ctx.types().literal().predef(), .{.kind = .keyword})
+      ) orelse {
+        node.data = .poison;
+        continue;
+      };
+      const name_val = try intpr.ctx.evaluator().evaluate(name_expr);
+      const name = switch (name_val.data) {
+        .text   => |txt| txt.content,
+        .poison => continue,
+        else    => unreachable,
+      };
+
+      const ast = &renderer.value.data.expression.data.value.data.ast;
+      const T = std.meta.fieldInfo(
+        model.Node.Highlight.Renderer, .variable).field_type;
+      lib.reportCaptures(intpr, ast, 1);
+      const variable: T =
+        if (ast.capture.len == 0) .none else T{.def = ast.capture[0]};
+      try collected.append(.{
+        .name = name, .content = ast, .variable = variable,
+      });
+    },
+  };
+  return collected.items;
+}
+
 pub const Impl = lib.Provider.Wrapper(struct {
   //---------
   // keywords
@@ -213,9 +260,20 @@ pub const Impl = lib.Provider.Wrapper(struct {
     lib.reportCaptures(intpr, body, 0);
     const pnode = params orelse try intpr.node_gen.void(pos);
     // type system ensures body.container isn't null here
-    return (try intpr.node_gen.funcgen(
-      pos, @"return", pnode, ns, body.root, body.container.?
-    )).node();
+    return (
+      try intpr.node_gen.funcgen(
+        pos, @"return", pnode, ns, body.root, body.container.?)
+    ).node();
+  }
+
+  pub fn highlight(
+    intpr     : *Interpreter,
+    pos       : model.Position,
+    syntax    : *model.Node,
+    renderers : *model.Node.Varmap,
+  ) nyarna.Error!*model.Node {
+    const rlist = try createRenderers(intpr, renderers);
+    return (try intpr.node_gen.highlight(pos, syntax, rlist)).node();
   }
 
   pub fn @"if"(
@@ -875,6 +933,7 @@ pub const Checker = struct {
     .{"builtin",         .keyword},
     .{"for",             .keyword},
     .{"fragment",        .keyword},
+    .{"highlight",       .keyword},
     .{"if",              .keyword},
     .{"keyword",         .keyword},
     .{"library",         .keyword},

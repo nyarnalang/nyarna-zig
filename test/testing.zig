@@ -322,27 +322,6 @@ const AstEmitter = struct {
         try def.pop();
       },
       .expression => |e| try self.processExpr(e),
-      .@"if" => |ifn| {
-        const lvl = try self.push("IF");
-        try self.process(ifn.condition);
-        if (ifn.then.capture.len > 0) {
-          try self.emitLine(">THEN |{s}|", .{ifn.then.capture[0].name});
-        } else try self.emitLine(">THEN", .{});
-        try self.process(ifn.then.root);
-        if (ifn.@"else") |en| {
-          try self.emitLine(">ELSE", .{});
-          try self.process(en);
-        }
-        try lvl.pop();
-      },
-      .import => |i| {
-        try self.emitLine("=IMPORT {s}", .{
-          self.data.known_modules.keys()[i.module_index]});
-      },
-      .literal => |a| {
-        try self.emitLine("=LIT {s} \"{}\"",
-          .{@tagName(a.kind), std.zig.fmtEscapes(a.content)});
-      },
       .@"for" => |f| {
         const lvl = try self.push("FOR");
         try self.process(f.input);
@@ -372,6 +351,45 @@ const AstEmitter = struct {
         try self.process(fg.body);
         try body.pop();
         try func.pop();
+      },
+      .highlight => |hl| {
+        const lvl = try self.push("HIGHLIGHT");
+        try self.process(hl.syntax);
+        for (hl.renderers) |renderer| {
+          switch (renderer.variable) {
+            .def => |def| try self.emitLine(">RENDERER {s} |[{}]{s}|", .{
+              renderer.name, def.ns, def.name
+            }),
+            .sym => |sym| try self.emitLine(">RENDERER {s} |{s}.{s}|", .{
+              renderer.name, sym.sym().defined_at.source.locator.repr,
+              sym.sym().name,
+            }),
+            .none => try self.emitLine(">RENDERER {s}", .{renderer.name})
+          }
+          try self.process(renderer.content.root);
+        }
+        try lvl.pop();
+      },
+      .@"if" => |ifn| {
+        const lvl = try self.push("IF");
+        try self.process(ifn.condition);
+        if (ifn.then.capture.len > 0) {
+          try self.emitLine(">THEN |{s}|", .{ifn.then.capture[0].name});
+        } else try self.emitLine(">THEN", .{});
+        try self.process(ifn.then.root);
+        if (ifn.@"else") |en| {
+          try self.emitLine(">ELSE", .{});
+          try self.process(en);
+        }
+        try lvl.pop();
+      },
+      .import => |i| {
+        try self.emitLine("=IMPORT {s}", .{
+          self.data.known_modules.keys()[i.module_index]});
+      },
+      .literal => |a| {
+        try self.emitLine("=LIT {s} \"{}\"",
+          .{@tagName(a.kind), std.zig.fmtEscapes(a.content)});
       },
       .location => |loc| {
         const l = try self.push("LOC");

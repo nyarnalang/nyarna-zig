@@ -1002,6 +1002,10 @@ pub fn resolve(
         }
       }
     },
+    .highlight => |*hl| {
+      try self.resolve(hl.syntax);
+      for (hl.renderers) |renderer| try self.resolve(renderer.content.root);
+    },
     .import, .literal => {},
     .location => |loc| {
       try self.resolve(loc.name);
