@@ -483,3 +483,99 @@ pub fn Terminal(comptime Writer: type, comptime do_style: bool) type {
     }
   };
 }
+
+/// reporter that doesn't do anything.
+pub const Ignore = struct {
+  reporter: Reporter,
+
+  pub fn init() @This() {
+    return .{
+      .reporter = .{
+        .lexerErrorFn        = lexerError,
+        .parserErrorFn       = parserError,
+        .previousOccurenceFn = previousOccurence,
+        .posChainFn          = posChain,
+        .wrongItemErrorFn    = wrongItemError,
+        .scalarErrorFn       = scalarError,
+        .wrongIdErrorFn      = wrongIdError,
+        .typeErrorFn         = typeError,
+        .constructionErrorFn = constructionError,
+        .runtimeErrorFn      = runtimeError,
+        .systemNyErrorFn     = systemNyError,
+        .fileErrorFn         = fileError,
+      },
+    };
+  }
+
+  fn lexerError(_: *Reporter, _ : ids.LexerError, _ : model.Position) void {}
+  fn parserError(
+    _ : *Reporter,
+    _ : ids.GenericParserError,
+    _ : model.Position,
+  ) void {}
+  fn wrongItemError(
+    _: *Reporter,
+    _: ids.WrongItemError,
+    _: model.Position,
+    _: []const ids.WrongItemError.ItemDescr,
+    _: ids.WrongItemError.ItemDescr,
+  ) void {}
+  fn scalarError(
+    _: *Reporter,
+    _: ids.ScalarError,
+    _: model.Position,
+    _: []const u8,
+  ) void {}
+  fn wrongIdError(
+    _: *Reporter,
+    _: ids.WrongIdError,
+    _: model.Position,
+    _: []const u8,
+    _: []const u8,
+    _: model.Position,
+  ) void {}
+  fn previousOccurence(
+    _: *Reporter,
+    _: ids.PreviousOccurenceError,
+    _: []const u8,
+    _: model.Position,
+    _: model.Position,
+  ) void {}
+  fn posChain(
+    _: *Reporter,
+    _: ids.PositionChainError,
+    _: model.Position,
+    _: []model.Position,
+  ) void {}
+  fn typeError(
+    _: *Reporter,
+    _: ids.TypeError,
+    _: []const model.SpecType,
+  ) void {}
+  fn constructionError(
+    _: *Reporter,
+    _: ids.ConstructionError,
+    _: model.Position,
+    _: model.Type,
+    _: []const u8,
+  ) void {}
+  fn runtimeError(
+    _: *Reporter,
+    _: ids.RuntimeError,
+    _: model.Position,
+    _: []const u8,
+  ) void {}
+  fn systemNyError(
+    _: *Reporter,
+    _: ids.SystemNyError,
+    _: model.Position,
+    _: []const u8,
+  ) void {}
+  fn fileError(
+    _: *Reporter,
+    _: ids.FileError,
+    _: model.Position,
+    _: []const u8,
+    _: []const u8,
+  ) void {}
+};

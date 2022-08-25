@@ -225,15 +225,15 @@ fn curLevel(self: *@This()) *ContentLevel {
   return last(self.levels.items);
 }
 
-fn procStart(self: *@This(), implicit_fullast: bool) !void {
+pub fn procRootStart(self: *@This(), implicit_fullast: bool) !void {
   while (self.cur == .space or self.cur == .indent) self.advance();
-  // this state is used for initial top-level and for list arguments.
-  // list arguments do not change block configuration and so will always
-  // inherit parent's fullast. the top-level will not be fullast unless
-  // instructed by the caller.
-  try self.pushLevel(
-    if (self.levels.items.len == 0) implicit_fullast
-    else self.curLevel().fullast);
+  try self.pushLevel(implicit_fullast);
+  self.state = .default;
+}
+
+fn procStart(self: *@This()) !void {
+  while (self.cur == .space or self.cur == .indent) self.advance();
+  try self.pushLevel(self.curLevel().fullast);
   self.state = .default;
 }
 
@@ -1003,43 +1003,39 @@ fn procSpecial(self: *@This()) !void {
   }
 }
 
-pub fn doParse(
-  self            : *@This(),
-  implicit_fullast: bool,
-) Parser.Error!*model.Node {
-  while (true) {
-    switch (self.state) {
-      .start          => try self.procStart(implicit_fullast),
-      .possible_start => try self.procPossibleStart(),
-      .default        => switch (self.cur) {
-        .space, .escape, .literal, .ws_break => self.state = .textual,
-        .end_source => {
-          try self.procEndSource();
-          return self.levels.items[0].finalize(self);
-        },
-        .indent           => self.advance(),
-        .symref           => try self.procSymref(),
-        .list_end, .comma, .list_end_missing_colon => try self.procLeaveArg(),
-        .parsep           => try self.procParagraphEnd(),
-        .block_name_sep   => try self.procBlockNameStart(),
-        .list_start       => try self.procBlockNameExprStart(),
-        .block_end_open   => try self.procEndCommand(),
-        .name_sep         => self.procIllegalNameSep(),
-        .id_set           => self.procIdSet(),
-        else => std.debug.panic(
-          "unexpected token in default: {s} at {}\n",
-          .{@tagName(self.cur), self.cur_start.formatter()}),
+pub fn doParse(self: *@This()) Parser.Error!bool {
+  switch (self.state) {
+    .start          => try self.procStart(),
+    .possible_start => try self.procPossibleStart(),
+    .default        => switch (self.cur) {
+      .space, .escape, .literal, .ws_break => self.state = .textual,
+      .end_source => {
+        try self.procEndSource();
+        return true;
       },
-      .textual            => try self.procTextual(),
-      .command            => try self.procCommand(),
-      .after_list         => try self.procAfterList(),
-      .after_blocks_start => try self.procAfterBlocksStart(),
-      .block_name         => try self.procBlockName(),
-      .before_id          => try self.procBeforeId(),
-      .after_id           => try self.procAfterId(),
-      .special            => try self.procSpecial(),
-    }
+      .indent           => self.advance(),
+      .symref           => try self.procSymref(),
+      .list_end, .comma, .list_end_missing_colon => try self.procLeaveArg(),
+      .parsep           => try self.procParagraphEnd(),
+      .block_name_sep   => try self.procBlockNameStart(),
+      .list_start       => try self.procBlockNameExprStart(),
+      .block_end_open   => try self.procEndCommand(),
+      .name_sep         => self.procIllegalNameSep(),
+      .id_set           => self.procIdSet(),
+      else => std.debug.panic(
+        "unexpected token in default: {s} at {}\n",
+        .{@tagName(self.cur), self.cur_start.formatter()}),
+    },
+    .textual            => try self.procTextual(),
+    .command            => try self.procCommand(),
+    .after_list         => try self.procAfterList(),
+    .after_blocks_start => try self.procAfterBlocksStart(),
+    .block_name         => try self.procBlockName(),
+    .before_id          => try self.procBeforeId(),
+    .after_id           => try self.procAfterId(),
+    .special            => try self.procSpecial(),
   }
+  return false;
 }
 
 /// out-value used for processBlockHeader after the initial ':'.

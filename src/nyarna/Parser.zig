@@ -4,6 +4,7 @@
 //! yield the replacement for the original node.
 
 const Lexer       = @import("Parser/Lexer.zig");
+const highlight   = @import("highlight.zig");
 const nyarna      = @import("../nyarna.zig");
 
 const Interpreter = nyarna.Interpreter;
@@ -51,36 +52,38 @@ pub fn init() @This() {
   }};
 }
 
-/// parse given source. If it returns .referred_module_unavailable, parsing
-/// may be resumed via resumeParse() after the referred source has been
-/// loaded. If it returns .encountered_options, option values must be pushed
-/// into the module loader and options must be finalized before parsing may
-/// continue. Other returned errors are not recoverable.
-///
-/// Errors in the given input are not returned as errors of this function.
-/// Instead, they are handed to the loader's errors.Handler. To check whether
-/// errors have occurred, check for increase of the handler's error_count.
-pub fn parseSource(
-  self   : *@This(),
-  intpr  : *Interpreter,
-  source : *model.Source,
+/// Start parsing the given source. Must be called after init().
+pub fn start(
+  self: *@This(),
+  intpr: *Interpreter,
+  source: *model.Source,
   fullast: bool,
-) Error!*model.Node {
+) !void {
   self.impl.lexer = try Lexer.init(intpr, source);
   self.impl.advance();
-  return self.impl.doParse(fullast);
+  try self.impl.procRootStart(fullast);
 }
 
-/// continue parsing. Precondition: parseSource() or resumeParse() have
-/// returned with an UnwindReason previously on the given parser, and have
-/// never returned a *model.Node.
+/// Attempts to build the syntax tree. Must have called start() before.
+/// When .referred_module_unavailable or .encountered_options is returned,
+/// parsing can be continued by calling build() again later. Other errors are
+/// not recoverable.
 ///
-/// Apart from the precondition, this function has the same semantics as
-/// parseSource(), including that it may return .referred_module_unavailable or
-/// .encountered_options.
-pub fn resumeParse(self: *@This()) Error!*model.Node {
-  // when resuming, the fullast value is irrelevant since it is only inspected
-  // when encountering the first non-space token in the file – which will
-  // always be before parsing is interrupted.
-  return self.impl.doParse(undefined);
+/// .referred_module_unavailable requires the referred module to be loaded
+/// before continuing. .encountered_options requires pushing option values
+/// and finalizing options before continuing.
+///
+/// General parsing errors are not returned as errors of this function.
+/// Instead, they are handed to the loader's errors.Handler. To check whether
+/// errors have occurred, check for an increase of the handler's error_count.
+pub fn build(self: *@This()) Error!*model.Node {
+  while (!(try self.impl.doParse())) {}
+  return self.impl.levels.items[0].finalize(&self.impl);
+}
+
+/// Interface for syntax highlighting. Returns the next item, or null if the
+/// parser has finished.
+pub fn next(self: *@This()) !?highlight.Syntax.Item {
+  _ = self;
+  return null;
 }

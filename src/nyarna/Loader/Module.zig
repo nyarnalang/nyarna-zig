@@ -130,18 +130,15 @@ pub fn work(self: *Module) !bool {
         try magic.magicModule(self.loader.interpreter.ctx)
       ) else self.loader.data.known_modules.values()[0].loaded;
       try self.loader.interpreter.importModuleSyms(implicit_module, 0);
+      try self.parser.start(self.loader.interpreter, self.source, self.fullast);
 
-      const node = (
-        self.parser.parseSource(
-          self.loader.interpreter, self.source, self.fullast)
-      ) catch |e| return self.handleError(e);
+      const node = self.parser.build() catch |e| return self.handleError(e);
       try self.ensureSpecifiedContent(node.pos);
       self.state = .{.interpreting = node};
     },
     .encountered_options => unreachable,
     .parsing => {
-      const node = self.parser.resumeParse()
-        catch |e| return self.handleError(e);
+      const node = self.parser.build() catch |e| return self.handleError(e);
       try self.ensureSpecifiedContent(node.pos);
       self.state = .{.interpreting = node};
     },
