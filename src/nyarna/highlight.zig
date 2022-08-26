@@ -107,7 +107,7 @@ pub const NyarnaSyntax = struct {
     ret.nyarna = try nyarna.Processor.init(
       allocator, nyarna.default_stack_size, &ret.ignore.reporter, self.stdlib);
     errdefer (ret.nyarna.deinit());
-    ret.main = ret.nyarna.initMainModule(&ret.doc_res.resolver, "", true);
+    ret.main = ret.nyarna.initMainModule(&ret.doc_res.resolver, "", false);
     return &ret.proc;
   }
 };
@@ -120,12 +120,45 @@ const NyarnaProcessor = struct {
   doc_res  : Loader.SingleResolver,
   allocated: bool,
 
-  fn next(proc: *Syntax.Processor) Error!?Syntax.Item {
-    _ = proc;
-    return null;
+  fn next(obj: *Syntax.Processor) Error!?Syntax.Item {
+    const self = @fieldParentPtr(NyarnaProcessor, "proc", obj);
+    const globals = self.main.data;
+    const main_loader = while (globals.lastLoadingModule()) |index| {
+      const loader = switch (globals.known_modules.values()[index]) {
+        .require_options => |ml| ml,
+        .require_module  => |ml| blk: {
+          break :blk ml;
+        },
+        .loaded, .pushed_param => unreachable,
+      };
+      if (index == 1) break loader;
+      _ = try loader.work();
+      if (loader.state == .finished) {
+        const module = try loader.finalize();
+        globals.known_modules.values()[index] = .{.loaded = module};
+      }
+    } else return null;
+    switch (main_loader.state) {
+      .initial => {
+        try main_loader.loader.interpreter.importModuleSyms(
+          globals.known_modules.values()[0].loaded, 0);
+        try main_loader.parser.start(
+          main_loader.loader.interpreter, main_loader.source, false);
+        self.state = .parsing;
+      },
+      .parsing => {
+        return try main_loader.parser.next();
+      },
+      else => unreachable,
+    }
   }
 
-  fn destroy(proc: *Syntax.Processor) void {
-    _ = proc;
+  fn destroy(obj: *Syntax.Processor) void {
+    const self = @fieldParentPtr(NyarnaProcessor, "proc", obj);
+    const allocator = self.main.data.backing_allocator;
+    if (self.allocated) allocator.free(self.doc_res.content);
+    self.main.destroy();
+    self.nyarna.deinit();
+    allocator.destroy(self);
   }
 };

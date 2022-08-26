@@ -39,6 +39,8 @@ pub const Error = nyarna.Error || UnwindReason;
 
 /// parser implementation. mustn't be accessed from outside.
 impl: @import("Parser/Impl.zig"),
+/// whether current state has been emitted. used for the highlighting interface.
+emitted: bool = true,
 
 pub fn init() @This() {
   return @This(){.impl = .{
@@ -81,9 +83,18 @@ pub fn build(self: *@This()) Error!*model.Node {
   return self.impl.levels.items[0].finalize(&self.impl);
 }
 
+pub const SyntaxItem = struct {
+  kind: enum { text, comment, escape, keyword, symref, special, tag},
+  length: usize,
+};
+
 /// Interface for syntax highlighting. Returns the next item, or null if the
-/// parser has finished.
-pub fn next(self: *@This()) !?highlight.Syntax.Item {
+/// parser has finished. `from` is an index into the source and tells the
+/// highlighter where the next item should start. This is used both for emitting
+/// text between control structures, and to ignore a certain part of the input
+/// at the beginning.
+pub fn next(self: *@This(), from: usize) !?SyntaxItem {
   _ = self;
+  _ = from;
   return null;
 }
