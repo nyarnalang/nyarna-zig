@@ -32,6 +32,9 @@ const State = enum {
   /// same as start, but does not transition to default if list_end is
   /// encountered.
   possible_start,
+  /// similar to possible_start, but for the primary block that doesn't exist
+  /// if block_name_sep is encountered.
+  possible_primary,
   /// reading content of a block or list argument. Allows inner blocks,
   /// swallowing and paragraph separators besides inner nodes that get pushed
   /// to the current level. Will ditch trailing space. Lexer will not produce
@@ -42,7 +45,9 @@ const State = enum {
   textual,
   /// used after closed list. checks for blocks start; if none is encountered,
   /// transitions to command.
-  after_list,
+  after_flow_list,
+  /// checks if a new paragraph starts or if the block ends instead.
+  after_paragraph_sep,
   /// used after any command. The current level's .command field will be
   /// .unknown and hold the occurred command in .subject.
   /// When encountering command continuation (e.g. opening list or blocks),
@@ -51,32 +56,62 @@ const State = enum {
   /// and transition to .default. Handles error cases like .subject being
   /// prefix notation for a function but not being followed by a call.
   command,
-  /// This state checks whether a primary block exists after a blocks start.
-  /// A primary block exists when any of the following is true:
-  /// a block config exists, any non-space content appears before the
-  /// occurrence of a block name, or an \end() command directly closes the
-  /// blocks.
-  after_blocks_start,
-  /// This state reads in a block name, possibly a block configuration, and
-  /// then pushes a level to read the block content.
+  /// State after entering a block name. Skips space, then transitions to either
+  /// block_name or skip_block_name.
+  block_name_start,
+  /// read a valid block name, looks for finishing ':'
   block_name,
+  /// as block_name, but for block names at top level
+  skip_block_name,
+  /// Looks for block config, then starts block content.
+  after_block_name,
   /// This state expects a .call_id and then transitions to .after_id
   before_id,
   /// emits an error if anything but space occurs before ',' or ')'
   after_id,
+  /// expects the call id, transitions to .expect_end_command_end
+  end_command,
+  /// expects ')', transitions to .command
+  expect_end_command_end,
+  /// same as expect_end_command_end, but transitions to .default
+  expect_end_command_end_stop,
+  /// after '::', expects identifier
+  access,
+  /// after ':=', expects '(' or ':'
+  assign,
   /// This state passes lexer tokens to the special syntax processor.
   special,
+  /// used when whitespace is encountered within special syntax
+  special_after_space,
+  /// after a ':' that may be followed by a block header
+  block_header_start,
+  /// after a '<' or ',' in block config
+  block_config_start,
+  block_config_csym,
+  block_config_syntax,
+  block_config_map,
+  block_config_map_arg,
+  block_config_off,
+  block_config_empty,
+  /// after a finished block config item, expecting ',' or '>'
+  block_config_after_item,
+  /// look for ':', else transition to after_block_header
+  after_block_config,
+  /// after a '|', look for symbol or '|'
+  block_capture_start,
+  /// after block capture symbol, look for ',' or '|'
+  block_capture,
+  /// after a swallow depth number, look for '>'
+  block_swallow_depth,
 };
 
-const ns_mapping_failed = 1 << 15;
+const ns_mapping_failed    = 1 << 15;
 const ns_mapping_succeeded = (1 << 15) + 1;
-const ns_mapping_no_from = ns_mapping_succeeded;
+const ns_mapping_no_from   = ns_mapping_succeeded;
 
 /// stack of current levels. must have at least size of 1, with the first
 /// level being the current source's root.
 levels: std.ArrayListUnmanaged(ContentLevel),
-/// currently parsed block config. Filled in the .config state.
-config: ?*model.BlockConfig,
 /// stack of currently active namespace mapping statuses.
 /// namespace mappings create a new namespace, disable a namespace, or map a
 /// namespace from one character to another.
@@ -86,8 +121,58 @@ ns_mapping_stack: std.ArrayListUnmanaged(u16),
 
 lexer    : Lexer,
 state    : State,
-cur      : model.Token,
-cur_start: model.Cursor,
+/// used for reporting errors that span multiple tokens. Set at the start of
+/// the erroneous content.
+stored_cursor: ?model.Cursor = null,
+/// stores the given identifier for a block name.
+block_name: union(enum) {
+  simple: struct {
+    name: []const u8,
+    pos : model.Position,
+  },
+  node: *model.Node,
+  none,
+} = .none,
+/// collects textual content in textual state
+text: struct {
+  content           : std.ArrayListUnmanaged(u8) = .{},
+  non_space_len     : usize = 0,
+  non_space_line_len: usize = 0,
+  non_space_end     : model.Cursor = undefined,
+  start             : model.Cursor,
+},
+/// memorizes whitespace in special syntax
+special: struct {
+  newlines  : u21,
+  nl_pos    : model.Position,
+  whitespace: []const u8,
+  ws_pos    : model.Position,
+},
+/// information about the currently processed block header
+block_header: struct {
+  context: union(enum) {
+    /// when processing the header of a primary block
+    primary: struct {
+      /// true if any kind of block header has been seen.
+      guaranteed: bool,
+    },
+    /// when processing a header in syntax (after '{…}')
+    push_to_syntax: *model.Value.BlockHeader,
+    /// when processing the header of a named block
+    named,
+    /// block header at an illegal block name at root level
+    ignored,
+  },
+  /// currently parsed block config.
+  config: ?*model.BlockConfig,
+  config_parser: struct {
+    into    : *model.BlockConfig,
+    map_list: std.ArrayListUnmanaged(model.BlockConfig.Map),
+    map_from: u21,
+  },
+  /// capture variables
+  captures: std.ArrayListUnmanaged(model.Value.Ast.VarDef),
+} = undefined,
 
 pub fn allocator(self: *@This()) std.mem.Allocator {
   return self.intpr().allocator();
@@ -109,27 +194,6 @@ pub fn source(self: *@This()) *const model.Source {
   return self.lexer.walker.source;
 }
 
-pub fn parseFile(
-  self: *@This(),
-  path: []const u8,
-  locator: model.Locator,
-  context: *Interpreter,
-) !*model.Node {
-  const file = try std.fs.cwd().openFile(path, .{});
-  defer file.close();
-  const file_contents = try std.fs.cwd().readFileAlloc(
-    self.allocator(), path, (try file.stat()).size + 4);
-  std.mem.copy(
-    u8, file_contents[(file_contents.len - 4)..], "\x04\x04\x04\x04");
-  return self.parseSource(&model.Source{
-      .content = file_contents,
-      .offsets = .{.line = 0, .column = 0},
-      .name = path,
-      .locator = locator,
-      .locator_ctx = locator.parent()
-    }, context);
-}
-
 fn pushLevel(self: *@This(), fullast: bool) !void {
   if (self.levels.items.len > 0) {
     std.debug.assert(self.curLevel().command.info != .unknown);
@@ -141,76 +205,6 @@ fn pushLevel(self: *@This(), fullast: bool) !void {
     .sym_start = self.intpr().symbols.items.len,
     .capture   = &.{},
   });
-}
-
-/// retrieves the next valid token from the lexer.
-/// emits errors for any invalid token along the way.
-pub fn advance(self: *@This()) void {
-  while (true) {
-    self.cur_start = self.lexer.recent_end;
-    (switch (self.lexer.next() catch blk: {
-      const start = self.cur_start;
-      const next = while (true) {
-        break self.lexer.next() catch continue;
-      } else unreachable;
-      self.logger().InvalidUtf8Encoding(self.lexer.walker.posFrom(start));
-      break :blk next;
-    }) {
-      // the following errors are not handled here since they indicate
-      // structure:
-      //   missing_block_name_sep (ends block name)
-      //   wrong_call_id, skipping_call_id (end a call)
-      //
-      .illegal_code_point => errors.Handler.IllegalCodePoint,
-      .illegal_opening_parenthesis =>
-        errors.Handler.IllegalOpeningParenthesis,
-      .illegal_blocks_start_in_args =>
-        errors.Handler.IllegalBlocksStartInArgs,
-      .illegal_command_char => errors.Handler.IllegalCommandChar,
-      .illegal_characters => errors.Handler.IllegalCharacters,
-      .mixed_indentation => errors.Handler.MixedIndentation,
-      .illegal_indentation => errors.Handler.IllegalIndentation,
-      .illegal_content_at_header => errors.Handler.IllegalContentAtHeader,
-      .invalid_end_command => errors.Handler.InvalidEndCommand,
-      .comment => continue,
-      else => |t| {
-        self.cur = t;
-        break;
-      }
-    })(self.logger(), self.lexer.walker.posFrom(self.cur_start));
-  }
-}
-
-/// retrieves the next token from the lexer. true iff that token is valid.
-/// if false is returned, self.cur is to be considered undefined.
-pub fn getNext(self: *@This()) bool {
-  self.cur_start = self.lexer.recent_end;
-  (switch (self.lexer.next() catch {
-    self.logger().InvalidUtf8Encoding(
-      self.lexer.walker.posFrom(self.cur_start));
-    return false;
-  }) {
-    .missing_block_name_sep => errors.Handler.MissingBlockNameEnd,
-    .illegal_code_point => errors.Handler.IllegalCodePoint,
-    .illegal_opening_parenthesis => errors.Handler.IllegalOpeningParenthesis,
-    .illegal_blocks_start_in_args => errors.Handler.IllegalBlocksStartInArgs,
-    .illegal_command_char => errors.Handler.IllegalCommandChar,
-    .illegal_characters => errors.Handler.IllegalCharacters,
-    .mixed_indentation => errors.Handler.MixedIndentation,
-    .illegal_indentation => errors.Handler.IllegalIndentation,
-    .illegal_content_at_header => errors.Handler.IllegalContentAtHeader,
-    .invalid_end_command => errors.Handler.InvalidEndCommand,
-    .no_block_call_id => unreachable,
-    .wrong_call_id => unreachable,
-    .skipping_call_id => unreachable,
-    else => |t| {
-      if (@enumToInt(t) > @enumToInt(model.Token.skipping_call_id))
-        unreachable;
-      self.cur = t;
-      return true;
-    }
-  })(self.logger(), self.lexer.walker.posFrom(self.cur_start));
-  return false;
 }
 
 fn leaveLevel(self: *@This()) !void {
@@ -226,28 +220,33 @@ fn curLevel(self: *@This()) *ContentLevel {
 }
 
 pub fn procRootStart(self: *@This(), implicit_fullast: bool) !void {
-  while (self.cur == .space or self.cur == .indent) self.advance();
   try self.pushLevel(implicit_fullast);
-  self.state = .default;
+  self.state = .start;
 }
 
-fn procStart(self: *@This()) !void {
-  while (self.cur == .space or self.cur == .indent) self.advance();
-  try self.pushLevel(self.curLevel().fullast);
-  self.state = .default;
+fn procStart(self: *@This(), cur: model.TokenAt) !bool {
+  if (cur.isIn(.{.space, .indent, .ws_break})) return true;
+  self.state =
+    if (self.curLevel().syntax_proc != null) .special else .default;
+  return false;
 }
 
-fn procPossibleStart(self: *@This()) !void {
-  while (self.cur == .space) self.advance();
-  if (self.cur == .list_end) {
-    self.state = .after_list;
-  } else {
-    try self.pushLevel(self.curLevel().fullast);
-    self.state = .default;
+fn procPossibleStart(self: *@This(), cur: model.TokenAt) !bool {
+  switch (cur.token) {
+    .space => return true,
+    .list_end => {
+      try self.endList();
+      return true;
+    },
+    else => {
+      try self.pushLevel(self.curLevel().fullast);
+      self.state = .default;
+      return false;
+    },
   }
 }
 
-fn procEndSource(self: *@This()) !void {
+fn procEndSource(self: *@This(), cur: model.TokenAt) !void {
   while (self.levels.items.len > 1) {
     try self.leaveLevel();
     const parent = self.curLevel();
@@ -255,28 +254,28 @@ fn procEndSource(self: *@This()) !void {
       const spos = parent.command.mapper().subject_pos;
       if (self.lexer.paren_depth > 0) {
         self.logger().MissingClosingParenthesis(
-          self.lexer.walker.posFrom(self.cur_start));
+          self.lexer.walker.posFrom(cur.start));
       } else {
         const name =
           if (spos.end.byte_offset - spos.start.byte_offset > 0)
             self.lexer.walker.contentIn(spos) else "<unnamed>";
         self.logger().MissingEndCommand(
           name, parent.command.mapper().subject_pos,
-          self.lexer.walker.posFrom(self.cur_start));
+          self.lexer.walker.posFrom(cur.start));
       }
     }
     try parent.command.shift(
-      self.intpr(), self.source(), self.cur_start, parent.fullast);
+      self.intpr(), self.source(), cur.start, parent.fullast);
     try parent.append(self.intpr(), parent.command.info.unknown);
   }
 }
 
-fn procSymref(self: *@This()) !void {
+fn procSymref(self: *@This(), cur: model.TokenAt) !void {
   self.curLevel().command = .{
-    .start = self.cur_start,
+    .start = cur.start,
     .info = .{
       .unknown = try self.intpr().resolveSymbol(
-        self.lexer.walker.posFrom(self.cur_start),
+        self.lexer.walker.posFrom(cur.start),
         self.lexer.ns,
         std.unicode.utf8CodepointSequenceLength(
           self.lexer.code_point) catch unreachable,
@@ -286,90 +285,65 @@ fn procSymref(self: *@This()) !void {
     .cur_cursor = undefined,
   };
   self.state = .command;
-  self.advance();
 }
 
-fn procLeaveArg(self: *@This()) !void {
-  try self.leaveLevel();
-  if (self.cur == .comma) {
-    self.advance();
-    self.state = .start;
-  } else self.state = .after_list;
+fn procParagraphEnd(self: *@This()) void {
+  self.state = .after_paragraph_sep;
+  self.curLevel().dangling = .{.parsep = self.lexer.newline_count};
 }
 
-fn procParagraphEnd(self: *@This()) !void {
-  const newline_count = self.lexer.newline_count;
-  self.advance();
-  if (self.cur != .block_end_open and self.cur != .end_source) {
-    self.curLevel().dangling = .{.parsep = newline_count};
+fn procAfterParagraphSep(self: *@This(), cur: model.TokenAt) void {
+  if (cur.isIn(.{.block_end_open, .end_source})) {
+    self.curLevel().dangling = .none;
   }
+  self.state = .default;
 }
 
-/// skip over possible block configuration, including swallow spec.
-/// used for top-level block names that do not correspond to a call.
-fn skipOverBlockConfig(self: *@This()) !void {
-  self.advance();
-  var colon_start: ?model.Position = null;
-  var buffer: model.BlockConfig = undefined;
-  const check_pipe = if (self.cur == .diamond_open) blk: {
-    try BlockConfig.init(
-      &buffer, self.allocator(), self).parse();
-    if (self.cur == .blocks_sep) {
-      colon_start = self.lexer.walker.posFrom(self.cur_start);
-      self.advance();
-      break :blk true;
-    } else break :blk false;
-  } else true;
-  const check_swallow = if (check_pipe) if (self.cur == .pipe) blk: {
-    try PipeCapture.init(self, self.curLevel()).parse();
-    if (self.cur == .blocks_sep) {
-      colon_start = self.lexer.walker.posFrom(self.cur_start);
-      self.advance();
-      break :blk true;
-    } else break :blk false;
-  } else true else false;
-  if (check_swallow) _ = self.checkSwallow(colon_start);
-}
-
-fn finishSwallowing(self: *@This()) !void {
+fn finishSwallowing(self: *@This(), at: model.Cursor) !void {
   var parent = &self.levels.items[self.levels.items.len - 2];
   while (parent.command.swallow_depth != null) {
     // end level that is swallowed
     try self.leaveLevel();
     // finalize swallowing command
     try parent.command.shift(
-      self.intpr(), self.source(), self.cur_start, parent.fullast);
+      self.intpr(), self.source(), at, parent.fullast);
     try parent.append(self.intpr(), parent.command.info.unknown);
 
     parent = &self.levels.items[self.levels.items.len - 2];
   }
 }
 
-fn procBlockNameStart(self: *@This()) !void {
-  try self.finishSwallowing();
+fn procBlockNameStartColon(self: *@This(), cur: model.TokenAt) !void {
+  try self.finishSwallowing(cur.start);
+  self.stored_cursor = null;
+  self.state = .block_name_start;
+}
 
+fn procBlockNameStart(self: *@This(), cur: model.TokenAt) !void {
+  if (cur.token == .space) return;
   if (self.levels.items.len == 1) {
-    const start = self.cur_start;
-    while (true) {
-      self.advance();
-      if (
-        self.cur == .block_name_sep or
-        self.cur == .missing_block_name_sep
-      ) break;
-    }
-    if (self.cur == .block_name_sep) {
-      try self.skipOverBlockConfig();
-    } else self.advance();
-    self.logger().BlockNameAtTopLevel(self.lexer.walker.posFrom(start));
+    self.stored_cursor = cur.start;
+    self.state = .skip_block_name;
   } else {
     try self.leaveLevel();
+    switch (cur.token) {
+      .identifier => {
+        self.block_name = .{.simple = .{
+          .name = self.lexer.walker.contentFrom(cur.start.byte_offset),
+          .pos  = self.lexer.walker.posFrom(cur.start),
+        }};
+        self.stored_cursor = null;
+      },
+      else => {
+        self.block_name = .none;
+        self.stored_cursor = cur.start;
+      },
+    }
     self.state = .block_name;
   }
 }
 
-fn enterBlockNameExpr(self: *@This(), valid: bool) !void {
-  const start = self.cur_start;
-  while (self.cur == .space) self.advance();
+fn enterBlockNameExpr(self: *@This(), valid: bool, start: model.Cursor) !void {
   try self.pushLevel(self.curLevel().fullast);
   const lvl = self.curLevel();
   lvl.start = start;
@@ -379,7 +353,7 @@ fn enterBlockNameExpr(self: *@This(), valid: bool) !void {
   // pushed node instead. The assignment mapper is used because it handles
   // multiple values just like we want it here, with error messages.
   lvl.command = .{
-    .start      = self.cur_start,
+    .start      = start,
     .info       = .{
       .unknown =
         try self.intpr().node_gen.@"void"(self.source().at(start)),
@@ -390,176 +364,180 @@ fn enterBlockNameExpr(self: *@This(), valid: bool) !void {
   self.state = .possible_start;
 }
 
-fn procBlockNameExprStart(self: *@This()) !void {
-  try self.finishSwallowing();
+fn procBlockNameExprStart(self: *@This(), cur: model.TokenAt) !void {
+  try self.finishSwallowing(cur.start);
 
   const valid = if (self.levels.items.len > 1) blk: {
     try self.leaveLevel();
     break :blk true;
   } else false;
-  self.advance();
-  try self.enterBlockNameExpr(valid);
+  try self.enterBlockNameExpr(valid, self.lexer.recent_end);
 }
 
-fn procEndCommand(self: *@This()) !void {
-  try self.finishSwallowing();
+fn procEndCommandToken(self: *@This(), cur: model.TokenAt) !void {
+  try self.finishSwallowing(cur.start);
 
-  self.advance();
-  const do_shift = switch (self.cur) {
-    .call_id => blk: {
+  self.state = .end_command;
+}
+
+fn procEndCommand(self: *@This(), cur: model.TokenAt) !void {
+  switch (cur.token) {
+    .space => {},
+    .call_id => {
       try self.leaveLevel();
-      break :blk true;
+      self.state = .expect_end_command_end;
     },
-    .wrong_call_id => blk: {
+    .wrong_call_id => {
       const cmd_start =
         self.levels.items[self.levels.items.len - 2].command.start;
       self.logger().WrongCallId(
-        self.lexer.walker.posFrom(self.cur_start),
+        self.lexer.walker.posFrom(cur.start),
         self.lexer.recent_expected_id, self.lexer.recent_id,
         self.source().at(cmd_start));
       try self.leaveLevel();
-      break :blk true;
+      self.state = .expect_end_command_end;
     },
-    .no_block_call_id => blk: {
-      self.logger().NoBlockToEnd(self.lexer.walker.posFrom(self.cur_start));
-      break :blk false;
+    .no_block_call_id => {
+      self.logger().NoBlockToEnd(self.lexer.walker.posFrom(cur.start));
+      self.state = .expect_end_command_end_stop;
     },
-    else => blk: {
-      std.debug.assert(@enumToInt(self.cur) >=
+    else => {
+      std.debug.assert(@enumToInt(cur.token) >=
         @enumToInt(model.Token.skipping_call_id));
       const cmd_start =
         self.levels.items[self.levels.items.len - 2].command.start;
       self.logger().SkippingCallId(
-        self.lexer.walker.posFrom(self.cur_start),
+        self.lexer.walker.posFrom(cur.start),
         self.lexer.recent_expected_id, self.lexer.recent_id,
         self.source().at(cmd_start));
-      const num_skipped = model.Token.numSkippedEnds(self.cur);
+      const num_skipped = model.Token.numSkippedEnds(cur.token);
       var i: u32 = 0; while (i < num_skipped) : (i += 1) {
         try self.leaveLevel();
         const lvl = self.curLevel();
         try lvl.command.shift(
-          self.intpr(), self.source(), self.cur_start, lvl.fullast);
+          self.intpr(), self.source(), cur.start, lvl.fullast);
         try lvl.append(self.intpr(), lvl.command.info.unknown);
       }
       try self.leaveLevel();
-      break :blk true;
+      self.state = .expect_end_command_end;
+    },
+  }
+}
+
+fn procExpectEndCommandEnd(self: *@This(), cur: model.TokenAt) !bool {
+  const ret = switch (cur.token) {
+    .space => return true,
+    .list_end => true,
+    else => blk: {
+      self.logger().MissingClosingParenthesis(self.source().at(cur.start));
+      break :blk false;
     },
   };
-  self.advance();
-  if (self.cur == .list_end) {
-    self.advance();
-  } else {
-    self.logger().MissingClosingParenthesis(self.source().at(self.cur_start));
-  }
-  if (do_shift) {
-    self.state = .command;
-    try self.curLevel().command.shift(
-      self.intpr(), self.source(), self.cur_start, self.curLevel().fullast);
-  }
+  self.state = .command;
+  try self.curLevel().command.shift(
+    self.intpr(), self.source(), cur.start, self.curLevel().fullast);
+  return ret;
 }
 
-fn procIllegalNameSep(self: *@This()) void {
-  self.logger().IllegalNameSep(self.lexer.walker.posFrom(self.cur_start));
-  self.advance();
-}
-
-fn procIdSet(self: *@This()) void {
-  self.state = .before_id;
-  self.advance();
-}
-
-fn procTextual(self: *@This()) !void {
-  var content: std.ArrayListUnmanaged(u8) = .{};
-  var non_space_len: usize = 0;
-  var non_space_line_len: usize = 0;
-  var non_space_end: model.Cursor = undefined;
-  const textual_start = self.cur_start;
-  while (true) {
-    switch (self.cur) {
-      .space =>
-        try content.appendSlice(self.allocator(),
-            self.lexer.walker.contentFrom(self.cur_start.byte_offset)),
-      .literal => {
-        try content.appendSlice(self.allocator(),
-            self.lexer.walker.contentFrom(self.cur_start.byte_offset));
-        non_space_len = content.items.len;
-        non_space_line_len = non_space_len;
-        non_space_end = self.lexer.recent_end;
-      },
-      .ws_break => {
-        // dump whitespace before newline
-        content.shrinkRetainingCapacity(non_space_line_len);
-        try content.append(self.allocator(), '\n');
-        non_space_line_len = content.items.len;
-      },
-      .escape => {
-        try content.appendSlice(self.allocator(), self.lexer.recent_id);
-        non_space_len = content.items.len;
-        non_space_line_len = non_space_len;
-        non_space_end = self.lexer.recent_end;
-      },
-      .indent => {},
-      .comment => {
-        // dump whitespace before comment
-        content.shrinkRetainingCapacity(non_space_line_len);
-      },
-      else => break
-    }
-    if (!self.getNext()) {
-      self.advance();
-      break;
-    }
-  }
-  const lvl = self.curLevel();
-  const pos = switch (self.cur) {
-    .block_end_open, .block_name_sep, .comma, .name_sep, .list_start, .list_end,
-    .list_end_missing_colon, .end_source => blk: {
-      content.shrinkAndFree(self.allocator(), non_space_len);
-      break :blk self.source().between(textual_start, non_space_end);
-    },
-    else => self.lexer.walker.posFrom(textual_start),
-  };
-  if (content.items.len > 0) {
-    if (self.cur == .name_sep) {
-      const parent = &self.levels.items[self.levels.items.len - 2];
-      if (
-        lvl.nodes.items.len > 0 or
-        parent.command.cur_cursor != .not_pushed
-      ) {
-        self.logger().IllegalNameSep(
-          self.lexer.walker.posFrom(self.cur_start));
-        self.advance();
-      } else {
-        try parent.command.pushName(
-          pos, content.items,
-          self.lexer.walker.before.byte_offset - self.cur_start.byte_offset
-            == 2, .flow);
-        while (true) {
-          self.advance();
-          if (self.cur != .space) break;
-        }
-      }
-    } else {
-      const node = (try self.intpr().node_gen.literal(pos,
-        if (non_space_len > 0) .text else .space, content.items
-      )).node();
-      // dangling space will be postponed for the case of a following,
-      // swallowing command that ends the current level.
-      if (non_space_len > 0) try lvl.append(self.intpr(), node)
-      else {
-        switch (lvl.dangling) {
-          .space  => unreachable,
-          .parsep => |num_lines| try lvl.pushParagraph(self.intpr(), num_lines),
-          .none   => {},
-        }
-        lvl.dangling = .{.space = node};
-      }
+fn procExpectEndCommandEndStop(self: *@This(), cur: model.TokenAt) bool {
+  switch (cur.token) {
+    .space => return true,
+    .list_end => {
       self.state = .default;
-    }
-  } else self.state = .default; // happens with space at block/arg end
+      return true;
+    },
+    else => {
+      self.logger().MissingClosingParenthesis(self.source().at(cur.start));
+      self.state = .default;
+      return false;
+    },
+  }
 }
 
-fn procCommand(self: *@This()) !void {
+fn procTextual(self: *@This(), cur: model.TokenAt) !bool {
+  switch (cur.token) {
+    .space => try self.text.content.appendSlice(
+      self.allocator(), self.lexer.walker.contentFrom(cur.start.byte_offset)),
+    .literal => {
+      try self.text.content.appendSlice(self.allocator(),
+          self.lexer.walker.contentFrom(cur.start.byte_offset));
+      self.text.non_space_len = self.text.content.items.len;
+      self.text.non_space_line_len = self.text.non_space_len;
+      self.text.non_space_end = self.lexer.recent_end;
+    },
+    .ws_break => {
+      // dump whitespace before newline
+      self.text.content.shrinkRetainingCapacity(
+        self.text.non_space_line_len);
+      try self.text.content.append(self.allocator(), '\n');
+      self.text.non_space_line_len = self.text.content.items.len;
+    },
+    .escape => {
+      try self.text.content.appendSlice(
+        self.allocator(), self.lexer.recent_id);
+      self.text.non_space_len = self.text.content.items.len;
+      self.text.non_space_line_len = self.text.non_space_len;
+      self.text.non_space_end = self.lexer.recent_end;
+    },
+    .indent => {},
+    .comment => {
+      // dump whitespace before comment
+      self.text.content.shrinkRetainingCapacity(self.text.non_space_line_len);
+    },
+    else => {
+      const lvl = self.curLevel();
+      const pos = switch (cur.token) {
+        .block_end_open, .block_name_sep, .comma, .name_sep, .list_start,
+        .list_end, .list_end_missing_colon, .end_source => blk: {
+          self.text.content.shrinkAndFree(
+            self.allocator(), self.text.non_space_len);
+          break :blk self.source().between(
+            self.text.start, self.text.non_space_end);
+        },
+        else => self.lexer.walker.posFrom(self.text.start),
+      };
+      if (self.text.content.items.len > 0) {
+        if (cur.token == .name_sep) {
+          const parent = &self.levels.items[self.levels.items.len - 2];
+          if (
+            lvl.nodes.items.len > 0 or
+            parent.command.cur_cursor != .not_pushed
+          ) {
+            self.logger().IllegalNameSep(self.lexer.walker.posFrom(cur.start));
+          } else {
+            try parent.command.pushName(
+              pos, self.text.content.items,
+              self.lexer.walker.before.byte_offset - cur.start.byte_offset
+                == 2, .flow);
+            self.state = .start;
+          }
+          return true;
+        } else {
+          const node = (try self.intpr().node_gen.literal(pos,
+            if (self.text.non_space_len > 0) .text else .space,
+            self.text.content.items
+          )).node();
+          // dangling space will be postponed for the case of a following,
+          // swallowing command that ends the current level.
+          if (self.text.non_space_len > 0) try lvl.append(self.intpr(), node)
+          else {
+            switch (lvl.dangling) {
+              .space  => unreachable,
+              .parsep => |num_lines| try lvl.pushParagraph(self.intpr(), num_lines),
+              .none   => {},
+            }
+            lvl.dangling = .{.space = node};
+          }
+          self.state = .default;
+        }
+      } else self.state = .default; // happens with space at block/arg end
+      return false;
+    },
+  }
+  return true;
+}
+
+fn procCommand(self: *@This(), cur: model.TokenAt) !bool {
   var lvl = self.curLevel();
   while (true) switch (lvl.command.info.unknown.data) {
     .import => |*import| {
@@ -580,7 +558,7 @@ fn procCommand(self: *@This()) !void {
         .pushed_param => unreachable,
         .loaded => |module| {
           // if the import is not called, generate an implicit call
-          if (self.cur != .list_start and self.cur != .blocks_sep) {
+          if (!cur.isIn(.{.list_start, .blocks_sep})) {
             if (module.root != null) {
               lvl.command.info.unknown = (
                 try self.intpr().node_gen.uCall(import.node().pos, .{
@@ -631,53 +609,14 @@ fn procCommand(self: *@This()) !void {
     },
     else => break,
   };
-  switch (self.cur) {
+  switch (cur.token) {
     .access => {
-      const start = self.lexer.recent_end;
-      self.advance();
-      lvl.command.info.unknown = if (self.cur == .identifier) blk: {
-        const name_node = try self.intpr().node_gen.literal(
-          self.lexer.walker.posFrom(start), .text, self.lexer.recent_id);
-        const access_node = try self.intpr().node_gen.uAccess(
-          self.lexer.walker.posFrom(lvl.command.info.unknown.pos.start),
-          lvl.command.info.unknown,
-          name_node.node(),
-          self.lexer.ns,
-        );
-        self.advance();
-        break :blk access_node.node();
-      } else blk: {
-        self.logger().MissingSymbolName(self.source().at(self.cur_start));
-        break :blk try self.intpr().node_gen.poison(
-          self.lexer.walker.posFrom(lvl.command.info.unknown.pos.start));
-      };
+      self.state = .access;
+      return true;
     },
     .assign => {
-      const start = self.lexer.recent_end;
-      self.advance();
-      switch (self.cur) {
-        .list_start => self.state = .start,
-        .blocks_sep => self.state = .after_blocks_start,
-        .closer => {
-          self.logger().AssignmentWithoutExpression(
-            self.lexer.walker.posFrom(lvl.command.info.unknown.pos.start));
-          self.state = .default;
-          self.advance();
-          return;
-        },
-        else => {
-          const pos = model.Position{
-            .source = self.source().meta,
-            .start = lvl.command.info.unknown.pos.start,
-            .end = start,
-          };
-          self.logger().AssignmentWithoutExpression(pos);
-          self.state = .default;
-          return;
-        }
-      }
-      lvl.command.startAssignment(self.intpr());
-      self.advance();
+      self.state = .assign;
+      return true;
     },
     .list_start, .blocks_sep => {
       const target = lvl.command.info.unknown;
@@ -706,440 +645,874 @@ fn procCommand(self: *@This()) !void {
           }
         },
       }
-      self.state =
-        if (self.cur == .list_start) .possible_start else .after_blocks_start;
-      self.advance();
+      if (cur.token == .list_start) {
+        self.state = .possible_start;
+      } else self.startBlockHeader(.{.primary = .{.guaranteed = false}});
+      return true;
     },
     .closer => {
       try lvl.append(self.intpr(), lvl.command.info.unknown);
-      self.advance();
       self.state =
         if (self.curLevel().syntax_proc != null) .special else .default;
+      return true;
     },
     else => {
       try lvl.append(self.intpr(), lvl.command.info.unknown);
       self.state =
         if (self.curLevel().syntax_proc != null) .special else .default;
-    }
+      return false;
+    },
   }
 }
 
-fn procAfterList(self: *@This()) !void {
-  const end = self.lexer.recent_end;
+fn procAccess(self: *@This(), cur: model.TokenAt) !bool {
+  const start = cur.start;
+  const lvl = self.curLevel();
+  if (cur.token == .identifier) {
+    const name_node = try self.intpr().node_gen.literal(
+      self.lexer.walker.posFrom(start), .text, self.lexer.recent_id);
+    const access_node = try self.intpr().node_gen.uAccess(
+      self.lexer.walker.posFrom(lvl.command.info.unknown.pos.start),
+      lvl.command.info.unknown,
+      name_node.node(),
+      self.lexer.ns,
+    );
+    lvl.command.info.unknown = access_node.node();
+    self.state = .command;
+    return true;
+  } else {
+    self.logger().MissingSymbolName(self.source().at(cur.start));
+    lvl.command.info.unknown = try self.intpr().node_gen.poison(
+      self.lexer.walker.posFrom(lvl.command.info.unknown.pos.start));
+    self.state = .default;
+    return false;
+  }
+}
+
+fn procAssign(self: *@This(), cur: model.TokenAt) !bool {
+  const start = cur.start;
+  const lvl = self.curLevel();
+  switch (cur.token) {
+    .list_start => {
+      try self.pushLevel(self.curLevel().fullast);
+      self.state = .start;
+    },
+    .blocks_sep => self.startBlockHeader(.{.primary = .{.guaranteed = false}}),
+    .closer => {
+      self.logger().AssignmentWithoutExpression(
+        self.lexer.walker.posFrom(lvl.command.info.unknown.pos.start));
+      self.state = .default;
+      return true;
+    },
+    else => {
+      const pos = model.Position{
+        .source = self.source().meta,
+        .start = lvl.command.info.unknown.pos.start,
+        .end = start,
+      };
+      self.logger().AssignmentWithoutExpression(pos);
+      self.state = .default;
+      return false;
+    }
+  }
+  lvl.command.startAssignment(self.intpr());
+  return true;
+}
+
+fn endList(self: *@This()) !void {
   const lvl = self.curLevel();
   switch (lvl.semantics) {
-    .default => {
-      self.advance();
-      if (self.cur == .blocks_sep) {
-        // call continues
-        self.state = .after_blocks_start;
-        self.advance();
-      } else {
-        if (lvl.command.checkAutoSwallow()) |swallow_depth| {
-          self.lexer.implicitSwallowOccurred();
-          try self.pushLevel(if (
-            lvl.command.choseAstNodeParam()
-          ) false else lvl.fullast);
-          if (lvl.implicitBlockConfig()) |config| {
-            try self.applyBlockConfig(self.source().at(end), config);
-          }
-          lvl.command.swallow_depth = swallow_depth;
-          try self.closeSwallowing(swallow_depth);
-          while (
-            self.cur == .space or self.cur == .indent or self.cur == .ws_break
-          ) self.advance();
-          self.state = .default;
-        } else {
-          try lvl.command.shift(self.intpr(), self.source(), end, lvl.fullast);
-          self.state = .command;
-        }
-      }
-      return;
-    },
+    .default => self.state = .after_flow_list,
     .discarded_block_name => {
-      if (self.cur == .list_end) {
-        try self.skipOverBlockConfig();
-      } else {
-        self.logger().MissingColon(self.source().at(end));
-      }
       self.logger().BlockNameAtTopLevel(self.lexer.walker.posFrom(lvl.start));
       _ = self.levels.pop();
-      self.state = if (
-        self.curLevel().syntax_proc != null
-      ) .special else .default;
+      self.startBlockHeader(.ignored);
     },
     .block_name => {
-      const node = (
+      self.block_name = .{.node = (
         lvl.command.info.assignment.pushed
       ) orelse (
         try self.intpr().node_gen.@"void"(self.source().at(lvl.command.start))
-      );
+      )};
       _ = self.levels.pop();
-      const parent = self.curLevel();
-      self.advance();
-      try parent.command.pushNameExpr(node, self.cur == .diamond_open);
-      try self.pushLevel(
-        if (parent.command.choseAstNodeParam()) false else parent.fullast);
-      if (!(try self.processBlockHeader(null))) {
-        if (parent.implicitBlockConfig()) |c| {
-          try self.applyBlockConfig(self.source().at(self.cur_start), c);
-        }
-      }
-      while (
-        self.cur == .space or self.cur == .indent or self.cur == .ws_break
-      ) self.advance();
-      self.state =
-        if (self.curLevel().syntax_proc != null) .special else .default;
-    }
+      self.state = .after_block_name;
+    },
   }
 }
 
-fn procAfterBlocksStart(self: *@This()) !void {
-  var pb_exists = PrimaryBlockExists.unknown;
-  if (try self.processBlockHeader(&pb_exists)) {
-    self.state =
-      if (self.curLevel().syntax_proc != null) .special else .default;
-  } else {
-    while (self.cur == .space or self.cur == .indent) self.advance();
-    if (self.cur == .block_name_sep or self.cur == .list_start) {
-      switch (pb_exists) {
-        .unknown => {},
-        .maybe => {
-          const lvl = self.levels.pop();
-          if (lvl.block_config) |c| try self.revertBlockConfig(c.*);
-        },
-        .yes => try self.leaveLevel(),
-      }
-      if (self.cur == .list_start) {
-        self.advance();
-        try self.enterBlockNameExpr(true);
-      } else {
-        self.state = .block_name;
-      }
-    } else {
-      if (pb_exists == .unknown) {
-        const lvl = self.curLevel();
-        // neither explicit nor implicit block config. fullast is thus
-        // inherited except when an AstNode parameter has been chosen.
-        try self.pushLevel(
-          if (lvl.command.choseAstNodeParam()) false else lvl.fullast);
-      }
-      self.state =
-        if (self.curLevel().syntax_proc != null) .special else .default;
-    }
-  }
-}
-
-fn procBlockName(self: *@This()) !void {
-  while (true) {
-    self.advance();
-    if (self.cur != .space) break;
-  }
+fn procAfterBlockName(self: *@This(), cur: model.TokenAt) !void {
   const parent = self.curLevel();
-  if (self.cur == .identifier) {
-    const name = self.lexer.walker.contentFrom(self.cur_start.byte_offset);
-    const name_pos = self.lexer.walker.posFrom(self.cur_start);
-    var recover = false;
-    while (true) {
-      self.advance();
-      if (
-        self.cur == .block_name_sep or
-        self.cur == .missing_block_name_sep
-      ) break;
-      if (self.cur != .space and !recover) {
-        self.logger().ExpectedXGotY(
-          self.lexer.walker.posFrom(self.cur_start),
-          &[_]errors.WrongItemError.ItemDescr{
-            .{.token = .block_name_sep}
-          }, .{.token = self.cur});
-        recover = true;
-      }
-    }
-    if (self.cur == .missing_block_name_sep) {
-      self.logger().MissingBlockNameEnd(self.source().at(self.cur_start));
-    }
-    try parent.command.pushName(name_pos, name, false,
-      if (self.cur == .diamond_open) .block_with_config else .block_no_config
-    );
-  } else {
-    self.logger().ExpectedXGotY(self.source().at(self.cur_start),
-      &[_]errors.WrongItemError.ItemDescr{.{.token = .identifier}},
-      .{.token = self.cur});
-    while (
-      self.cur != .block_name_sep and self.cur != .missing_block_name_sep
-    ) self.advance();
-    parent.command.cur_cursor = .failed;
-  }
-  self.advance();
-  // initialize level with fullast according to chosen param type.
-  // may be overridden by block config in following processBlockHeader.
-  try self.pushLevel(
-    if (parent.command.choseAstNodeParam()) false else parent.fullast);
-  if (!(try self.processBlockHeader(null))) {
-    if (parent.implicitBlockConfig()) |c| {
-      try self.applyBlockConfig(self.source().at(self.cur_start), c);
-    }
-  }
-  while (
-    self.cur == .space or self.cur == .indent or self.cur == .ws_break
-  ) self.advance();
-  self.state = if (
-    self.curLevel().syntax_proc != null
-  ) .special else .default;
-}
-
-fn procBeforeId(self: *@This()) !void {
-  while (self.cur == .space) self.advance();
-  if (self.cur == .call_id) {
-    self.advance();
-  } else {
-    self.logger().MissingId(
-      self.lexer.walker.posFrom(self.cur_start).before());
-  }
-  self.state = .after_id;
-}
-
-fn procAfterId(self: *@This()) !void {
-  while (self.cur == .space) self.advance();
-  switch (self.cur) {
-    .comma => {
-      self.state = .start;
-      self.advance();
-      _ = self.levels.pop();
+  switch (self.block_name) {
+    .simple => |data| {
+      try parent.command.pushName(data.pos, data.name, false,
+        if (cur.token == .diamond_open) .block_with_config else .block_no_config
+      );
     },
-    .list_end, .list_end_missing_colon => {
-      self.state = .after_list;
-      _ = self.levels.pop();
+    .node => |node| {
+      try parent.command.pushNameExpr(node, cur.token == .diamond_open);
     },
-    .end_source => self.state = .default,
-    else => {
-      self.logger().IllegalContentAfterId(
-        self.lexer.walker.posFrom(self.cur_start));
-      const parent = &self.levels.items[self.levels.items.len - 2];
+    .none => {
+      self.logger().MissingBlockName(self.source().at(cur.start));
       parent.command.cur_cursor = .failed;
-      self.state = .default;
-    }
+    },
   }
+  self.startBlockHeader(.named);
 }
 
-fn procSpecial(self: *@This()) !void {
-  const proc = self.curLevel().syntax_proc.?;
-  const result = try switch (self.cur) {
-    .indent => syntaxes.SpecialSyntax.Processor.Action.none,
-    .space =>
-      proc.push(proc, self.lexer.walker.posFrom(self.cur_start), .{
-        .space = self.lexer.walker.contentFrom(self.cur_start.byte_offset)
-      }),
-    .escape =>
-      proc.push(proc, self.lexer.walker.posFrom(self.cur_start),
-        .{.escaped = self.lexer.recent_id}),
-    .identifier =>
-      proc.push(proc, self.lexer.walker.posFrom(self.cur_start),
-        .{.literal = self.lexer.recent_id}),
-    .special =>
-      proc.push(proc, self.lexer.walker.posFrom(self.cur_start),
-        .{.special_char = self.lexer.code_point}),
-    .ws_break, .parsep => {
-      const num_breaks: u16 =
-        if (self.cur == .ws_break) 1 else self.lexer.newline_count;
-      const pos = self.lexer.walker.posFrom(self.cur_start);
-      while (true) {
-        self.advance();
-        if (self.cur != .indent) break;
-      }
-      switch (self.cur) {
-        .end_source, .block_name_sep, .list_start, .block_end_open => {
-          self.state = .default;
-          return;
-        },
-        else => {
-          const res = try proc.push(proc, pos, .{.newlines = num_breaks});
-          std.debug.assert(res == .none);
-          return;
-        },
-      }
-    },
-    .end_source, .symref, .block_name_sep, .list_start, .block_end_open => {
-      self.state = .default;
-      return;
-    },
-    else => std.debug.panic("unexpected token in special: {s}\n",
-        .{@tagName(self.cur)}),
+fn startBlockHeader(self: *@This(), context: anytype) void {
+  self.state = .block_header_start;
+  self.block_header = .{
+    .context       = context,
+    .config        = null,
+    .config_parser = undefined,
+    .captures      = .{},
   };
-  switch (result) {
-    .none => self.advance(),
-    .read_block_header => {
-      const start = self.cur_start;
-      self.lexer.readBlockHeader();
-      const value = try self.intpr().ctx.global().create(model.Value);
-      value.data = .{.block_header = .{}};
-      const bh = &value.data.block_header;
+}
 
-      self.advance();
-      const check_pipe: ?model.Position =
-        if (self.cur == .diamond_open) blk: {
-          bh.config = @as(model.BlockConfig, undefined);
-          try BlockConfig.init(
-            &bh.config.?, self.intpr().ctx.global(), self).parse();
-          if (self.cur == .blocks_sep) {
-            defer self.advance();
-            break :blk self.lexer.walker.posFrom(self.cur_start);
-          } else break :blk null;
-        } else self.source().between(start, self.cur_start);
-      const check_swallow = if (check_pipe) |pos| if (self.cur == .pipe) blk: {
-        try PipeCapture.init(self, self.curLevel()).parse();
-        if (self.cur == .blocks_sep) {
-          defer self.advance();
-          break :blk self.lexer.walker.posFrom(self.cur_start);
-        } else break :blk null;
-      } else pos else null;
-      if (check_swallow) |colon_pos| {
-        bh.swallow_depth = self.checkSwallow(colon_pos);
+fn procAfterFlowList(self: *@This(), cur: model.TokenAt) !bool {
+  if (cur.token == .blocks_sep) {
+    // call continues
+    self.startBlockHeader(.{.primary = .{.guaranteed = false}});
+    return true;
+  } else {
+    const lvl = self.curLevel();
+    if (lvl.command.checkAutoSwallow()) |swallow_depth| {
+      self.lexer.implicitSwallowOccurred();
+      try self.pushLevel(if (
+        lvl.command.choseAstNodeParam()
+      ) false else lvl.fullast);
+      if (lvl.implicitBlockConfig()) |config| {
+        try self.applyBlockConfig(self.source().at(cur.start), config);
       }
-
-      value.origin = self.source().between(start, self.cur_start);
-      _ = try proc.push(proc, value.origin, .{.block_header = bh});
+      lvl.command.swallow_depth = swallow_depth;
+      try self.closeSwallowing(swallow_depth);
+      self.state = .start;
+      return true;
+    } else {
+      try lvl.command.shift(
+        self.intpr(), self.source(), cur.start, lvl.fullast);
+      self.state = .command;
+      return false;
     }
   }
 }
 
-pub fn doParse(self: *@This()) Parser.Error!bool {
-  switch (self.state) {
-    .start          => try self.procStart(),
-    .possible_start => try self.procPossibleStart(),
-    .default        => switch (self.cur) {
-      .space, .escape, .literal, .ws_break => self.state = .textual,
-      .end_source => {
-        try self.procEndSource();
-        return true;
-      },
-      .indent           => self.advance(),
-      .symref           => try self.procSymref(),
-      .list_end, .comma, .list_end_missing_colon => try self.procLeaveArg(),
-      .parsep           => try self.procParagraphEnd(),
-      .block_name_sep   => try self.procBlockNameStart(),
-      .list_start       => try self.procBlockNameExprStart(),
-      .block_end_open   => try self.procEndCommand(),
-      .name_sep         => self.procIllegalNameSep(),
-      .id_set           => self.procIdSet(),
-      else => std.debug.panic(
-        "unexpected token in default: {s} at {}\n",
-        .{@tagName(self.cur), self.cur_start.formatter()}),
-    },
-    .textual            => try self.procTextual(),
-    .command            => try self.procCommand(),
-    .after_list         => try self.procAfterList(),
-    .after_blocks_start => try self.procAfterBlocksStart(),
-    .block_name         => try self.procBlockName(),
-    .before_id          => try self.procBeforeId(),
-    .after_id           => try self.procAfterId(),
-    .special            => try self.procSpecial(),
-  }
+fn procSkipSpace(self: *@This(), cur: model.TokenAt) !bool {
+  if (cur.isIn(.{.space, .indent, .ws_break})) return true;
+  self.state =
+    if (self.curLevel().syntax_proc != null) .special else .default;
   return false;
 }
 
-/// out-value used for processBlockHeader after the initial ':'.
-const PrimaryBlockExists = enum {unknown, maybe, yes};
-
-/// processes the content after a `:` that either started blocks or ended a
-/// block name.
-/// pb_exists shall be non-null iff the ':' starts block parameters (i.e. we
-/// are not after a block name). its initial value shall be .unknown.
-/// the out value of pb_exists indicates the following:
-///   .unknown =>
-///     no level has been pushed since neither explicit nor implicit block
-///     configuration has been encountered. the current level's primary param
-///     has been entered to check for implicit block config.
-///   .maybe =>
-///     level has been pushed and command entered its primary param, but
-///     existence of primary block is not known. This happens if a call target
-///     does have a primary parameter that supplies an implicit block config.
-///     This block config must be activated before reading the block content,
-///     since it may change the lexer's behavior. If there is, in fact, no
-///     primary block, the pushed level is to be discarded.
-///   .yes =>
-///     level has been pushed and command entered its primary param due to
-///     explicit block config.
-///
-/// this func's return value must be interpreted depending on pb_exists:
-/// if pb_exists is null, returns true iff explicit block config has been
-/// encountered. if pb_exists is non-null, returns true iff swallowing has
-/// occurred.
-fn processBlockHeader(self: *@This(), pb_exists: ?*PrimaryBlockExists) !bool {
-  // on named blocks, the new level has already been pushed
-  const parent = &self.levels.items[
-    self.levels.items.len - if (pb_exists == null) @as(usize, 2) else 1];
-  // position of the colon *after* a block header, for additional swallow
-  var colon_start: ?model.Position = null;
-  const check_pipe = if (self.cur == .diamond_open) blk: {
-    const config = try self.allocator().create(model.BlockConfig);
-    try BlockConfig.init(config, self.allocator(), self).parse();
-    const pos = self.source().at(self.cur_start);
-    if (pb_exists) |ind| {
-      try parent.command.pushPrimary(pos, true);
-      try self.pushLevel(
-        if (parent.command.choseAstNodeParam()) false else parent.fullast);
-      ind.* = .yes;
-    }
-    try self.applyBlockConfig(pos, config);
-    if (self.cur == .blocks_sep) {
-      colon_start = self.lexer.walker.posFrom(self.cur_start);
-      self.advance();
-      break :blk true;
-    } else break :blk false;
-  } else true;
-  const check_swallow = if (check_pipe) if (self.cur == .pipe) blk: {
-    if (pb_exists) |ind| if (ind.* == .unknown) {
-      try parent.command.pushPrimary(self.source().at(self.cur_start), true);
-      try self.pushLevel(
-        if (parent.command.choseAstNodeParam()) false else parent.fullast);
-      ind.* = .yes;
-    };
-    try PipeCapture.init(self, self.curLevel()).parse();
-    if (self.cur == .blocks_sep) {
-      colon_start = self.lexer.walker.posFrom(self.cur_start);
-      self.advance();
-      break :blk true;
-    } else break :blk false;
-  } else true else false;
-  if (check_swallow) {
-    if (self.checkSwallow(colon_start)) |swallow_depth| {
-      if (pb_exists) |ind| {
-        if (ind.* == .unknown) {
-          try parent.command.pushPrimary(
-            self.source().at(self.cur_start), false);
-          try self.pushLevel(if (
-            parent.command.choseAstNodeParam()
-          ) false else parent.fullast);
-          if (parent.implicitBlockConfig()) |c| {
-            try self.applyBlockConfig(
-              self.source().at(self.cur_start), c);
-          }
-        }
-        ind.* = .yes;
+fn procPossiblePrimary(self: *@This(), cur: model.TokenAt) !bool {
+  switch (cur.token) {
+    .space, .indent => return true,
+    .block_name_sep, .list_start => {
+      const lvl = self.levels.pop();
+      if (lvl.block_config) |c| try self.revertBlockConfig(c.*);
+      if (cur.token == .block_name_sep) {
+        self.state = .block_name;
+      } else {
+        try self.enterBlockNameExpr(true, self.lexer.recent_end);
       }
-      parent.command.swallow_depth = swallow_depth;
-      try self.closeSwallowing(swallow_depth);
+      return true;
+    },
+    else => {
+      self.state = .start;
+      return false;
+    },
+  }
+}
 
-      while (
-        self.cur == .space or self.cur == .indent or self.cur == .ws_break
-      ) self.advance();
-      return if (pb_exists == null) (
-        self.curLevel().block_config != null
-      ) else true;
-    } else if (pb_exists) |ind| {
-      if (ind.* == .unknown) {
-        try parent.command.pushPrimary(self.source().at(self.cur_start), false);
-        if (parent.implicitBlockConfig()) |c| {
-          ind.* = .maybe;
-          try self.pushLevel(if (parent.command.choseAstNodeParam()) false
-                              else parent.fullast);
-          try self.applyBlockConfig(self.source().at(self.cur_start), c);
-        }
-      }
+fn procBlockName(self: *@This(), cur: model.TokenAt) void {
+  switch (cur.token) {
+    .space => return,
+    .block_name_sep => {},
+    .missing_block_name_sep => {
+      self.logger().MissingBlockNameEnd(self.source().at(cur.start));
+    },
+    else => {
+      if (self.stored_cursor == null) self.stored_cursor = cur.start;
+      return;
+    },
+  }
+  if (self.stored_cursor) |start| {
+    self.logger().IllegalContentInBlockName(self.lexer.walker.posFrom(start));
+  }
+  self.state = .after_block_name;
+}
+
+fn procSkipBlockName(self: *@This(), cur: model.TokenAt) void {
+  if (cur.token == .space) return;
+  self.logger().BlockNameAtTopLevel(
+    self.lexer.walker.posFrom(self.stored_cursor.?));
+  switch (cur.token) {
+    else => unreachable,
+    .block_name_sep => self.startBlockHeader(.ignored),
+    .missing_block_name_sep => {
+      self.logger().MissingBlockNameEnd(self.source().at(cur.start));
+      self.state = .default;
+    },
+  }
+}
+
+fn procBeforeId(self: *@This(), cur: model.TokenAt) !bool {
+  switch (cur.token) {
+    .space   => return true,
+    .call_id => {
+      self.state = .after_id;
+      return true;
+    },
+    else => {
+      self.logger().MissingId(self.lexer.walker.posFrom(cur.start).before());
+      self.state = .after_id;
+      return false;
+    },
+  }
+}
+
+fn procAfterId(self: *@This(), cur: model.TokenAt) !bool {
+  switch (cur.token) {
+    .space => return true,
+    .comma => {
+      self.state = .start;
+      _ = self.levels.pop();
+      try self.pushLevel(self.curLevel().fullast);
+      return true;
+    },
+    .list_end => {
+      _ = self.levels.pop();
+      try self.endList();
+      return true;
+    },
+    .list_end_missing_colon => {
+      self.logger().MissingColon(self.source().at(cur.start));
+      _ = self.levels.pop();
+      try self.endList();
+      return true;
+    },
+    .end_source => {
+      self.state = .default;
+      return false;
+    },
+    else => {
+      self.logger().IllegalContentAfterId(
+        self.lexer.walker.posFrom(cur.start));
+      const parent = &self.levels.items[self.levels.items.len - 2];
+      parent.command.cur_cursor = .failed;
+      self.state = .default;
+      return true;
+    },
+  }
+}
+
+fn procSpecial(self: *@This(), cur: model.TokenAt) !bool {
+  const proc = self.curLevel().syntax_proc.?;
+  const result = try switch (cur.token) {
+    .indent => syntaxes.SpecialSyntax.Processor.Action.none,
+    .space, .ws_break, .parsep => {
+      self.enterSpecialWhitespace();
+      return false;
+    },
+    .escape =>
+      proc.push(proc, self.lexer.walker.posFrom(cur.start),
+        .{.escaped = self.lexer.recent_id}),
+    .identifier =>
+      proc.push(proc, self.lexer.walker.posFrom(cur.start),
+        .{.literal = self.lexer.recent_id}),
+    .special =>
+      proc.push(proc, self.lexer.walker.posFrom(cur.start),
+        .{.special_char = self.lexer.code_point}),
+    .end_source, .symref, .block_name_sep, .list_start, .block_end_open => {
+      self.state = .default;
+      return false;
+    },
+    else => std.debug.panic("unexpected token in special: {s}\n",
+      .{@tagName(cur.token)}),
+  };
+  switch (result) {
+    .none => {},
+    .read_block_header => {
+      const value = try self.intpr().ctx.global().create(model.Value);
+      value.origin.start = cur.start;
+      value.data = .{.block_header = .{}};
+      const bh = &value.data.block_header;
+      self.startBlockHeader(.{.push_to_syntax = bh});
     }
   }
-  return if (pb_exists == null) self.curLevel().block_config != null else false;
+  return true;
+}
+
+fn enterSpecialWhitespace(self: *@This()) void {
+  self.state = .special_after_space;
+  self.special = .{
+    .newlines   = 0,
+    .nl_pos     = undefined,
+    .whitespace = &.{},
+    .ws_pos     = undefined,
+  };
+}
+
+fn procSpecialAfterSpace(self: *@This(), cur: model.TokenAt) !bool {
+  switch (cur.token) {
+    .comment => {
+      if (self.special.newlines == 0) {
+        self.state = .special;
+      } else {
+        self.special.whitespace = &.{};
+      }
+      return true;
+    },
+    .space => {
+      std.debug.assert(self.special.whitespace.len == 0);
+      self.special.whitespace =
+        self.lexer.walker.contentFrom(cur.start.byte_offset);
+      self.special.ws_pos = self.lexer.walker.posFrom(cur.start);
+      return true;
+    },
+    .ws_break, .parsep => {
+      self.special.whitespace = &.{};
+      self.special.newlines =
+        if (cur.token == .ws_break) 1 else self.lexer.newline_count;
+      self.special.nl_pos = self.lexer.walker.posFrom(cur.start);
+      return true;
+    },
+    .end_source, .block_name_sep, .list_start, .block_end_open => {
+      self.state = .special;
+      return false;
+    },
+    else => {
+      const proc = self.curLevel().syntax_proc.?;
+      if (self.special.newlines > 0) {
+        const res = try proc.push(proc, self.special.nl_pos,
+          .{.newlines = self.special.newlines});
+        std.debug.assert(res == .none);
+      }
+      if (self.special.whitespace.len > 0) {
+        const res = try proc.push(proc, self.special.ws_pos,
+          .{.space = self.special.whitespace});
+        std.debug.assert(res == .none);
+      }
+      self.state = .special;
+      return false;
+    }
+  }
+}
+
+pub fn push(
+  self: *@This(),
+  cur: model.TokenAt,
+) Parser.Error!bool {
+  while (true) {
+    const prev_state = self.state;
+    switch (self.state) {
+    .start            => if (try self.procStart(cur))           return false,
+    .possible_start   => if (try self.procPossibleStart(cur))   return false,
+    .possible_primary => if (try self.procPossiblePrimary(cur)) return false,
+    .default        => switch (cur.token) {
+      .space, .escape, .literal, .ws_break => {
+        self.state = .textual;
+        self.text = .{.start = cur.start};
+      },
+      .end_source => {
+        try self.procEndSource(cur);
+        return true;
+      },
+      .indent           => return false,
+      .symref           => {
+        try self.procSymref(cur);
+        return false;
+      },
+      .comma => {
+        try self.leaveLevel();
+        try self.pushLevel(self.curLevel().fullast);
+        self.state = .start;
+        return false;
+      },
+      .list_end => {
+        try self.leaveLevel();
+        try self.endList();
+        return false;
+      },
+      .list_end_missing_colon => {
+        try self.leaveLevel();
+        self.logger().MissingColon(self.source().at(cur.start));
+        try self.endList();
+        return false;
+      },
+      .parsep           => {
+        self.procParagraphEnd();
+        return false;
+      },
+      .block_name_sep   => {
+        try self.procBlockNameStartColon(cur);
+        return false;
+      },
+      .list_start       => {
+        try self.procBlockNameExprStart(cur);
+        return false;
+      },
+      .block_end_open   => {
+        try self.procEndCommandToken(cur);
+        return false;
+      },
+      .name_sep         => {
+        self.logger().IllegalNameSep(self.lexer.walker.posFrom(cur.start));
+        return false;
+      },
+      .id_set           => {
+        self.state = .before_id;
+        return false;
+      },
+      else => std.debug.panic(
+        "unexpected token in default: {s} at {}\n",
+        .{@tagName(cur.token), cur.start.formatter()}),
+    },
+    .textual            => if (try self.procTextual(cur)) return false,
+    .command            => if (try self.procCommand(cur)) return false,
+    .after_flow_list    => if (try self.procAfterFlowList(cur)) return false,
+    .after_block_name   => {
+      try self.procAfterBlockName(cur);
+      return false;
+    },
+    .after_paragraph_sep => self.procAfterParagraphSep(cur),
+    .block_name_start   => {
+      try self.procBlockNameStart(cur);
+      return false;
+    },
+    .block_name         => self.procBlockName(cur),
+    .skip_block_name    => {
+      self.procSkipBlockName(cur);
+      return false;
+    },
+    .before_id          => if (try self.procBeforeId(cur)) return false,
+    .after_id           => if (try self.procAfterId(cur)) return false,
+    .end_command        => {
+      try self.procEndCommand(cur);
+      return false;
+    },
+    .expect_end_command_end => {
+      if (try self.procExpectEndCommandEnd(cur)) return false;
+    },
+    .expect_end_command_end_stop => {
+      if (self.procExpectEndCommandEndStop(cur)) return false;
+    },
+    .access => if (try self.procAccess(cur)) return false,
+    .assign => if (try self.procAssign(cur)) return false,
+    .special            => if (try self.procSpecial(cur)) return false,
+    .special_after_space=> if (try self.procSpecialAfterSpace(cur))return false,
+    .block_header_start => if (try self.procBlockHeaderStart(cur)) return false,
+    .block_config_start => if (try self.procBlockConfigStart(cur)) return false,
+    .block_config_csym  => if (try self.procBlockConfigCsym(cur))  return false,
+    .block_config_syntax=> if (try self.procBlockConfigSyntax(cur))return false,
+    .block_config_map   => if (try self.procBlockConfigMap(cur))   return false,
+    .block_config_map_arg =>
+      if (try self.procBlockConfigMapArg(cur)) return false,
+    .block_config_off   => if (try self.procBlockConfigOff(cur))   return false,
+    .block_config_empty => if (try self.procBlockConfigEmpty(cur)) return false,
+    .block_config_after_item =>
+      if (try self.procBlockConfigAfterItem(cur)) return false,
+    .after_block_config => if (try self.procAfterBlockConfig(cur)) return false,
+    .block_capture_start=> if (try self.procBlockCaptureStart(cur))return false,
+    .block_capture      => if (try self.procBlockCapture(cur))     return false,
+    .block_swallow_depth=> if (try self.procBlockSwallowDepth(cur))return false,
+    }
+    std.debug.assert(self.state != prev_state);
+  }
+}
+
+fn procBlockHeaderStart(self: *@This(), cur: model.TokenAt) !bool {
+  switch (cur.token) {
+    .diamond_open => {
+      self.block_header.config_parser = .{
+        .into     = try self.allocator().create(model.BlockConfig),
+        .map_list = .{},
+        .map_from = undefined,
+      };
+      self.block_header.config_parser.into.* = .{};
+      self.state = .block_config_start;
+      switch (self.block_header.context) {
+        .primary => |*p| p.guaranteed = true,
+        else     => {},
+      }
+      return true;
+    },
+    .pipe => {
+      self.state = .block_capture_start;
+      switch (self.block_header.context) {
+        .primary => |*p| p.guaranteed = true,
+        else     => {},
+      }
+      return true;
+    },
+    .swallow_depth => {
+      switch (self.block_header.context) {
+        .primary => |*p| p.guaranteed = true,
+        else     => {}
+      }
+      self.state = .block_swallow_depth;
+      self.stored_cursor = cur.start;
+      return true;
+    },
+    .diamond_close => {
+      switch (self.block_header.context) {
+        .primary => |*p| p.guaranteed = true,
+        else     => {},
+      }
+      try self.finishBlockHeader(self.lexer.recent_end, 0);
+      return true;
+    },
+    else => {
+      try self.finishBlockHeader(cur.start, null);
+      return false;
+    }
+  }
+}
+
+fn procBlockConfigStart(self: *@This(), cur: model.TokenAt) !bool {
+  switch (cur.token) {
+    .space => return true,
+    .diamond_close => {
+      self.finalizeBlockConfig(self.lexer.walker.before);
+      self.state = .after_block_config;
+      return true;
+    },
+    .end_source => {
+      self.logger().ExpectedXGotY(
+        self.lexer.walker.posFrom(cur.start),
+        &.{.{.token = .identifier}}, .{.token = .diamond_close}
+      );
+      self.finalizeBlockConfig(cur.start);
+      self.state = .after_block_config;
+      return false;
+    },
+    .identifier => {
+      const name = self.lexer.walker.contentFrom(cur.start.byte_offset);
+      self.state = switch (std.hash.Adler32.hash(name)) {
+        std.hash.Adler32.hash("csym")    => .block_config_csym,
+        std.hash.Adler32.hash("syntax")  => .block_config_syntax,
+        std.hash.Adler32.hash("map")     => .block_config_map,
+        std.hash.Adler32.hash("off")     => .block_config_off,
+        std.hash.Adler32.hash("fullast") => blk: {
+          self.block_header.config_parser.into.full_ast =
+            self.lexer.walker.posFrom(cur.start);
+          break :blk .block_config_after_item;
+        },
+        std.hash.Adler32.hash("")        => .block_config_empty,
+        else => {
+          self.logger().UnknownConfigDirective(
+            self.lexer.walker.posFrom(cur.start));
+          try self.abortBlockConfig(self.lexer.walker.before);
+          return true;
+        },
+      };
+      return true;
+    },
+    else => unreachable,
+  }
+}
+
+fn abortBlockConfig(self: *@This(), at: model.Cursor) !void {
+  self.lexer.abortBlockHeader();
+  self.finalizeBlockConfig(at);
+  try self.finishBlockHeader(at, null);
+}
+
+fn finalizeBlockConfig(self: *@This(), at: model.Cursor) void {
+  self.block_header.config_parser.into.map =
+    self.block_header.config_parser.map_list.items;
+  if (self.block_header.config != null) {
+    self.logger().MultipleBlockConfigs(self.source().at(at));
+  } else {
+    self.block_header.config = self.block_header.config_parser.into;
+  }
+}
+
+fn procBlockConfigCsym(self: *@This(), cur: model.TokenAt) !bool {
+  switch (cur.token) {
+    .space => return true,
+    .ns_char => {
+      try self.block_header.config_parser.map_list.append(self.allocator(), .{
+        .pos = self.lexer.walker.posFrom(cur.start),
+        .from = 0, .to = self.lexer.code_point});
+      self.state = .block_config_after_item;
+      return true;
+    },
+    else => {
+      self.logger().ExpectedXGotY(
+        self.lexer.walker.posFrom(cur.start),
+        &.{.{.token = .ns_char}}, .{.token = cur.token});
+      try self.abortBlockConfig(cur.start);
+      return cur.token != .end_source;
+    }
+  }
+}
+
+fn procBlockConfigSyntax(self: *@This(), cur: model.TokenAt) !bool {
+  switch (cur.token) {
+    .space => return true,
+    .literal => {
+      const syntax_name = self.lexer.walker.contentFrom(cur.start.byte_offset);
+      switch (std.hash.Adler32.hash(syntax_name)) {
+        std.hash.Adler32.hash("locations") => {
+          self.block_header.config_parser.into.syntax = .{
+            .pos = model.Position.intrinsic(),
+            .index = 0,
+          };
+        },
+        std.hash.Adler32.hash("definitions") => {
+          self.block_header.config_parser.into.syntax = .{
+            .pos = model.Position.intrinsic(),
+            .index = 1,
+          };
+        },
+        else => self.logger().UnknownSyntax(
+          self.lexer.walker.posFrom(cur.start), syntax_name),
+      }
+      self.state = .block_config_after_item;
+      return true;
+    },
+    else => {
+      self.logger().ExpectedXGotY(
+        self.lexer.walker.posFrom(cur.start),
+        &.{.{.token = .literal}}, .{.token = cur.token});
+      try self.abortBlockConfig(cur.start);
+      return cur.token != .end_source;
+    },
+  }
+}
+
+fn procBlockConfigMap(self: *@This(), cur: model.TokenAt) !bool {
+  switch (cur.token) {
+    .space => return true,
+    .ns_char => {
+      self.block_header.config_parser.map_from = self.lexer.code_point;
+      self.state = .block_config_map_arg;
+      return true;
+    },
+    else => {
+      self.logger().ExpectedXGotY(
+        self.lexer.walker.posFrom(cur.start),
+        &.{.{.token = .ns_char}}, .{.token = cur.token});
+      try self.abortBlockConfig(cur.start);
+      return cur.token != .end_source;
+    },
+  }
+}
+
+fn procBlockConfigMapArg(self: *@This(), cur: model.TokenAt) !bool {
+  switch (cur.token) {
+    .space => return true,
+    .ns_char => {
+      try self.block_header.config_parser.map_list.append(self.allocator(), .{
+        .pos  = self.lexer.walker.posFrom(cur.start),
+        .from = self.block_header.config_parser.map_from,
+        .to   = self.lexer.code_point,
+      });
+      self.state = .block_config_after_item;
+      return true;
+    },
+    else => {
+      self.logger().ExpectedXGotY(
+        self.lexer.walker.posFrom(cur.start),
+        &.{.{.token = .ns_char}}, .{.token = cur.token});
+      try self.abortBlockConfig(cur.start);
+      return cur.token != .end_source;
+    },
+  }
+}
+
+fn procBlockConfigOff(self: *@This(), cur: model.TokenAt) !bool {
+  switch (cur.token) {
+    .space   => return true,
+    .comment => {
+      self.block_header.config_parser.into.off_comment =
+        self.lexer.walker.posFrom(cur.start);
+      self.state = .block_config_after_item;
+      return true;
+    },
+    .block_name_sep => {
+      self.block_header.config_parser.into.off_colon =
+        self.lexer.walker.posFrom(cur.start);
+      self.state = .block_config_after_item;
+      return true;
+    },
+    else => {
+      self.block_header.config_parser.into.off_comment =
+        self.lexer.walker.posFrom(cur.start);
+      self.block_header.config_parser.into.off_colon =
+        self.lexer.walker.posFrom(cur.start);
+      try self.block_header.config_parser.map_list.append(self.allocator(), .{
+        .pos = self.lexer.walker.posFrom(cur.start),
+        .from = 0, .to = 0,
+      });
+      self.state = .block_config_after_item;
+      return false;
+    },
+  }
+}
+
+fn procBlockConfigEmpty(self: *@This(), cur: model.TokenAt) !bool {
+  switch (cur.token) {
+    .space => return true,
+    else => {
+      self.logger().ExpectedXGotY(
+        self.lexer.walker.posFrom(cur.start),
+        &.{.{.token = .identifier}}, .{.token = cur.token});
+      try self.abortBlockConfig(cur.start);
+      return cur.token != .end_source;
+    },
+  }
+}
+
+fn procBlockConfigAfterItem(self: *@This(), cur: model.TokenAt) !bool {
+  switch (cur.token) {
+    .space => return true,
+    .comma => {
+      self.state = .block_config_start;
+      return true;
+    },
+    .diamond_close => {
+      self.finalizeBlockConfig(self.lexer.walker.before);
+      self.state = .after_block_config;
+      return true;
+    },
+    else => {
+      self.logger().ExpectedXGotY(
+        self.lexer.walker.posFrom(cur.start),
+        &.{.{.token = .diamond_close}, .{.token = .comma}},
+        .{.token = cur.token});
+      try self.abortBlockConfig(cur.start);
+      return cur.token != .end_source;
+    },
+  }
+}
+
+fn procAfterBlockConfig(self: *@This(), cur: model.TokenAt) !bool {
+  if (cur.token == .block_name_sep) {
+    self.state = .block_header_start;
+    return true;
+  }
+  try self.finishBlockHeader(cur.start, null);
+  return false;
+}
+
+fn procBlockCaptureStart(self: *@This(), cur: model.TokenAt) !bool {
+  switch (cur.token) {
+    .space => return true,
+    .pipe => {
+      self.state = .after_block_config;
+      return true;
+    },
+    .symref => {
+      try self.block_header.captures.append(self.allocator(), .{
+        .ns = self.lexer.ns,
+        // this will become a variable name, which must be global
+        .name = try self.intpr().ctx.global().dupe(u8, self.lexer.recent_id),
+        .pos  = self.lexer.walker.posFrom(cur.start),
+      });
+      self.state = .block_capture;
+      return true;
+    },
+    .comma => {
+      self.logger().MissingToken(
+        self.source().at(cur.start),
+        &.{.{.token = .symref}}, .{.token = .comma});
+      return true;
+    },
+    else => {
+      self.logger().MissingToken(
+        self.source().at(cur.start),
+        &.{.{.token = model.Token.pipe}}, .{.token = cur.token});
+      self.lexer.abortCaptureList();
+      return true;
+    },
+  }
+}
+
+fn procBlockCapture(self: *@This(), cur: model.TokenAt) !bool {
+  switch (cur.token) {
+    .space => return true,
+    .comma => {
+      self.state = .block_capture_start;
+      return true;
+    },
+    else   => {
+      self.state = .block_capture_start;
+      return false;
+    }
+  }
+}
+
+fn procBlockSwallowDepth(self: *@This(), cur: model.TokenAt) !bool {
+  if (cur.token == .diamond_close) {
+    try self.finishBlockHeader(self.lexer.recent_end, self.lexer.code_point);
+    return true;
+  } else {
+    self.logger().MissingToken(
+      self.source().at(cur.start),
+      &.{.{.token = .diamond_close}}, .{.token = cur.token});
+    try self.finishBlockHeader(cur.start, null);
+    return false;
+  }
+}
+
+fn finishBlockHeader(
+  self         : *@This(),
+  start        : model.Cursor,
+  swallow_depth: ?u21,
+) !void {
+  const parent = self.curLevel();
+  switch (self.block_header.context) {
+    .primary => |p| {
+      if (p.guaranteed) {
+        try parent.command.pushPrimary(
+          self.source().at(start), self.block_header.config != null);
+      } else {
+        const cfg = parent.command.mapper().spyPrimary();
+        try parent.command.pushPrimary(self.source().at(start), false);
+        try self.pushLevel(if (cfg.ast_node) false else parent.fullast);
+        if (cfg.config) |c| {
+          try self.applyBlockConfig(self.source().at(start), c);
+        }
+        self.state = .possible_primary;
+        return;
+      }
+    },
+    .named => {},
+    .push_to_syntax => |bh| {
+      const proc = self.curLevel().syntax_proc.?;
+      if (self.block_header.config == null) {
+        bh.config = null;
+      }
+      const pos = self.source().between(bh.value().origin.start, start);
+      bh.value().origin = pos;
+      bh.swallow_depth = swallow_depth;
+      _ = try proc.push(proc, pos, .{.block_header = bh});
+      self.state = .special;
+      return;
+    },
+    .ignored => {
+      self.state = .default;
+      return;
+    },
+  }
+  // initialize level with fullast according to chosen param type.
+  // may be overridden by block config.
+  try self.pushLevel(
+    if (parent.command.choseAstNodeParam()) false else parent.fullast);
+  if (self.block_header.config) |c| {
+    try self.applyBlockConfig(self.source().at(start), c);
+  } else if (parent.implicitBlockConfig()) |c| {
+    try self.applyBlockConfig(self.source().at(start), c);
+  }
+  self.curLevel().capture = self.block_header.captures.items;
+  self.state = .start;
+
+  if (swallow_depth) |depth| {
+    parent.command.swallow_depth = swallow_depth;
+    try self.closeSwallowing(depth);
+  }
 }
 
 /// Close other swallowing levels when swallowing is encountered. `target_depth`
@@ -1209,34 +1582,6 @@ fn closeSwallowing(self: *@This(), target_depth: usize) !void {
     // finally, shift the new level on top of the target_level
     self.levels.items[target_level + 1] = last(self.levels.items).*;
     try self.levels.resize(self.allocator(), target_level + 2);
-  }
-}
-
-/// if colon_pos is given, assumes that swallowing *must* occur and issues an
-/// error using the colon_pos if non occurs.
-fn checkSwallow(self: *@This(), colon_pos: ?model.Position) ?u21 {
-  switch (self.cur) {
-    .swallow_depth => {
-      const swallow_depth = self.lexer.code_point;
-      const start = self.cur_start;
-      self.advance();
-      if (self.cur == .diamond_close) {
-        self.advance();
-      } else {
-        self.logger().SwallowDepthWithoutDiamondClose(
-          self.source().between(start, self.cur_start));
-        return null;
-      }
-      return swallow_depth;
-    },
-    .diamond_close => {
-      self.advance();
-      return 0;
-    },
-    else => {
-      if (colon_pos) |pos| self.logger().IllegalColon(pos);
-      return null;
-    }
   }
 }
 

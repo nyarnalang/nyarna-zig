@@ -95,6 +95,11 @@ pub const Location = struct {
   }
 };
 
+///
+pub const Highlight = struct {
+
+};
+
 pub const IfOpt = struct {
   condition: *Expression,
   then     : *Expression,

@@ -286,7 +286,11 @@
   highlight = \keyword:
     # name of the syntax to highlight.
     syntax    : \Ast
-    #
+    # Renderers for each of the items occurring in the syntax.
+    # These are defined by the syntax. Each renderer may have a capture that
+    # will contain the rendered content of the entity that should be rendered.
+    # The type of this capture will be the inferred return type of the
+    # whole highlighting function.
     renderers : \HashMap(\Literal, \FrameRoot) {varmap}
   \end(keyword)
 :private:

@@ -14,6 +14,7 @@ const syntaxes         = @import("syntaxes.zig");
 
 const Interpreter = nyarna.Interpreter;
 const model       = nyarna.model;
+const Types       = nyarna.Types;
 
 const last = @import("../helpers.zig").last;
 
@@ -100,6 +101,10 @@ const Command = struct {
     )) |cursor| .{
       .mapped = cursor,
     } else .failed;
+  }
+
+  pub fn spyPrimary(self: *Command) Mapper.PrimarySpec {
+    return self.mapper().primarySpec();
   }
 
   /// returns the swallow depth if implicit swallowing occurs.
@@ -197,7 +202,7 @@ const Command = struct {
     return switch (self.cur_cursor) {
       .mapped => |cursor|
         if (self.mapper().paramType(cursor)) |t| (
-          t.isNamed(.ast) or t.isNamed(.frame_root)
+          Types.containsAst(t)
         ) else false,
       else => false,
     };
@@ -313,8 +318,7 @@ pub fn finalize(self: *ContentLevel, p: *Impl) !*model.Node {
 
   const alloc = p.allocator();
   const content_node = if (self.syntax_proc) |proc| (
-    try proc.finish(
-      proc, p.lexer.walker.source.between(self.start, p.cur_start))
+    try proc.finish(proc, p.lexer.walker.source, self.start)
   ) else if (self.seq.items.len == 0) (
     (
       try self.finalizeParagraph(p.intpr())

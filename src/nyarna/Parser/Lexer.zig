@@ -1495,8 +1495,11 @@ pub fn enableSpecialSyntax(
   self.level.special =
     if (comments_include_newline) .standard_comments
     else .comments_without_newline;
-  std.debug.assert(
-    self.state == .check_indent or (self.cur_stored catch 0) == 4);
+  if (self.state != .check_indent and (self.cur_stored catch 0) != 4) {
+    std.debug.panic(
+      "enableSpecialSyntax called in state .{s} (should be .check_indent)",
+      .{@tagName(self.state)});
+  }
   self.state = .special_syntax_check_indent;
 }
 

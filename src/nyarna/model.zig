@@ -51,6 +51,17 @@ pub const Cursor = struct {
   }
 };
 
+/// A token annotated with its starting position
+pub const TokenAt = struct {
+  token: lexing.Token,
+  start: Cursor,
+
+  pub fn isIn(self: TokenAt, comptime expected: anytype) bool {
+    inline for (expected) |item| if (self.token == item) return true;
+    return false;
+  }
+};
+
 /// Describes the origin of a construct. Usually start and end cursor are in a
 /// source file, but can also come from command line parameters.
 pub const Position = struct {
@@ -256,7 +267,7 @@ pub const BlockConfig = struct {
   /// custom syntax to use in this block.
   syntax: ?SyntaxDef = null,
   /// see doc of Map
-  map: []Map = .{},
+  map: []Map = &.{},
   /// whether begin-of-line colon shall be disabled
   off_colon: ?Position = null,
   /// whether comments shall be disabled

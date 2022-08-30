@@ -6,6 +6,8 @@ const errors      = nyarna.errors;
 const Interpreter = nyarna.Interpreter;
 const model       = nyarna.model;
 
+const last = @import("../helpers.zig").last;
+
 pub const SpecialSyntax = struct {
   pub const Item = union(enum) {
     literal     : []const u8,
@@ -25,7 +27,11 @@ pub const SpecialSyntax = struct {
       pos : model.Position,
       item: Item,
     ) nyarna.Error!Action,
-    finish: fn(self: *@This(), pos: model.Position) nyarna.Error!*model.Node,
+    finish: fn(
+      self  : *@This(),
+      source: *const model.Source,
+      start : model.Cursor,
+    ) nyarna.Error!*model.Node,
   };
 
   init: fn init(
@@ -790,12 +796,19 @@ pub const SymbolDefs = struct {
     while (true) if (try self.state(self, pos, item)) |action| return action;
   }
 
-  fn finish(p: *Processor, pos: model.Position) nyarna.Error!*model.Node {
+  fn finish(
+    p     : *Processor,
+    source: *const model.Source,
+    start : model.Cursor,
+  ) nyarna.Error!*model.Node {
     const self = @fieldParentPtr(SymbolDefs, "proc", p);
     if (self.state != initial) {
       _ = try p.push(
         p, self.last_item.after(), SpecialSyntax.Item{.newlines = 1});
     }
+    const pos = if (self.produced.items.len > 0) (
+      source.between(start, last(self.produced.items).*.pos.end)
+    ) else source.at(start);
     return (try self.intpr.node_gen.concat(pos, self.produced.items)).node();
   }
 

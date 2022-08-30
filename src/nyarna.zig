@@ -342,7 +342,10 @@ pub const Processor = struct {
       globals, system_ny, self.resolvers.items[1].resolver,
       model.Locator.parse(".std.system") catch unreachable,
       false, &lib.system.instance.provider);
-    _ = try system_loader.work();
+    _ = system_loader.work() catch |err| {
+      system_loader.destroy();
+      return err;
+    };
     const source = system_loader.source.meta;
     const module = try system_loader.finalize();
     try globals.known_modules.put(

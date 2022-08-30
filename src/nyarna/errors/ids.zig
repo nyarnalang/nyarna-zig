@@ -9,7 +9,7 @@ pub const LexerError = enum {
   IllegalContentAtHeader, IllegalCharacters, InvalidEndCommand,
   SwallowDepthWithoutDiamondClose, InvalidLocator, IllegalColon, IllegalNameSep,
   AssignmentWithoutExpression, MissingId, IllegalContentAfterId,
-  MissingColon,
+  IllegalContentInBlockName, MissingColon,
 };
 
 pub const GenericParserError = enum {
@@ -28,7 +28,8 @@ pub const GenericParserError = enum {
   CannotCallLibraryImport, UnexpectedBlockNameExpr, NotABackend, EmptyBackend,
   BackendOutsideSchemaDef, InvalidCollector, UnexpectedCaptureVars,
   SuperfluousSubscript, MissingSubscript, NonPositionalSubscript,
-  MergeNotAllowedHere, CannotMergeThisDefinitionKind,
+  MergeNotAllowedHere, CannotMergeThisDefinitionKind,  MultipleBlockConfigs,
+  MissingBlockName,
 };
 
 pub const WrongItemError = enum {

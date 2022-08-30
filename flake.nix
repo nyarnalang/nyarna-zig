@@ -15,7 +15,7 @@
       inherit system;
       overlays = [
         (zicross.lib.zigOverlayFor {
-          version = "2022-08-16";
+          version = "2022-08-23";
           master = true;
           patchArmHeader = false;
         })
@@ -71,6 +71,7 @@
       file = "test/${kind}_test.zig";
       dependencies = [ zigPkgs.nyarna zigPkgs.testing ];
       generators   = [ handler_gen test_gen ];
+      stage1       = true;
     }) ["lex" "parse" "interpret" "load" "output"];
     buildNyarna = {
       pname, src, genTests ? false, ...
@@ -90,6 +91,7 @@
       file         = "src/cli.zig";
       dependencies = [ zigPkgs.clap ];
       generators   = [ handler_gen ];
+      stage1       = true;
       install      = true;
     };
     wasmLibrary = {
@@ -100,8 +102,9 @@
         cpu_arch = "wasm32";
         os_tag = "freestanding";
       };
-      install = true;
       generators = [ handler_gen ];
+      stage1  = true;
+      install = true;
     };
 
     nyarna_cli = buildNyarna {

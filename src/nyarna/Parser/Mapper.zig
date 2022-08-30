@@ -22,6 +22,7 @@ const ModuleEntry = @import("../Globals.zig").ModuleEntry;
 const Interpreter = nyarna.Interpreter;
 const model       = nyarna.model;
 const Type        = model.Type;
+const Types       = nyarna.Types;
 
 const Self = @This();
 
@@ -42,18 +43,30 @@ pub const ProtoArgFlag = enum {
   flow, block_no_config, block_with_config
 };
 
+pub const PrimarySpec = struct {
+  config  : ?*const model.BlockConfig,
+  ast_node: bool,
+};
+
 mapFn: fn(
   self : *Self,
   pos  : model.Position,
   input: ArgKind,
   flag : ProtoArgFlag,
 ) nyarna.Error!?Cursor,
-pushFn: fn(self: *Self, at: Cursor, content: *model.Node) nyarna.Error!void,
+spyFn   : ?fn(self: *Self) PrimarySpec,
+pushFn  : fn(self: *Self, at: Cursor, content: *model.Node) nyarna.Error!void,
 configFn: fn(self: *Self, at: Cursor) ?*model.BlockConfig,
 paramTypeFn: fn(self: *Self, at: Cursor) ?model.Type,
-finalizeFn: fn(self: *Self, pos: model.Position) nyarna.Error!*model.Node,
+finalizeFn : fn(self: *Self, pos: model.Position) nyarna.Error!*model.Node,
 
 subject_pos: model.Position,
+
+pub fn spyPrimary(self: *Self) PrimarySpec {
+  return if (self.spyFn) |spy| spy(self) else .{
+    .config = null, .ast_node = false,
+  };
+}
 
 pub fn map(
   self : *Self,
@@ -100,6 +113,7 @@ pub const ToSignature = struct {
   ) !@This() {
     var res = @This(){
       .mapper = .{
+        .spyFn       = @This().spy,
         .mapFn       = @This().map,
         .configFn    = @This().config,
         .paramTypeFn = @This().paramType,
@@ -134,6 +148,17 @@ pub const ToSignature = struct {
         .container = container,
       });
     }
+  }
+
+  fn spy(mapper: *Self) PrimarySpec {
+    const self = @fieldParentPtr(@This(), "mapper", mapper);
+    if (self.signature.primary) |index| {
+      const param = &self.signature.parameters[index];
+      return .{
+        .config   = if (param.config) |*cfg| cfg else null,
+        .ast_node = Types.containsAst(param.spec.t),
+      };
+    } else return .{.config = null, .ast_node = false};
   }
 
   fn map(
@@ -490,6 +515,7 @@ pub const ToImport = struct {
     const me = &intpr.ctx.data.known_modules.values()[target.module_index];
     return .{
       .mapper = .{
+        .spyFn       = null,
         .mapFn       = @This().map,
         .configFn    = @This().config,
         .paramTypeFn = @This().paramType,
@@ -576,6 +602,7 @@ pub const Collect = struct {
   ) @This() {
     return .{
       .mapper = .{
+        .spyFn       = null,
         .mapFn       = @This().map,
         .configFn    = @This().config,
         .paramTypeFn = @This().paramType,
@@ -642,6 +669,7 @@ pub const ToAssignment = struct {
   pub fn init(subject: *model.Node, intpr: *Interpreter) ToAssignment {
     return .{
       .mapper = .{
+        .spyFn       = null,
         .mapFn       = @This().map,
         .configFn    = @This().config,
         .paramTypeFn = @This().paramType,
