@@ -89,9 +89,6 @@ pub fn build(self: *@This()) Error!*model.Node {
   }
   std.debug.assert(self.impl.levels.items.len == 1);
   const ret = try self.impl.levels.items[0].finalize(&self.impl);
-  const fmt = @import("fmt.zig").IndentingFormatter(
-    *model.Node, std.fs.File.Writer).init(ret, 0, self.impl.intpr().ctx.data);
-  std.debug.print("{}\n", .{fmt});
   return ret;
 }
 

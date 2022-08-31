@@ -1497,8 +1497,8 @@ pub fn enableSpecialSyntax(
     else .comments_without_newline;
   if (self.state != .check_indent and (self.cur_stored catch 0) != 4) {
     std.debug.panic(
-      "enableSpecialSyntax called in state .{s} (should be .check_indent)",
-      .{@tagName(self.state)});
+      "{}: enableSpecialSyntax called in state .{s} (should be .check_indent)",
+      .{self.walker.source.at(self.recent_end), @tagName(self.state)});
   }
   self.state = .special_syntax_check_indent;
 }

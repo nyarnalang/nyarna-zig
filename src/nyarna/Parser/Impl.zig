@@ -938,6 +938,7 @@ fn procSpecial(self: *@This(), cur: model.TokenAt) !bool {
       value.data = .{.block_header = .{}};
       const bh = &value.data.block_header;
       self.startBlockHeader(.{.push_to_syntax = bh});
+      self.lexer.readBlockHeader();
     }
   }
   return true;
@@ -1080,7 +1081,10 @@ pub fn push(
       try self.procBlockNameStart(cur);
       return false;
     },
-    .block_name         => self.procBlockName(cur),
+    .block_name         => {
+      self.procBlockName(cur);
+      return false;
+    },
     .skip_block_name    => {
       self.procSkipBlockName(cur);
       return false;
@@ -1117,7 +1121,10 @@ pub fn push(
     .block_capture      => if (try self.procBlockCapture(cur))     return false,
     .block_swallow_depth=> if (try self.procBlockSwallowDepth(cur))return false,
     }
-    std.debug.assert(self.state != prev_state);
+    if (self.state == prev_state) {
+      std.debug.panic("pushing {s} in state {s} didn't change state or consume",
+        .{@tagName(cur.token), @tagName(prev_state)});
+    }
   }
 }
 
@@ -1125,7 +1132,15 @@ fn procBlockHeaderStart(self: *@This(), cur: model.TokenAt) !bool {
   switch (cur.token) {
     .diamond_open => {
       self.block_header.config_parser = .{
-        .into     = try self.allocator().create(model.BlockConfig),
+        .into     = switch (self.block_header.context) {
+          .push_to_syntax => |bh| blk: {
+            if (bh.config == null) {
+              bh.config = @as(model.BlockConfig, undefined);
+              break :blk &bh.config.?;
+            } else break :blk try self.allocator().create(model.BlockConfig);
+          },
+          else => try self.allocator().create(model.BlockConfig),
+        },
         .map_list = .{},
         .map_from = undefined,
       };
@@ -1482,9 +1497,9 @@ fn finishBlockHeader(
     .named => {},
     .push_to_syntax => |bh| {
       const proc = self.curLevel().syntax_proc.?;
-      if (self.block_header.config == null) {
-        bh.config = null;
-      }
+      if (self.block_header.config) |res_cfg| {
+        std.debug.assert(res_cfg == &bh.config.?);
+      } else bh.config = null;
       const pos = self.source().between(bh.value().origin.start, start);
       bh.value().origin = pos;
       bh.swallow_depth = swallow_depth;

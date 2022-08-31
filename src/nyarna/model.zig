@@ -8,9 +8,10 @@ pub const Type           = @import("model/types.zig").Type;
 pub const Symbol         = @import("model/Symbol.zig");
 pub const ValueGenerator = @import("model/ValueGenerator.zig");
 
-const unicode = @import("unicode.zig");
-const lexing  = @import("model/lexing.zig");
+const fmt     = @import("fmt.zig");
 const Globals = @import("Globals.zig");
+const lexing  = @import("model/lexing.zig");
+const unicode = @import("unicode.zig");
 
 pub usingnamespace lexing;
 
@@ -276,6 +277,10 @@ pub const BlockConfig = struct {
   /// this requires the block being used in a context where it can return an
   /// Ast value.
   full_ast: ?Position = null,
+
+  pub fn formatter(self: BlockConfig) std.fmt.Formatter(fmt.formatBlockConfig) {
+    return .{.data = self};
+  }
 };
 
 /// a type that has been specified at a certain position as target type.

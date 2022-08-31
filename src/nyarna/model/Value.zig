@@ -1,6 +1,8 @@
 const std = @import("std");
 
-const model = @import("../model.zig");
+const fmt     = @import("../fmt.zig");
+const Globals = @import("../Globals.zig");
+const model   = @import("../model.zig");
 
 const Expression = model.Expression;
 const Node       = model.Node;
@@ -40,6 +42,12 @@ pub const BlockHeader = struct {
 
   pub fn value(self: *@This()) *Value {
     return Value.parent(self);
+  }
+
+  pub fn formatter(
+    self: *const BlockHeader,
+  ) std.fmt.Formatter(fmt.formatBlockHeader) {
+    return .{.data = self};
   }
 };
 

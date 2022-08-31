@@ -12,186 +12,178 @@ const Value      = nyarna.model.Value;
 
 const EncodedCharacter = @import("unicode.zig").EncodedCharacter;
 
-const AdditionalsWithGlobal = struct {
-  value: *const Node.Location.Additionals,
-  data : *Globals,
-
-  fn format(
-             self   : AdditionalsWithGlobal,
-    comptime fmt    : []const u8,
-             options: std.fmt.FormatOptions,
-             writer : anytype,
-  ) !void {
-    try writer.writeByte('{');
-    var first = true;
-    inline for ([_][]const u8{"primary", "varargs", "varmap", "borrow"}) |f| {
-      if (@field(self.value, f) != null) {
-        if (first) first = false else try writer.writeAll(", ");
-        try writer.writeAll(f);
-      }
+pub fn formatAdditionals(
+           self   : *const Node.Location.Additionals,
+  comptime fmt    : []const u8,
+           options: std.fmt.FormatOptions,
+           writer : anytype,
+) !void {
+  try writer.writeByte('{');
+  var first = true;
+  inline for ([_][]const u8{"primary", "varargs", "varmap", "borrow"}) |f| {
+    if (@field(self, f) != null) {
+      if (first) first = false else try writer.writeAll(", ");
+      try writer.writeAll(f);
     }
-    try writer.writeAll("}");
-    if (self.value.header) |h|
-      try (HeaderWithGlobal{.header = h, .data = self.data,}).format(
-        fmt, options, writer);
   }
+  try writer.writeAll("}");
+  if (self.header) |h| try formatBlockHeader(h, fmt, options, writer);
+}
 
-  fn formatter(self: AdditionalsWithGlobal) std.fmt.Formatter(format) {
-    return .{.data = self};
-  }
-};
-
-const HeaderWithGlobal = struct {
-  header: *const Value.BlockHeader,
-  data  : *Globals,
-
-  fn format(
-             self  : HeaderWithGlobal,
-    comptime _     : []const u8,
-             _     : std.fmt.FormatOptions,
-             writer: anytype,
-  ) !void {
-    if (self.header.config) |config| {
-      try writer.writeAll(":<");
-      var first = true;
-      for (config.map) |*item| {
-        if (item.to == 0) {
-          if (first) first = false else try writer.writeAll(", ");
-          const ec = EncodedCharacter.init(item.from);
-          try writer.print("off {s}", .{ec.repr()});
-        }
-      }
-      for (config.map) |*item| {
-        if (item.from == 0) {
-          if (first) first = false else try writer.writeAll(", ");
-          const ec = EncodedCharacter.init(item.to);
-          try writer.print("csym {s}", .{ec.repr()});
-        }
-      }
-      for (config.map) |*item| {
-        if (item.from != 0 and item.to != 0) {
-          if (first) first = false else try writer.writeAll(", ");
-          const fc = EncodedCharacter.init(item.from);
-          const tc = EncodedCharacter.init(item.to);
-          try writer.print("map {s} {s}", .{fc.repr(), tc.repr()});
-        }
-      }
-      if (config.full_ast) |_| {
-        if (first) first = false else try writer.writeAll(", ");
-        try writer.writeAll("fullast");
-      }
-      if (config.syntax) |def| {
-        if (first) first = false else try writer.writeAll(", ");
-        // TODO: user-define syntaxes
-        try writer.print("syntax {s}", .{switch (def.index) {
-          0 => @as([]const u8, "locations"), 1 => "definitions",
-          else => unreachable
-        }});
-      }
-      try writer.writeByte('>');
+pub fn formatBlockConfig(
+           self  : nyarna.model.BlockConfig,
+  comptime _     : []const u8,
+           _     : std.fmt.FormatOptions,
+           writer: anytype,
+) !void {
+  try writer.writeAll(":<");
+  var first = true;
+  for (self.map) |*item| {
+    if (item.to == 0) {
+      if (first) first = false else try writer.writeAll(", ");
+      const ec = EncodedCharacter.init(item.from);
+      try writer.print("off {s}", .{ec.repr()});
     }
-    if (self.header.swallow_depth) |swallow_depth| {
-      try if (swallow_depth > 0) writer.print(":{}>", .{swallow_depth})
-          else writer.writeAll(":>");
-    } else if (self.header.config == null) try writer.writeAll("null");
   }
-
-  fn formatter(self: HeaderWithGlobal) std.fmt.Formatter(format) {
-    return .{.data = self};
+  for (self.map) |*item| {
+    if (item.from == 0) {
+      if (first) first = false else try writer.writeAll(", ");
+      const ec = EncodedCharacter.init(item.to);
+      try writer.print("csym {s}", .{ec.repr()});
+    }
   }
-};
+  for (self.map) |*item| {
+    if (item.from != 0 and item.to != 0) {
+      if (first) first = false else try writer.writeAll(", ");
+      const fc = EncodedCharacter.init(item.from);
+      const tc = EncodedCharacter.init(item.to);
+      try writer.print("map {s} {s}", .{fc.repr(), tc.repr()});
+    }
+  }
+  if (self.full_ast) |_| {
+    if (first) first = false else try writer.writeAll(", ");
+    try writer.writeAll("fullast");
+  }
+  if (self.syntax) |def| {
+    if (first) first = false else try writer.writeAll(", ");
+    // TODO: user-define syntaxes
+    try writer.print("syntax {s}", .{switch (def.index) {
+      0 => @as([]const u8, "locations"), 1 => "definitions",
+      else => unreachable
+    }});
+  }
+  try writer.writeByte('>');
+}
 
-pub fn IndentingFormatter(comptime T: type, comptime Writer: type) type {
+pub fn formatBlockHeader(
+           self   : *const Value.BlockHeader,
+  comptime fmt    : []const u8,
+           options: std.fmt.FormatOptions,
+           writer : anytype,
+) !void {
+  if (self.config) |config| try formatBlockConfig(config, fmt, options, writer);
+  if (self.swallow_depth) |swallow_depth| {
+    try if (swallow_depth > 0) (
+      writer.print(":{}>", .{swallow_depth})
+    ) else writer.writeAll(":>");
+  } else if (self.config == null) try writer.writeByte(':');
+}
+
+pub fn IndentingFormatter(comptime T: type) type {
   return struct {
-    const Level = struct {
-      writer: Writer,
-      depth : usize,
-      data  : *Globals,
-      state : enum {initial, args, braces} = .initial,
+    fn level(
+      writer: anytype,
+      depth: usize,
+      data: *Globals,
+    ) Level(@TypeOf(writer)) {
+      return .{.writer = writer, .depth = depth, .data = data};
+    }
 
-      fn init(writer: Writer, depth: usize, data: *Globals) @This() {
-        return @This(){.writer = writer, .depth = depth, .data = data};
-      }
+    fn Level(comptime Writer: type) type {
+      return struct {
+        writer: Writer,
+        depth : usize,
+        data  : *Globals,
+        state : enum {initial, args, braces} = .initial,
 
-      fn id(
-                 self : @This(),
-        comptime sym  : []const u8,
-                 value: []const u8,
-      ) !void {
-        try self.writer.writeAll(sym);
-        var capitalize = true;
-        for (value) |chr| {
-          if (chr == '_') {
-            capitalize = true;
-          } else if (capitalize) {
-            try self.writer.writeByte(chr - ('a' - 'A'));
-            capitalize = false;
-          } else try self.writer.writeByte(chr);
-        }
-      }
-
-      fn close(self: @This()) !void {
-        switch (self.state) {
-          .initial => try self.writer.writeAll("()"),
-          .args    => try self.writer.writeByte(')'),
-          .braces  => {
-            try self.writer.writeByte('\n');
-            var i: usize = 0; while (i < self.depth) : (i += 1) {
-              try self.writer.writeAll("  ");
-            }
-            try self.writer.writeByte('}');
+        fn id(
+                   self : @This(),
+          comptime sym  : []const u8,
+                   value: []const u8,
+        ) !void {
+          try self.writer.writeAll(sym);
+          var capitalize = true;
+          for (value) |chr| {
+            if (chr == '_') {
+              capitalize = true;
+            } else if (capitalize) {
+              try self.writer.writeByte(chr - ('a' - 'A'));
+              capitalize = false;
+            } else try self.writer.writeByte(chr);
           }
         }
-      }
 
-      fn arg(
-                 self: *@This(),
-                 name: ?[]const u8,
-        comptime fmt : []const u8,
-                 args: anytype,
-      ) !void {
-        switch (self.state) {
-          .initial => try self.writer.writeByte('('),
-          .args    => try self.writer.writeAll(", "),
-          .braces  => unreachable,
+        fn close(self: @This()) !void {
+          switch (self.state) {
+            .initial => try self.writer.writeAll("()"),
+            .args    => try self.writer.writeByte(')'),
+            .braces  => {
+              try self.writer.writeByte('\n');
+              var i: usize = 0; while (i < self.depth) : (i += 1) {
+                try self.writer.writeAll("  ");
+              }
+              try self.writer.writeByte('}');
+            }
+          }
         }
-        if (name) |content| try self.writer.print("{s} = ", .{content});
-        try self.writer.print(fmt, args);
-        self.state = .args;
-      }
 
-      fn child(self: *@This(), name: ?[]const u8, value: anytype) !void {
-        switch (self.state) {
-          .initial => try self.writer.writeAll("{\n"),
-          .args    => try self.writer.writeAll("){\n"),
-          .braces  => try self.writer.writeByte('\n'),
+        fn arg(
+                   self: *@This(),
+                   name: ?[]const u8,
+          comptime fmt : []const u8,
+                   args: anytype,
+        ) !void {
+          switch (self.state) {
+            .initial => try self.writer.writeByte('('),
+            .args    => try self.writer.writeAll(", "),
+            .braces  => unreachable,
+          }
+          if (name) |content| try self.writer.print("{s} = ", .{content});
+          try self.writer.print(fmt, args);
+          self.state = .args;
         }
-        const child_fmt = IndentingFormatter(@TypeOf(value), Writer).init(
-          value, self.depth + 1, self.data);
-        var i: usize = 0; while (i < child_fmt.depth) : (i += 1) {
-          try self.writer.writeAll("  ");
-        }
-        if (name) |content| try self.writer.print("{s}: ", .{content});
-        try self.writer.print("{}", .{child_fmt});
-        self.state = .braces;
-      }
 
-      fn innerLvl(self: *@This(), name: ?[]const u8) !Level {
-        switch (self.state) {
-          .initial => try self.writer.writeAll("{\n"),
-          .args    => try self.writer.writeAll("){\n"),
-          .braces  => try self.writer.writeByte('\n'),
+        fn child(self: *@This(), name: ?[]const u8, value: anytype) !void {
+          switch (self.state) {
+            .initial => try self.writer.writeAll("{\n"),
+            .args    => try self.writer.writeAll("){\n"),
+            .braces  => try self.writer.writeByte('\n'),
+          }
+          const child_fmt = IndentingFormatter(@TypeOf(value)).init(
+            value, self.depth + 1, self.data);
+          var i: usize = 0; while (i < child_fmt.depth) : (i += 1) {
+            try self.writer.writeAll("  ");
+          }
+          if (name) |content| try self.writer.print("{s}: ", .{content});
+          try self.writer.print("{}", .{child_fmt});
+          self.state = .braces;
         }
-        const ret = @This(){
-          .writer = self.writer, .depth = self.depth + 1, .data = self.data,
-        };
-        var i: usize = 0; while (i < ret.depth) : (i += 1) {
-          try self.writer.writeAll("  ");
+
+        fn innerLvl(self: *@This(), name: ?[]const u8) !@This() {
+          switch (self.state) {
+            .initial => try self.writer.writeAll("{\n"),
+            .args    => try self.writer.writeAll("){\n"),
+            .braces  => try self.writer.writeByte('\n'),
+          }
+          const ret = level(self.writer, self.depth + 1, self.data);
+          var i: usize = 0; while (i < ret.depth) : (i += 1) {
+            try self.writer.writeAll("  ");
+          }
+          if (name) |content| try self.writer.print("{s}: ", .{content});
+          return ret;
         }
-        if (name) |content| try self.writer.print("{s}: ", .{content});
-        return ret;
-      }
-    };
+      };
+    }
 
     payload: T,
     depth  : usize,
@@ -205,11 +197,11 @@ pub fn IndentingFormatter(comptime T: type, comptime Writer: type) type {
                self   : @This(),
       comptime fmt    : []const u8,
                options: std.fmt.FormatOptions,
-               writer : Writer,
-    ) Writer.Error!void {
+               writer : anytype,
+    ) @TypeOf(writer).Error!void {
       _ = options;
       _ = fmt;
-      var lvl = Level.init(writer, self.depth, self.data);
+      var lvl = level(writer, self.depth, self.data);
       switch (T) {
         *Node       => try self.formatNode(self.payload, &lvl),
         *Expression => try self.formatExpr(self.payload, &lvl),
@@ -221,8 +213,8 @@ pub fn IndentingFormatter(comptime T: type, comptime Writer: type) type {
 
     fn formatVar(
       variable: anytype,
-      lvl     : *Level,
-    ) !void {
+      lvl     : anytype,
+    ) @TypeOf(lvl.writer).Error!void {
       switch (variable) {
         .def => |def| {
           try lvl.arg(null, "[{}]{s}", .{def.ns, def.name});
@@ -236,11 +228,32 @@ pub fn IndentingFormatter(comptime T: type, comptime Writer: type) type {
       }
     }
 
+    fn formatLocations(
+      comptime name: []const u8,
+               list: anytype,
+               lvl : anytype,
+    ) @TypeOf(lvl.writer).Error!void {
+      switch (list.*) {
+        .unresolved => |u| try lvl.child(name, u),
+        .resolved   => |r| {
+          var params_lvl = try lvl.innerLvl("params");
+          for (r.locations) |ref| switch (ref) {
+            .node   => |n| try params_lvl.child(null, n.node()),
+            .expr   => |e| try params_lvl.child(null, e),
+            .value  => |v| try params_lvl.child(null, v),
+            .poison => try params_lvl.child("poison", .{}),
+          };
+          try params_lvl.close();
+        },
+        .pregen => unreachable,
+      }
+    }
+
     fn formatNode(
       self: @This(),
       node: *Node,
-      lvl : *Level,
-    ) Writer.Error!void {
+      lvl : anytype,
+    ) @TypeOf(lvl.writer).Error!void {
       switch (node.data) {
         .expression => |expr| return self.formatExpr(expr, lvl),
         else => try lvl.id("⊙", @tagName(node.data)),
@@ -269,7 +282,7 @@ pub fn IndentingFormatter(comptime T: type, comptime Writer: type) type {
             .node => |rnode| try lvl.child(null, rnode),
             .expr => |expr|  try lvl.child(null, expr),
           }
-          try lvl.child("params", bg.params.unresolved);
+          try formatLocations("params", &bg.params, lvl);
         },
         .capture => |c| {
           for (c.vars) |v| try lvl.arg(null, "[{}]{s}", .{v.ns, v.name});
@@ -289,7 +302,7 @@ pub fn IndentingFormatter(comptime T: type, comptime Writer: type) type {
         },
         .funcgen => |fg| {
           if (fg.returns) |ret| try lvl.child("returns", ret);
-          try lvl.child("params", fg.params.unresolved);
+          try formatLocations("params", &fg.params, lvl);
           try lvl.child("body", fg.body);
         },
         .highlight => |hl| {
@@ -326,12 +339,7 @@ pub fn IndentingFormatter(comptime T: type, comptime Writer: type) type {
           try lvl.arg(null, "\"{}\"", .{std.zig.fmtEscapes(l.content)});
         },
         .location => |l| {
-          if (l.additionals) |a| {
-            const fmt = (
-              AdditionalsWithGlobal{.value = a, .data = self.data}
-            ).formatter();
-            try lvl.arg("flags", "{}", .{fmt});
-          }
+          if (l.additionals) |a| try lvl.arg("flags", "{}", .{a.formatter()});
           try lvl.child("name", l.name);
           if (l.@"type") |t| try lvl.child("type", t);
           if (l.default) |d| try lvl.child("default", d);
@@ -512,8 +520,8 @@ pub fn IndentingFormatter(comptime T: type, comptime Writer: type) type {
       self : @This(),
       path : []const Expression.Access.PathItem,
       start: Type,
-      lvl  : *Level,
-    ) Writer.Error!void {
+      lvl  : anytype,
+    ) @TypeOf(lvl.writer).Error!void {
       var t = start;
       for (path) |item| switch (item) {
         .field => |f| {
@@ -541,8 +549,8 @@ pub fn IndentingFormatter(comptime T: type, comptime Writer: type) type {
     fn formatExpr(
       self: @This(),
       expr: *Expression,
-      lvl : *Level,
-    ) Writer.Error!void {
+      lvl : anytype,
+    ) @TypeOf(lvl.writer).Error!void {
       switch (expr.data) {
         .value => |val| return self.formatValue(val, lvl),
         else   => try lvl.id("⊗", @tagName(expr.data)),
@@ -587,12 +595,7 @@ pub fn IndentingFormatter(comptime T: type, comptime Writer: type) type {
           if (i.@"else") |e| try lvl.child("else", e);
         },
         .location => |l| {
-          if (l.additionals) |a| {
-            const fmt = (
-              AdditionalsWithGlobal{.value = a, .data = self.data}
-            ).formatter();
-            try lvl.arg("flags", "{}", .{fmt});
-          }
+          if (l.additionals) |a| try lvl.arg("flags", "{}", .{a.formatter()});
           try lvl.child("name", l.name);
           if (l.@"type") |t| try lvl.child("type", t);
           if (l.default) |d| try lvl.child("default", d);
@@ -664,20 +667,15 @@ pub fn IndentingFormatter(comptime T: type, comptime Writer: type) type {
     fn formatValue(
       self : @This(),
       value: *Value,
-      lvl  : *Level,
-    ) Writer.Error!void {
+      lvl  : anytype,
+    ) @TypeOf(lvl.writer).Error!void {
       switch (value.data) {
         .ast => |a| return self.formatNode(a.root, lvl),
         else => try lvl.id("□", @tagName(value.data)),
       }
       switch (value.data) {
         .ast => unreachable,
-        .block_header => |*bh| {
-          const fmt = (
-            HeaderWithGlobal{.header = bh, .data = self.data}
-          ).formatter();
-          try lvl.arg(null, "{}", .{fmt});
-        },
+        .block_header => |*bh| try lvl.arg(null, "{}", .{bh.formatter()}),
         .concat => |c| for (c.content.items) |item| try lvl.child(null, item),
         .definition => |d| {
           try lvl.arg(null, "{s}", .{d.name.content});
@@ -762,7 +760,7 @@ pub fn IndentingFormatter(comptime T: type, comptime Writer: type) type {
         },
         .text => |txt| {
           try lvl.arg(null, "{}", .{txt.t.formatter()});
-          try lvl.arg(null, "{}", .{std.zig.fmtEscapes(txt.content)});
+          try lvl.arg(null, "\"{}\"", .{std.zig.fmtEscapes(txt.content)});
         },
         .@"type" => |tv| try lvl.arg(null, "{}", .{tv.t.formatter()}),
         .void, .poison => {},

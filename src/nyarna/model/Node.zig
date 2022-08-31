@@ -8,7 +8,9 @@
 
 const std = @import("std");
 
-const model = @import("../model.zig");
+const fmt     = @import("../fmt.zig");
+const Globals = @import("../Globals.zig");
+const model   = @import("../model.zig");
 
 const Expression = model.Expression;
 const locations  = model.locations;
@@ -222,6 +224,12 @@ pub const Location = struct {
     varmap : ?model.Position,
     borrow : ?model.Position,
     header : ?*Value.BlockHeader,
+
+    pub fn formatter(
+      self: *const Additionals,
+    ) std.fmt.Formatter(fmt.formatAdditionals) {
+      return .{.data = self};
+    }
   };
   name       : *Node,
   @"type"    : ?*Node,
@@ -648,14 +656,21 @@ fn parent(it: anytype) *Node {
 
 pub fn lastIdPos(self: *Node) model.Position {
   return switch (self.data) {
-    .resolved_access => |*racc| racc.last_name_pos,
-    .resolved_symref => |*rsym| rsym.name_pos,
+    .resolved_access   => |*racc| racc.last_name_pos,
+    .resolved_symref   => |*rsym| rsym.name_pos,
     .unresolved_access => |*uacc| uacc.name.pos,
     .unresolved_symref => |*usym| usym.namePos(),
     else => model.Position{
       .source = self.pos.source,
-      .start = self.pos.end,
-      .end = self.pos.end,
+      .start  = self.pos.end,
+      .end    = self.pos.end,
     },
   };
+}
+
+pub fn formatter(
+  self: *Node,
+  data: *Globals,
+) std.fmt.Formatter(fmt.IndentingFormatter(*Node).format) {
+  return .{.data = .{.payload = self, .depth = 0, .data = data}};
 }
