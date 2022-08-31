@@ -43,8 +43,8 @@ pub const Error = nyarna.Error || UnwindReason;
 
 /// parser implementation. mustn't be accessed from outside.
 impl: Impl,
-/// whether current state has been emitted. used for the highlighting interface.
-emitted: bool = true,
+/// stored token in case of a referred_module_unavailable error
+stored: ?model.TokenAt = null,
 
 pub fn init() @This() {
   return @This(){.impl = .{
@@ -82,13 +82,20 @@ pub fn start(
 /// Instead, they are handed to the loader's errors.Handler. To check whether
 /// errors have occurred, check for an increase of the handler's error_count.
 pub fn build(self: *@This()) Error!*model.Node {
+  var cur = if (self.stored) |stored| blk: {
+    self.stored = null;
+    break :blk stored;
+  } else advance(&self.impl);
   while (true) {
-    const cur = advance(&self.impl);
-    if ((try self.impl.push(cur))) break;
+    const res = self.impl.push(cur) catch |err| {
+      self.stored = cur;
+      return err;
+    };
+    if (res) break;
+    cur = advance(&self.impl);
   }
   std.debug.assert(self.impl.levels.items.len == 1);
-  const ret = try self.impl.levels.items[0].finalize(&self.impl);
-  return ret;
+  return try self.impl.levels.items[0].finalize(&self.impl);
 }
 
 pub const SyntaxItem = struct {

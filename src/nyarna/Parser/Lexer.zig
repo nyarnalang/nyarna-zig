@@ -551,7 +551,7 @@ fn procArg(self: *Lexer, cur: *u21) !Token {
 }
 
 fn procArgStart(self: *Lexer, cur: *u21) !?Token {
-  if (try self.readDumpableSpace(cur)) {
+  if (try self.readDumpableSpace(cur, true)) {
     self.recent_end = self.walker.before;
     return .space;
   }
@@ -571,7 +571,7 @@ fn procArgStart(self: *Lexer, cur: *u21) !?Token {
 }
 
 fn procBeforeIdSetter(self: *Lexer, cur: *u21) !?Token {
-  if (try self.readDumpableSpace(cur)) {
+  if (try self.readDumpableSpace(cur, true)) {
     self.recent_end = self.walker.before;
     return .space;
   }
@@ -711,7 +711,7 @@ fn procAtHeader(self: *Lexer, cur: *u21) !?Token {
 }
 
 fn procConfigItemStart(self: *Lexer, cur: *u21) !Token {
-  if (try self.readDumpableSpace(cur)) {
+  if (try self.readDumpableSpace(cur, false)) {
     self.recent_end = self.walker.before;
     return .space;
   }
@@ -735,6 +735,7 @@ fn procConfigItemArg(self: *Lexer, cur: *u21) !?Token {
   const res = try self.processContent(.config, cur);
   self.recent_end = self.walker.before;
   if (res.token) |t| return t
+  else if (res.hit_line_end) return .ws_break
   else {
     cur.* = self.cur_stored catch {
       return .space;
@@ -1300,15 +1301,15 @@ fn advancing(
 
 /// return true iff any space has been read.
 /// error is only returned if no space has been read.
-fn readDumpableSpace(self: *Lexer, cur: *u21) !bool {
+fn readDumpableSpace(self: *Lexer, cur: *u21, comptime nl: bool) !bool {
   while(true) {
     switch (cur.*) {
-      '\r' => {
+      '\r' => if (nl) {
         if (try self.advancing(cur, Walker.nextAfterCR)) return true;
-      },
-      '\n' => {
+      } else break,
+      '\n' => if (nl) {
         if (try self.advancing(cur, Walker.nextAfterLF)) return true;
-      },
+      } else break,
       '\t', ' ' => {
         if (try self.advancing(cur, Walker.nextInline)) return true;
       },
@@ -1510,10 +1511,10 @@ pub fn readBlockHeader(self: *Lexer) void {
 
 /// block headers are aborted on the first error, to avoid parsing large
 /// chunks of code as block header if it's not properly closed.
-pub fn abortBlockHeader(self: *Lexer) void {
+pub fn abortBlockHeader(self: *Lexer, had_newline: bool) void {
   self.state = if (self.level.special == .disabled) (
-    .at_header
-  ) else .special_syntax;
+    if (had_newline) State.indent_capture else State.at_header
+  ) else State.special_syntax;
 }
 
 pub fn abortCaptureList(self: *Lexer) void {

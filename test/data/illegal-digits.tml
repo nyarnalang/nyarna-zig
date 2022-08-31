@@ -6,8 +6,12 @@
   \end(if)
 \end(block)
 --- errors:expr
-3:8 - 3:11 SwallowDepthWithoutDiamondClose
-5:9 - 5:11 SwallowDepthWithoutDiamondClose
+3:11 - 3:11 MissingToken
+  expected = {diamond_close}
+  got = space
+5:11 - 5:11 MissingToken
+  expected = {diamond_close}
+  got = space
 4:7 - 4:10 NotInEnum
   t = Bool
   repr = foo

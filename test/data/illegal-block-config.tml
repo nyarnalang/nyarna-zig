@@ -13,10 +13,15 @@
 \block:<\if
 --- errors:expr
 3:9 - 3:12 UnknownConfigDirective
+3:13 - 4:1 ExpectedXGotY
+  expected = {identifier}
+  got = ws_break
 7:9 - 7:10 ExpectedXGotY
   expected = {identifier}
   got = ns_char
-7:11 - 7:13 IllegalContentAtHeader
+7:11 - 7:13 ExpectedXGotY
+  expected = {comma, diamond_close}
+  got = literal
 7:14 - 7:16 IllegalContentAtHeader
 11:15 - 11:16 ExpectedXGotY
   expected = {ns_char}
@@ -26,4 +31,4 @@
   got = symref
 13:2 - 13:7 MissingEndCommand
   repr = block
-  previous = input(13:12)
+  previous = input(14:1)

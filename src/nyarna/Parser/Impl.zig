@@ -96,6 +96,7 @@ const State = enum {
   block_config_map_arg,
   block_config_off,
   block_config_empty,
+  block_config_try_recover,
   /// after a finished block config item, expecting ',' or '>'
   block_config_after_item,
   /// look for ':', else transition to after_block_header
@@ -228,7 +229,7 @@ pub fn procRootStart(self: *@This(), implicit_fullast: bool) !void {
 }
 
 fn procStart(self: *@This(), cur: model.TokenAt) !bool {
-  if (cur.isIn(.{.space, .indent, .ws_break})) return true;
+  if (cur.isIn(.{.space, .indent, .ws_break, .comment})) return true;
   self.state =
     if (self.curLevel().syntax_proc != null) .special else .default;
   return false;
@@ -236,7 +237,7 @@ fn procStart(self: *@This(), cur: model.TokenAt) !bool {
 
 fn procPossibleStart(self: *@This(), cur: model.TokenAt) !bool {
   switch (cur.token) {
-    .space => return true,
+    .space, .comment => return true,
     .list_end => return try self.endList(),
     else => {
       try self.pushLevel(self.curLevel().fullast);
@@ -400,10 +401,7 @@ fn procEndCommandToken(self: *@This(), cur: model.TokenAt) !void {
 fn procEndCommand(self: *@This(), cur: model.TokenAt) !void {
   switch (cur.token) {
     .space => {},
-    .call_id => {
-      try self.leaveLevel();
-      self.state = .expect_end_command_end;
-    },
+    .call_id => self.state = .expect_end_command_end,
     .wrong_call_id => {
       const cmd_start =
         self.levels.items[self.levels.items.len - 2].command.start;
@@ -411,7 +409,6 @@ fn procEndCommand(self: *@This(), cur: model.TokenAt) !void {
         self.lexer.walker.posFrom(cur.start),
         self.lexer.recent_expected_id, self.lexer.recent_id,
         self.source().at(cmd_start));
-      try self.leaveLevel();
       self.state = .expect_end_command_end;
     },
     .no_block_call_id => {
@@ -435,7 +432,6 @@ fn procEndCommand(self: *@This(), cur: model.TokenAt) !void {
           self.intpr(), self.source(), cur.start, lvl.fullast);
         try lvl.append(self.intpr(), lvl.command.info.unknown);
       }
-      try self.leaveLevel();
       self.state = .expect_end_command_end;
     },
   }
@@ -450,9 +446,11 @@ fn procExpectEndCommandEnd(self: *@This(), cur: model.TokenAt) !bool {
       break :blk false;
     },
   };
+  try self.leaveLevel();
   self.state = .command;
   try self.curLevel().command.shift(
-    self.intpr(), self.source(), cur.start, self.curLevel().fullast);
+    self.intpr(), self.source(), self.lexer.recent_end, self.curLevel().fullast
+  );
   return ret;
 }
 
@@ -809,7 +807,7 @@ fn procAfterFlowList(self: *@This(), cur: model.TokenAt) !bool {
       lvl.command.swallow_depth = swallow_depth;
       try self.closeSwallowing(swallow_depth);
       self.state = .start;
-      return true;
+      return false;
     } else {
       try lvl.command.shift(
         self.intpr(), self.source(), cur.start, lvl.fullast);
@@ -820,7 +818,7 @@ fn procAfterFlowList(self: *@This(), cur: model.TokenAt) !bool {
 }
 
 fn procSkipSpace(self: *@This(), cur: model.TokenAt) !bool {
-  if (cur.isIn(.{.space, .indent, .ws_break})) return true;
+  if (cur.isIn(.{.space, .indent, .ws_break, .comment})) return true;
   self.state =
     if (self.curLevel().syntax_proc != null) .special else .default;
   return false;
@@ -881,8 +879,8 @@ fn procSkipBlockName(self: *@This(), cur: model.TokenAt) void {
 
 fn procBeforeId(self: *@This(), cur: model.TokenAt) !bool {
   switch (cur.token) {
-    .space   => return true,
-    .call_id => {
+    .space, .comment => return true,
+    .call_id        => {
       self.state = .after_id;
       return true;
     },
@@ -896,8 +894,8 @@ fn procBeforeId(self: *@This(), cur: model.TokenAt) !bool {
 
 fn procAfterId(self: *@This(), cur: model.TokenAt) !bool {
   switch (cur.token) {
-    .space => return true,
-    .comma => {
+    .space, .comment => return true,
+    .comma           => {
       self.state = .start;
       _ = self.levels.pop();
       try self.pushLevel(self.curLevel().fullast);
@@ -922,7 +920,7 @@ fn procAfterId(self: *@This(), cur: model.TokenAt) !bool {
       const parent = &self.levels.items[self.levels.items.len - 2];
       parent.command.cur_cursor = .failed;
       self.state = .default;
-      return true;
+      return false;
     },
   }
 }
@@ -932,10 +930,12 @@ fn procSpecial(self: *@This(), cur: model.TokenAt) !bool {
   const result = try switch (cur.token) {
     .comment => return true,
     .indent => syntaxes.SpecialSyntax.Processor.Action.none,
-    .space, .ws_break, .parsep => {
+    .space, .parsep => {
       self.enterSpecialWhitespace();
       return false;
     },
+    .ws_break =>
+      proc.push(proc, self.lexer.walker.posFrom(cur.start), .{.newlines = 1}),
     .escape =>
       proc.push(proc, self.lexer.walker.posFrom(cur.start),
         .{.escaped = self.lexer.recent_id}),
@@ -945,7 +945,14 @@ fn procSpecial(self: *@This(), cur: model.TokenAt) !bool {
     .special =>
       proc.push(proc, self.lexer.walker.posFrom(cur.start),
         .{.special_char = self.lexer.code_point}),
-    .end_source, .symref, .block_name_sep, .list_start, .block_end_open => {
+    .end_source, .block_name_sep, .list_start, .block_end_open => {
+      const res =
+        try proc.push(proc, self.source().at(cur.start), .{.newlines = 1});
+      std.debug.assert(res == .none);
+      self.state = .default;
+      return false;
+    },
+    .symref => {
       self.state = .default;
       return false;
     },
@@ -979,10 +986,9 @@ fn enterSpecialWhitespace(self: *@This()) void {
 fn procSpecialAfterSpace(self: *@This(), cur: model.TokenAt) !bool {
   switch (cur.token) {
     .comment => {
+      self.special.whitespace = &.{};
       if (self.special.newlines == 0) {
-        self.state = .special;
-      } else {
-        self.special.whitespace = &.{};
+        self.special.newlines = 1;
       }
       return true;
     },
@@ -1001,6 +1007,14 @@ fn procSpecialAfterSpace(self: *@This(), cur: model.TokenAt) !bool {
       return true;
     },
     .end_source, .block_name_sep, .list_start, .block_end_open => {
+      if (self.special.newlines == 0) {
+        self.special.newlines = 1;
+        self.special.nl_pos = self.source().at(cur.start);
+      }
+      const proc = self.curLevel().syntax_proc.?;
+      const res = try proc.push(proc, self.special.nl_pos,
+        .{.newlines = self.special.newlines});
+      std.debug.assert(res == .none);
       self.state = .special;
       return false;
     },
@@ -1136,6 +1150,9 @@ pub fn push(
       if (try self.procBlockConfigMapArg(cur)) return false,
     .block_config_off   => if (try self.procBlockConfigOff(cur))   return false,
     .block_config_empty => if (try self.procBlockConfigEmpty(cur)) return false,
+    .block_config_try_recover => {
+      if (try self.procBlockConfigTryRecover(cur)) return false;
+    },
     .block_config_after_item =>
       if (try self.procBlockConfigAfterItem(cur)) return false,
     .after_block_config => if (try self.procAfterBlockConfig(cur)) return false,
@@ -1236,23 +1253,23 @@ fn procBlockConfigStart(self: *@This(), cur: model.TokenAt) !bool {
           break :blk .block_config_after_item;
         },
         std.hash.Adler32.hash("")        => .block_config_empty,
-        else => {
+        else => blk: {
           self.logger().UnknownConfigDirective(
             self.lexer.walker.posFrom(cur.start));
-          try self.abortBlockConfig(self.lexer.walker.before);
-          return true;
+          break :blk .block_config_try_recover;
         },
       };
+      self.stored_cursor = cur.start;
       return true;
     },
     else => unreachable,
   }
 }
 
-fn abortBlockConfig(self: *@This(), at: model.Cursor) !void {
-  self.lexer.abortBlockHeader();
-  self.finalizeBlockConfig(at);
-  try self.finishBlockHeader(at, null);
+fn abortBlockHeader(self: *@This(), cur: model.TokenAt) !void {
+  self.lexer.abortBlockHeader(cur.token == .ws_break);
+  self.finalizeBlockConfig(cur.start);
+  try self.finishBlockHeader(cur.start, null);
 }
 
 fn finalizeBlockConfig(self: *@This(), at: model.Cursor) void {
@@ -1270,7 +1287,7 @@ fn procBlockConfigCsym(self: *@This(), cur: model.TokenAt) !bool {
     .space => return true,
     .ns_char => {
       try self.block_header.config_parser.map_list.append(self.allocator(), .{
-        .pos = self.lexer.walker.posFrom(cur.start),
+        .pos = self.lexer.walker.posFrom(self.stored_cursor.?),
         .from = 0, .to = self.lexer.code_point});
       self.state = .block_config_after_item;
       return true;
@@ -1279,8 +1296,11 @@ fn procBlockConfigCsym(self: *@This(), cur: model.TokenAt) !bool {
       self.logger().ExpectedXGotY(
         self.lexer.walker.posFrom(cur.start),
         &.{.{.token = .ns_char}}, .{.token = cur.token});
-      try self.abortBlockConfig(cur.start);
-      return cur.token != .end_source;
+      self.state = .block_config_try_recover;
+      return switch (cur.token) {
+        .end_source, .ws_break => false,
+        else => true,
+      };
     }
   }
 }
@@ -1313,8 +1333,11 @@ fn procBlockConfigSyntax(self: *@This(), cur: model.TokenAt) !bool {
       self.logger().ExpectedXGotY(
         self.lexer.walker.posFrom(cur.start),
         &.{.{.token = .literal}}, .{.token = cur.token});
-      try self.abortBlockConfig(cur.start);
-      return cur.token != .end_source;
+      self.state = .block_config_try_recover;
+      return switch (cur.token) {
+        .end_source, .ws_break => false,
+        else => true,
+      };
     },
   }
 }
@@ -1331,8 +1354,11 @@ fn procBlockConfigMap(self: *@This(), cur: model.TokenAt) !bool {
       self.logger().ExpectedXGotY(
         self.lexer.walker.posFrom(cur.start),
         &.{.{.token = .ns_char}}, .{.token = cur.token});
-      try self.abortBlockConfig(cur.start);
-      return cur.token != .end_source;
+      self.state = .block_config_try_recover;
+      return switch (cur.token) {
+        .end_source, .ws_break => false,
+        else => true,
+      };
     },
   }
 }
@@ -1342,7 +1368,7 @@ fn procBlockConfigMapArg(self: *@This(), cur: model.TokenAt) !bool {
     .space => return true,
     .ns_char => {
       try self.block_header.config_parser.map_list.append(self.allocator(), .{
-        .pos  = self.lexer.walker.posFrom(cur.start),
+        .pos  = self.lexer.walker.posFrom(self.stored_cursor.?),
         .from = self.block_header.config_parser.map_from,
         .to   = self.lexer.code_point,
       });
@@ -1353,8 +1379,11 @@ fn procBlockConfigMapArg(self: *@This(), cur: model.TokenAt) !bool {
       self.logger().ExpectedXGotY(
         self.lexer.walker.posFrom(cur.start),
         &.{.{.token = .ns_char}}, .{.token = cur.token});
-      try self.abortBlockConfig(cur.start);
-      return cur.token != .end_source;
+      self.state = .block_config_try_recover;
+      return switch (cur.token) {
+        .end_source, .ws_break => false,
+        else => true,
+      };
     },
   }
 }
@@ -1364,19 +1393,19 @@ fn procBlockConfigOff(self: *@This(), cur: model.TokenAt) !bool {
     .space   => return true,
     .comment => {
       self.block_header.config_parser.into.off_comment =
-        self.lexer.walker.posFrom(cur.start);
+        self.lexer.walker.posFrom(self.stored_cursor.?);
       self.state = .block_config_after_item;
       return true;
     },
     .block_name_sep => {
       self.block_header.config_parser.into.off_colon =
-        self.lexer.walker.posFrom(cur.start);
+        self.lexer.walker.posFrom(self.stored_cursor.?);
       self.state = .block_config_after_item;
       return true;
     },
     .ns_char => {
       try self.block_header.config_parser.map_list.append(self.allocator(), .{
-        .pos  = self.lexer.walker.posFrom(cur.start),
+        .pos  = self.lexer.walker.posFrom(self.stored_cursor.?),
         .from = self.lexer.code_point, .to = 0,
       });
       self.state = .block_config_after_item;
@@ -1384,11 +1413,11 @@ fn procBlockConfigOff(self: *@This(), cur: model.TokenAt) !bool {
     },
     else => {
       self.block_header.config_parser.into.off_comment =
-        self.lexer.walker.posFrom(cur.start);
+        self.source().between(self.stored_cursor.?, cur.start);
       self.block_header.config_parser.into.off_colon =
-        self.lexer.walker.posFrom(cur.start);
+        self.source().between(self.stored_cursor.?, cur.start);
       try self.block_header.config_parser.map_list.append(self.allocator(), .{
-        .pos = self.lexer.walker.posFrom(cur.start),
+        .pos = self.source().between(self.stored_cursor.?, cur.start),
         .from = 0, .to = 0,
       });
       self.state = .block_config_after_item;
@@ -1404,10 +1433,35 @@ fn procBlockConfigEmpty(self: *@This(), cur: model.TokenAt) !bool {
       self.logger().ExpectedXGotY(
         self.lexer.walker.posFrom(cur.start),
         &.{.{.token = .identifier}}, .{.token = cur.token});
-      try self.abortBlockConfig(cur.start);
-      return cur.token != .end_source;
+      self.state = .block_config_try_recover;
+      return switch (cur.token) {
+        .end_source, .ws_break => false,
+        else => true,
+      };
     },
   }
+}
+
+fn procBlockConfigTryRecover(self: *@This(), cur: model.TokenAt) !bool {
+  switch (cur.token) {
+    .space => {},
+    .comma => self.state = .block_config_start,
+    .diamond_close => {
+      self.finalizeBlockConfig(self.lexer.walker.before);
+      self.state = .after_block_config;
+    },
+    else => {
+      if (cur.token != .ws_break) {
+        self.logger().ExpectedXGotY(
+          self.lexer.walker.posFrom(cur.start),
+          &.{.{.token = .comma}, .{.token = .diamond_close}},
+          .{.token = cur.token});
+      }
+      try self.abortBlockHeader(cur);
+      return cur.token != .end_source;
+    }
+  }
+  return true;
 }
 
 fn procBlockConfigAfterItem(self: *@This(), cur: model.TokenAt) !bool {
@@ -1427,8 +1481,11 @@ fn procBlockConfigAfterItem(self: *@This(), cur: model.TokenAt) !bool {
         self.lexer.walker.posFrom(cur.start),
         &.{.{.token = .diamond_close}, .{.token = .comma}},
         .{.token = cur.token});
-      try self.abortBlockConfig(cur.start);
-      return cur.token != .end_source;
+      self.state = .block_config_try_recover;
+      return switch (cur.token) {
+        .end_source, .ws_break => false,
+        else => true,
+      };
     },
   }
 }

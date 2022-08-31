@@ -18,7 +18,7 @@
 5:19 - 5:23 UnknownFlag
   repr = derp
 5:28 - 5:37 SurplusFlags
-10:16 - 10:16 PrematureToken
+10:16 - 11:1 PrematureToken
   expected = {identifier, '}'}
   got = ws_break
 9:2 - 9:6 MissingEndCommand

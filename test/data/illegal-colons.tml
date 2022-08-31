@@ -7,8 +7,11 @@
   \foo
 \end(func)(spam, egg)
 --- errors:expr
-4:21 - 4:22 SwallowDepthWithoutDiamondClose
-5:17 - 5:18 IllegalColon
-6:15 - 6:16 SwallowDepthWithoutDiamondClose
+4:22 - 4:22 MissingToken
+  expected = {diamond_close}
+  got = ws_break
+6:16 - 6:16 MissingToken
+  expected = {diamond_close}
+  got = space
 8:12 - 8:16 InvalidNumber
   repr = spam
