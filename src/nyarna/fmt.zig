@@ -1,4 +1,4 @@
-//! this module implements formatting of node, expression and value trees
+//! this module implements formatting of model data. mostly for debugging.
 
 const std = @import("std");
 

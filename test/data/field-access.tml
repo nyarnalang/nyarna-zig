@@ -22,42 +22,22 @@
     >ARG public
     +AST
       +DEF Data
-        +RCALL
-          =SYMREF .std.system.Record
-          >ARG embed
-          +AST
-            +VARARGS
-            -VARARGS
-          -AST
-          >ARG abstract
-          =VOID
-          >ARG fields
-          +AST
-            +LOC
-              =LIT text "a"
-              =SYMREF .std.system.Text
-            -LOC
-            +LOC
-              =LIT text "b"
-              =SYMREF .std.system.Text
-            -LOC
-          -AST
-        -RCALL
+        +TYPE record
+          +PARAM a
+            =TYPE textual .std.system.Text
+          -PARAM
+          +PARAM b
+            =TYPE textual .std.system.Text
+          -PARAM
+        -TYPE
       -DEF
       +DEF foo
-        +RCALL
-          =SYMREF .std.system.func
-          >ARG return
-          =VOID
-          >ARG params
-          +AST
-            +LOC
-              =LIT text "data"
-              =SYMREF [0]Data
-            -LOC
-          -AST
-          >ARG body
-          +AST
+        +FUNC
+          +LOC
+            =TEXT Literal "data"
+            =SYMREF [0]Data
+          -LOC
+          +BODY
             =LIT text "("
             +ACCESS
               >SUBJECT
@@ -73,8 +53,8 @@
               =LIT text "b"
             -ACCESS
             =LIT text ")"
-          -AST
-        -RCALL
+          -BODY
+        -FUNC
       -DEF
     -AST
     >ARG private

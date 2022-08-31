@@ -56,9 +56,12 @@ const State = enum {
   /// and transition to .default. Handles error cases like .subject being
   /// prefix notation for a function but not being followed by a call.
   command,
-  /// State after entering a block name. Skips space, then transitions to either
-  /// block_name or skip_block_name.
+  /// State after entering a block name. Skips space and ends previous block,
+  /// then transitions to either block_name or skip_block_name.
   block_name_start,
+  /// same as block_name_start, but doesn't end previous block level since this
+  /// is the first named block without a primary block.
+  first_block_name_start,
   /// read a valid block name, looks for finishing ':'
   block_name,
   /// as block_name, but for block names at top level
@@ -234,10 +237,7 @@ fn procStart(self: *@This(), cur: model.TokenAt) !bool {
 fn procPossibleStart(self: *@This(), cur: model.TokenAt) !bool {
   switch (cur.token) {
     .space => return true,
-    .list_end => {
-      try self.endList();
-      return true;
-    },
+    .list_end => return try self.endList(),
     else => {
       try self.pushLevel(self.curLevel().fullast);
       self.state = .default;
@@ -315,7 +315,6 @@ fn finishSwallowing(self: *@This(), at: model.Cursor) !void {
 
 fn procBlockNameStartColon(self: *@This(), cur: model.TokenAt) !void {
   try self.finishSwallowing(cur.start);
-  self.stored_cursor = null;
   self.state = .block_name_start;
 }
 
@@ -341,6 +340,24 @@ fn procBlockNameStart(self: *@This(), cur: model.TokenAt) !void {
     }
     self.state = .block_name;
   }
+}
+
+fn procFirstBlockNameStart(self: *@This(), cur: model.TokenAt) !void {
+  switch (cur.token) {
+    .space => return,
+    .identifier => {
+      self.block_name = .{.simple = .{
+        .name = self.lexer.walker.contentFrom(cur.start.byte_offset),
+        .pos  = self.lexer.walker.posFrom(cur.start),
+      }};
+      self.stored_cursor = null;
+    },
+    else => {
+      self.block_name = .none;
+      self.stored_cursor = cur.start;
+    },
+  }
+  self.state = .block_name;
 }
 
 fn enterBlockNameExpr(self: *@This(), valid: bool, start: model.Cursor) !void {
@@ -694,10 +711,14 @@ fn procAssign(self: *@This(), cur: model.TokenAt) !bool {
   const lvl = self.curLevel();
   switch (cur.token) {
     .list_start => {
+      lvl.command.startAssignment(self.intpr());
       try self.pushLevel(self.curLevel().fullast);
       self.state = .start;
     },
-    .blocks_sep => self.startBlockHeader(.{.primary = .{.guaranteed = false}}),
+    .blocks_sep => {
+      lvl.command.startAssignment(self.intpr());
+      self.startBlockHeader(.{.primary = .{.guaranteed = false}});
+    },
     .closer => {
       self.logger().AssignmentWithoutExpression(
         self.lexer.walker.posFrom(lvl.command.info.unknown.pos.start));
@@ -715,11 +736,10 @@ fn procAssign(self: *@This(), cur: model.TokenAt) !bool {
       return false;
     }
   }
-  lvl.command.startAssignment(self.intpr());
   return true;
 }
 
-fn endList(self: *@This()) !void {
+fn endList(self: *@This()) !bool {
   const lvl = self.curLevel();
   switch (lvl.semantics) {
     .default => self.state = .after_flow_list,
@@ -736,8 +756,10 @@ fn endList(self: *@This()) !void {
       )};
       _ = self.levels.pop();
       self.state = .after_block_name;
+      return false;
     },
   }
+  return true;
 }
 
 fn procAfterBlockName(self: *@This(), cur: model.TokenAt) !void {
@@ -811,7 +833,7 @@ fn procPossiblePrimary(self: *@This(), cur: model.TokenAt) !bool {
       const lvl = self.levels.pop();
       if (lvl.block_config) |c| try self.revertBlockConfig(c.*);
       if (cur.token == .block_name_sep) {
-        self.state = .block_name;
+        self.state = .first_block_name_start;
       } else {
         try self.enterBlockNameExpr(true, self.lexer.recent_end);
       }
@@ -824,22 +846,23 @@ fn procPossiblePrimary(self: *@This(), cur: model.TokenAt) !bool {
   }
 }
 
-fn procBlockName(self: *@This(), cur: model.TokenAt) void {
+fn procBlockName(self: *@This(), cur: model.TokenAt) bool {
   switch (cur.token) {
-    .space => return,
+    .space => return true,
     .block_name_sep => {},
     .missing_block_name_sep => {
       self.logger().MissingBlockNameEnd(self.source().at(cur.start));
     },
     else => {
       if (self.stored_cursor == null) self.stored_cursor = cur.start;
-      return;
+      return true;
     },
   }
   if (self.stored_cursor) |start| {
     self.logger().IllegalContentInBlockName(self.lexer.walker.posFrom(start));
   }
   self.state = .after_block_name;
+  return false;
 }
 
 fn procSkipBlockName(self: *@This(), cur: model.TokenAt) void {
@@ -882,14 +905,12 @@ fn procAfterId(self: *@This(), cur: model.TokenAt) !bool {
     },
     .list_end => {
       _ = self.levels.pop();
-      try self.endList();
-      return true;
+      return try self.endList();
     },
     .list_end_missing_colon => {
       self.logger().MissingColon(self.source().at(cur.start));
       _ = self.levels.pop();
-      try self.endList();
-      return true;
+      return try self.endList();
     },
     .end_source => {
       self.state = .default;
@@ -909,6 +930,7 @@ fn procAfterId(self: *@This(), cur: model.TokenAt) !bool {
 fn procSpecial(self: *@This(), cur: model.TokenAt) !bool {
   const proc = self.curLevel().syntax_proc.?;
   const result = try switch (cur.token) {
+    .comment => return true,
     .indent => syntaxes.SpecialSyntax.Processor.Action.none,
     .space, .ws_break, .parsep => {
       self.enterSpecialWhitespace();
@@ -927,8 +949,8 @@ fn procSpecial(self: *@This(), cur: model.TokenAt) !bool {
       self.state = .default;
       return false;
     },
-    else => std.debug.panic("unexpected token in special: {s}\n",
-      .{@tagName(cur.token)}),
+    else => std.debug.panic("{}: unexpected token in special: {s}\n",
+      .{self.source().at(cur.start).formatter(), @tagName(cur.token)}),
   };
   switch (result) {
     .none => {},
@@ -1011,6 +1033,7 @@ pub fn push(
     .possible_start   => if (try self.procPossibleStart(cur))   return false,
     .possible_primary => if (try self.procPossiblePrimary(cur)) return false,
     .default        => switch (cur.token) {
+      .comment => return false,
       .space, .escape, .literal, .ws_break => {
         self.state = .textual;
         self.text = .{.start = cur.start};
@@ -1032,14 +1055,12 @@ pub fn push(
       },
       .list_end => {
         try self.leaveLevel();
-        try self.endList();
-        return false;
+        if (try self.endList()) return false;
       },
       .list_end_missing_colon => {
         try self.leaveLevel();
         self.logger().MissingColon(self.source().at(cur.start));
-        try self.endList();
-        return false;
+        if (try self.endList()) return false;
       },
       .parsep           => {
         self.procParagraphEnd();
@@ -1081,10 +1102,11 @@ pub fn push(
       try self.procBlockNameStart(cur);
       return false;
     },
-    .block_name         => {
-      self.procBlockName(cur);
+    .first_block_name_start => {
+      try self.procFirstBlockNameStart(cur);
       return false;
     },
+    .block_name         => if (self.procBlockName(cur)) return false,
     .skip_block_name    => {
       self.procSkipBlockName(cur);
       return false;
@@ -1352,6 +1374,14 @@ fn procBlockConfigOff(self: *@This(), cur: model.TokenAt) !bool {
       self.state = .block_config_after_item;
       return true;
     },
+    .ns_char => {
+      try self.block_header.config_parser.map_list.append(self.allocator(), .{
+        .pos  = self.lexer.walker.posFrom(cur.start),
+        .from = self.lexer.code_point, .to = 0,
+      });
+      self.state = .block_config_after_item;
+      return true;
+    },
     else => {
       self.block_header.config_parser.into.off_comment =
         self.lexer.walker.posFrom(cur.start);
@@ -1404,7 +1434,7 @@ fn procBlockConfigAfterItem(self: *@This(), cur: model.TokenAt) !bool {
 }
 
 fn procAfterBlockConfig(self: *@This(), cur: model.TokenAt) !bool {
-  if (cur.token == .block_name_sep) {
+  if (cur.token == .blocks_sep) {
     self.state = .block_header_start;
     return true;
   }

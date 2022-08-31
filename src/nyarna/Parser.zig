@@ -83,8 +83,7 @@ pub fn start(
 /// errors have occurred, check for an increase of the handler's error_count.
 pub fn build(self: *@This()) Error!*model.Node {
   while (true) {
-    const accepts_comment = self.impl.state == .textual;
-    const cur = advance(&self.impl, accepts_comment);
+    const cur = advance(&self.impl);
     if ((try self.impl.push(cur))) break;
   }
   std.debug.assert(self.impl.levels.items.len == 1);
@@ -110,7 +109,7 @@ pub fn next(self: *@This(), from: usize) !?SyntaxItem {
 
 /// retrieves the next valid token from the lexer.
 /// emits errors for any invalid token along the way.
-fn advance(impl: *Impl, comment: bool) model.TokenAt {
+fn advance(impl: *Impl) model.TokenAt {
   while (true) {
     const at = impl.lexer.recent_end;
     (switch (impl.lexer.next() catch blk: {
@@ -137,9 +136,6 @@ fn advance(impl: *Impl, comment: bool) model.TokenAt {
       .illegal_indentation       => errors.Handler.IllegalIndentation,
       .illegal_content_at_header => errors.Handler.IllegalContentAtHeader,
       .invalid_end_command       => errors.Handler.InvalidEndCommand,
-      .comment => if (comment) (
-        return .{.start = at, .token = .comment}
-      ) else continue,
       else => |t| {
         return .{.start = at, .token = t};
       }
