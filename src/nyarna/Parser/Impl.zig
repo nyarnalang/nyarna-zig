@@ -6,14 +6,12 @@
 const std     = @import("std");
 const builtin = @import("builtin");
 
-const BlockConfig  = @import("BlockConfig.zig");
 const ContentLevel = @import("ContentLevel.zig");
 const Globals      = @import("../Globals.zig");
 const Lexer        = @import("Lexer.zig");
 const nyarna       = @import("../../nyarna.zig");
 const ModuleEntry  = @import("../Globals.zig").ModuleEntry;
 const Parser       = @import("../Parser.zig");
-const PipeCapture  = @import("PipeCapture.zig");
 const Resolver     = @import("../Interpreter/Resolver.zig");
 const syntaxes     = @import("syntaxes.zig");
 const unicode      = @import("../unicode.zig");
@@ -1286,9 +1284,10 @@ fn procBlockConfigCsym(self: *@This(), cur: model.TokenAt) !bool {
   switch (cur.token) {
     .space => return true,
     .ns_char => {
-      try self.block_header.config_parser.map_list.append(self.allocator(), .{
-        .pos = self.lexer.walker.posFrom(self.stored_cursor.?),
-        .from = 0, .to = self.lexer.code_point});
+      try self.block_header.config_parser.map_list.append(
+        self.intpr().ctx.global(), .{
+          .pos = self.lexer.walker.posFrom(self.stored_cursor.?),
+          .from = 0, .to = self.lexer.code_point});
       self.state = .block_config_after_item;
       return true;
     },
@@ -1367,11 +1366,12 @@ fn procBlockConfigMapArg(self: *@This(), cur: model.TokenAt) !bool {
   switch (cur.token) {
     .space => return true,
     .ns_char => {
-      try self.block_header.config_parser.map_list.append(self.allocator(), .{
-        .pos  = self.lexer.walker.posFrom(self.stored_cursor.?),
-        .from = self.block_header.config_parser.map_from,
-        .to   = self.lexer.code_point,
-      });
+      try self.block_header.config_parser.map_list.append(
+        self.intpr().ctx.global(), .{
+          .pos  = self.lexer.walker.posFrom(self.stored_cursor.?),
+          .from = self.block_header.config_parser.map_from,
+          .to   = self.lexer.code_point,
+        });
       self.state = .block_config_after_item;
       return true;
     },
@@ -1404,10 +1404,11 @@ fn procBlockConfigOff(self: *@This(), cur: model.TokenAt) !bool {
       return true;
     },
     .ns_char => {
-      try self.block_header.config_parser.map_list.append(self.allocator(), .{
-        .pos  = self.lexer.walker.posFrom(self.stored_cursor.?),
-        .from = self.lexer.code_point, .to = 0,
-      });
+      try self.block_header.config_parser.map_list.append(
+        self.intpr().ctx.global(), .{
+          .pos  = self.lexer.walker.posFrom(self.stored_cursor.?),
+          .from = self.lexer.code_point, .to = 0,
+        });
       self.state = .block_config_after_item;
       return true;
     },
@@ -1416,10 +1417,11 @@ fn procBlockConfigOff(self: *@This(), cur: model.TokenAt) !bool {
         self.source().between(self.stored_cursor.?, cur.start);
       self.block_header.config_parser.into.off_colon =
         self.source().between(self.stored_cursor.?, cur.start);
-      try self.block_header.config_parser.map_list.append(self.allocator(), .{
-        .pos = self.source().between(self.stored_cursor.?, cur.start),
-        .from = 0, .to = 0,
-      });
+      try self.block_header.config_parser.map_list.append(
+        self.intpr().ctx.global(), .{
+          .pos = self.source().between(self.stored_cursor.?, cur.start),
+          .from = 0, .to = 0,
+        });
       self.state = .block_config_after_item;
       return false;
     },
