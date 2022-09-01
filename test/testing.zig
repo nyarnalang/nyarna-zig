@@ -352,21 +352,16 @@ const AstEmitter = struct {
         try body.pop();
         try func.pop();
       },
-      .highlight => |hl| {
+      .highlighter => |hl| {
         const lvl = try self.push("HIGHLIGHT");
         try self.process(hl.syntax);
         for (hl.renderers) |renderer| {
-          switch (renderer.variable) {
-            .def => |def| try self.emitLine(">RENDERER {s} |[{}]{s}|", .{
-              renderer.name, def.ns, def.name
-            }),
-            .sym => |sym| try self.emitLine(">RENDERER {s} |{s}.{s}|", .{
-              renderer.name, sym.sym().defined_at.source.locator.repr,
-              sym.sym().name,
-            }),
-            .none => try self.emitLine(">RENDERER {s}", .{renderer.name})
-          }
-          try self.process(renderer.content.root);
+          if (renderer.variable) |v| {
+            try self.emitLine(">RENDERER {s} |[{}]{s}|", .{
+              renderer.name.content, v.ns, v.name,
+            });
+          } else try self.emitLine(">RENDERER {s}", .{renderer.name.content});
+          try self.process(renderer.content);
         }
         try lvl.pop();
       },
@@ -1416,13 +1411,14 @@ pub fn parseTest(data: *TestDataResolver) !void {
     &data.stdlib.api);
   defer proc.deinit();
   var loader = try proc.initMainModule(&checker.data.api, "input", true);
-  const ml = loader.loader.data.known_modules.values()[1].require_module;
   defer loader.destroy();
+  const ml = try loader.finishMainAst();
+  defer ml.destroy();
+  const node = try ml.finalizeNode();
+  try std.testing.expect(!loader.loader.data.seen_error);
   var emitter = AstEmitter.init(loader.loader.data, &checker);
-  while (!try ml.work()) {}
-  try emitter.process(try ml.finalizeNode());
+  try emitter.process(node);
   try checker.finish();
-  try std.testing.expectEqual(@as(usize, 0), ml.loader.logger.count);
 }
 
 pub fn parseErrorTest(data: *TestDataResolver) !void {

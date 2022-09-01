@@ -4,6 +4,7 @@
 const std = @import("std");
 
 const nyarna = @import("../nyarna.zig");
+const Parser = @import("Parser.zig");
 
 const errors = nyarna.errors;
 const Loader = nyarna.Loader;
@@ -15,15 +16,14 @@ pub const Error = error {
 
 /// Description of a syntax highlighter. Use Processor to execute it.
 pub const Syntax = struct {
-  pub const Item = union(enum) {
-    text : []const u8,
-    enter: usize,
-    exit : usize,
+  pub const Item = struct {
+    token_index: usize,
+    length     : usize,
   };
 
   pub const Processor = struct {
     syntax   : *Syntax,
-    nextFn   : fn(self: *Processor) Error!?Item,
+    nextFn   : fn(self: *Processor, from: usize) Error!?Item,
     destroyFn: fn(self: *Processor) void,
 
     pub fn create(
@@ -38,34 +38,30 @@ pub const Syntax = struct {
       self.destroyFn(self);
     }
 
-    pub fn next(self: *@This()) Error!?Item {
-      return self.nextFn(self);
+    pub fn next(self: *@This(), from: usize) Error!?Item {
+      return self.nextFn(self, from);
     }
   };
 
-  /// nodes that make up the structure of this syntax
-  node_kinds: []const []const u8,
+  /// tokens that make up the structure of this syntax
+  tokens: []const []const u8,
 
   createProcFn: fn(
     allocator: std.mem.Allocator,
     syntax   : *Syntax,
     input    : []const u8,
-  ) std.mem.Allocator.Error!void,
+  ) Error!*Processor,
 };
 
 /// highlighter for Nyarna syntax
 pub const NyarnaSyntax = struct {
-  const nodes = []const []const u8{
-    "comment", "keyword", "symref", "special", "tag"
-  };
-
   syntax: Syntax,
   stdlib: *Loader.Resolver,
 
-  fn init(stdlib: *Loader.Resolver) NyarnaSyntax {
+  pub fn init(stdlib: *Loader.Resolver) NyarnaSyntax {
     return .{
       .syntax = .{
-        .node_kinds   = nodes,
+        .tokens = std.meta.fieldNames(Parser.SyntaxItem.Kind),
         .createProcFn = createProc,
       },
       .stdlib = stdlib,
@@ -74,9 +70,9 @@ pub const NyarnaSyntax = struct {
 
   fn createProc(
     allocator: std.mem.Allocator,
-    syntax: *Syntax,
-    input: []const u8,
-  ) std.mem.Allocator.Error!void {
+    syntax   : *Syntax,
+    input    : []const u8,
+  ) Error!*Syntax.Processor {
     const self = @fieldParentPtr(NyarnaSyntax, "syntax", syntax);
     const ret = try allocator.create(NyarnaProcessor);
     errdefer allocator.destroy(ret);
@@ -107,7 +103,14 @@ pub const NyarnaSyntax = struct {
     ret.nyarna = try nyarna.Processor.init(
       allocator, nyarna.default_stack_size, &ret.ignore.reporter, self.stdlib);
     errdefer (ret.nyarna.deinit());
-    ret.main = ret.nyarna.initMainModule(&ret.doc_res.resolver, "", false);
+    ret.main = (
+      ret.nyarna.initMainModule(&ret.doc_res.api, "", false)
+    ) catch |err| switch (err) {
+      error.OutOfMemory, error.nyarna_stack_overflow,
+      error.too_many_namespaces => return Error.OutOfMemory,
+      // impossible since we have already loaded system.ny successfully.
+      error.init_error => unreachable,
+    };
     return &ret.proc;
   }
 };
@@ -120,42 +123,58 @@ const NyarnaProcessor = struct {
   doc_res  : Loader.SingleResolver,
   allocated: bool,
 
-  fn next(obj: *Syntax.Processor) Error!?Syntax.Item {
+  fn next(obj: *Syntax.Processor, from: usize) Error!?Syntax.Item {
     const self = @fieldParentPtr(NyarnaProcessor, "proc", obj);
-    const globals = self.main.data;
-    const main_loader = while (globals.lastLoadingModule()) |index| {
-      const loader = switch (globals.known_modules.values()[index]) {
-        .require_options => |ml| ml,
-        .require_module  => |ml| blk: {
-          break :blk ml;
+    const globals = self.main.loader.data;
+    while (true) {
+      const main_loader = while (globals.lastLoadingModule()) |index| {
+        const loader = switch (globals.known_modules.values()[index]) {
+          .require_options => |ml| ml,
+          .require_module  => |ml| blk: {
+            break :blk ml;
+          },
+          .parsed, .loaded, .pushed_param => unreachable,
+        };
+        if (index == 1) break loader;
+        _ = loader.work() catch |err| switch (err) {
+          error.OutOfMemory => return Error.OutOfMemory,
+          else              => return Error.syntax_parser_error,
+        };
+        if (loader.state == .finished) {
+          const module = try loader.finalize();
+          globals.known_modules.values()[index] = .{.loaded = module};
+        }
+      } else return null;
+      switch (main_loader.state) {
+        .initial => {
+          try main_loader.loader.interpreter.importModuleSyms(
+            globals.known_modules.values()[0].loaded, 0);
+          try main_loader.parser.start(
+            main_loader.loader.interpreter, main_loader.source, false);
+          main_loader.state = .parsing;
         },
-        .loaded, .pushed_param => unreachable,
-      };
-      if (index == 1) break loader;
-      _ = try loader.work();
-      if (loader.state == .finished) {
-        const module = try loader.finalize();
-        globals.known_modules.values()[index] = .{.loaded = module};
+        .parsing => {
+          const item = (
+            main_loader.parser.next(from) catch |err| switch (err) {
+              error.OutOfMemory => return Error.OutOfMemory,
+              Parser.UnwindReason.referred_module_unavailable,
+              Parser.UnwindReason.encountered_options => continue,
+              else => return Error.syntax_parser_error,
+            }
+          ) orelse return null;
+          return Syntax.Item{
+            .token_index = @enumToInt(item.kind),
+            .length      = item.length,
+          };
+        },
+        else => unreachable,
       }
-    } else return null;
-    switch (main_loader.state) {
-      .initial => {
-        try main_loader.loader.interpreter.importModuleSyms(
-          globals.known_modules.values()[0].loaded, 0);
-        try main_loader.parser.start(
-          main_loader.loader.interpreter, main_loader.source, false);
-        self.state = .parsing;
-      },
-      .parsing => {
-        return try main_loader.parser.next();
-      },
-      else => unreachable,
     }
   }
 
   fn destroy(obj: *Syntax.Processor) void {
     const self = @fieldParentPtr(NyarnaProcessor, "proc", obj);
-    const allocator = self.main.data.backing_allocator;
+    const allocator = self.main.loader.data.backing_allocator;
     if (self.allocated) allocator.free(self.doc_res.content);
     self.main.destroy();
     self.nyarna.deinit();

@@ -8,10 +8,11 @@ pub const Type           = @import("model/types.zig").Type;
 pub const Symbol         = @import("model/Symbol.zig");
 pub const ValueGenerator = @import("model/ValueGenerator.zig");
 
-const fmt     = @import("fmt.zig");
-const Globals = @import("Globals.zig");
-const lexing  = @import("model/lexing.zig");
-const unicode = @import("unicode.zig");
+const fmt       = @import("fmt.zig");
+const Globals   = @import("Globals.zig");
+const highlight = @import("highlight.zig");
+const lexing    = @import("model/lexing.zig");
+const unicode   = @import("unicode.zig");
 
 pub usingnamespace lexing;
 
@@ -321,9 +322,15 @@ pub const Function = struct {
     body: *Expression,
   };
 
+  pub const Highlighter = struct {
+    syntax    : *highlight.Syntax,
+    processors: []*Expression,
+  };
+
   pub const Data = union(enum) {
     ny : Nyarna,
     ext: External,
+    hl : Highlighter,
   };
 
   callable: *Type.Callable,

@@ -9,7 +9,8 @@
 
 const std = @import("std");
 
-const nyarna = @import("../nyarna.zig");
+const highlight = @import("highlight.zig");
+const nyarna    = @import("../nyarna.zig");
 
 const errors = nyarna.errors;
 const lib    = nyarna.lib;
@@ -23,7 +24,8 @@ pub const ModuleEntry = union(enum) {
   pushed_param   : *ModuleLoader,
   require_module : *ModuleLoader,
   require_options: *ModuleLoader,
-  loaded: *model.Module,
+  parsed         : *ModuleLoader,
+  loaded         : *model.Module,
 };
 
 pub const ResolverEntry = struct {
@@ -80,6 +82,8 @@ seen_error: bool = false,
 system_keywords: struct {
   matcher: usize,
 } = undefined,
+/// Nyarna syntax highlighter. can be used via \highlighter.
+nyarna_syntax: highlight.NyarnaSyntax,
 
 pub fn create(
   backing_allocator: std.mem.Allocator,
@@ -96,6 +100,7 @@ pub fn create(
     .stack             = undefined,
     .stack_ptr         = undefined,
     .resolvers         = resolvers,
+    .nyarna_syntax     = highlight.NyarnaSyntax.init(resolvers[1].resolver),
   };
   errdefer backing_allocator.destroy(ret);
   errdefer ret.storage.deinit();
@@ -119,14 +124,14 @@ pub fn destroy(self: *@This()) void {
   self.types.deinit();
   for (self.known_modules.values()) |value| switch (value) {
     .require_module, .require_options, .pushed_param => |ml| ml.destroy(),
-    .loaded => {},
+    .parsed, .loaded => {},
   };
   self.storage.deinit();
   self.backing_allocator.free(self.stack);
   self.backing_allocator.destroy(self);
 }
 
-fn lastLoadingModule(self: *@This()) ?usize {
+pub fn lastLoadingModule(self: *@This()) ?usize {
   var index: usize = self.known_modules.count();
   while (index > 0) {
     index -= 1;
@@ -136,7 +141,7 @@ fn lastLoadingModule(self: *@This()) ?usize {
         .initial, .parsing => return index,
         else               => {},
       },
-      .loaded, .pushed_param => {},
+      .parsed, .loaded, .pushed_param => {},
     }
   }
   return null;
@@ -152,12 +157,18 @@ pub fn work(self: *@This()) !void {
       .require_module  => |ml| blk: {
         break :blk ml;
       },
-      .loaded, .pushed_param => unreachable,
+      .parsed, .loaded, .pushed_param => unreachable,
     };
     _ = try loader.work();
-    if (loader.state == .finished) {
-      const module = try loader.finalize();
-      self.known_modules.values()[index] = .{.loaded = module};
+    if (loader.fullast) {
+      if (loader.state == .interpreting) {
+        self.known_modules.values()[index] = .{.parsed = loader};
+      }
+    } else {
+      if (loader.state == .finished) {
+        const module = try loader.finalize();
+        self.known_modules.values()[index] = .{.loaded = module};
+      }
     }
   }
 }

@@ -132,10 +132,27 @@ pub fn finishMainModule(self: *Main) !*model.Module {
       }
     },
     .loaded => {},
-    .pushed_param => unreachable,
+    .parsed, .pushed_param => unreachable,
   }
   try self.loader.data.work();
   return self.loader.data.known_modules.values()[1].loaded;
+}
+
+/// finish parsing the main module. Main module must have
+/// been initialized with fullast=true. finalize() or deinit() must still be
+/// called afterwards.
+pub fn finishMainAst(self: *Main) !*Loader.Module {
+  switch (self.mainModule().*) {
+    .require_options, .require_module => |ml| {
+      if (ml.state == .encountered_options) {
+        try ml.finalizeOptions(model.Position.intrinsic());
+      }
+    },
+    .parsed => {},
+    .loaded, .pushed_param => unreachable,
+  }
+  try self.loader.data.work();
+  return self.loader.data.known_modules.values()[1].parsed;
 }
 
 pub fn pushArg(
@@ -176,7 +193,7 @@ pub fn pushArg(
         try option.set(node);
         return;
       },
-      .require_module, .loaded => {},
+      .require_module, .parsed, .loaded => {},
     }
     res.value_ptr.* = .{.pushed_param = loader};
   }

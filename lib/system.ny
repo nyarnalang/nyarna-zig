@@ -62,7 +62,7 @@
   # the following two definitions must come first to make the implementation
   # happy. There are some circular references in our type definitions here and
   # the order of types tells the interpreter in which order to resolve them so
-  # that everything works.Z
+  # that everything works.
 
   Enum = \prototype:
     values: \List(\Ast) {varargs}
@@ -283,7 +283,7 @@
   # `content` is the text to be highlighted, `before` can be additional text
   # that should be parsed before `content` to set up the correct syntax context.
   # the return type is inferred from the given renderers.
-  highlight = \keyword:
+  highlighter = \keyword:
     # name of the syntax to highlight.
     syntax    : \Ast
     # Renderers for each of the items occurring in the syntax.
@@ -291,7 +291,7 @@
     # will contain the rendered content of the entity that should be rendered.
     # The type of this capture will be the inferred return type of the
     # whole highlighting function.
-    renderers : \HashMap(\Literal, \FrameRoot) {varmap}
+    renderers : \HashMap(\Literal, \Ast) {varmap}
   \end(keyword)
 :private:
   FrameRoot   = \unique()

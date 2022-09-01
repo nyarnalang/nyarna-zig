@@ -15,7 +15,7 @@
       inherit system;
       overlays = [
         (zicross.lib.zigOverlayFor {
-          version = "2022-08-23";
+          version = "2022-09-01";
           master = true;
           patchArmHeader = false;
         })

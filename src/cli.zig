@@ -50,13 +50,14 @@ pub fn main() !void {
   var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
   defer arena.deinit();
 
-  const params = comptime [_]clap.Param(clap.Help){
-    clap.parseParam("-h, --help         Display this help and exit.") catch unreachable,
-    clap.parseParam("-v, --version      Output version information and exit.") catch unreachable,
-    clap.parseParam("-o, --output <DIR> Write output documents to <DIR>. default: cwd") catch unreachable,
-    clap.parseParam("<file>             The file to be interpreted. '-' for stdin.") catch unreachable,
-    clap.parseParam("<arg>...           Nyarna arguments for interpreting <file>.") catch unreachable,
-  };
+  const params = comptime clap.parseParamsComptime(
+    \\-h, --help           Display this help and exit.
+    \\-v, --version        Print version information and exit.
+    \\-o, --output <DIR>   Write output documents to <DIR>. default: cwd
+    \\--ast                Print AST of file to stdout, then exit.
+    \\<FILE>               The file to be interpreted. default: '-' for stdin.
+    \\<ARG>...             Nyarna arguments for interpreting <FILE>.
+  ++ "");
 
   var iter = try std.process.ArgIterator.initWithAllocator(arena.allocator());
   defer iter.deinit();
@@ -68,8 +69,6 @@ pub fn main() !void {
     .iter       = &iter,
     .diagnostic = &diag,
   };
-
-
 
   const stdlib_path = std.process.getEnvVarOwned(
     arena.allocator(), "NYARNA_STDLIB_PATH"
@@ -88,6 +87,8 @@ pub fn main() !void {
 
   var target_dir: ?std.fs.Dir = null;
   defer if (target_dir) |*dir| dir.close();
+
+  var print_ast = false;
 
   var loader: *nyarna.Loader.Main = blk: {
     var cur_loader: ?*nyarna.Loader.Main = null;
@@ -139,7 +140,9 @@ pub fn main() !void {
             .{arg.value.?, @errorName(err)}) catch unreachable;
           std.os.exit(1);
         };
-      } else if (arg.param == &params[3] and cur_loader == null) {
+      } else if (arg.param == &params[3]) {
+        print_ast = true;
+      } else if (arg.param == &params[4] and cur_loader == null) {
         const main_path = if (std.mem.eql(u8, arg.value.?, "-")) "-" else (
           std.fs.realpathAlloc(arena.allocator(), arg.value.?)
         ) catch |err| {
@@ -158,7 +161,12 @@ pub fn main() !void {
           std.os.exit(1);
         };
         var input = try Input.fromName(main_path, arena.allocator());
-        cur_loader = try proc.startLoading(input.resolver(), input.name());
+        cur_loader = if (print_ast) load: {
+          const loader =
+            try proc.initMainModule(input.resolver(), input.name(), true);
+          try loader.loader.data.work();
+          break :load loader;
+        } else try proc.startLoading(input.resolver(), input.name());
         parser.state = .rest_are_positional;
       } else {
         if (cur_name) |name| {
@@ -183,7 +191,14 @@ pub fn main() !void {
     };
   };
 
-  if (try loader.finalize()) |container| {
+  if (print_ast) {
+    defer loader.destroy();
+    const ml = try loader.finishMainAst();
+    defer ml.destroy();
+    const node = try ml.finalizeNode();
+    try std.io.getStdOut().writer().print(
+      "{}\n", .{node.formatter(loader.loader.data)});
+  } else if (try loader.finalize()) |container| {
     defer container.destroy();
     if (try container.process()) {
       const base_dir = target_dir orelse std.fs.cwd();

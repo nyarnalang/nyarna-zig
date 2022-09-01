@@ -34,7 +34,7 @@ pub const SpecialSyntax = struct {
     ) nyarna.Error!*model.Node,
   };
 
-  init: fn init(
+  init: fn(
     intpr: *Interpreter,
     source: *const model.Source,
   ) std.mem.Allocator.Error!*Processor,

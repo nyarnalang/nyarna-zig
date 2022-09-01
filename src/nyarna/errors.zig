@@ -154,6 +154,8 @@ pub fn Terminal(comptime Writer: type, comptime do_style: bool) type {
           "must have one of the defined suffixes (given: no or unknown suffix)",
         .UnknownBackend        => "unknown backend",
         .UnknownMergeTarget    => "unknown merge target",
+        .UnknownSyntaxToken    => "unknown syntax token",
+        .MissingTokenHandler   => "missing handler for token",
       };
       self.renderError("{s}: '{s}'", .{entity, repr});
     }

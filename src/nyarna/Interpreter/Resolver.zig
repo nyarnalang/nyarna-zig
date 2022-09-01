@@ -26,6 +26,9 @@ pub const Context = struct {
     /// The name resolves to an unfinished function. The returned type may be
     /// used to calculate the type of calls to this function.
     unfinished_function: model.Type,
+    /// The name resolves to an unfinished variable. The returned type may be
+    /// used to calculate retrievals on this variable.
+    unfinished_variable: model.Type,
     /// The name has been resolved to a type which has not yet been finalized.
     /// The returned type may be used as inner type to construct another type,
     /// but must not be used for anything else since it is unfinished.
@@ -51,6 +54,7 @@ pub const Context = struct {
   };
   pub const StrippedResult = union(enum) {
     unfinished_function: model.Type,
+    unfinished_variable: model.Type,
     unfinished_type    : model.Type,
     variable           : *model.Symbol.Variable,
     node               : *model.Node,
@@ -86,6 +90,9 @@ pub const Context = struct {
   /// the target in whose namespace all symbols declared via this context
   /// reside. either a command character namespace or a type.
   target: Target,
+  /// used if multiple context are active. Resolution is delegated to upper
+  /// context if this one is not able to resolve.
+  parent: ?*Context = null,
 
   fn strip(
     ctx  : *Context,
@@ -94,6 +101,7 @@ pub const Context = struct {
   ) !StrippedResult {
     return switch (res) {
       .unfinished_function => |t| StrippedResult{.unfinished_function = t},
+      .unfinished_variable => |t| StrippedResult{.unfinished_variable = t},
       .unfinished_type     => |t| StrippedResult{.unfinished_type = t},
       .variable            => |v| StrippedResult{.variable = v},
       .node                => |n| StrippedResult{.node = n},
@@ -125,10 +133,13 @@ pub const Context = struct {
     ctx  : *Context,
     intpr: *Interpreter,
     item : *model.Node.UnresolvedSymref,
-  ) !StrippedResult {
+  ) nyarna.Error!StrippedResult {
     switch (ctx.target) {
       .ns => |ns| if (ns == item.ns) {
         const res = try ctx.resolveNameFn(ctx, item.name, item.node().pos);
+        if (res == .unknown) if (ctx.parent) |p| {
+          return try p.resolveSymbol(intpr, item);
+        };
         return try ctx.strip(intpr.allocator(), res);
       },
       .t => {},
@@ -1002,9 +1013,9 @@ pub fn resolve(
         }
       }
     },
-    .highlight => |*hl| {
+    .highlighter => |*hl| {
       try self.resolve(hl.syntax);
-      for (hl.renderers) |renderer| try self.resolve(renderer.content.root);
+      for (hl.renderers) |renderer| try self.resolve(renderer.content);
     },
     .import, .literal => {},
     .location => |loc| {

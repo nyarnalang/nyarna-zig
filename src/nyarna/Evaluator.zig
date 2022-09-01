@@ -226,6 +226,9 @@ fn evalCall(
             return poison(impl_ctx, call.expr().pos);
           }
         },
+        .hl => {
+          std.debug.panic("highlighting not implemented!", .{});
+        }
       }
     },
     .@"type" => |tv| {

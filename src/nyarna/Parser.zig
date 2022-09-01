@@ -99,7 +99,8 @@ pub fn build(self: *@This()) Error!*model.Node {
 }
 
 pub const SyntaxItem = struct {
-  kind: enum { text, comment, escape, keyword, symref, special, tag},
+  pub const Kind = enum { text, comment, escape, keyword, symref, special, tag};
+  kind  : Kind,
   length: usize,
 };
 
@@ -109,9 +110,49 @@ pub const SyntaxItem = struct {
 /// text between control structures, and to ignore a certain part of the input
 /// at the beginning.
 pub fn next(self: *@This(), from: usize) !?SyntaxItem {
-  _ = self;
-  _ = from;
-  return null;
+  var cur = if (self.stored) |stored| blk: {
+    self.stored = null;
+    break :blk stored;
+  } else advance(&self.impl);
+  while (true) {
+    const res = self.impl.push(cur) catch |err| {
+      self.stored = cur;
+      return err;
+    };
+    if (res) return null;
+    if (self.impl.lexer.recent_end.byte_offset > from) emitter: {
+      return SyntaxItem{
+        .kind = switch (cur.token) {
+          .comment => .comment,
+          .indent, .space, .ws_break, .parsep, .literal => .text,
+          .escape => .escape,
+          .closer, .ns_char, .access, .assign, .list_start, .list_end, .comma,
+          .name_sep, .id_set, .blocks_sep, .block_name_sep, .diamond_open,
+          .diamond_close, .pipe, .special => .special,
+          .symref => blk: {
+            const processed = self.impl.curLevel().command.info.unknown;
+            switch (processed.data) {
+              .resolved_symref => |rs| switch (rs.sym.data) {
+                .func => |f| if (f.sig().isKeyword()) {
+                  break :blk SyntaxItem.Kind.keyword;
+                },
+                else => {},
+              },
+              else => {},
+            }
+            break :blk SyntaxItem.Kind.symref;
+          },
+          .identifier              => .symref,
+          .block_end_open          => .keyword,
+          .call_id, .swallow_depth => .tag,
+          .end_source => return null,
+          else => break :emitter,
+        },
+        .length = self.impl.lexer.recent_end.byte_offset - from,
+      };
+    }
+    cur = advance(&self.impl);
+  }
 }
 
 /// retrieves the next valid token from the lexer.

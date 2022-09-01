@@ -164,30 +164,23 @@ pub fn copy(self: Self, node: *Node) std.mem.Allocator.Error!*Node {
         try self.copy(fg.params.unresolved), fg.params_ns,
         try self.copy(fg.body), fg.variables)
     ).node(),
-    .highlight => |*hl| {
+    .highlighter => |*hl| {
       const renderers = try self.allocator.alloc(
-        Node.Highlight.Renderer, hl.renderers.len);
+        Node.Highlighter.Renderer, hl.renderers.len);
       for (hl.renderers) |renderer, index| {
-        const inner_syms = try self.copySymDefs(renderer.content.inner_syms);
-        const cpt = try self.copyVarDefs(renderer.content.capture);
         renderers[index] = .{
-          .name    = try self.allocator.dupe(u8, renderer.name),
-          .content = try self.ctx.values.ast(
-            try self.copy(renderer.content.root),
-            renderer.content.container, inner_syms, cpt),
-          .variable = switch (renderer.variable) {
-            .def => |def| .{.def = Value.Ast.VarDef{
-              .ns   = def.ns,
-              .name = try self.allocator.dupe(u8, def.name),
-              .pos  = def.pos,
-            }},
-            .sym => |sym| .{.sym = sym},
-            .none => .none,
-          },
+          .name    = try self.literal(renderer.name.node().pos,
+            renderer.name.kind, renderer.name.content),
+          .content = try self.copy(renderer.content),
+          .variable = if (renderer.variable) |v| Value.Ast.VarDef{
+            .ns   = v.ns,
+            .name = try self.allocator.dupe(u8, v.name),
+            .pos  = v.pos,
+          } else null,
         };
       }
       return (
-        try self.highlight(node.pos, try self.copy(hl.syntax), renderers)
+        try self.highlighter(node.pos, try self.copy(hl.syntax), renderers)
       ).node();
     },
     .@"if" => |*ifn| (
@@ -542,16 +535,16 @@ pub fn funcgen(
   }})).data.funcgen;
 }
 
-pub fn highlight(
+pub fn highlighter(
   self     : Self,
   pos      : Position,
   syntax   : *Node,
-  renderers: []Node.Highlight.Renderer,
-) !*Node.Highlight {
-  return &(try self.newNode(pos, .{.highlight = .{
+  renderers: []Node.Highlighter.Renderer,
+) !*Node.Highlighter {
+  return &(try self.newNode(pos, .{.highlighter = .{
     .syntax    = syntax,
     .renderers = renderers,
-  }})).data.highlight;
+  }})).data.highlighter;
 }
 
 pub fn @"if"(

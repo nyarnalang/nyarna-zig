@@ -1595,13 +1595,233 @@ pub fn tryInterpretFunc(
   }
 }
 
-pub fn tryInterpretHighlight(
+pub const HighlighterContext = struct {
+  ctx   : Resolver.Context,
+  vname : []const u8,
+  cur_t : model.Type,
+
+  fn init(
+    ns    : u15,
+    vname : []const u8,
+    t     : model.Type,
+    parent: ?*Resolver.Context,
+  ) @This() {
+    return .{
+      .ctx = .{
+        .resolveNameFn = resolveVar,
+        .target        = .{.ns = ns},
+        .parent        = parent
+      },
+      .vname = vname,
+      .cur_t = t,
+    };
+  }
+
+  fn resolveVar(
+    ctx : *Resolver.Context,
+    name: []const u8,
+    _   : model.Position,
+  ) nyarna.Error!Resolver.Context.Result {
+    const self = @fieldParentPtr(HighlighterContext, "ctx", ctx);
+    if (std.mem.eql(u8, name, self.vname)) {
+      return Resolver.Context.Result{
+        .unfinished_variable = self.cur_t,
+      };
+    } else return Resolver.Context.Result.unknown;
+  }
+};
+
+fn probeRenderer(
+  self    : *Interpreter,
+  renderer: *model.Node.Highlighter.Renderer,
+  stage   : Stage,
+  ret     : model.Type,
+) nyarna.Error!?model.Type {
+  if (renderer.variable) |v| {
+    var hlctx = HighlighterContext.init(v.ns, v.name, ret, stage.resolve_ctx);
+    return try self.probeType(renderer.content, .{
+      .kind = stage.kind, .resolve_ctx = &hlctx.ctx,
+    }, false);
+  } else {
+    return try self.probeType(renderer.content, stage, false);
+  }
+}
+
+pub fn tryInterpretHighlighter(
   self : *Interpreter,
-  hl   : *model.Node.Highlight,
+  hl   : *model.Node.Highlighter,
   stage: Stage,
 ) nyarna.Error!?*model.Expression {
-  _ = self; _ = hl; _ = stage;
-  std.debug.panic("highlight not implemented", .{});
+  // we'll do a fixpoint iteration to determine the return type which will also
+  // be the type of the processor variables.
+  var res = self.ctx.types().system.text;
+  var seen_unfinished = false;
+  var seen_poison = false;
+  var iter: usize = 0; while (
+    iter == 0 or (iter == 1 and !seen_unfinished and !seen_poison)
+  ) : (iter += 1) {
+    for (hl.renderers) |*renderer, i| {
+      const rt = (try self.probeRenderer(renderer, stage, res)) orelse {
+        seen_unfinished = true;
+        continue;
+      };
+      if (rt.isNamed(.poison)) {
+        seen_poison = true;
+        continue;
+      }
+      const new = try self.ctx.types().sup(res, rt);
+      if (new.isNamed(.poison)) {
+        seen_poison = true;
+        const found = for (hl.renderers[0..i]) |*prev| {
+          const prev_t = (
+            try self.probeRenderer(prev, stage, res)
+          ) orelse continue;
+          if (prev_t.isNamed(.poison)) continue;
+          if ((try self.ctx.types().sup(rt, prev_t)).isNamed(.poison)) {
+            self.ctx.logger.IncompatibleTypes(&.{
+              rt.at(renderer.content.pos), prev_t.at(prev.content.pos),
+            });
+            break true;
+          }
+        } else false;
+        if (!found) {
+          const pos = hl.renderers[0].content.pos.span(
+            hl.renderers[i - 1].content.pos);
+          self.ctx.logger.IncompatibleTypes(&.{
+            rt.at(renderer.content.pos), res.at(pos),
+          });
+        }
+        continue;
+      }
+      const cnew = (
+        try self.ctx.types().concat(new)
+      ) orelse {
+        self.ctx.logger.InvalidInnerConcatType(
+          &.{new.at(renderer.content.pos)});
+        continue;
+      };
+      res = cnew;
+    }
+  }
+
+  if (seen_unfinished) return null;
+  if (seen_poison) {
+    const node = hl.node();
+    node.data = .poison;
+    return null;
+  }
+
+  const expr = (
+    try self.associate(
+      hl.syntax, self.ctx.types().system.identifier.predef(), stage)
+  ) orelse return null;
+  const val = try self.ctx.evaluator().evaluate(expr);
+  const syntax = switch (val.data) {
+    .text => |*txt| blk: {
+      if (std.mem.eql(u8, txt.content, "nyarna")) {
+        break :blk &self.ctx.data.nyarna_syntax.syntax;
+      } else {
+        self.ctx.logger.UnknownSyntax(val.origin, txt.content);
+        const node = hl.node();
+        node.data = .poison;
+        return null;
+      }
+    },
+    .poison => {
+      const node = hl.node();
+      node.data = .poison;
+      return null;
+    },
+    else => unreachable,
+  };
+
+  const container = try self.ctx.global().create(model.VariableContainer);
+  container.* = .{.num_values = 3};
+  const processors = try self.ctx.global().alloc(
+    *model.Expression, syntax.tokens.len);
+
+  for (hl.renderers) |renderer| {
+    const index = for (syntax.tokens) |token, i| {
+      if (std.mem.eql(u8, token, renderer.name.content)) break i;
+    } else {
+      self.ctx.logger.UnknownSyntaxToken(
+        renderer.name.node().pos, renderer.name.content);
+      continue;
+    };
+
+    if (renderer.variable) |v| {
+      const sym = try self.ctx.global().create(model.Symbol);
+      sym.* = .{
+        .defined_at = v.pos,
+        .name       = v.name,
+        .data       = .{.variable = .{
+          .spec       = res.at(v.pos),
+          .container  = container,
+          .offset     = 0,
+          .kind       = .given,
+        }},
+        .parent_type = null,
+      };
+      const mark = self.markSyms();
+      if (try self.namespace(v.ns).tryRegister(self, sym)) {
+        try Resolver.init(self, .{.kind = .intermediate}).resolve(
+          renderer.content);
+        self.resetSyms(mark);
+      }
+    }
+
+    processors[index] = (
+      try self.associate(
+        renderer.content, res.at(hl.node().pos), .{.kind = .final})
+    ) orelse {
+      seen_poison = true;
+      continue;
+    };
+  }
+
+  for (syntax.tokens) |token| {
+    for (hl.renderers) |renderer| {
+      if (std.mem.eql(u8, renderer.name.content, token)) break;
+    } else {
+      self.ctx.logger.MissingTokenHandler(hl.node().pos, token);
+      seen_poison = true;
+    }
+  }
+
+  if (seen_poison) {
+    const node = hl.node();
+    node.data = .poison;
+    return null;
+  }
+
+  const opt_text =
+    (try self.ctx.types().optional(self.ctx.types().system.text)).?;
+  var finder = Types.CallableReprFinder.init(self.ctx.types());
+  try finder.pushType(opt_text, "before");
+  try finder.pushType(self.ctx.types().system.text, "code");
+  const finder_res = try finder.finish(res, false);
+  var builder = try Types.SigBuilder.init(
+    self.ctx, 2, res, finder_res.needs_different_repr);
+  try builder.pushUnwrapped(
+    model.Position.intrinsic(), "before", opt_text.predef());
+  try builder.pushUnwrapped(
+    model.Position.intrinsic(), "code", self.ctx.types().system.text.predef());
+  const builder_res = builder.finish();
+  const func = try self.ctx.global().create(model.Function);
+  func.* = .{
+    .callable   = try builder_res.createCallable(self.ctx.global(), .function),
+    .name       = null,
+    .data       = .{.hl = .{
+      .syntax     = syntax,
+      .processors = processors,
+    }},
+    .defined_at = hl.node().pos,
+    .variables  = container,
+  };
+
+  return try self.ctx.createValueExpr(
+    (try self.ctx.values.funcRef(hl.node().pos, func)).value()
+  );
 }
 
 /// never creates an Expression because builtins may only occur as node in a
@@ -2055,6 +2275,7 @@ fn tryGetType(
             self.ctx.logger.CantCallUnfinished(node.pos);
             return TypeResult.failed;
           },
+          .unfinished_variable => |t| return TypeResult{.unfinished = t},
           .unfinished_type => |t| return TypeResult{.unfinished = t},
           .unknown => if (stage.kind == .keyword or stage.kind == .final) {
             self.ctx.logger.UnknownSymbol(node.pos, usym.name);
@@ -3191,7 +3412,7 @@ pub fn tryInterpret(
       break :blk try self.ctx.createValueExpr(
         (try self.ctx.values.funcRef(input.pos, val)).value());
     },
-    .highlight => |*hl| try self.tryInterpretHighlight(hl, stage),
+    .highlighter => |*hl| try self.tryInterpretHighlighter(hl, stage),
     .@"if" => self.tryProbeAndInterpret(input, stage),
     .import => unreachable, // this must always be handled directly
                             // by the parser.
@@ -3335,6 +3556,7 @@ fn probeNodeList(
           self.ctx.logger.IncompatibleTypes(&.{
             t.at(node.pos), prev_t.at(prev.pos),
           });
+          break true;
         }
       } else false;
       if (!found) {
@@ -3500,7 +3722,7 @@ pub fn probeType(
       node.data = .{.expression = expr};
       return expr.expected_type;
     } else return null,
-    .assign, .builtingen, .@"for", .funcgen, .highlight, .import, .matcher,
+    .assign, .builtingen, .@"for", .funcgen, .highlighter, .import, .matcher,
     .root_def, .vt_setter => if (try self.tryInterpret(node, stage)) |expr| {
       node.data = .{.expression = expr};
       return expr.expected_type;
@@ -3956,7 +4178,7 @@ pub fn interpretWithTargetScalar(
     .location, .map, .match, .matcher, .output, .resolved_access,
     .resolved_symref, .resolved_call, .gen_concat, .gen_enum, .gen_intersection,
     .gen_list, .gen_map, .gen_numeric, .gen_optional, .gen_sequence,
-    .gen_prototype, .gen_record, .gen_textual, .gen_unique, .highlight,
+    .gen_prototype, .gen_record, .gen_textual, .gen_unique, .highlighter,
     .root_def, .unresolved_access, .unresolved_call, .unresolved_symref,
     .varargs, .varmap => {
       if (try self.tryInterpret(input, stage)) |expr| {

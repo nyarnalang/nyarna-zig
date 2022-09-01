@@ -152,21 +152,17 @@ pub const Funcgen = struct {
   }
 };
 
-pub const Highlight = struct {
+pub const Highlighter = struct {
   pub const Renderer = struct {
-    name: []const u8,
-    content  : *Value.Ast,
-    /// if given, is initially def, which will transition to sym. sym will not
-    /// have its container set yet. .none if no capture was given for the block.
-    variable : union(enum) {
-      def: Value.Ast.VarDef,
-      sym: *model.Symbol.Variable,
-      none
-    },
+    name    : *Node.Literal,
+    content : *Node,
+    variable: ?Value.Ast.VarDef,
   };
 
   syntax   : *model.Node,
   renderers: []Renderer,
+  /// stores the return type if it has already been calculated
+  ret_type : ?model.Type = null,
 
   pub fn node(self: *@This()) *Node {
     return Node.parent(self);
@@ -578,7 +574,7 @@ pub const Data = union(enum) {
   gen_record       : tg.Record,
   gen_textual      : tg.Textual,
   gen_unique       : tg.Unique,
-  highlight        : Highlight,
+  highlighter      : Highlighter,
   @"if"            : If,
   import           : Import,
   literal          : Literal,
@@ -617,7 +613,7 @@ fn parent(it: anytype) *Node {
     *Expression      => offset(Data, "expression"),
     For              => offset(Data, "for"),
     Funcgen          => offset(Data, "funcgen"),
-    Highlight        => offset(Data, "highlight"),
+    Highlighter      => offset(Data, "highlighter"),
     If               => offset(Data, "if"),
     Import           => offset(Data, "import"),
     Literal          => offset(Data, "literal"),

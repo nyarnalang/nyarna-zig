@@ -89,7 +89,13 @@ pub fn formatBlockHeader(
   } else if (self.config == null) try writer.writeByte(':');
 }
 
+const Poison = struct{};
+
 pub fn IndentingFormatter(comptime T: type) type {
+  switch (T) {
+    *Node, *Expression, *Value, Poison => {},
+    else => @compileError("invalid type for formatting: " ++ @typeName(T)),
+  }
   return struct {
     fn level(
       writer: anytype,
@@ -206,6 +212,7 @@ pub fn IndentingFormatter(comptime T: type) type {
         *Node       => try self.formatNode(self.payload, &lvl),
         *Expression => try self.formatExpr(self.payload, &lvl),
         *Value      => try self.formatValue(self.payload, &lvl),
+        Poison      => try lvl.id("", "poison"),
         else        => unreachable,
       }
       try lvl.close();
@@ -240,8 +247,8 @@ pub fn IndentingFormatter(comptime T: type) type {
           for (r.locations) |ref| switch (ref) {
             .node   => |n| try params_lvl.child(null, n.node()),
             .expr   => |e| try params_lvl.child(null, e),
-            .value  => |v| try params_lvl.child(null, v),
-            .poison => try params_lvl.child("poison", .{}),
+            .value  => |v| try params_lvl.child(null, v.value()),
+            .poison => try params_lvl.child(null, Poison{}),
           };
           try params_lvl.close();
         },
@@ -305,14 +312,16 @@ pub fn IndentingFormatter(comptime T: type) type {
           try formatLocations("params", &fg.params, lvl);
           try lvl.child("body", fg.body);
         },
-        .highlight => |hl| {
+        .highlighter => |hl| {
           try lvl.child("syntax", hl.syntax);
           for (hl.renderers) |renderer| {
             var render_lvl = try lvl.innerLvl(null);
             try render_lvl.id("", "Renderer");
-            try render_lvl.arg(null, "{s}", .{renderer.name});
-            try formatVar(renderer.variable, &render_lvl);
-            try render_lvl.child(null, renderer.content.root);
+            try render_lvl.arg(null, "{s}", .{renderer.name.content});
+            if (renderer.variable) |v| {
+              try render_lvl.arg(null, "[{}]{s}", .{v.ns, v.name});
+            }
+            try render_lvl.child(null, renderer.content);
             try render_lvl.close();
           }
         },
@@ -355,7 +364,7 @@ pub fn IndentingFormatter(comptime T: type) type {
             var case_lvl = try lvl.innerLvl(null);
             try case_lvl.id("", "case");
             try formatVar(c.variable, &case_lvl);
-            try case_lvl.child("type", c);
+            try case_lvl.child("type", c.t);
             try case_lvl.child("body", c.content.root);
             try case_lvl.close();
           }
@@ -365,7 +374,7 @@ pub fn IndentingFormatter(comptime T: type) type {
             var case_lvl = try lvl.innerLvl(null);
             try case_lvl.id("", "case");
             try formatVar(c.variable, &case_lvl);
-            try case_lvl.child("type", c);
+            try case_lvl.child("type", c.t);
             try case_lvl.child("body", c.content.root);
             try case_lvl.close();
           }
@@ -446,9 +455,11 @@ pub fn IndentingFormatter(comptime T: type) type {
               .node   => |lnode| try lvl.child(null, lnode.node()),
               .expr   => |lexpr| try lvl.child(null, lexpr),
               .value  => |lval|  try lvl.child(null, lval.value()),
-              .poison => try lvl.child("poison", .{}),
+              .poison => try lvl.child(null, Poison{}),
             },
-            .pregen => try lvl.child(null, Type{.named = gr.generated.?}),
+            .pregen => try lvl.arg(null, "{}", (
+              Type{.named = gr.generated.?}
+            ).formatter()),
           }
         },
         .gen_textual => |gt| {
@@ -610,7 +621,7 @@ pub fn IndentingFormatter(comptime T: type) type {
           while (iter.next()) |item| {
             var case_lvl = try lvl.innerLvl(null);
             try case_lvl.id("", "case");
-            try case_lvl.child("type", item.key_ptr.t);
+            try case_lvl.arg("type", "{}", .{item.key_ptr.t.formatter()});
             try case_lvl.child("body", item.value_ptr.expr);
             try case_lvl.close();
           }

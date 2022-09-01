@@ -89,7 +89,7 @@ pub const ScalarError = enum {
   UnknownResolver, UnknownUnique, UnknownPrototype, UnknownBuiltin,
   DoesntHaveConstructor, InvalidNumber, NumberTooLarge, TooManyDecimals,
   FactorMustntBeNegative, MustHaveDefinedSuffix, InvalidDecimals,
-  UnknownBackend, UnknownMergeTarget,
+  UnknownBackend, UnknownMergeTarget, UnknownSyntaxToken, MissingTokenHandler,
 };
 
 pub const WrongIdError = enum {

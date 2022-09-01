@@ -217,7 +217,7 @@ fn leaveLevel(self: *@This()) !void {
   _ = self.levels.pop();
 }
 
-fn curLevel(self: *@This()) *ContentLevel {
+pub fn curLevel(self: *@This()) *ContentLevel {
   return last(self.levels.items);
 }
 
@@ -568,7 +568,7 @@ fn procCommand(self: *@This(), cur: model.TokenAt) !bool {
           // already been loaded.
           unreachable;
         },
-        .pushed_param => unreachable,
+        .parsed, .pushed_param => unreachable,
         .loaded => |module| {
           // if the import is not called, generate an implicit call
           if (!cur.isIn(.{.list_start, .blocks_sep})) {
@@ -603,7 +603,7 @@ fn procCommand(self: *@This(), cur: model.TokenAt) !bool {
             me.* = .{.require_module = ml};
             return Parser.UnwindReason.referred_module_unavailable;
           },
-          .require_module, .pushed_param => unreachable,
+          .parsed, .require_module, .pushed_param => unreachable,
           .loaded => |module| {
             if (module.root) |root| {
               uc.target.data = .{
