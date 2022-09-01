@@ -186,6 +186,7 @@ pub fn IndentingFormatter(comptime T: type) type {
             try self.writer.writeAll("  ");
           }
           if (name) |content| try self.writer.print("{s}: ", .{content});
+          self.state = .braces;
           return ret;
         }
       };
