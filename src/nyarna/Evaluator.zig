@@ -3,6 +3,7 @@
 const builtin = @import("builtin");
 const std     = @import("std");
 
+const highlight   = @import("highlight.zig");
 const nyarna      = @import("../nyarna.zig");
 
 const Interpreter = nyarna.Interpreter;
@@ -194,6 +195,65 @@ fn evalExtFuncCall(
   }
 }
 
+fn evalHighlightCall(
+  self    : *Evaluator,
+  pos     : model.Position,
+  func    : *model.Function,
+  ret     : model.Type,
+  args    : []*model.Expression,
+) nyarna.Error!*model.Value {
+  const target_frame = try self.setupParameterStackFrame(
+    func.variables.num_values, false, func.variables.cur_frame);
+  defer self.resetStackFrame(
+    &func.variables.cur_frame, func.variables.num_values, false);
+  if (try self.fillParameterStackFrame(
+      args, func.argStart(target_frame))) {
+    func.variables.cur_frame = target_frame;
+    var code = target_frame[3].value.data.text.content;
+    const proc = highlight.Syntax.Processor.create(
+      self.ctx.data.backing_allocator, func.data.hl.syntax,
+      switch (target_frame[2].value.data) {
+        .text   => |txt| txt.content,
+        .void   => null,
+        else    => unreachable,
+      }, code,
+    ) catch |err| switch (err) {
+      error.syntax_parser_error => {
+        self.ctx.logger.ErrorInHighlighter(pos);
+        return try self.ctx.values.poison(pos);
+      },
+      error.OutOfMemory => return error.OutOfMemory,
+    };
+    defer proc.destroy();
+
+    var builder = ConcatBuilder.init(self.ctx, pos, ret);
+    while (
+      proc.next() catch |err| switch (err) {
+        error.syntax_parser_error => {
+          self.ctx.logger.ErrorInHighlighter(pos);
+          return try self.ctx.values.poison(pos);
+        },
+        error.OutOfMemory => return error.OutOfMemory,
+      }
+    ) |item| {
+      target_frame[1] = .{
+        .value = (
+          try self.ctx.values.textScalar(
+            args[1].pos, self.ctx.types().system.text, code[0..item.length])
+        ).value(),
+      };
+      code = code[item.length..];
+      try builder.enqueue(
+        try self.evaluate(func.data.hl.processors[item.token_index]));
+    }
+    return try builder.finish();
+  } else {
+    // required for resetStackFrame to work correctly
+    func.variables.cur_frame = target_frame;
+    return try self.ctx.values.poison(pos);
+  }
+}
+
 fn evalCall(
   self    : *Evaluator,
   impl_ctx: anytype,
@@ -226,9 +286,8 @@ fn evalCall(
             return poison(impl_ctx, call.expr().pos);
           }
         },
-        .hl => {
-          std.debug.panic("highlighting not implemented!", .{});
-        }
+        .hl => return try self.evalHighlightCall(
+          call.expr().pos, fr.func, call.expr().expected_type, call.exprs),
       }
     },
     .@"type" => |tv| {

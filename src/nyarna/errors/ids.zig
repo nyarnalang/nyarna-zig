@@ -19,7 +19,7 @@ pub const GenericParserError = enum {
   TooManyArguments, UnexpectedPrimaryBlock, InvalidPositionalArgument,
   BlockNeedsConfig, InvalidNamedArg, UnfinishedCallInTypeArg, NotAType,
   CantCallUnfinished, FailedToCalculateReturnType, FieldAccessWithoutInstance,
-  MethodOutsideDeclare, CannotResolveLocator,
+  MethodOutsideDeclare, CannotResolveLocator, ErrorInHighlighter,
   MissingInitialValue, IllegalNumericInterval, EntityCannotBeNamed,
   SurplusFlags, TypeInMagic, NyFuncInMagic, BuiltinMustBeNamed, NoBlockToEnd,
   ConstructorUnavailable, NoBuiltinProvider, IllegalContentInPrototypeFuncs,

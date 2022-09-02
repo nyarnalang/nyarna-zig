@@ -1,0 +1,52 @@
+=== Highlighting Nyarna
+--- input
+\declare:
+  hl = \highlighter(nyarna):
+  :text:|\t|
+    \t
+  :comment:|\c|
+    <comment \c>
+  :escape:|\e|
+    <escape \e>
+  :keyword:|\k|
+    <keyword \k>
+  :symref:|\s|
+    <symref \s>
+  :special:|\s|
+    <special \s>
+  :tag:|\t|
+    <tag \t>
+  \end(highlighter)
+\end(declare)
+
+\hl:<off>
+  # comment
+  Some text
+
+  \declare:
+    foo = \func:
+      a: \Text
+    :body:
+      \a more \a
+    \end(func)
+  \end(declare)
+
+  \block:<off>
+    \no # nothing
+  \end(block)
+\end(hl)
+--- output
+<comment # comment>
+Some text
+
+<keyword \declare><special :>
+  <symref foo> <special => <keyword \func><special :>
+    <symref a><special :> <symref \Text>
+  <special :><symref body><special :>
+    <symref \a> more <symref \a>
+  <keyword \end><special (><tag func><special )>
+<keyword \end><special (><tag declare><special )>
+
+<keyword \block><special :><special <><tag off><special >>
+  \no #nothing
+<keyword \end><special (><tag block><special )>

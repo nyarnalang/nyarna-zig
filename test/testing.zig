@@ -21,7 +21,7 @@ pub fn lexTest(data: *TestDataResolver) !void {
     std.testing.allocator, nyarna.default_stack_size, &r.reporter,
     &data.stdlib.api);
   defer proc.deinit();
-  var loader = try proc.initMainModule(&data.api, "input", true);
+  var loader = try proc.initMainModule(&data.api, "input", .full);
   const ml = loader.loader.data.known_modules.values()[1].require_module;
   defer loader.destroy();
   var expected_content = data.valueLines("tokens");
@@ -1410,7 +1410,7 @@ pub fn parseTest(data: *TestDataResolver) !void {
     std.testing.allocator, nyarna.default_stack_size, &r.reporter,
     &data.stdlib.api);
   defer proc.deinit();
-  var loader = try proc.initMainModule(&checker.data.api, "input", true);
+  var loader = try proc.initMainModule(&checker.data.api, "input", .full);
   defer loader.destroy();
   const ml = try loader.finishMainAst();
   defer ml.destroy();
@@ -1429,7 +1429,7 @@ pub fn parseErrorTest(data: *TestDataResolver) !void {
     std.testing.allocator, nyarna.default_stack_size, &reporter.api,
     &data.stdlib.api);
   defer proc.deinit();
-  var loader = try proc.initMainModule(&checker.data.api, "input", true);
+  var loader = try proc.initMainModule(&checker.data.api, "input", .full);
   const ml = loader.loader.data.known_modules.values()[1].require_module;
   defer loader.destroy();
   while (!try ml.work()) {}
@@ -1464,6 +1464,7 @@ pub fn interpretErrorTest(data: *TestDataResolver) !void {
   var loader = try proc.startLoading(&data.api, "input");
   if (try loader.finalize()) |doc| {
     doc.destroy();
+    std.debug.print("error: expected errors, but none were emitted\n", .{});
     return error.TestUnexpectedResult;
   }
   try checker.finish();
@@ -1505,13 +1506,14 @@ pub fn loadErrorTest(data: *TestDataResolver) !void {
   }
   if (try loader.finalize()) |container| {
     container.destroy();
+    std.debug.print("error: expected errors, but none were emitted\n", .{});
     return error.TestUnexpectedResult;
   }
   try checker.finish();
 }
 
 pub fn outputTest(data: *TestDataResolver) !void {
-  var r = FileTerm.init(std.io.getStdOut().writer());
+  var r = FileTerm.init(std.io.getStdErr().writer());
   var proc = try nyarna.Processor.init(
     std.testing.allocator, nyarna.default_stack_size, &r.reporter,
     &data.stdlib.api);

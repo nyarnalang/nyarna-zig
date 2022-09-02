@@ -23,23 +23,27 @@ pub const Syntax = struct {
 
   pub const Processor = struct {
     syntax   : *Syntax,
-    nextFn   : fn(self: *Processor, from: usize) Error!?Item,
+    nextFn   : fn(self: *Processor) Error!?Item,
     destroyFn: fn(self: *Processor) void,
+    from     : usize,
 
     pub fn create(
       allocator: std.mem.Allocator,
       syntax   : *Syntax,
-      input    : []const u8,
-    ) std.mem.Allocator.Error!*Processor {
-      return syntax.createProcFn(allocator, syntax, input);
+      before   : ?[]const u8,
+      code     : []const u8,
+    ) Error!*Processor {
+      return syntax.createProcFn(allocator, syntax, before, code);
     }
 
-    pub fn destroy(self: Processor) void {
+    pub fn destroy(self: *Processor) void {
       self.destroyFn(self);
     }
 
-    pub fn next(self: *@This(), from: usize) Error!?Item {
-      return self.nextFn(self, from);
+    pub fn next(self: *@This()) Error!?Item {
+      const ret = (try self.nextFn(self)) orelse return null;
+      self.from += ret.length;
+      return ret;
     }
   };
 
@@ -49,7 +53,8 @@ pub const Syntax = struct {
   createProcFn: fn(
     allocator: std.mem.Allocator,
     syntax   : *Syntax,
-    input    : []const u8,
+    before   : ?[]const u8,
+    code     : []const u8,
   ) Error!*Processor,
 };
 
@@ -71,7 +76,8 @@ pub const NyarnaSyntax = struct {
   fn createProc(
     allocator: std.mem.Allocator,
     syntax   : *Syntax,
-    input    : []const u8,
+    before   : ?[]const u8,
+    code     : []const u8,
   ) Error!*Syntax.Processor {
     const self = @fieldParentPtr(NyarnaSyntax, "syntax", syntax);
     const ret = try allocator.create(NyarnaProcessor);
@@ -81,24 +87,26 @@ pub const NyarnaSyntax = struct {
         .syntax    = syntax,
         .nextFn    = NyarnaProcessor.next,
         .destroyFn = NyarnaProcessor.destroy,
+        .from      = if (before) |pre| pre.len else 0,
       },
       .ignore    = errors.Ignore.init(),
       .nyarna    = undefined,
       .main      = undefined,
       .doc_res   = undefined,
-      .allocated = false,
     };
-    const content = if (
-      input.len < 4 or
-      !std.mem.eql(u8, input[input.len - 4..], "\x04\x04\x04\x04")
-    ) blk: {
-      const buffer = try allocator.alloc(u8, input.len + 4);
-      std.mem.copy(u8, buffer, input);
-      std.mem.copy(u8, buffer[input.len..], "\x04\x04\x04\x04");
-      ret.allocated = true;
-      break :blk buffer;
-    } else input;
-    errdefer if (ret.allocated) allocator.free(content);
+
+    var size_needed = 4 + code.len;
+    if (before) |pre| size_needed += pre.len;
+    const content = try allocator.alloc(u8, size_needed);
+    errdefer allocator.free(content);
+    var code_starts: usize = 0;
+    if (before) |pre| {
+      code_starts += pre.len;
+      std.mem.copy(u8, content, pre);
+    }
+    std.mem.copy(u8, content[code_starts..], code);
+    std.mem.copy(u8, content[code_starts + code.len..], "\x04\x04\x04\x04");
+
     ret.doc_res = Loader.SingleResolver.init(content);
     ret.nyarna = try nyarna.Processor.init(
       allocator, nyarna.default_stack_size, &ret.ignore.reporter, self.stdlib);
@@ -121,9 +129,8 @@ const NyarnaProcessor = struct {
   nyarna   : nyarna.Processor,
   main     : *Loader.Main,
   doc_res  : Loader.SingleResolver,
-  allocated: bool,
 
-  fn next(obj: *Syntax.Processor, from: usize) Error!?Syntax.Item {
+  fn next(obj: *Syntax.Processor) Error!?Syntax.Item {
     const self = @fieldParentPtr(NyarnaProcessor, "proc", obj);
     const globals = self.main.loader.data;
     while (true) {
@@ -155,7 +162,7 @@ const NyarnaProcessor = struct {
         },
         .parsing => {
           const item = (
-            main_loader.parser.next(from) catch |err| switch (err) {
+            main_loader.parser.next(obj.from) catch |err| switch (err) {
               error.OutOfMemory => return Error.OutOfMemory,
               Parser.UnwindReason.referred_module_unavailable,
               Parser.UnwindReason.encountered_options => continue,
@@ -175,7 +182,7 @@ const NyarnaProcessor = struct {
   fn destroy(obj: *Syntax.Processor) void {
     const self = @fieldParentPtr(NyarnaProcessor, "proc", obj);
     const allocator = self.main.loader.data.backing_allocator;
-    if (self.allocated) allocator.free(self.doc_res.content);
+    allocator.free(self.doc_res.content);
     self.main.destroy();
     self.nyarna.deinit();
     allocator.destroy(self);
