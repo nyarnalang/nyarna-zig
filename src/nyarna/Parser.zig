@@ -130,7 +130,13 @@ pub fn next(self: *@This(), from: usize) !?SyntaxItem {
           .name_sep, .id_set, .blocks_sep, .block_name_sep, .diamond_open,
           .diamond_close, .pipe, .special => .special,
           .symref => blk: {
-            const processed = self.impl.curLevel().command.info.unknown;
+            const processed = switch (self.impl.curLevel().command.info) {
+              .unknown => |u| u,
+              else => {
+                // happens in capture lists
+                break :blk SyntaxItem.Kind.symref;
+              },
+            };
             switch (processed.data) {
               .resolved_symref => |rs| switch (rs.sym.data) {
                 .func => |f| if (f.sig().isKeyword()) {
