@@ -1637,14 +1637,18 @@ fn probeRenderer(
   stage   : Stage,
   ret     : model.Type,
 ) nyarna.Error!?model.Type {
+  var hlctx: HighlighterContext = undefined;
+  var inner_stage = stage;
   if (renderer.variable) |v| {
-    var hlctx = HighlighterContext.init(v.ns, v.name, ret, stage.resolve_ctx);
-    return try self.probeType(renderer.content, .{
-      .kind = stage.kind, .resolve_ctx = &hlctx.ctx,
-    }, false);
-  } else {
-    return try self.probeType(renderer.content, stage, false);
+    hlctx = HighlighterContext.init(v.ns, v.name, ret, stage.resolve_ctx);
+    inner_stage.resolve_ctx = &hlctx.ctx;
   }
+  const probed = try self.probeType(renderer.content, inner_stage, false);
+  if (probed == null and stage.kind == .final) {
+    // generate errors from unresolved symbols
+    _ = try self.tryInterpret(renderer.content, inner_stage);
+  }
+  return probed;
 }
 
 pub fn tryInterpretHighlighter(
@@ -1806,6 +1810,7 @@ pub fn tryInterpretHighlighter(
     model.Position.intrinsic(), "before", opt_text.predef());
   try builder.pushUnwrapped(
     model.Position.intrinsic(), "code", self.ctx.types().system.text.predef());
+  builder.val.primary = 1;
   const builder_res = builder.finish();
   const func = try self.ctx.global().create(model.Function);
   func.* = .{

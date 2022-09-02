@@ -536,6 +536,8 @@ fn fromResult(
       else => return Chain{.failed = ns},
     },
     .unfinished_function => |t| return Chain.functionReturning(t, ns),
+    .unfinished_variable => |t|
+      return Chain.runtime(ns, node, .{}, t, name_pos, true),
     else => return Chain{.failed = ns},
   }
 }

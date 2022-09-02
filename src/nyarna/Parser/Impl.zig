@@ -836,6 +836,8 @@ fn procPossiblePrimary(self: *@This(), cur: model.TokenAt) !bool {
       return true;
     },
     else => {
+      const parent = &self.levels.items[self.levels.items.len - 2];
+      try parent.command.pushPrimary(self.source().at(cur.start), false);
       self.state = .start;
       return false;
     },
@@ -1574,7 +1576,6 @@ fn finishBlockHeader(
           self.source().at(start), self.block_header.config != null);
       } else {
         const cfg = parent.command.mapper().spyPrimary();
-        try parent.command.pushPrimary(self.source().at(start), false);
         try self.pushLevel(if (cfg.ast_node) false else parent.fullast);
         if (cfg.config) |c| {
           try self.applyBlockConfig(self.source().at(start), c);

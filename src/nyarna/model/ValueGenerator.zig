@@ -176,6 +176,7 @@ pub fn output(
 }
 
 pub fn poison(self: *const Self, pos: Position) !*Value {
+  //std.debug.panic("{}: gen poison", .{pos.formatter()});
   return self.value(pos, .poison);
 }
 

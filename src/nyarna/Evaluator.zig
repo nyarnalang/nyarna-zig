@@ -243,7 +243,7 @@ fn evalHighlightCall(
         ).value(),
       };
       code = code[item.length..];
-      try builder.enqueue(
+      try builder.push(
         try self.evaluate(func.data.hl.processors[item.token_index]));
     }
     return try builder.finish();

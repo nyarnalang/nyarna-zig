@@ -36,17 +36,17 @@
   \end(block)
 \end(hl)
 --- output
-<comment # comment>
-Some text
+<comment # comment
+>Some text
 
 <keyword \declare><special :>
   <symref foo> <special => <keyword \func><special :>
     <symref a><special :> <symref \Text>
   <special :><symref body><special :>
     <symref \a> more <symref \a>
-  <keyword \end><special (><tag func><special )>
-<keyword \end><special (><tag declare><special )>
+  <keyword \end(><tag func><special )>
+<keyword \end(><tag declare><special )>
 
-<keyword \block><special :><special <><tag off><special >>
-  \no #nothing
-<keyword \end><special (><tag block><special )>
+<keyword \block><special :><special <><symref off><special >>
+  \no # nothing
+<keyword \end(><tag block><special )>
