@@ -40,13 +40,13 @@
 >Some text
 
 <keyword \declare><special :>
-  <symref foo> <special => <keyword \func><special :>
-    <symref a><special :> <symref \Text>
-  <special :><symref body><special :>
+  <tag foo> <special => <keyword \func><special :>
+    <tag a><special :> <symref \Text>
+  <special :><tag body><special :>
     <symref \a> more <symref \a>
   <keyword \end(><tag func><special )>
 <keyword \end(><tag declare><special )>
 
-<keyword \block><special :><special <><symref off><special >>
+<keyword \block><special :><special <><tag off><special >>
   \no # nothing
 <keyword \end(><tag block><special )>

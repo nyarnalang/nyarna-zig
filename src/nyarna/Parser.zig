@@ -148,7 +148,7 @@ pub fn next(self: *@This(), from: usize) !?SyntaxItem {
             }
             break :blk SyntaxItem.Kind.symref;
           },
-          .identifier              => .symref,
+          .identifier              => .tag,
           .block_end_open          => .keyword,
           .call_id, .swallow_depth => .tag,
           .end_source => return null,
