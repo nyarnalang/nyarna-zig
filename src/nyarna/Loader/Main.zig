@@ -174,7 +174,7 @@ pub fn pushArg(
   };
   var resolver = Loader.ParamResolver.init();
   const loader = try Loader.Module.create(
-    self.loader.data, &cursor.api, &resolver.api, locator, true, null);
+    self.loader.data, &cursor.api, &resolver.api, locator, .full, null);
   const res = try self.loader.data.known_modules.getOrPut(
     self.loader.data.storage.allocator(), repr);
   if (res.found_existing) {

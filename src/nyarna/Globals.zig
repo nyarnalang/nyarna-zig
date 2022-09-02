@@ -160,14 +160,14 @@ pub fn work(self: *@This()) !void {
       .parsed, .loaded, .pushed_param => unreachable,
     };
     _ = try loader.work();
-    if (loader.fullast) {
-      if (loader.state == .interpreting) {
-        self.known_modules.values()[index] = .{.parsed = loader};
-      }
-    } else {
+    if (loader.ast == .none) {
       if (loader.state == .finished) {
         const module = try loader.finalize();
         self.known_modules.values()[index] = .{.loaded = module};
+      }
+    } else {
+      if (loader.state == .interpreting) {
+        self.known_modules.values()[index] = .{.parsed = loader};
       }
     }
   }

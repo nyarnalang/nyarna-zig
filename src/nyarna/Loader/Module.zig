@@ -39,10 +39,19 @@ const Option = struct {
   given: bool,
 };
 
+pub const Ast = enum {
+  /// don't evaluate keyword calls
+  full,
+  /// evaluate keyword calls, but don't evaluate the module's root
+  out,
+  /// fully evaluate the module
+  none,
+};
+
 source: *model.Source,
 loader: Loader,
 parser: Parser,
-state: union(enum) {
+state : union(enum) {
   initial,
   /// encountered an option specification
   encountered_options,
@@ -52,8 +61,8 @@ state: union(enum) {
   /// for referenced module paths that cannot be resolved to a module source
   poison,
 },
-fullast: bool,
-options: []Option = &.{},
+ast             : Ast,
+options         : []Option = &.{},
 option_container: model.VariableContainer = .{.num_values = 0},
 
 /// allocates the loader and initializes it. Give no_interpret if you want to
@@ -63,12 +72,12 @@ pub fn create(
   input   : *Resolver.Cursor,
   resolver: *Resolver,
   location: model.Locator,
-  fullast : bool,
+  ast     : Ast,
   provider: ?*const lib.Provider,
 ) std.mem.Allocator.Error!*Module {
   var ret = try data.storage.allocator().create(Module);
   ret.* = .{
-    .fullast = fullast,
+    .ast     = ast,
     .state   = undefined,
     .parser  = Parser.init(),
     .loader  = undefined,
@@ -130,7 +139,8 @@ pub fn work(self: *Module) !bool {
         try magic.magicModule(self.loader.interpreter.ctx)
       ) else self.loader.data.known_modules.values()[0].loaded;
       try self.loader.interpreter.importModuleSyms(implicit_module, 0);
-      try self.parser.start(self.loader.interpreter, self.source, self.fullast);
+      try self.parser.start(
+        self.loader.interpreter, self.source, self.ast == .full);
 
       const node = self.parser.build() catch |e| return self.handleError(e);
       try self.ensureSpecifiedContent(node.pos);
@@ -143,7 +153,7 @@ pub fn work(self: *Module) !bool {
       self.state = .{.interpreting = node};
     },
     .interpreting => |node| {
-      if (self.fullast) return true;
+      if (self.ast != .none) return true;
       const intpr = self.loader.interpreter;
 
       var in_out = switch (intpr.specified_content) {
@@ -206,9 +216,9 @@ pub fn work(self: *Module) !bool {
 /// preconditions:
 ///
 ///  * self.work() must have returned true
-///  * create() must have been called with fullast == false
+///  * create() must have been called with ast == .none
 pub fn finalize(self: *Module) !*model.Module {
-  std.debug.assert(!self.fullast);
+  std.debug.assert(self.ast == .none);
   defer self.destroy();
   std.debug.assert(self.loader.interpreter.var_containers.items.len == 1);
   const ret = try self.loader.ctx().global().create(model.Module);
@@ -237,9 +247,9 @@ pub fn finalize(self: *Module) !*model.Module {
 /// preconditions:
 ///
 ///  * self.work() must have returned true
-///  * create() must have been called with fullast == true
+///  * create() must have been called with ast != .none
 pub fn finalizeNode(self: *Module) !*model.Node {
-  std.debug.assert(self.fullast);
+  std.debug.assert(self.ast != .none);
   return switch (self.state) {
     .interpreting => |n| n,
     .poison =>
@@ -338,7 +348,7 @@ pub fn searchModule(
   if (!res.found_existing) {
     const module_loader = try create(
       data, descriptor, resolver,
-      model.Locator.parse(abs_locator) catch unreachable, false,
+      model.Locator.parse(abs_locator) catch unreachable, .none,
       data.known_providers.get(abs_locator));
     res.value_ptr.* = .{.require_options = module_loader};
   }

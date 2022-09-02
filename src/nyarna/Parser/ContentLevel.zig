@@ -141,9 +141,12 @@ const Command = struct {
           if (fullast) {
             switch (rcall.target.data) {
               .resolved_symref => |*rsym| {
+                // import must be resolved even in fullast
                 if (std.mem.eql(u8, "import", rsym.sym.name)) {
-                  intpr.ctx.logger.ImportIllegalInFullast(newNode.pos);
-                  newNode.data = .poison;
+                  if (
+                    try intpr.tryInterpret(
+                      newNode, .{.kind = .intermediate})
+                  ) |expr| newNode.data = .{.expression = expr};
                 }
               },
               else => {}

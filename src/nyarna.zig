@@ -341,7 +341,7 @@ pub const Processor = struct {
     const system_loader = try Loader.Module.create(
       globals, system_ny, self.resolvers.items[1].resolver,
       model.Locator.parse(".std.system") catch unreachable,
-      false, &lib.system.instance.provider);
+      .none, &lib.system.instance.provider);
     _ = system_loader.work() catch |err| {
       system_loader.destroy();
       return err;
@@ -366,7 +366,7 @@ pub const Processor = struct {
     self        : *Self,
     doc_resolver: *Loader.Resolver,
     main_module : []const u8,
-    fullast     : bool,
+    ast         : Loader.Module.Ast,
   ) !*Loader.Main {
     self.resolvers.items[0].resolver = doc_resolver;
     const ret = try Loader.Main.create(
@@ -394,8 +394,8 @@ pub const Processor = struct {
     std.mem.copy(u8, locator[5..], main_module);
     const ml = try Loader.Module.create(
       globals, desc, doc_resolver,
-      model.Locator.parse(locator) catch unreachable, fullast, null);
-    if (fullast) {
+      model.Locator.parse(locator) catch unreachable, ast, null);
+    if (ast != .none) {
       try globals.known_modules.put(
         globals.storage.allocator(), desc.name, .{.require_module = ml});
     } else {
@@ -422,7 +422,7 @@ pub const Processor = struct {
     doc_resolver: *Loader.Resolver,
     main_module : []const u8,
   ) !*Loader.Main {
-    const ret = try self.initMainModule(doc_resolver, main_module, false);
+    const ret = try self.initMainModule(doc_resolver, main_module, .none);
     try ret.loader.data.work();
     return ret;
   }

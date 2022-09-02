@@ -104,7 +104,7 @@ pub const NyarnaSyntax = struct {
       allocator, nyarna.default_stack_size, &ret.ignore.reporter, self.stdlib);
     errdefer (ret.nyarna.deinit());
     ret.main = (
-      ret.nyarna.initMainModule(&ret.doc_res.api, "", false)
+      ret.nyarna.initMainModule(&ret.doc_res.api, "", .out)
     ) catch |err| switch (err) {
       error.OutOfMemory, error.nyarna_stack_overflow,
       error.too_many_namespaces => return Error.OutOfMemory,

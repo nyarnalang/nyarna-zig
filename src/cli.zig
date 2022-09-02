@@ -163,7 +163,7 @@ pub fn main() !void {
         var input = try Input.fromName(main_path, arena.allocator());
         cur_loader = if (print_ast) load: {
           const loader =
-            try proc.initMainModule(input.resolver(), input.name(), true);
+            try proc.initMainModule(input.resolver(), input.name(), .out);
           try loader.loader.data.work();
           break :load loader;
         } else try proc.startLoading(input.resolver(), input.name());
