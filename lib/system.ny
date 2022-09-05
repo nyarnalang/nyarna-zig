@@ -244,7 +244,7 @@
   \end(keyword)
 
   map = \keyword:
-    input    : \Ast
+    input    : \Ast            {primary}
     func     : \Optional(\Ast)
     collector: \Optional(\Ast)
   \end(keyword)

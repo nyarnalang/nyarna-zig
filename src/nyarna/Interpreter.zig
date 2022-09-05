@@ -2055,6 +2055,7 @@ pub fn tryPregenMatcherFunc(
       self.ctx, 1, ret_type, finder_res.needs_different_repr);
     try builder.pushUnwrapped(
       matcher.node().pos, matcher.variable.sym().name, matcher.variable.spec);
+    builder.val.primary = 0;
     const builder_res = builder.finish();
 
     const ret = try self.ctx.global().create(model.Function);
