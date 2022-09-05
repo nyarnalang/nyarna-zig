@@ -1531,6 +1531,7 @@ fn procBlockCaptureStart(self: *@This(), cur: model.TokenAt) !bool {
         self.source().at(cur.start),
         &.{.{.token = model.Token.pipe}}, .{.token = cur.token});
       self.lexer.abortCaptureList();
+      try self.finishBlockHeader(cur.start, null);
       return true;
     },
   }
