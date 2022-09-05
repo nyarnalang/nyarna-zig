@@ -615,7 +615,6 @@ fn doConvert(
             }
             break :blk builder.items;
           },
-          // TODO: convert between numeric types directly
           .int   => |*int_val| try self.toString(int_val),
           .float => |*float_val| try self.toString(float_val),
           else   => unreachable,
@@ -624,7 +623,21 @@ fn doConvert(
           try self.ctx.textFromString(value.origin, input, txt)
         ) |nv| nv.value() else try self.ctx.values.poison(value.origin);
       },
-      else => unreachable,
+      .int => |*int| {
+        return
+          try self.ctx.intAsValue(value.origin, value.data.int.content, 0, int);
+      },
+      .float => |*flt| {
+        const fval = switch (value.data) {
+          .int   => |int| @intToFloat(f64, int.content),
+          .float => |float| float.content,
+          else   => unreachable,
+        };
+        return try self.ctx.floatAsValue(value.origin, fval, 0, flt);
+      },
+      else => std.debug.panic("{}: invalid target type for conversion: {}", .{
+        value.origin, to
+      }),
     },
     .structural => |struc| switch (struc.*) {
       .callable => unreachable,

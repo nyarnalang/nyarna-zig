@@ -154,7 +154,19 @@
     body  : \Ast {primary}
   \end(unique)
 
-  Concat, Optional = \prototype:
+  Concat = \prototype:
+    inner: \Ast {primary}
+  :funcs:
+    len = \builtin(return=\Natural):
+      this: \This {borrow}
+    \end(builtin)
+    item = \builtin(return=\Inner):
+      this : \This     {borrow}
+      index: \Positive
+    \end(builtin)
+  \end(prototype)
+
+  Optional = \prototype:
     inner: \Ast {primary}
   \end(prototype)
 
@@ -167,7 +179,7 @@
       this: \This {borrow}
     \end(builtin)
     item = \builtin(return=\Inner):
-      this: \This {borrow}
+      this : \This     {borrow}
       index: \Positive
     \end(builtin)
   \end(prototype)

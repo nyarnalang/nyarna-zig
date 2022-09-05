@@ -791,6 +791,35 @@ pub const Impl = lib.Provider.Wrapper(struct {
     return list.content.items[@intCast(usize, index.content - 1)];
   }
 
+  pub fn @"Concat::len"(
+    eval  : *nyarna.Evaluator,
+    pos   : model.Position,
+    concat: *model.Value.Concat,
+  ) nyarna.Error!*model.Value {
+    return (try eval.ctx.values.int(
+      pos, &eval.ctx.types().system.natural.named.data.int,
+      @intCast(i64, concat.content.items.len), 0)).value();
+  }
+
+  pub fn @"Concat::item"(
+    eval  : *nyarna.Evaluator,
+    pos   : model.Position,
+    concat: *model.Value.Concat,
+    index : *model.Value.IntNum,
+  ) nyarna.Error!*model.Value {
+    if (index.content > concat.content.items.len) {
+      const msg = try std.fmt.allocPrint(
+        eval.ctx.global(), "<Concat with {} items>: {}", .{
+          concat.content.items.len, index.content
+        }
+      );
+      defer eval.ctx.global().free(msg);
+      eval.ctx.logger.IndexError(pos, msg);
+      return eval.ctx.values.poison(pos);
+    }
+    return concat.content.items[@intCast(usize, index.content - 1)];
+  }
+
   //----------------------
   // unique type functions
   //----------------------
