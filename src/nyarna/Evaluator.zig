@@ -1487,11 +1487,16 @@ pub fn processBackends(
       const outputs = try self.evalCall(self, call);
 
       switch (outputs.data) {
-        .concat => |*con| for (con.content.items) |item| {
-          try container.documents.append(self.ctx.global(), &item.data.output);
+        .concat => |*con| for (con.content.items) |item| switch (item.data) {
+          .output => |*o| try container.documents.append(self.ctx.global(), o),
+          .poison => {},
+          else    => std.debug.panic(
+            "{}: unexpected content in output concat: {s}",
+            .{item.origin, @tagName(item.data)}),
         },
         .poison => {},
-        else    => unreachable,
+        else    => std.debug.panic("{}: unexpected content in outputs: {s}",
+            .{outputs.origin, @tagName(outputs.data)}),
       }
     };
   }
@@ -1573,7 +1578,7 @@ const ConcatBuilder = struct {
     try self.enqueue(scalar_val.value());
   }
 
-  pub fn push(self: *ConcatBuilder, item: *model.Value) !void {
+  pub fn push(self: *ConcatBuilder, item: *model.Value) nyarna.Error!void {
     if (item.data == .void) return;
     const value = switch (item.data) {
       .text => |*txt| if (self.scalar_type) |stype| (
@@ -1584,6 +1589,10 @@ const ConcatBuilder = struct {
       },
       .int, .float, .@"enum" =>
         try self.ctx.evaluator().coerce(item, self.scalar_type.?),
+      .concat => |*inner| {
+        for (inner.content.items) |inner_item| try self.push(inner_item);
+        return;
+      },
       else => item,
     };
     switch (self.state) {

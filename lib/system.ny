@@ -227,8 +227,8 @@
 
   if = \keyword:
     condition: \Ast
-    then: \Optional(\Ast) {primary}
-    else: \Optional(\Ast)
+    then     : \Ast            {primary}
+    else     : \Optional(\Ast)
   \end(keyword)
 
   map = \keyword:
