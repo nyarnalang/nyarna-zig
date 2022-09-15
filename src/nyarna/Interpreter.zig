@@ -4479,7 +4479,7 @@ pub fn interpretWithTargetScalar(
         if (bres == .success) {
           res[next] = .{
             .content = (try self.interpretWithTargetScalar(
-              item.content, stype, stage)).?,
+              item.content, stype, .{.kind = .final})).?,
             .lf_after = item.lf_after,
           };
           next += 1;
