@@ -253,6 +253,7 @@ extern fn throwPanic(msg: [*]const u8, msg_size: usize) noreturn;
 pub fn panic(
   msg: []const u8,
   _  : ?*std.builtin.StackTrace,
+  _  : ?usize,
 ) noreturn {
   throwPanic(msg.ptr, msg.len);
 }

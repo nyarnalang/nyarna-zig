@@ -31,8 +31,8 @@ pub const Provider = struct {
   getKeyword: fn(name: []const u8) ?KeywordWrapper,
   getBuiltin: fn(name: []const u8) ?BuiltinWrapper,
 
-  fn Params(comptime fn_decl: std.builtin.TypeInfo.Fn) type {
-    var fields: [fn_decl.args.len]std.builtin.TypeInfo.StructField = undefined;
+  fn Params(comptime fn_decl: std.builtin.Type.Fn) type {
+    var fields: [fn_decl.args.len]std.builtin.Type.StructField = undefined;
     var buf: [2*fn_decl.args.len]u8 = undefined;
     for (fn_decl.args) |arg, index| {
       fields[index] = .{
@@ -45,11 +45,11 @@ pub const Provider = struct {
       };
     }
 
-    return @Type(std.builtin.TypeInfo{
+    return @Type(std.builtin.Type{
       .Struct = .{
         .layout   = .Auto,
         .fields   = &fields,
-        .decls    = &[_]std.builtin.TypeInfo.Declaration{},
+        .decls    = &[_]std.builtin.Type.Declaration{},
         .is_tuple = true
       },
     });
@@ -124,7 +124,7 @@ pub const Provider = struct {
 
       fn SingleWrapper(
         comptime FirstArg: type,
-        comptime decl    : std.builtin.TypeInfo.Declaration,
+        comptime decl    : std.builtin.Type.Declaration,
         comptime Ret     : type,
       ) type {
         const item = @typeInfo(@TypeOf(@field(impls, decl.name)));

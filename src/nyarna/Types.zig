@@ -1192,7 +1192,7 @@ pub fn typeType(self: *Self, t: model.Type) !model.Type {
 
 pub fn valueType(self: *Self, v: *model.Value) !model.Type {
   return switch (v.data) {
-    .ast          => |ast| if (ast.container == null)
+    .ast          => |astv| if (astv.container == null)
                               self.ast() else self.frameRoot(),
     .block_header =>         self.blockHeader(),
     .concat       => |*con|  con.t.typedef(),
@@ -1202,7 +1202,7 @@ pub fn valueType(self: *Self, v: *model.Value) !model.Type {
     .funcref      => |*fr|   fr.func.callable.typedef(),
     .hashmap      => |*map|  map.t.typedef(),
     .int          => |*int|  int.t.typedef(),
-    .list         => |*list| list.t.typedef(),
+    .list         => |*lstv| lstv.t.typedef(),
     .location     =>         self.location(),
     .output       =>         self.output(),
     .prototype    => |pv|

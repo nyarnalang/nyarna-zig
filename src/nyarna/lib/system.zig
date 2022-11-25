@@ -458,7 +458,7 @@ pub const Impl = lib.Provider.Wrapper(struct {
     lib.reportCaptures(intpr, body, 2);
     const expr = (
       try intpr.tryInterpret(input, .{.kind = .keyword})
-    ) orelse try return intpr.node_gen.poison(pos);
+    ) orelse return try intpr.node_gen.poison(pos);
     if (
       !switch (expr.expected_type) {
         .structural => |strct| switch (strct.*) {
