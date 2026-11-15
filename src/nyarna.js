@@ -54,7 +54,11 @@ class Nyarna {
   }
 
   stringFromZig(ptr, size) {
-    const buffer = new Uint8Array(this.memory.buffer, ptr, size);
+    // zero-length slices may have arbitrary pointers, e.g. Zig's allocators
+    // return maxInt(usize) for them, which would be negative as i32.
+    if (size == 0) return "";
+    // pointers are unsigned but exported as i32.
+    const buffer = new Uint8Array(this.memory.buffer, ptr >>> 0, size);
     const decoder = new TextDecoder();
     return decoder.decode(buffer);
   }
@@ -104,8 +108,11 @@ class Input {
 
   // --- internal stuff ---
 
-  // returns an Uint8Array containing the UTF-8 encoded string.
-  // if owned == true, Uint8Array must be free'd explicitly.
+  // if owned == true, copies the UTF-8 encoded string into WASM memory and
+  // returns its location as {byteOffset, byteLength}. A Uint8Array view is
+  // not returned since it gets detached when a later allocation grows the
+  // WASM memory. The string is owned by the Input.
+  // if owned == false, returns an Uint8Array containing the encoded string.
   stringToZig(val, owned, addPadding) {
     const encoder = new TextEncoder();
     const buffer = encoder.encode(val);
@@ -117,7 +124,7 @@ class Input {
       if (addPadding) {
         ret.set([10, 4, 4, 4, 4], buffer.byteLength);
       }
-      return ret;
+      return {byteOffset: ptr, byteLength: len};
     } else return buffer;
   }
 }
