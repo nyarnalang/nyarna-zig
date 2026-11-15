@@ -14,7 +14,7 @@ const highlight = @import("highlight.zig");
 const lexing    = @import("model/lexing.zig");
 const unicode   = @import("unicode.zig");
 
-pub usingnamespace lexing;
+pub const Token = lexing.Token;
 
 /// an item on the call stack.
 pub const StackItem = extern union {
@@ -40,15 +40,13 @@ pub const Cursor = struct {
 
   /// format the cursor in the form "<line>:<column>", without byte offset.
   pub fn format(
-             self  : Cursor,
-    comptime _     : []const u8,
-             _     : std.fmt.FormatOptions,
-             writer: anytype
-  ) !void {
-    try std.fmt.format(writer, "{}:{}", .{self.at_line, self.before_column});
+    self  : Cursor,
+    writer: *std.Io.Writer
+  ) std.Io.Writer.Error!void {
+    try writer.print("{}:{}", .{self.at_line, self.before_column});
   }
 
-  pub fn formatter(self: Cursor) std.fmt.Formatter(format) {
+  pub fn formatter(self: Cursor) std.fmt.Alt(Cursor, format) {
     return .{.data = self};
   }
 };
@@ -129,27 +127,41 @@ pub const Position = struct {
   ///
   ///   argument "<name>"(<start> - <end>)
   ///
-  /// instead. give "s" as specifier if you only want the <start>.
+  /// instead. Use formatStart if you only want the <start>.
   pub fn format(
-             self     : Position,
-    comptime specifier: []const u8,
-             _        : std.fmt.FormatOptions,
-             writer   : anytype
-  ) @TypeOf(writer).Error!void {
+    self  : Position,
+    writer: *std.Io.Writer
+  ) std.Io.Writer.Error!void {
+    try self.formatSource(writer);
+    try writer.print(
+      "({f} - {f})", .{self.start.formatter(), self.end.formatter()});
+  }
+
+  /// like format, but only emits the start cursor.
+  pub fn formatStart(
+    self  : Position,
+    writer: *std.Io.Writer
+  ) std.Io.Writer.Error!void {
+    try self.formatSource(writer);
+    try writer.print("({f})", .{self.start.formatter()});
+  }
+
+  fn formatSource(
+    self  : Position,
+    writer: *std.Io.Writer
+  ) std.Io.Writer.Error!void {
     if (self.source.argument) {
-      try std.fmt.format(writer, "argument \"{s}\"", .{self.source.name});
+      try writer.print("argument \"{s}\"", .{self.source.name});
     } else {
       try writer.writeAll(self.source.name);
     }
-    if (comptime std.mem.eql(u8, specifier, "s")) {
-      try std.fmt.format(writer, "({})", .{self.start.formatter()});
-    } else {
-      try std.fmt.format(
-        writer, "({} - {})", .{self.start.formatter(), self.end.formatter()});
-    }
   }
 
-  pub fn formatter(self: Position) std.fmt.Formatter(format) {
+  pub fn formatter(self: Position) std.fmt.Alt(Position, format) {
+    return .{.data = self};
+  }
+
+  pub fn startFormatter(self: Position) std.fmt.Alt(Position, formatStart) {
     return .{.data = self};
   }
 };
@@ -171,7 +183,7 @@ pub const Source = struct {
     /// generates the value that should go into Source.locator_ctx from the
     /// absolute locator.
     pub fn genLocatorCtx(self: *const Descriptor) []const u8 {
-      const index = std.mem.lastIndexOf(u8, self.locator.repr, ".").?;
+      const index = std.mem.findLast(u8, self.locator.repr, ".").?;
       return self.locator.repr[0..index + 1]; // include the '.'
     }
   };
@@ -218,7 +230,7 @@ pub const Locator = struct {
     if (input.len == 0) return Error.parse_error;
     var ret = Locator{.repr = input, .resolver = null, .path = undefined};
     if (input[0] == '.') {
-      const end = (std.mem.indexOfScalar(u8, input[1..], '.') orelse
+      const end = (std.mem.findScalar(u8, input[1..], '.') orelse
         return Error.parse_error) + 1;
       ret.resolver = input[1..end];
       ret.path = input[end+1..];
@@ -230,7 +242,7 @@ pub const Locator = struct {
 
   pub fn parent(self: Locator) Locator {
     if (self.path.len == 0) return null;
-    const end = std.mem.lastIndexOfScalar(u8, self.path, '.') orelse 0;
+    const end = std.mem.findScalarLast(u8, self.path, '.') orelse 0;
     return if (self.resolver) |res| Locator{
       .repr     = self.repr[0..res.len + 2 + end],
       .resolver = res,
@@ -279,7 +291,9 @@ pub const BlockConfig = struct {
   /// Ast value.
   full_ast: ?Position = null,
 
-  pub fn formatter(self: BlockConfig) std.fmt.Formatter(fmt.formatBlockConfig) {
+  pub fn formatter(
+    self: BlockConfig,
+  ) std.fmt.Alt(BlockConfig, fmt.formatBlockConfig) {
     return .{.data = self};
   }
 };
@@ -294,8 +308,8 @@ pub const SpecType = struct {
   pub const HashContext = struct {
     pub fn hash(_: HashContext, st: SpecType) u64 {
       return switch (st.t) {
-        .structural => |s|  @intCast(u64, @ptrToInt(s)),
-        .named      => |in| @intCast(u64, @ptrToInt(in)),
+        .structural => |s|  @as(u64, @intCast(@intFromPtr(s))),
+        .named      => |in| @as(u64, @intCast(@intFromPtr(in))),
       };
     }
 

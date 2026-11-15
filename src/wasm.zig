@@ -5,9 +5,9 @@ const MapResolver = @import("nyarna/Loader/MapResolver.zig");
 
 const errors = nyarna.errors;
 
-const system_ny = @embedFile("../lib/system.ny") ++ "\x04\x04\x04\x04";
-const meta_ny   = @embedFile("../lib/meta.ny")   ++ "\x04\x04\x04\x04";
-const schema_ny = @embedFile("../lib/Schema.ny") ++ "\x04\x04\x04\x04";
+const system_ny = @embedFile("system.ny") ++ "\x04\x04\x04\x04";
+const meta_ny   = @embedFile("meta.ny")   ++ "\x04\x04\x04\x04";
+const schema_ny = @embedFile("Schema.ny") ++ "\x04\x04\x04\x04";
 
 pub const Input = struct {
   const Arg = struct {
@@ -17,7 +17,7 @@ pub const Input = struct {
 
   storage : std.heap.ArenaAllocator,
   resolver: MapResolver,
-  args    : std.ArrayListUnmanaged(Arg),
+  args    : std.ArrayList(Arg),
 };
 
 pub const Result = struct {
@@ -64,7 +64,7 @@ export fn createInput() ?*Input {
   ret.* = .{
     .storage  = std.heap.ArenaAllocator.init(std.heap.page_allocator),
     .resolver = undefined,
-    .args     = .{},
+    .args     = .empty,
   };
   ret.resolver = MapResolver.init(ret.storage.allocator());
   return ret;
@@ -123,9 +123,8 @@ fn pushStdlib(
 }
 
 export fn process(self: *Input, main: [*]const u8, main_len: usize) ?*Result {
-  var error_out = std.ArrayList(u8).init(self.storage.allocator());
-  var term = errors.Terminal(@TypeOf(error_out).Writer, false).init(
-    error_out.writer());
+  var error_out = std.Io.Writer.Allocating.init(self.storage.allocator());
+  var term = errors.Terminal(*std.Io.Writer, false).init(&error_out.writer);
 
   jsLog("debug", "initializing stdlib");
   var stdlib = nyarna.Loader.MapResolver.init(self.storage.allocator());
@@ -177,12 +176,12 @@ export fn process(self: *Input, main: [*]const u8, main_len: usize) ?*Result {
         return null;
       })
     ) {
-      res.* = .{.error_output = error_out.items};
+      res.* = .{.error_output = error_out.written()};
       return res;
     }
     defer container.destroy();
-    var docs = std.ArrayList(Result.Output).init(self.storage.allocator());
-    defer docs.deinit();
+    var docs: std.ArrayList(Result.Output) = .empty;
+    defer docs.deinit(self.storage.allocator());
     for (container.documents.items) |output| {
       if (
         if (output.schema) |schema| schema.backend != null else false
@@ -205,18 +204,23 @@ export fn process(self: *Input, main: [*]const u8, main_len: usize) ?*Result {
           return null;
         },
       };
-      docs.append(.{.name = name, .content = content}) catch |err| {
+      docs.append(
+        self.storage.allocator(), .{.name = name, .content = content}
+      ) catch |err| {
         jsLog("error while appending output document:", @errorName(err));
         return null;
       };
     }
     res.* = .{
-      .documents = docs.toOwnedSlice(),
+      .documents = docs.toOwnedSlice(self.storage.allocator()) catch |err| {
+        jsLog("error while collecting output documents:", @errorName(err));
+        return null;
+      },
     };
     return res;
   }
   // TODO: missing inputs
-  res.* = .{.error_output = error_out.items};
+  res.* = .{.error_output = error_out.written()};
   return res;
 }
 
@@ -250,10 +254,8 @@ export fn documentContent(result: *Result, index: usize) [*]const u8 {
 
 extern fn throwPanic(msg: [*]const u8, msg_size: usize) noreturn;
 
-pub fn panic(
-  msg: []const u8,
-  _  : ?*std.builtin.StackTrace,
-  _  : ?usize,
-) noreturn {
+pub const panic = std.debug.FullPanic(panicImpl);
+
+fn panicImpl(msg: []const u8, _: ?usize) noreturn {
   throwPanic(msg.ptr, msg.len);
 }

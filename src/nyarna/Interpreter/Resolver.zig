@@ -78,7 +78,7 @@ pub const Context = struct {
   /// correct namespace (if context is namespace-based) or in an access on the
   /// correct type or an expression of the correct type
   /// (if context is type-based).
-  resolveNameFn: fn(
+  resolveNameFn: *const fn(
     ctx     : *Context,
     name    : []const u8,
     name_pos: model.Position,
@@ -86,7 +86,7 @@ pub const Context = struct {
 
   /// registers all links to sibling nodes that are encountered.
   /// will be set during graph processing and is not to be set by the caller.
-  dependencies: std.ArrayListUnmanaged(usize) = undefined,
+  dependencies: std.ArrayList(usize) = undefined,
   /// the target in whose namespace all symbols declared via this context
   /// reside. either a command character namespace or a type.
   target: Target,
@@ -213,7 +213,7 @@ pub const ComptimeContext = struct {
     name_pos: model.Position,
   ) nyarna.Error!Context.Result {
     _ = name_pos;
-    const self = @fieldParentPtr(ComptimeContext, "ctx", ctx);
+    const self: *ComptimeContext = @fieldParentPtr("ctx", ctx);
     if (self.entries.get(name)) |node| {
       return Context.Result{.node = node};
     }
@@ -230,7 +230,7 @@ pub const Chain = union(enum) {
     /// command character used for the base
     ns: u15,
     /// list of items to descend into at runtime.
-    indexes: std.ArrayListUnmanaged(model.Node.Assign.PathItem) = .{},
+    indexes: std.ArrayList(model.Node.Assign.PathItem) = .empty,
     /// the current type of the accessed value.
     t: model.Type,
     /// position of the last resolved name in the chain.
@@ -280,10 +280,10 @@ pub const Chain = union(enum) {
     }};
   }
 
-  fn runtime(
+  fn runtimeChain(
     ns           : u15,
     base         : *model.Node,
-    indexes      : std.ArrayListUnmanaged(model.Node.Assign.PathItem),
+    indexes      : std.ArrayList(model.Node.Assign.PathItem),
     t            : model.Type,
     last_name_pos: model.Position,
     preliminary  : bool,
@@ -438,7 +438,7 @@ fn searchAccessible(
     .named => |named| switch (named.data) {
       .record => |*rec| {
         for (
-          rec.constructor.sig.parameters[rec.first_own..]
+          rec.constructor.sig.parameters[rec.first_own..], 0..
         ) |field, index| {
           if (std.mem.eql(u8, field.name, name)) {
             return AccessResult{
@@ -486,8 +486,8 @@ fn resolveSymref(self: Resolver, rs: *model.Node.ResolvedSymref) Chain {
         std.debug.assert(self.stage.kind == .intermediate);
         return Chain{.failed = rs.ns};
       } else {
-        return Chain.runtime(
-          rs.ns, rs.node(), .{}, v.spec.t, rs.name_pos, false);
+        return Chain.runtimeChain(
+          rs.ns, rs.node(), .empty, v.spec.t, rs.name_pos, false);
       }
     },
     else => {},
@@ -516,7 +516,7 @@ fn fromResult(
         .name_pos = name_pos,
       }};
       std.debug.assert(!v.spec.t.isNamed(.every));
-      return Chain.runtime(ns, node, .{}, v.spec.t, name_pos, false);
+      return Chain.runtimeChain(ns, node, .empty, v.spec.t, name_pos, false);
     },
     .poison  => {
       node.data = .poison;
@@ -537,7 +537,7 @@ fn fromResult(
     },
     .unfinished_function => |t| return Chain.functionReturning(t, ns),
     .unfinished_variable => |t|
-      return Chain.runtime(ns, node, .{}, t, name_pos, true),
+      return Chain.runtimeChain(ns, node, .empty, t, name_pos, true),
     else => return Chain{.failed = ns},
   }
 }
@@ -553,7 +553,7 @@ fn resolveUAccess(
       try self.intpr.associate(
         uacc.name, self.intpr.ctx.types().text().predef(), self.stage)
     ) |expr| blk: {
-      const value = try self.intpr.ctx.evaluator().evaluate(expr);
+      const value = try self.intpr.ctx.evaluate(expr);
       switch (value.data) {
         .text   => |*txt| {
           uacc.name.data = .{.literal = .{
@@ -756,7 +756,7 @@ fn resolveUCall(
   }
   switch (res) {
     .function_returning => |*fr| {
-      return Chain.runtime(fr.ns, ucall.target, .{}, fr.returns,
+      return Chain.runtimeChain(fr.ns, ucall.target, .empty, fr.returns,
         ucall.node().pos.after(), true);
     },
     .runtime => |*rc| {
@@ -764,8 +764,8 @@ fn resolveUCall(
         switch (rc.t) {
           .structural => |strct| switch (strct.*) {
             .callable => |*callable| {
-              return Chain.runtime(
-                rc.ns, ucall.node(), .{}, callable.sig.returns,
+              return Chain.runtimeChain(
+                rc.ns, ucall.node(), .empty, callable.sig.returns,
                 ucall.node().pos.after(), true
               );
             },
@@ -780,29 +780,30 @@ fn resolveUCall(
         ) orelse return Chain{.failed = rc.ns};
         const node = ucall.node();
         node.data = .{.expression = expr};
-        return Chain.runtime(
-          undefined, node, .{}, expr.expected_type, rc.last_name_pos, false);
+        return Chain.runtimeChain(
+          undefined, node, .empty, expr.expected_type, rc.last_name_pos, false);
       }
     },
     .sym_ref => |*sr| {
       if (sr.preliminary) {
         switch (sr.sym.data) {
           .func => |f|
-            return Chain.runtime(sr.ns, ucall.node(), .{},
+            return Chain.runtimeChain(sr.ns, ucall.node(), .empty,
               f.callable.sig.returns, sr.name_pos, true),
           .variable => |*v| {
             switch (v.spec.t) {
               .structural => |strct| switch (strct.*) {
-                .callable => |*callable| return Chain.runtime(sr.ns,
-                  ucall.node(), .{}, callable.sig.returns, sr.name_pos, true),
+                .callable => |*callable| return Chain.runtimeChain(
+                  sr.ns, ucall.node(), .empty, callable.sig.returns,
+                  sr.name_pos, true),
                 else => {},
               },
               else => {},
             }
             return Chain{.failed = sr.ns};
           },
-          .@"type" => |t| return Chain.runtime(
-            sr.ns, ucall.node(), .{}, t, sr.name_pos, true),
+          .@"type" => |t| return Chain.runtimeChain(
+            sr.ns, ucall.node(), .empty, t, sr.name_pos, true),
           // since prototypes cannot be assigned to variables or returned
           // from functions, delayed resolution can never result in a
           // prototype.
@@ -815,8 +816,8 @@ fn resolveUCall(
         ) orelse return Chain{.failed = sr.ns};
         const node = ucall.node();
         node.data = .{.expression = expr};
-        return Chain.runtime(
-          undefined, node, .{}, expr.expected_type, sr.name_pos, false);
+        return Chain.runtimeChain(
+          undefined, node, .empty, expr.expected_type, sr.name_pos, false);
       }
     },
     .failed, .poison => return res,
@@ -869,8 +870,8 @@ pub fn resolveChain(
 
   if (try self.intpr.tryInterpret(chain, self.stage)) |expr| {
     chain.data = .{.expression = expr};
-    return Chain.runtime(
-      undefined, chain, .{}, expr.expected_type, last_name_pos, false);
+    return Chain.runtimeChain(
+      undefined, chain, .empty, expr.expected_type, last_name_pos, false);
   } else return switch (self.stage.kind) {
     .intermediate => Chain{.failed = ns},
     else => Chain.poison,
@@ -879,7 +880,7 @@ pub fn resolveChain(
 
 /// try to resolve all unresolved names in the given node.
 pub fn resolve(
-  self: *Resolver,
+  self: Resolver,
   node: *model.Node,
 ) nyarna.Error!void {
   switch (node.data) {

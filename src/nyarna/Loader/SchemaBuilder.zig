@@ -24,8 +24,8 @@ const BackendBuilder = struct {
   intpr    : *nyarna.Interpreter,
   doc_type : *model.Type.Record,
 
-  funcs : std.ArrayListUnmanaged(*model.Node.Definition) = .{},
-  output: std.ArrayListUnmanaged(*model.Value.Ast) = .{},
+  funcs : std.ArrayList(*model.Node.Definition) = .empty,
+  output: std.ArrayList(*model.Value.Ast) = .empty,
 
   fn merge(
     self      : *@This(),
@@ -85,12 +85,12 @@ const BackendBuilder = struct {
 };
 
 loader    : nyarna.Loader,
-defs      : std.ArrayListUnmanaged(*model.Node.Definition),
+defs      : std.ArrayList(*model.Node.Definition),
 root      : *model.Node,
 /// set if a backend name has been given. used to identify relevant backend
 /// definitions.
 b_name    : ?[]const u8,
-backends  : std.ArrayListUnmanaged(BackendDef),
+backends  : std.ArrayList(BackendDef),
 
 pub fn create(
   base   : *model.Value.SchemaDef,
@@ -99,8 +99,8 @@ pub fn create(
 ) !*SchemaBuilder {
   const ret = try data.backing_allocator.create(SchemaBuilder);
   try ret.loader.init(data, null, null, null, null);
-  ret.defs = .{};
-  ret.backends = .{};
+  ret.defs = .empty;
+  ret.backends = .empty;
   try ret.defs.appendSlice(ret.loader.interpreter.allocator(), base.defs);
   ret.root = base.root;
   ret.b_name = null;
@@ -174,8 +174,7 @@ fn procBackend(
     try self.loader.data.storage.allocator().create(model.VariableContainer);
   container.* = .{.num_values = 0};
 
-  var var_locs =
-    std.ArrayList(model.locations.Ref).init(self.loader.storage.allocator());
+  var var_locs: std.ArrayList(model.locations.Ref) = .empty;
 
   for (self.backends.items) |def| if (def.backend.vars) |vars| {
     // TODO: does this suffice to properly handle name clashes in variables?
@@ -231,7 +230,7 @@ fn procBackend(
   };
   for (self.backends.items) |bd| {
     try builder.merge(
-      bd.backend, bd.doc_var, @intCast(u15, var_locs.items.len));
+      bd.backend, bd.doc_var, @as(u15, @intCast(var_locs.items.len)));
   }
 
   // create all variables in the container.
@@ -495,7 +494,7 @@ pub fn finalize(
   try dres.execute();
   const expr = try self.ip().interpretAs(
     self.root, self.loader.ctx().types().@"type"().predef());
-  switch ((try self.loader.ctx().evaluator().evaluate(expr)).data) {
+  switch ((try self.loader.ctx().evaluate(expr)).data) {
     .@"type" => |*tv| {
       return try self.loader.ctx().values.schema(
         pos, tv.t.at(tv.value().origin), self.loader.public_syms.items,

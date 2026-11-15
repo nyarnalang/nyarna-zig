@@ -9,6 +9,7 @@ const Types  = nyarna.Types;
 
 const totalOrderLess = @import("helpers.zig").totalOrderLess;
 const gcd            = @import("../helpers.zig").gcd;
+const mulOverflow    = @import("../helpers.zig").mulOverflow;
 
 pub const EnumBuilder = struct {
   const Self = @This();
@@ -21,7 +22,7 @@ pub const EnumBuilder = struct {
     named.* = .{
       .at   = pos,
       .name = null,
-      .data = .{.@"enum" = .{.values = .{}}},
+      .data = .{.@"enum" = .{.values = .empty}},
     };
     return Self{.ctx = ctx, .ret = &named.data.@"enum"};
   }
@@ -58,14 +59,16 @@ pub const IntersectionBuilder = struct {
 
       pub fn init(sources: anytype) @This() {
         var ret: @This() = undefined;
-        inline for (std.meta.fields(@TypeOf(sources))) |field, index| {
-          const value = @field(sources, field.name);
-          switch (@typeInfo(@TypeOf(value)).Pointer.size) {
-            .One => ret.sources[index] = .{
+        inline for (
+          @typeInfo(@TypeOf(sources)).@"struct".field_names, 0..
+        ) |name, index| {
+          const value = @field(sources, name);
+          switch (@typeInfo(@TypeOf(value)).pointer.size) {
+            .one => ret.sources[index] = .{
               .pos   = undefined, // never used for static
-              .types = @ptrCast([*]const model.Type, value)[0..1],
+              .types = @as([*]const model.Type, @ptrCast(value))[0..1],
             },
-            .Slice => ret.sources[index] = .{.pos = undefined, .types = value},
+            .slice => ret.sources[index] = .{.pos = undefined, .types = value},
             else => unreachable,
           }
           ret.indexes[index] = 0;
@@ -132,7 +135,7 @@ pub const IntersectionBuilder = struct {
         if (t.eql(pt)) return prev.pos;
       }
     }
-    self.push(@ptrCast([*]const model.Type, t)[0..1]);
+    self.push(@as([*]const model.Type, @ptrCast(t))[0..1]);
     self.sources[self.filled - 1].pos = pos;
     return null;
   }
@@ -143,10 +146,10 @@ pub const IntersectionBuilder = struct {
     };
     var tcount = @as(usize, 0);
     var scalar: ?model.Type = null;
-    var input = self.sources[0..self.filled];
+    const input = self.sources[0..self.filled];
     while (true) {
       var cur_type: ?model.Type = null;
-      for (input) |item, index| {
+      for (input, 0..) |item, index| {
         const list = item.types;
         if (list.len > self.indexes[index]) {
           const next = list[self.indexes[index]];
@@ -156,7 +159,7 @@ pub const IntersectionBuilder = struct {
         }
       }
       if (cur_type) |next_type| {
-        for (input) |item, index| {
+        for (input, 0..) |item, index| {
           const list = item.types;
           const list_index = self.indexes[index];
           if (list_index < list.len and list[list_index].eql(next_type)) {
@@ -190,10 +193,10 @@ pub const IntersectionBuilder = struct {
         .types = try types.allocator.alloc(model.Type, tcount),
       };
       var target_index = @as(usize, 0);
-      for (input) |_, index| self.indexes[index] = 0;
+      for (input, 0..) |_, index| self.indexes[index] = 0;
       while (true) {
         var cur_type: ?model.Type = null;
-        for (input) |item, index| {
+        for (input, 0..) |item, index| {
           const vals = item.types;
           if (self.indexes[index] < vals.len) {
             const next_in_list = vals[self.indexes[index]];
@@ -204,7 +207,7 @@ pub const IntersectionBuilder = struct {
           }
         }
         if (cur_type) |next_type| {
-          for (input) |item, index| {
+          for (input, 0..) |item, index| {
             const vals = item.types;
             const list_index = self.indexes[index];
             if (list_index < vals.len and vals[list_index].eql(next_type)) {
@@ -233,8 +236,8 @@ pub const IntNumBuilder = struct {
   ret      : *model.Type.IntNum,
   pos      : model.Position,
   failed   : bool = false,
-  positions: std.ArrayListUnmanaged(model.Position) = .{},
-  units    : std.ArrayListUnmanaged(model.Type.IntNum.Unit) = .{},
+  positions: std.ArrayList(model.Position) = .empty,
+  units    : std.ArrayList(model.Type.IntNum.Unit) = .empty,
   /// factor with which each given unit's factor is multiplied so that the
   /// smallest unit has factor `1`.
   cur_factor: i64 = 1,
@@ -271,7 +274,7 @@ pub const IntNumBuilder = struct {
       self.ctx.logger.FactorMustntBeNegative(pos, factor.repr);
       return;
     }
-    for (self.units.items) |item, index| {
+    for (self.units.items, 0..) |item, index| {
       if (std.mem.eql(u8, item.suffix, suffix)) {
         self.ctx.logger.DuplicateSuffix(
           suffix, pos, self.positions.items[index]);
@@ -287,7 +290,7 @@ pub const IntNumBuilder = struct {
 
     var actual: i64 = undefined;
     if (divisor == 1) {
-      if (@mulWithOverflow(i64, factor.value, coeff, &actual)) {
+      if (mulOverflow(factor.value, coeff, &actual)) {
         self.ctx.logger.FactorsTooFarApart(
           factor.repr, pos, self.positions.items[self.smallest_factor]);
         return;
@@ -295,8 +298,8 @@ pub const IntNumBuilder = struct {
     } else {
       const x = @mod(factor.value, divisor);
       const additional = @divExact(divisor, gcd(divisor, x));
-      for (self.units.items) |*item, index| {
-        if (@mulWithOverflow(i64, item.factor, additional, &item.factor)) {
+      for (self.units.items, 0..) |*item, index| {
+        if (mulOverflow(item.factor, additional, &item.factor)) {
           self.ctx.logger.FactorsTooFarApart(
             factor.repr, pos, self.positions.items[index]);
           return;
@@ -376,8 +379,8 @@ pub const FloatNumBuilder = struct {
   ret      : *model.Type.FloatNum,
   pos      : model.Position,
   failed   : bool = false,
-  positions: std.ArrayListUnmanaged(model.Position) = .{},
-  units    : std.ArrayListUnmanaged(model.Type.FloatNum.Unit) = .{},
+  positions: std.ArrayList(model.Position) = .empty,
+  units    : std.ArrayList(model.Type.FloatNum.Unit) = .empty,
 
   pub fn init(
     ctx    : nyarna.Context,
@@ -389,8 +392,8 @@ pub const FloatNumBuilder = struct {
       .at   = pos,
       .name = null,
       .data = .{.float = .{
-        .min      = -std.math.inf_f64,
-        .max      = std.math.inf_f64,
+        .min      = -std.math.inf(f64),
+        .max      = std.math.inf(f64),
         .suffixes = undefined,
       }},
     };
@@ -409,17 +412,18 @@ pub const FloatNumBuilder = struct {
       self.ctx.logger.FactorMustntBeNegative(pos, factor.repr);
       return;
     }
-    for (self.units.items) |item, index| {
+    for (self.units.items, 0..) |item, index| {
       if (std.mem.eql(u8, item.suffix, suffix)) {
         self.ctx.logger.DuplicateSuffix(
           suffix, pos, self.positions.items[index]);
         return;
       }
     }
-    const divisor = std.math.pow(f64, 10, @intToFloat(f64, factor.decimals));
+    const divisor =
+      std.math.pow(f64, 10, @as(f64, @floatFromInt(factor.decimals)));
     try self.units.append(self.ctx.global(), .{
       .suffix = suffix,
-      .factor = @intToFloat(f64, factor.value) / divisor,
+      .factor = @as(f64, @floatFromInt(factor.value)) / divisor,
     });
     try self.positions.append(self.private, pos);
   }
@@ -444,21 +448,21 @@ pub const FloatNumBuilder = struct {
       self.ctx.logger.MustHaveDefinedSuffix(pos, input.repr);
       return false;
     } else {
-      target.* = @intToFloat(f64, input.value) /
-        std.math.pow(f64, 10, @intToFloat(f64, input.decimals));
+      target.* = @as(f64, @floatFromInt(input.value)) /
+        std.math.pow(f64, 10, @as(f64, @floatFromInt(input.decimals)));
       return true;
     }
   }
 
   pub fn min(self: *Self, num: LiteralNumber, pos: model.Position) void {
     if (!self.setNum(num, pos, &self.ret.min)) {
-      self.ret.min = -std.math.inf_f64;
+      self.ret.min = -std.math.inf(f64);
     }
   }
 
   pub fn max(self: *Self, num: LiteralNumber, pos: model.Position) void {
     if (!self.setNum(num, pos, &self.ret.max)) {
-      self.ret.max = std.math.inf_f64;
+      self.ret.max = std.math.inf(f64);
     }
   }
 
@@ -540,8 +544,8 @@ pub const SequenceBuilder = struct {
   temp_alloc: std.mem.Allocator,
   direct    : ?model.SpecType = null,
   single    : ?model.SpecType = null,
-  list      : std.ArrayListUnmanaged(*model.Type.Record) = .{},
-  positions : std.ArrayListUnmanaged(model.Position) = .{},
+  list      : std.ArrayList(*model.Type.Record) = .empty,
+  positions : std.ArrayList(model.Position) = .empty,
   non_voids : u21 = 0,
   /// if true, a \Sequence type will always be created. Also errors will be
   /// logged if pushed types are merged into previously given types.
@@ -582,7 +586,7 @@ pub const SequenceBuilder = struct {
         },
         .record => |*rec| {
           // OPPORTUNITY: sort this list here?
-          for (self.list.items) |item, i| {
+          for (self.list.items, 0..) |item, i| {
             if (item.typedef().eql(spec.t)) {
               return if (force_direct) PushResult{
                 .not_disjoint = item.typedef().at(self.positions.items[i])
@@ -753,7 +757,7 @@ pub const SequenceBuilder = struct {
               break :blk null;
             }
           }
-          for (self.list.items) |item, i| {
+          for (self.list.items, 0..) |item, i| {
             if (item == rec) {
               res.auto = .{
                 .not_disjoint = item.typedef().at(self.positions.items[i]),
@@ -766,14 +770,14 @@ pub const SequenceBuilder = struct {
             res.auto = .no_primary;
             break :blk null;
           }
-          for (sig.parameters) |param, index| if (index != sig.primary.?) {
+          for (sig.parameters, 0..) |param, index| if (index != sig.primary.?) {
             if (
               !switch (param.spec.t) {
                 .structural => |strct| switch (strct.*) {
                   .concat, .optional, .sequence => true,
                   .list    => param.capture == .varargs,
                   .hashmap => if (sig.varmap) |vi| (
-                    vi == @intCast(u21, index)
+                    vi == @as(u21, @intCast(index))
                   ) else false,
                   else     => false,
                 },
@@ -824,14 +828,14 @@ pub const SequenceBuilder = struct {
         struc.* = .{.sequence = undefined};
         break :blk &struc.sequence;
       };
-      var index = for (repr.structural.sequence.inner) |item, i| {
+      const index = for (repr.structural.sequence.inner, 0..) |item, i| {
         if (item == at) break i;
       } else unreachable;
       ret.* = .{
         .direct = if (self.direct) |direct| direct.t else null,
         .inner = repr.structural.sequence.inner,
         .auto = .{
-          .index = @intCast(u21, index),
+          .index = @as(u21, @intCast(index)),
           .repr = &repr.structural.sequence,
         },
       };

@@ -25,7 +25,7 @@ pub fn collect(self: *@This(), node: *model.Node, intpr: *Interpreter) !void {
         node.data = .void;
         return;
       };
-      const value = try intpr.ctx.evaluator().evaluate(expr);
+      const value = try intpr.ctx.evaluate(expr);
       if (value.data == .poison) {
         node.data = .poison;
         return;
@@ -132,14 +132,14 @@ pub fn append(
       try self.append(item, intpr, pdef, gen);
     },
     .expression => |expr| {
-      const value = try intpr.ctx.evaluator().evaluate(expr);
+      const value = try intpr.ctx.evaluate(expr);
       try self.appendValue(value, intpr.ctx, pdef, gen);
     },
     else => {
       const expr = try intpr.interpret(node);
       node.data = .{.expression = expr};
       try self.appendValue(
-        try intpr.ctx.evaluator().evaluate(expr), intpr.ctx, pdef, gen);
+        try intpr.ctx.evaluate(expr), intpr.ctx, pdef, gen);
     },
   }
 }

@@ -31,15 +31,15 @@ pub const SingleResolver     = @import("Loader/SingleResolver.zig");
 
 const Loader = @This();
 
-const SearchModuleImpl = fn(
+const SearchModuleImpl = *const fn(
   self   : *Loader,
   pos    : model.Position,
   locator: model.Locator,
 ) std.mem.Allocator.Error!?usize;
 
-const RegisterOptionsImpl = fn(self: *Loader) Module.OptionRegistrar;
+const RegisterOptionsImpl = *const fn(self: *Loader) Module.OptionRegistrar;
 
-const EncOptionsImpl = fn(self: *Loader) bool;
+const EncOptionsImpl = *const fn(self: *Loader) bool;
 
 data       : *Globals,
 /// for data local to the module loading process. will go out of scope when
@@ -50,7 +50,7 @@ interpreter: *Interpreter,
 /// are encountered. If one or more errors are encountered during loading,
 /// the input is considered to be invalid.
 logger     : errors.Handler,
-public_syms: std.ArrayListUnmanaged(*model.Symbol),
+public_syms: std.ArrayList(*model.Symbol),
 sm_impl    : ?SearchModuleImpl,
 ro_impl    : ?RegisterOptionsImpl,
 eo_impl    : ?EncOptionsImpl,
@@ -67,7 +67,7 @@ pub fn init(
   self.storage = std.heap.ArenaAllocator.init(data.backing_allocator);
   self.logger = .{.reporter = data.reporter};
   self.interpreter = try Interpreter.create(self, provider);
-  self.public_syms = .{};
+  self.public_syms = .empty;
   self.sm_impl = sm_impl;
   self.ro_impl = ro_impl;
   self.eo_impl = eo_impl;

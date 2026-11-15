@@ -27,7 +27,7 @@ const line_feeds = "\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n";
 fn lineFeeds(self: *Evaluator, num: usize) ![]const u8 {
   if (num <= line_feeds.len) return line_feeds[0..num];
   const ret = try self.ctx.global().alloc(u8, num);
-  std.mem.set(u8, ret, '\n');
+  @memset(ret, '\n');
   return ret;
 }
 
@@ -38,14 +38,14 @@ pub fn allocateStackFrame(
 ) ![*]model.StackItem {
   const data = self.ctx.data;
   if (
-    (@ptrToInt(data.stack_ptr) - @ptrToInt(data.stack.ptr))
+    (@intFromPtr(data.stack_ptr) - @intFromPtr(data.stack.ptr))
     / @sizeOf(model.StackItem) + num_variables > data.stack.len
   ) {
     return nyarna.Error.nyarna_stack_overflow;
   }
   const ret = data.stack_ptr;
   data.stack_ptr += num_variables + 1;
-  ret.* = .{.frame_ref = prev_frame};
+  ret[0] = .{.frame_ref = prev_frame};
   return ret;
 }
 
@@ -76,7 +76,7 @@ pub fn fillParameterStackFrame(
   frame: [*]model.StackItem,
 ) !bool {
   var seen_poison = false;
-  for (exprs) |expr, i| {
+  for (exprs, 0..) |expr, i| {
     const val = try self.evaluate(expr);
     frame[i] = .{.value = val};
     if (val.data == .poison) seen_poison = true;
@@ -175,7 +175,7 @@ fn evalExtFuncCall(
       },
       .origin = undefined,
     };
-    frame_ptr.* = .{.value = &ns_val};
+    frame_ptr[0] = .{.value = &ns_val};
     frame_ptr += 1;
   }
   defer self.resetStackFrame(
@@ -306,7 +306,7 @@ fn evalCall(
             ) {
               const ret = try self.ctx.values.record(call.expr().pos, rec);
               const first_value = frame.? + 1;
-              for (ret.fields) |*field, index| {
+              for (ret.fields, 0..) |*field, index| {
                 field.* = first_value[index].value;
               }
               return ret.value();
@@ -351,7 +351,7 @@ pub fn evaluateKeywordCall(
       if (constr.callable.?.sig.isKeyword()) {
         return self.callConstructor(intpr, pos, args, constr, t);
       } else {
-        std.debug.panic("type {s} is not called as keyword!", .{t.formatter()});
+        std.debug.panic("type {f} is not called as keyword!", .{t.formatter()});
       }
     },
     else => std.debug.panic("{s} is not a keyword!", .{@tagName(target.data)})
@@ -367,8 +367,7 @@ fn checkRange(
     value.data.int.content <= 0 or
     value.data.int.content > subject.content.items.len
   ) {
-    const str = try std.fmt.allocPrint(
-      self.ctx.global(), "{}", .{value.data.int.content});
+    const str = try self.ctx.global().print("{}", .{value.data.int.content});
     self.ctx.logger.OutOfRange(
       value.origin, subject.t.typedef(), str);
     return false;
@@ -397,14 +396,16 @@ fn walkPath(
       if (value.data == .poison) return null;
       switch (cur.*.data) {
         .concat => |*con| if (try self.checkRange(value, con)) {
-          cur = &con.content.items[@intCast(usize, value.data.int.content) - 1];
+          const index: usize = @intCast(value.data.int.content);
+          cur = &con.content.items[index - 1];
         } else return null,
         .list => |*lst| if (try self.checkRange(value, lst)) {
-          cur = &lst.content.items[@intCast(usize, value.data.int.content) - 1];
+          const index: usize = @intCast(value.data.int.content);
+          cur = &lst.content.items[index - 1];
         } else return null,
         .seq => |*seq| if (try self.checkRange(value, seq)) {
           cur = &seq.content.items[
-            @intCast(usize, value.data.int.content) - 1].content;
+            @as(usize, @intCast(value.data.int.content)) - 1].content;
         } else return null,
         else => unreachable,
       }
@@ -440,7 +441,7 @@ fn evalBranches(
   self: *Evaluator,
   br  : *model.Expression.Branches,
 ) nyarna.Error!*model.Value {
-  var condition = try self.evaluate(br.condition);
+  const condition = try self.evaluate(br.condition);
   if ((try self.ctx.types().valueType(condition)).isNamed(.poison)) {
     return self.ctx.values.poison(br.expr().pos);
   }
@@ -476,7 +477,7 @@ fn convertIntoConcat(
     },
     .record => try into.push(value),
     .seq => |*seq| {
-      for (seq.content.items) |p, index| {
+      for (seq.content.items, 0..) |p, index| {
         try self.convertIntoConcat(p.content, into);
         if (index != seq.content.items.len - 1) {
           try into.pushSpace(p.lf_after);
@@ -527,7 +528,7 @@ fn convertIntoSequence(
     .auto => |index| {
       const rec = others[index];
       const rec_val = try self.ctx.values.record(value.origin, rec);
-      for (rec_val.fields) |*field, i| {
+      for (rec_val.fields, 0..) |*field, i| {
         const param = rec.constructor.sig.parameters[i];
         field.* = if (i == rec.constructor.sig.primary.?) (
           try self.doConvert(value, param.spec.t)
@@ -597,8 +598,8 @@ fn doConvert(
           .text => |*intxt| intxt.content,
           .@"enum" => |*e| e.t.values.keys()[e.index],
           .seq => |*seq| blk: {
-            var builder = std.ArrayListUnmanaged(u8){};
-            for (seq.content.items) |item, i| {
+            var builder: std.ArrayList(u8) = .empty;
+            for (seq.content.items, 0..) |item, i| {
               switch (item.content.data) {
                 .void => {},
                 .text => |*intxt| {
@@ -629,13 +630,13 @@ fn doConvert(
       },
       .float => |*flt| {
         const fval = switch (value.data) {
-          .int   => |int| @intToFloat(f64, int.content),
+          .int   => |int| @as(f64, @floatFromInt(int.content)),
           .float => |float| float.content,
           else   => unreachable,
         };
         return try self.ctx.floatAsValue(value.origin, fval, 0, flt);
       },
-      else => std.debug.panic("{}: invalid target type for conversion: {}", .{
+      else => std.debug.panic("{f}: invalid target type for conversion: {f}", .{
         value.origin, to
       }),
     },
@@ -661,7 +662,8 @@ fn doConvert(
       .list         => |*lst| {
         const ret = try self.ctx.values.list(value.origin, lst);
         for (value.data.list.content.items) |item| {
-          try ret.content.append(try self.doConvert(item, lst.inner));
+          try ret.content.append(
+            self.ctx.global(), try self.doConvert(item, lst.inner));
         }
         return ret.value();
       },
@@ -700,7 +702,7 @@ fn evalIfOpt(
       if (ifopt.variable) |v| {
         const frame = try self.allocateStackFrame(1, v.container.cur_frame);
         v.container.cur_frame = frame;
-        (frame + 1).* = .{.value = cond};
+        frame[1] = .{.value = cond};
       }
       defer if (ifopt.variable) |v| {
         self.resetStackFrame(&v.container.cur_frame, 1, false);
@@ -842,12 +844,14 @@ const Caller = struct {
 
   fn call(self: @This(), input: *model.Expression, index: usize) !*model.Value {
     if (self.call_expr) |expr| {
+      var args: [2]*model.Expression = .{input, undefined};
       expr.exprs = if (self.takes_index) blk: {
         const index_val = try self.eval.ctx.intAsValue(
-          input.pos, @intCast(i64, index + 1), undefined,
+          input.pos, @as(i64, @intCast(index + 1)), undefined,
           &self.eval.ctx.types().system.positive.named.data.int);
-        break :blk &.{input, try self.eval.ctx.createValueExpr(index_val)};
-      } else &.{input};
+        args[1] = try self.eval.ctx.createValueExpr(index_val);
+        break :blk args[0..2];
+      } else args[0..1];
       return try self.eval.evalCall(self.eval, expr);
     } else return try self.eval.evaluate(input);
   }
@@ -869,7 +873,7 @@ const Caller = struct {
       .data = .{.value = input},
       .expected_type = try self.eval.ctx.types().valueType(input),
     };
-    try pusher(target, try self.call(expr, index));
+    try pusher(target, self.eval.ctx.global(), try self.call(expr, index));
   }
 
   fn mapEach(
@@ -881,18 +885,18 @@ const Caller = struct {
     // when mapping a concat, the input may be a single value already (?).
     switch (input.data) {
       .concat => |*con| {
-        for (con.content.items) |item, index| {
+        for (con.content.items, 0..) |item, index| {
           try self.map(item, index, target, pusher);
         }
       },
       .list => |*lst| {
-        for (lst.content.items) |item, index| {
+        for (lst.content.items, 0..) |item, index| {
           try self.map(item, index, target, pusher);
         }
       },
       .poison => {},
       .seq => |*seq| {
-        for (seq.content.items) |item, index| {
+        for (seq.content.items, 0..) |item, index| {
           try self.map(item.content, index, target, pusher);
         }
       },
@@ -902,10 +906,27 @@ const Caller = struct {
 };
 
 fn pushIntoSeq(
-  arr : *std.ArrayList(model.Value.Seq.Item),
-  item: *model.Value,
+  arr      : *std.ArrayList(model.Value.Seq.Item),
+  allocator: std.mem.Allocator,
+  item     : *model.Value,
 ) std.mem.Allocator.Error!void {
-  return arr.append(.{.content = item, .lf_after = 2});
+  return arr.append(allocator, .{.content = item, .lf_after = 2});
+}
+
+fn pushIntoList(
+  arr      : *std.ArrayList(*model.Value),
+  allocator: std.mem.Allocator,
+  item     : *model.Value,
+) std.mem.Allocator.Error!void {
+  return arr.append(allocator, item);
+}
+
+fn pushIntoConcat(
+  builder: *ConcatBuilder,
+  _      : std.mem.Allocator,
+  item   : *model.Value,
+) nyarna.Error!void {
+  return builder.push(item);
 }
 
 fn evalMap(
@@ -951,14 +972,14 @@ fn evalMap(
     .concat => {
       var builder =
         ConcatBuilder.init(self.ctx, map.expr().pos, map.expr().expected_type);
-      try caller.mapEach(input, &builder, ConcatBuilder.push);
+      try caller.mapEach(input, &builder, pushIntoConcat);
       return try builder.finish();
     },
     .list => {
       const target = try self.ctx.values.list(
         map.expr().pos, &map.expr().expected_type.structural.list);
       try caller.mapEach(
-        input, &target.content, std.ArrayList(*model.Value).append);
+        input, &target.content, pushIntoList);
       return target.value();
     },
     .sequence => {
@@ -988,12 +1009,12 @@ fn evalMatch(
     defer self.resetStackFrame(
       &case.container.cur_frame, case.container.num_values, case.has_var);
     if (case.has_var) {
-      (frame + 1 + case.container.num_values).* = .{.value = subject};
+      frame[1 + case.container.num_values] = .{.value = subject};
     }
     return self.evaluate(case.expr);
   } else {
     std.debug.panic(
-      "unexpected type for match subject: {s}", .{s_type.formatter()});
+      "unexpected type for match subject: {f}", .{s_type.formatter()});
   }
 }
 
@@ -1032,7 +1053,7 @@ fn evalSequence(
     return try builder.finish(expr.pos);
   } else {
     var builder = ConcatBuilder.init(self.ctx, expr.pos, expr.expected_type);
-    for (paras) |para, index| {
+    for (paras, 0..) |para, index| {
       const value = try self.evaluate(para.content);
       if (!(try self.ctx.types().valueType(value)).isNamed(.void)) {
         try builder.push(value);
@@ -1059,14 +1080,14 @@ fn evalVarargs(
         .poison => {},
         .list => |*inner| {
           for (inner.content.items) |inner_item| {
-            try list.content.append(inner_item);
+            try list.content.append(self.ctx.global(), inner_item);
           }
         },
         else => unreachable,
       }
     } else switch (val.data) {
       .poison => {},
-      else => try list.content.append(val),
+      else => try list.content.append(self.ctx.global(), val),
     }
   }
   return list.value();
@@ -1085,11 +1106,11 @@ fn pushIntoMap(
       .text => |*txt| txt.content,
       .int  => |*int| blk: {
         const fmt = int.formatter();
-        break :blk std.fmt.bufPrint(&buffer, "{}", .{fmt}) catch unreachable;
+        break :blk std.mem.print(&buffer, "{f}", .{fmt}) catch unreachable;
       },
       .float => |*fl| blk: {
         const fmt = fl.formatter();
-        break :blk std.fmt.bufPrint(&buffer, "{}", .{fmt}) catch unreachable;
+        break :blk std.mem.print(&buffer, "{f}", .{fmt}) catch unreachable;
       },
       .@"enum" => |*en| en.t.values.entries.items(.key)[en.index],
       else => unreachable,
@@ -1139,26 +1160,27 @@ fn evalVarRetr(
      } else false)
   ) {
     if (comptime builtin.cpu.arch != .wasm32 and builtin.cpu.arch != .wasm64) {
-      std.debug.print("{}: corrupted stack at {}! stack contents:\n", .{
+      std.debug.print("{f}: corrupted stack at {}! stack contents:\n", .{
         retr.expr().pos.formatter(),
-        @ptrToInt(retr.variable.container.cur_frame.?) + 1 +
-        retr.variable.offset - @ptrToInt(self.ctx.data.stack.ptr)
+        @intFromPtr(retr.variable.container.cur_frame.?) + 1 +
+        retr.variable.offset - @intFromPtr(self.ctx.data.stack.ptr)
       });
       const stack_len = (
-        @ptrToInt(self.ctx.data.stack_ptr) - @ptrToInt(self.ctx.data.stack.ptr)
+        @intFromPtr(self.ctx.data.stack_ptr) -
+        @intFromPtr(self.ctx.data.stack.ptr)
       ) / @sizeOf(model.StackItem);
-      for (self.ctx.data.stack[0..stack_len]) |item, index| {
+      for (self.ctx.data.stack[0..stack_len], 0..) |item, index| {
         std.debug.print("{}: ", .{index});
         if (
           if (item.frame_ref) |ptr| (
-            @ptrToInt(ptr) >= @ptrToInt(self.ctx.data.stack.ptr) and
-            @ptrToInt(ptr) < @ptrToInt(self.ctx.data.stack_ptr)
+            @intFromPtr(ptr) >= @intFromPtr(self.ctx.data.stack.ptr) and
+            @intFromPtr(ptr) < @intFromPtr(self.ctx.data.stack_ptr)
           ) else true
         ) {
           if (item.frame_ref) |ptr| {
             std.debug.print("[ header -> {} ]\n", .{
               @divExact(
-                @ptrToInt(ptr) - @ptrToInt(self.ctx.data.stack.ptr),
+                @intFromPtr(ptr) - @intFromPtr(self.ctx.data.stack.ptr),
                 @sizeOf(model.StackItem)
               )
             });
@@ -1168,7 +1190,7 @@ fn evalVarRetr(
         } else {
           const pos = item.value.origin.formatter();
           const fmt = (try self.ctx.types().valueType(item.value)).formatter();
-          std.debug.print("[ {}: {} ]\n", .{pos, fmt});
+          std.debug.print("[ {f}: {f} ]\n", .{pos, fmt});
         }
       }
     }
@@ -1197,7 +1219,7 @@ fn evalGenMap(
 ) nyarna.Error!*model.Value {
   var t: [2]model.Type = undefined;
   var seen_poison = false;
-  for ([_]*model.Expression{input.key, input.value}) |item, index| {
+  for ([_]*model.Expression{input.key, input.value}, 0..) |item, index| {
     switch ((try self.evaluate(item)).data) {
       .@"type" => |tv| t[index] = tv.t,
       .poison => seen_poison = true,
@@ -1299,7 +1321,7 @@ fn doEvaluate(
 
 fn toString(self: *Evaluator, input: anytype) ![]u8 {
   const fmt = input.formatter();
-  return std.fmt.allocPrint(self.ctx.global(), "{}", .{fmt});
+  return self.ctx.global().print("{f}", .{fmt});
 }
 
 fn coerce(
@@ -1320,10 +1342,12 @@ fn coerce(
         switch (value.data) {
           .void   => {},
           .concat => |*con| for (con.content.items) |item| {
-            try cv.content.append(try self.coerce(item, concat.inner));
+            try cv.content.append(
+              self.ctx.global(), try self.coerce(item, concat.inner));
           },
           .definition, .location, .output, .record, .text, .@"type" => {
-            try cv.content.append(try self.coerce(value, concat.inner));
+            try cv.content.append(
+              self.ctx.global(), try self.coerce(value, concat.inner));
           },
           else => unreachable,
         }
@@ -1356,7 +1380,8 @@ fn coerce(
       .list => |*list| {
         const coerced = try self.ctx.values.list(value.origin, list);
         for (value.data.list.content.items) |item| {
-          try coerced.content.append(try self.coerce(item, list.inner));
+          try coerced.content.append(
+            self.ctx.global(), try self.coerce(item, list.inner));
         }
         return coerced.value();
       },
@@ -1370,7 +1395,7 @@ fn coerce(
                 if (seq.direct) |direct| if (
                   self.ctx.types().lesserEqual(item_type, direct)
                 ) {
-                  try lv.content.append(.{
+                  try lv.content.append(self.ctx.global(), .{
                     .content  = try self.coerce(item.content, direct),
                     .lf_after = item.lf_after,
                   });
@@ -1379,7 +1404,7 @@ fn coerce(
                 std.debug.assert(for (seq.inner) |cur| {
                   if (cur.typedef().eql(item_type)) break true;
                 } else false);
-                try lv.content.append(item);
+                try lv.content.append(self.ctx.global(), item);
               }
             },
             else => {
@@ -1394,7 +1419,8 @@ fn coerce(
                 } else false);
                 break :blk value;
               };
-              try lv.content.append(.{.content = seq_value, .lf_after = 0});
+              try lv.content.append(
+                self.ctx.global(), .{.content = seq_value, .lf_after = 0});
             }
           }
         }
@@ -1446,7 +1472,8 @@ fn coerce(
         const p = value.origin.formatter();
         const v = value_type.formatter();
         const e = expected_type.formatter();
-        std.debug.panic("{}: coercion from {} to {} requested, which is illegal",
+        std.debug.panic(
+          "{f}: coercion from {f} to {f} requested, which is illegal",
           .{p, v, e});
       }
     },
@@ -1495,7 +1522,10 @@ pub fn processBackends(
       call.target = try self.ctx.createValueExpr((
         try self.ctx.values.funcRef(model.Position.intrinsic(), backend)
       ).value());
-      call.exprs = &.{try self.ctx.createValueExpr(doc_val.value())};
+      var args = [_]*model.Expression{
+        try self.ctx.createValueExpr(doc_val.value()),
+      };
+      call.exprs = &args;
       call_expr.expected_type = backend.callable.sig.returns;
       const outputs = try self.evalCall(self, call);
 
@@ -1504,11 +1534,11 @@ pub fn processBackends(
           .output => |*o| try container.documents.append(self.ctx.global(), o),
           .poison => {},
           else    => std.debug.panic(
-            "{}: unexpected content in output concat: {s}",
+            "{f}: unexpected content in output concat: {s}",
             .{item.origin, @tagName(item.data)}),
         },
         .poison => {},
-        else    => std.debug.panic("{}: unexpected content in outputs: {s}",
+        else    => std.debug.panic("{f}: unexpected content in outputs: {s}",
             .{outputs.origin, @tagName(outputs.data)}),
       }
     };
@@ -1518,7 +1548,7 @@ pub fn processBackends(
 const ConcatBuilder = struct {
   const MoreText = struct {
     pos    : model.Position,
-    content: std.ArrayListUnmanaged(u8) = .{},
+    content: std.ArrayList(u8) = .empty,
   };
 
   cur          : ?*model.Value                = null,
@@ -1565,8 +1595,8 @@ const ConcatBuilder = struct {
 
   fn initList(self: *ConcatBuilder, first_val: *model.Value) !void {
     self.cur_items = blk: {
-      var list = std.ArrayList(*model.Value).init(self.ctx.global());
-      try list.append(first_val);
+      var list: std.ArrayList(*model.Value) = .empty;
+      try list.append(self.ctx.global(), first_val);
       break :blk list;
     };
   }
@@ -1581,7 +1611,7 @@ const ConcatBuilder = struct {
     const new_type = try self.ctx.types().sup(self.inner_type, vt);
     self.inner_type = new_type;
 
-    if (self.cur_items) |*content| try content.append(item)
+    if (self.cur_items) |*content| try content.append(self.ctx.global(), item)
     else self.cur = item;
   }
 
@@ -1593,15 +1623,16 @@ const ConcatBuilder = struct {
 
   pub fn push(self: *ConcatBuilder, item: *model.Value) nyarna.Error!void {
     if (item.data == .void) return;
+    var eval = self.ctx.evaluator();
     const value = switch (item.data) {
       .text => |*txt| if (self.scalar_type) |stype| (
-        try self.ctx.evaluator().coerce(item, stype)
+        try eval.coerce(item, stype)
       ) else {
         std.debug.assert(txt.t.isNamed(.space));
         return;
       },
       .int, .float, .@"enum" =>
-        try self.ctx.evaluator().coerce(item, self.scalar_type.?),
+        try eval.coerce(item, self.scalar_type.?),
       .concat => |*inner| {
         for (inner.content.items) |inner_item| try self.push(inner_item);
         return;
@@ -1646,7 +1677,8 @@ const ConcatBuilder = struct {
     if (self.scalar_type == null) return;
     switch (self.state) {
       .initial => {
-        const content = try self.ctx.evaluator().lineFeeds(lf_count);
+        var eval = self.ctx.evaluator();
+        const content = try eval.lineFeeds(lf_count);
         self.state = .{.first_text = (
           try self.ctx.values.textScalar(
             model.Position.intrinsic(), self.ctx.types().space(), content
@@ -1658,12 +1690,12 @@ const ConcatBuilder = struct {
         const content = &self.state.more_text.content;
         try content.appendSlice(self.ctx.global(), start.data.text.content);
         try content.resize(self.ctx.global(), content.items.len + lf_count);
-        std.mem.set(u8, content.items[content.items.len - lf_count..], '\n');
+        @memset(content.items[content.items.len - lf_count..], '\n');
       },
       .more_text => |*more| {
         const content = &more.content;
         try content.resize(self.ctx.global(), content.items.len + lf_count);
-        std.mem.set(u8, content.items[content.items.len - lf_count..], '\n');
+        @memset(content.items[content.items.len - lf_count..], '\n');
       },
     }
   }
@@ -1715,14 +1747,14 @@ const SequenceBuilder = struct {
 
   pub fn init(ctx: nyarna.Context) SequenceBuilder {
     return .{
-      .content   = std.ArrayList(model.Value.Seq.Item).init(ctx.global()),
+      .content   = .empty,
       .t_builder = Types.SequenceBuilder.init(ctx.types(), ctx.global(), true),
       .ctx       = ctx,
     };
   }
 
   fn enqueue(self: *@This(), item: model.Value.Seq.Item) !void {
-    try self.content.append(item);
+    try self.content.append(self.ctx.global(), item);
     const item_type = try self.ctx.types().valueType(item.content);
     const res =
       try self.t_builder.push(item_type.at(item.content.origin), false);

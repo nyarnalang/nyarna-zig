@@ -224,9 +224,9 @@ command: Command,
 /// whether this level has fullast semantics.
 fullast: bool,
 /// list of nodes in the current paragraph parsed at this content level.
-nodes: std.ArrayListUnmanaged(*model.Node) = .{},
+nodes: std.ArrayList(*model.Node) = .empty,
 /// finished sequence items at this content level.
-seq: std.ArrayListUnmanaged(model.Node.Seq.Item) = .{},
+seq: std.ArrayList(model.Node.Seq.Item) = .empty,
 /// block configuration of this level. only applicable to block arguments.
 block_config: ?*const model.BlockConfig = null,
 /// capture variables of this block.
@@ -359,6 +359,6 @@ pub fn pushParagraph(
         .lf_after = lf_after
       });
     }
-    self.nodes = .{};
+    self.nodes = .empty;
   }
 }

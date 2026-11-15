@@ -40,19 +40,19 @@ pub fn Processor(comptime Graph: type) type {
     graph: Graph,
 
     pub fn init(allocator: std.mem.Allocator, graph: Graph) !Self {
-      var ret = Self{
+      const ret = Self{
         .graph = graph,
         .node_data = try allocator.alloc(NodeRef, graph.length()),
         .components = undefined,
       };
-      for (ret.node_data) |*data, i| data.* =
+      for (ret.node_data, 0..) |*data, i| data.* =
         .{.index_in_graph = i, .reverse_lookup = data};
       return ret;
     }
 
     // first step: collect dependencies of nodes.
     pub fn firstStep(self: *Self) !void {
-      for (self.node_data) |*data, i| {
+      for (self.node_data, 0..) |*data, i| {
         try self.graph.collectDeps(i, &data.edges);
       }
     }
@@ -64,6 +64,7 @@ pub fn Processor(comptime Graph: type) type {
       stack_top     : usize,
       first_unsorted: usize,
       components    : std.ArrayList(usize),
+      allocator     : std.mem.Allocator,
 
       fn init(allocator: std.mem.Allocator, proc: *Self) !Tarjan {
         return Tarjan{
@@ -72,13 +73,14 @@ pub fn Processor(comptime Graph: type) type {
           .stack = try allocator.alloc(*NodeRef, proc.node_data.len),
           .stack_top = 0,
           .first_unsorted = 0,
-          .components = std.ArrayList(usize).init(allocator),
+          .components = .empty,
+          .allocator = allocator,
         };
       }
 
       fn deinit(self: *Tarjan) void {
-        self.components.allocator.free(self.stack);
-        self.components.deinit();
+        self.allocator.free(self.stack);
+        self.components.deinit(self.allocator);
       }
 
       fn strongConnect(
@@ -96,11 +98,11 @@ pub fn Processor(comptime Graph: type) type {
           const w = &self.proc.node_data[w_orig_index];
           if (w.assigned_index) |w_index| {
             if (w.on_stack) {
-              v.lowlink = std.math.min(v.lowlink, w_index);
+              v.lowlink = @min(v.lowlink, w_index);
             }
           } else {
             try self.strongConnect(w);
-            v.lowlink = std.math.min(v.lowlink, w.lowlink);
+            v.lowlink = @min(v.lowlink, w.lowlink);
           }
         }
 
@@ -121,7 +123,7 @@ pub fn Processor(comptime Graph: type) type {
             self.first_unsorted += 1;
             if (w == v) break;
           }
-          try self.components.append(start_index);
+          try self.components.append(self.allocator, start_index);
         }
       }
     };

@@ -2,17 +2,18 @@ const std = @import("std");
 
 pub const Evaluator    = @import("nyarna/Evaluator.zig");
 pub const errors       = @import("nyarna/errors.zig");
+pub const Globals      = @import("nyarna/Globals.zig");
 pub const Interpreter  = @import("nyarna/Interpreter.zig");
 pub const lib          = @import("nyarna/lib.zig");
 pub const Loader       = @import("nyarna/Loader.zig");
 pub const model        = @import("nyarna/model.zig");
 pub const Types        = @import("nyarna/Types.zig");
+pub const unicode      = @import("nyarna/unicode.zig");
 
-const Globals = @import("nyarna/Globals.zig");
-const Parser  = @import("nyarna/Parser.zig");
-const unicode = @import("nyarna/unicode.zig");
+const Parser = @import("nyarna/Parser.zig");
 
-const gcd = @import("nyarna/helpers.zig").gcd;
+const gcd         = @import("nyarna/helpers.zig").gcd;
+const mulOverflow = @import("nyarna/helpers.zig").mulOverflow;
 
 pub const default_stack_size = 1024 * 1024; // 1MB
 
@@ -92,6 +93,15 @@ pub const Context = struct {
     return Evaluator{.ctx = self.*};
   }
 
+  /// shorthand for evaluating the given expression with a new Evaluator.
+  pub fn evaluate(
+    self: *const Context,
+    expr: *model.Expression,
+  ) Error!*model.Value {
+    var eval = self.evaluator();
+    return eval.evaluate(expr);
+  }
+
   /// Create an enum value from a given text. If unsuccessful, logs error and
   /// returns null.
   pub fn enumFrom(
@@ -124,8 +134,7 @@ pub const Context = struct {
       return false;
     }
     if (
-      @mulWithOverflow(
-        i64, @divExact(input.value, divisor), factor, target)
+      mulOverflow(@divExact(input.value, divisor), factor, target)
     ) {
       self.logger.NumberTooLarge(pos, input.repr);
       return false;
@@ -156,7 +165,7 @@ pub const Context = struct {
         }
         return try self.values.int(pos, t, parsed.value, 0);
       } else {
-        for (t.suffixes) |unit, index| {
+        for (t.suffixes, 0..) |unit, index| {
           if (std.mem.eql(u8, unit.suffix, parsed.suffix)) {
             var val: i64 = undefined;
             if (!self.applyIntUnit(unit, parsed, pos, &val)) return null;
@@ -181,7 +190,7 @@ pub const Context = struct {
     t    : *const model.Type.IntNum,
   ) !*model.Value {
     if (value < t.min or value > t.max) {
-      const str = try std.fmt.allocPrint(self.global(), "{}", .{value});
+      const str = try self.global().print("{}", .{value});
       self.logger.OutOfRange(pos, t.typedef(), str);
       return try self.values.poison(pos);
     } else return (try self.values.int(pos, t, value, unit)).value();
@@ -191,9 +200,10 @@ pub const Context = struct {
     unit  : model.Type.FloatNum.Unit,
     input : Parser.LiteralNumber,
   ) f64 {
-    var divisor = std.math.pow(f64, 10, @intToFloat(f64, input.decimals));
-    var factor = unit.factor;
-    return @intToFloat(f64, input.value) * (factor / divisor);
+    const divisor =
+      std.math.pow(f64, 10, @as(f64, @floatFromInt(input.decimals)));
+    const factor = unit.factor;
+    return @as(f64, @floatFromInt(input.value)) * (factor / divisor);
   }
 
   pub fn floatAsValue(
@@ -204,7 +214,7 @@ pub const Context = struct {
     t    : *const model.Type.FloatNum,
   ) !*model.Value {
     if (value < t.min or value > t.max) {
-      const str = try std.fmt.allocPrint(self.global(), "{}", .{value});
+      const str = try self.global().print("{}", .{value});
       self.logger.OutOfRange(pos, t.typedef(), str);
       return try self.values.poison(pos);
     } else return (try self.values.float(pos, t, value, unit)).value();
@@ -246,16 +256,16 @@ pub const Context = struct {
           self.logger.MissingSuffix(pos, t.typedef(), parsed.repr);
           return null;
         }
-        var val = @intToFloat(f64, parsed.value);
+        const val: f64 = @floatFromInt(parsed.value);
         if (val < t.min or val > t.max) {
           self.logger.OutOfRange(pos, t.typedef(), text);
           return null;
         }
         return try self.values.float(pos, t, val, 0);
       } else {
-        for (t.suffixes) |unit, index| {
+        for (t.suffixes, 0..) |unit, index| {
           if (std.mem.eql(u8, unit.suffix, parsed.suffix)) {
-            var val = applyFloatUnit(unit, parsed);
+            const val = applyFloatUnit(unit, parsed);
             if (val < t.min or val > t.max) {
               self.logger.OutOfRange(pos, t.typedef(), text);
               return null;
@@ -277,12 +287,12 @@ pub const Context = struct {
              inner_pos : model.Position,
     comptime error_name: []const u8,
   ) !*model.Value {
-    if (try @field(self.types(), name)(inner)) |t| {
+    if (try @field(Types, name)(self.types(), inner)) |t| {
       if (t.isStruc(@field(model.Type.Structural, name))) {
         return (try self.values.@"type"(pos, t)).value();
       }
     }
-    @field(self.logger, error_name)(&.{inner.at(inner_pos)});
+    @field(errors.Handler, error_name)(self.logger, &.{inner.at(inner_pos)});
     return try self.values.poison(pos);
   }
 };
@@ -292,7 +302,7 @@ pub const Processor = struct {
   allocator : std.mem.Allocator,
   stack_size: usize,
   reporter  : *errors.Reporter,
-  resolvers : std.ArrayListUnmanaged(Globals.ResolverEntry) = .{},
+  resolvers : std.ArrayList(Globals.ResolverEntry) = .empty,
 
   const Self = @This();
 
@@ -390,8 +400,8 @@ pub const Processor = struct {
     ) orelse std.debug.panic("unknown main module: '{s}'", .{main_module});
     const locator =
       try globals.storage.allocator().alloc(u8, main_module.len + 5);
-    std.mem.copy(u8, locator, ".doc.");
-    std.mem.copy(u8, locator[5..], main_module);
+    @memcpy(locator[0..5], ".doc.");
+    @memcpy(locator[5..][0..main_module.len], main_module);
     const ml = try Loader.Module.create(
       globals, desc, doc_resolver,
       model.Locator.parse(locator) catch unreachable, ast, null);
@@ -435,7 +445,7 @@ pub const DocumentContainer = struct {
   /// all documents are allocated within the globals' storage.
   /// after processing with backends, all documents that either do not have a
   /// schema or whose schema does not have a backend are considered outputs.
-  documents: std.ArrayListUnmanaged(*model.Value.Output),
+  documents: std.ArrayList(*model.Value.Output),
   globals  : *Globals,
   result   : ?bool = null,
 
@@ -444,7 +454,8 @@ pub const DocumentContainer = struct {
     if (self.result) |res| return res;
     var logger = errors.Handler{.reporter = self.globals.reporter};
     var ctx = Context{.data = self.globals, .logger = &logger};
-    try ctx.evaluator().processBackends(self);
+    var eval = ctx.evaluator();
+    try eval.processBackends(self);
     self.result = logger.count == 0;
     return logger.count == 0;
   }

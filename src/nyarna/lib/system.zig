@@ -12,8 +12,11 @@ const Interpreter = nyarna.Interpreter;
 const lib         = nyarna.lib;
 const model       = nyarna.model;
 
+const addOverflow = @import("../helpers.zig").addOverflow;
 const last        = @import("../helpers.zig").last;
+const mulOverflow = @import("../helpers.zig").mulOverflow;
 const stringOrder = @import("../helpers.zig").stringOrder;
+const subOverflow = @import("../helpers.zig").subOverflow;
 
 const Comparer = union(enum) {
   floats: struct {left: f64, right: f64},
@@ -27,16 +30,16 @@ const Comparer = union(enum) {
         .int => |ri|
           return .{.floats = .{
             .left  = lf.content,
-            .right = @intToFloat(f64, ri.content) /
-                     @intToFloat(f64, ri.t.suffixes[ri.cur_unit].factor),
+            .right = @as(f64, @floatFromInt(ri.content)) /
+                     @as(f64, @floatFromInt(ri.t.suffixes[ri.cur_unit].factor)),
           }},
         else => unreachable,
       },
       .int => |li| switch (right.data) {
         .float => |rf|
           return .{.floats = .{
-            .left  = @intToFloat(f64, li.content) /
-                     @intToFloat(f64, li.t.suffixes[li.cur_unit].factor),
+            .left  = @as(f64, @floatFromInt(li.content)) /
+                     @as(f64, @floatFromInt(li.t.suffixes[li.cur_unit].factor)),
             .right = rf.content,
           }},
         .int => |ri|
@@ -77,11 +80,11 @@ pub fn createMatchCases(
     },
     .node => |node| {
       const ast = &case.value.data.expression.data.value.data.ast;
-      const T = std.meta.fieldInfo(model.Node.Match.Case, .variable).field_type;
+      const T = @FieldType(model.Node.Match.Case, "variable");
       lib.reportCaptures(intpr, ast, 1);
       const variable: T =
         if (ast.capture.len == 0) .none else T{.def = ast.capture[0]};
-      try collected.append(.{
+      try collected.append(intpr.allocator(), .{
         .t        = node,
         .content  = ast,
         .variable = variable,
@@ -121,7 +124,7 @@ pub fn createRenderers(
             node.data = .poison;
             continue;
           };
-          const name_val = try intpr.ctx.evaluator().evaluate(name_expr);
+          const name_val = try intpr.ctx.evaluate(name_expr);
           switch (name_val.data) {
             .text   => |txt| break :blk try intpr.node_gen.literal(
               node.pos, .text, txt.content),
@@ -134,7 +137,7 @@ pub fn createRenderers(
       const ast = &renderer.value.data.expression.data.value.data.ast;
       lib.reportCaptures(intpr, ast, 1);
       const variable = if (ast.capture.len == 0) null else ast.capture[0];
-      try collected.append(.{
+      try collected.append(intpr.allocator(), .{
         .name = name_lit, .content = ast.root, .variable = variable,
       });
     },
@@ -238,7 +241,7 @@ pub const Impl = lib.Provider.Wrapper(struct {
         intpr.ctx.logger.MultipleModuleKinds("fragment", pos, f.pos),
       .unspecified => {
         if (options) |input| {
-          var list = std.ArrayList(model.locations.Ref).init(intpr.allocator());
+          var list: std.ArrayList(model.locations.Ref) = .empty;
           try intpr.collectLocations(input, &list);
           var registrar = intpr.loader.registerOptions();
           _ = try
@@ -309,7 +312,7 @@ pub const Impl = lib.Provider.Wrapper(struct {
       try intpr.associate(locator, intpr.ctx.types().text().predef(),
         .{.kind = .keyword})
     ) orelse return try intpr.node_gen.poison(pos);
-    const value = try intpr.ctx.evaluator().evaluate(expr);
+    const value = try intpr.ctx.evaluate(expr);
     if (value.data == .poison) return try intpr.node_gen.poison(pos);
     const parsed = model.Locator.parse(value.data.text.content) catch {
       intpr.ctx.logger.InvalidLocator(locator.pos);
@@ -348,7 +351,7 @@ pub const Impl = lib.Provider.Wrapper(struct {
         intpr.ctx.logger.MultipleModuleKinds("fragment", pos, f.pos),
       .unspecified => {
         if (options) |input| {
-          var list = std.ArrayList(model.locations.Ref).init(intpr.allocator());
+          var list: std.ArrayList(model.locations.Ref) = .empty;
           try intpr.collectLocations(input, &list);
           var registrar = intpr.loader.registerOptions();
           _ = try
@@ -431,8 +434,7 @@ pub const Impl = lib.Provider.Wrapper(struct {
       .unspecified => {
         if (options) |input| {
           if (try intpr.locationsCanGenVars(input, .{.kind = .keyword})) {
-            var list =
-              std.ArrayList(model.locations.Ref).init(intpr.allocator());
+            var list: std.ArrayList(model.locations.Ref) = .empty;
             try intpr.collectLocations(input, &list);
             var registrar = intpr.loader.registerOptions();
             _ = try intpr.processLocations(
@@ -471,8 +473,8 @@ pub const Impl = lib.Provider.Wrapper(struct {
       intpr.ctx.logger.NotIterable(&.{expr.expected_type.at(expr.pos)});
       return try intpr.node_gen.poison(pos);
     }
-    var value = try intpr.ctx.evaluator().evaluate(expr);
-    var generated = std.ArrayListUnmanaged(*model.Node){};
+    var value = try intpr.ctx.evaluate(expr);
+    var generated: std.ArrayList(*model.Node) = .empty;
     try generated.ensureTotalCapacityPrecise(intpr.allocator(),
       switch (value.data) {
       .concat   => |*con| con.content.items.len,
@@ -484,7 +486,7 @@ pub const Impl = lib.Provider.Wrapper(struct {
       else      => 1,
     });
 
-    var ns =
+    const ns =
       if (body.capture.len > 0) body.capture[0].ns else std.math.maxInt(u15);
     // TODO: allow different namespaces (?)
     std.debug.assert(body.capture.len <= 1 or body.capture[1].ns == ns);
@@ -511,7 +513,7 @@ pub const Impl = lib.Provider.Wrapper(struct {
 
     if (collector) |cnode| {
       const cexpr = try intpr.interpret(cnode);
-      const cvalue = try intpr.ctx.evaluator().evaluate(cexpr);
+      const cvalue = try intpr.ctx.evaluate(cexpr);
       switch (cvalue.data) {
         .poison    => return intpr.node_gen.poison(pos),
         .prototype => |pv| switch (pv.pt) {
@@ -548,7 +550,7 @@ pub const Impl = lib.Provider.Wrapper(struct {
   ) nyarna.Error!*model.Value {
     return (try eval.ctx.values.int(
       pos, &eval.ctx.types().system.natural.named.data.int,
-      @intCast(i64, self.content.len), 0)).value();
+      @as(i64, @intCast(self.content.len)), 0)).value();
   }
 
   pub fn @"Textual::eq"(
@@ -573,17 +575,17 @@ pub const Impl = lib.Provider.Wrapper(struct {
     end  : ?*model.Value.IntNum,
   ) nyarna.Error!*model.Value {
     const from: usize =
-      if (start) |num| @intCast(usize, num.content - 1) else 0;
+      if (start) |num| @as(usize, @intCast(num.content - 1)) else 0;
     const to: usize =
-      if (end) |num| @intCast(usize, num.content - 1) else self.content.len;
+      if (end) |num| @intCast(num.content - 1) else self.content.len;
     if (from > to) {
-      const msg = try std.fmt.allocPrint(
-        eval.ctx.global(), "invalid slice: {}..{}", .{from + 1, to + 1});
+      const msg = try eval.ctx.global().print(
+        "invalid slice: {}..{}", .{from + 1, to + 1});
       eval.ctx.logger.IndexError(pos, msg);
       return try eval.ctx.values.poison(pos);
     } else if (to > self.content.len) {
-      const msg = try std.fmt.allocPrint(
-        eval.ctx.global(), "index out of range: {}", .{to + 1});
+      const msg = try eval.ctx.global().print(
+        "index out of range: {}", .{to + 1});
       eval.ctx.logger.IndexError(pos, msg);
       return try eval.ctx.values.poison(pos);
     }
@@ -601,7 +603,7 @@ pub const Impl = lib.Provider.Wrapper(struct {
       .int => |*int| {
         var ret: i64 = 0;
         for (list.content.items) |item| {
-          if (@addWithOverflow(i64, ret, item.data.int.content, &ret)) {
+          if (addOverflow(ret, item.data.int.content, &ret)) {
             eval.ctx.logger.OutOfRange(pos, eval.target_type, "<overflow>");
             return try eval.ctx.values.poison(pos);
           }
@@ -631,8 +633,8 @@ pub const Impl = lib.Provider.Wrapper(struct {
       .int => |*int| {
         var ret: i64 = undefined;
         if (
-          @subWithOverflow(
-            i64, minuend.data.int.content, subtrahend.data.int.content, &ret)
+          subOverflow(
+            minuend.data.int.content, subtrahend.data.int.content, &ret)
         ) {
           eval.ctx.logger.OutOfRange(pos, eval.target_type, "<overflow>");
           return try eval.ctx.values.poison(pos);
@@ -658,7 +660,7 @@ pub const Impl = lib.Provider.Wrapper(struct {
       .int => |*int| {
         var ret: i64 = 1;
         for (list.content.items) |item| {
-          if (@mulWithOverflow(i64, ret, item.data.int.content, &ret)) {
+          if (mulOverflow(ret, item.data.int.content, &ret)) {
             eval.ctx.logger.OutOfRange(pos, eval.target_type, "<overflow>");
             return try eval.ctx.values.poison(pos);
           }
@@ -769,7 +771,7 @@ pub const Impl = lib.Provider.Wrapper(struct {
   ) nyarna.Error!*model.Value {
     return (try eval.ctx.values.int(
       pos, &eval.ctx.types().system.natural.named.data.int,
-      @intCast(i64, list.content.items.len), 0)).value();
+      @as(i64, @intCast(list.content.items.len)), 0)).value();
   }
 
   pub fn @"List::item"(
@@ -779,8 +781,8 @@ pub const Impl = lib.Provider.Wrapper(struct {
     index: *model.Value.IntNum,
   ) nyarna.Error!*model.Value {
     if (index.content > list.content.items.len) {
-      const msg = try std.fmt.allocPrint(
-        eval.ctx.global(), "<List with {} items>: {}", .{
+      const msg = try eval.ctx.global().print(
+        "<List with {} items>: {}", .{
           list.content.items.len, index.content
         }
       );
@@ -788,7 +790,7 @@ pub const Impl = lib.Provider.Wrapper(struct {
       eval.ctx.logger.IndexError(pos, msg);
       return eval.ctx.values.poison(pos);
     }
-    return list.content.items[@intCast(usize, index.content - 1)];
+    return list.content.items[@as(usize, @intCast(index.content - 1))];
   }
 
   pub fn @"Concat::len"(
@@ -798,7 +800,7 @@ pub const Impl = lib.Provider.Wrapper(struct {
   ) nyarna.Error!*model.Value {
     return (try eval.ctx.values.int(
       pos, &eval.ctx.types().system.natural.named.data.int,
-      @intCast(i64, concat.content.items.len), 0)).value();
+      @as(i64, @intCast(concat.content.items.len)), 0)).value();
   }
 
   pub fn @"Concat::item"(
@@ -808,8 +810,8 @@ pub const Impl = lib.Provider.Wrapper(struct {
     index : *model.Value.IntNum,
   ) nyarna.Error!*model.Value {
     if (index.content > concat.content.items.len) {
-      const msg = try std.fmt.allocPrint(
-        eval.ctx.global(), "<Concat with {} items>: {}", .{
+      const msg = try eval.ctx.global().print(
+        "<Concat with {} items>: {}", .{
           concat.content.items.len, index.content
         }
       );
@@ -817,7 +819,7 @@ pub const Impl = lib.Provider.Wrapper(struct {
       eval.ctx.logger.IndexError(pos, msg);
       return eval.ctx.values.poison(pos);
     }
-    return concat.content.items[@intCast(usize, index.content - 1)];
+    return concat.content.items[@as(usize, @intCast(index.content - 1))];
   }
 
   //----------------------
@@ -868,7 +870,7 @@ pub const Impl = lib.Provider.Wrapper(struct {
 pub const instance = Impl.init();
 
 pub const Checker = struct {
-  const TagType = @typeInfo(model.Type.Named.Data).Union.tag_type.?;
+  const TagType = @typeInfo(model.Type.Named.Data).@"union".tag_type.?;
   const ExpectedSymbol = struct {
     name: []const u8,
     kind: union(enum) {
@@ -884,16 +886,12 @@ pub const Checker = struct {
   };
 
   fn ExpectedData(tuples: anytype) type {
-    const ArrayType = @Type(.{.Array = .{
-      .len = tuples.len,
-      .child = ExpectedSymbol,
-      .sentinel = null,
-    }});
+    const ArrayType = [tuples.len]ExpectedSymbol;
     return struct {
       const Array = ArrayType;
       fn init(types: *nyarna.Types, data: *Globals) ArrayType {
         var ret: ArrayType = undefined;
-        inline for (tuples) |tuple, i| {
+        inline for (tuples, 0..) |tuple, i| {
           if (i > 0) if (stringOrder(tuple.@"0", tuples[i-1].@"0") != .gt) {
             std.debug.panic("wrong order: \"{s}\" >= \"{s}\"",
               .{tuples[i-1].@"0", tuple.@"0"});
@@ -997,9 +995,10 @@ pub const Checker = struct {
         .named => |named| named.name.?.name,
         .structural => |struc| @tagName(struc.*),
       };
-      std.mem.copy(u8, &self.buffer, t_name);
-      std.mem.copy(u8, self.buffer[t_name.len..], "::");
-      std.mem.copy(u8, self.buffer[t_name.len + 2..], sym.name);
+      @memcpy(self.buffer[0..t_name.len], t_name);
+      @memcpy(self.buffer[t_name.len..][0..2], "::");
+      @memcpy(
+        self.buffer[t_name.len + 2..][0..sym.name.len], sym.name);
       break :blk self.buffer[0..t_name.len + 2 + sym.name.len];
     } else sym.name;
   }
@@ -1059,7 +1058,7 @@ pub const Checker = struct {
       .start  = model.Cursor.unknown(),
       .end    = model.Cursor.unknown(),
     };
-    for (self.data) |*cur| {
+    for (&self.data) |*cur| {
       if (!cur.seen) switch (cur.kind) {
         .@"type"   => self.logger.MissingType(pos, cur.name),
         .prototype => self.logger.MissingPrototype(pos, cur.name),

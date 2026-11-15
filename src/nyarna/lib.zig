@@ -17,42 +17,27 @@ const last = @import("helpers.zig").last;
 
 /// A provider implements all external functions for a certain Nyarna module.
 pub const Provider = struct {
-  pub const KeywordWrapper = fn(
+  pub const KeywordWrapper = *const fn(
     ctx        : *Interpreter,
     pos        : model.Position,
     stack_frame: [*]model.StackItem,
   ) nyarna.Error!*model.Node;
-  pub const BuiltinWrapper = fn(
+  pub const BuiltinWrapper = *const fn(
     ctx        : *Evaluator,
     pos        : model.Position,
     stack_frame: [*]model.StackItem,
   ) nyarna.Error!*model.Value;
 
-  getKeyword: fn(name: []const u8) ?KeywordWrapper,
-  getBuiltin: fn(name: []const u8) ?BuiltinWrapper,
+  getKeyword: *const fn(name: []const u8) ?KeywordWrapper,
+  getBuiltin: *const fn(name: []const u8) ?BuiltinWrapper,
 
-  fn Params(comptime fn_decl: std.builtin.Type.Fn) type {
-    var fields: [fn_decl.args.len]std.builtin.Type.StructField = undefined;
-    var buf: [2*fn_decl.args.len]u8 = undefined;
-    for (fn_decl.args) |arg, index| {
-      fields[index] = .{
-        .name = std.fmt.bufPrint(buf[2*index..2*index+2], "{}", .{index})
-          catch unreachable,
-        .field_type = arg.arg_type.?,
-        .is_comptime = false,
-        .alignment = 0,
-        .default_value = null
-      };
+  fn Params(comptime fn_decl: std.lang.Type.Fn) type {
+    var types: [fn_decl.param_types.len]type = undefined;
+    for (fn_decl.param_types, 0..) |param_type, index| {
+      types[index] = param_type.?;
     }
-
-    return @Type(std.builtin.Type{
-      .Struct = .{
-        .layout   = .Auto,
-        .fields   = &fields,
-        .decls    = &[_]std.builtin.Type.Declaration{},
-        .is_tuple = true
-      },
-    });
+    const final = types;
+    return @Tuple(&final);
   }
 
   /// Wrapper takes a struct containing only function definitions, and returns
@@ -61,10 +46,10 @@ pub const Provider = struct {
   /// the given args and calls the original function.
   pub fn Wrapper(comptime impls: type) type {
     comptime {
-      std.debug.assert(@typeInfo(impls) == .Struct);
+      std.debug.assert(@typeInfo(impls) == .@"struct");
     }
 
-    const decls = @typeInfo(impls).Struct.decls;
+    const decls = @typeInfo(impls).@"struct".decl_names;
 
     return struct {
       const Self = @This();
@@ -79,11 +64,11 @@ pub const Provider = struct {
         return switch (T) {
           model.Type => v.data.@"type".t,
           else => switch (@typeInfo(T)) {
-            .Int      => @intCast(T, v.data.int.content),
-            .Float    => @floatCast(T, v.data.float.content),
-            .Optional => |opt| if (v.data == .void) null
+            .int      => @as(T, @intCast(v.data.int.content)),
+            .float    => @as(T, @floatCast(v.data.float.content)),
+            .optional => |opt| if (v.data == .void) null
                                else getTypedValue(opt.child, v, intpr),
-            .Pointer  => |ptr| switch (ptr.child) {
+            .pointer  => |ptr| switch (ptr.child) {
               model.Node              => blk: {
                 reportCaptures(intpr, &v.data.ast, 0);
                 break :blk v.data.ast.root;
@@ -110,7 +95,7 @@ pub const Provider = struct {
               model.Value.TextScalar  => &v.data.text,
               model.Value.TypeVal     => &v.data.@"type",
               u8 =>
-                if (ptr.is_const and ptr.size == .Slice)
+                if (ptr.attrs.@"const" and ptr.size == .slice)
                   v.data.text.content
                 else std.debug.panic(
                   "invalid native parameter type: {s}", .{@typeName(T)}),
@@ -124,29 +109,27 @@ pub const Provider = struct {
 
       fn SingleWrapper(
         comptime FirstArg: type,
-        comptime decl    : std.builtin.Type.Declaration,
+        comptime name    : []const u8,
         comptime Ret     : type,
       ) type {
-        const item = @typeInfo(@TypeOf(@field(impls, decl.name)));
+        const item = @typeInfo(@TypeOf(@field(impls, name)));
         return struct {
           fn wrapper(
-            ctx: FirstArg,
-            pos: model.Position,
+            ctx        : FirstArg,
+            pos        : model.Position,
             stack_frame: [*]model.StackItem,
           ) nyarna.Error!*Ret {
-            var unwrapped: Params(item.Fn) = undefined;
-            inline for (
-              @typeInfo(@TypeOf(unwrapped)).Struct.fields
-            ) |f, index| {
+            var unwrapped: Params(item.@"fn") = undefined;
+            inline for (item.@"fn".param_types, 0..) |param_type, index| {
               unwrapped[index] = switch (index) {
                 0 => ctx,
                 1 => pos,
                 else =>
                   getTypedValue(
-                    f.field_type, stack_frame[index - 2].value, ctx),
+                    param_type.?, stack_frame[index - 2].value, ctx),
               };
             }
-            return @call(.{}, @field(impls, decl.name), unwrapped);
+            return @call(.auto, @field(impls, name), unwrapped);
           }
         };
       }
@@ -156,16 +139,16 @@ pub const Provider = struct {
         return struct {
           fn getImpl(name: []const u8) ?F {
             inline for (decls) |decl| {
-              const item = @typeInfo(@TypeOf(@field(impls, decl.name)));
-              if (item != .Fn) {
+              const item = @typeInfo(@TypeOf(@field(impls, decl)));
+              if (item != .@"fn") {
                 std.debug.panic("unexpected item in provider " ++
                   "(expected only fn decls): {s}", .{@tagName(item)});
                 unreachable;
               }
               if (
-                item.Fn.args[0].arg_type.? != FirstArg
+                item.@"fn".param_types[0].? != FirstArg
               ) continue;
-              if (std.hash_map.eqlString(name, decl.name)) {
+              if (std.hash_map.eqlString(name, decl)) {
                 return SingleWrapper(FirstArg, decl,
                   if (keyword) model.Node else model.Value).wrapper;
               }
@@ -236,7 +219,7 @@ pub fn extFunc(
   ) orelse return null;
   const container = try ctx.global().create(model.VariableContainer);
   container.* = .{
-    .num_values = @intCast(u15, bres.sig.parameters.len),
+    .num_values = @as(u15, @intCast(bres.sig.parameters.len)),
   };
   const ret = try ctx.global().create(model.Function);
   ret.* = .{

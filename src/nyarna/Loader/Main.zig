@@ -94,7 +94,7 @@ pub fn finalize(self: *Main) !?*nyarna.DocumentContainer {
     else => {},
   };
   const call = try mapper.mapper.finalize(source.at(model.Cursor.unknown()));
-  const result = try intpr.ctx.evaluator().evaluate(try intpr.interpret(call));
+  const result = try intpr.ctx.evaluate(try intpr.interpret(call));
   if (self.loader.logger.count > 0) {
     self.destroy();
     return null;
@@ -102,7 +102,7 @@ pub fn finalize(self: *Main) !?*nyarna.DocumentContainer {
   const ret =
     try self.loader.data.storage.allocator().create(nyarna.DocumentContainer);
   ret.* = .{
-    .documents = .{},
+    .documents = .empty,
     .globals   = self.loader.data,
   };
   try ret.documents.append(ret.globals.storage.allocator(),
@@ -162,9 +162,9 @@ pub fn pushArg(
 ) !void {
   const repr =
     try self.loader.data.storage.allocator().alloc(u8, name.len + 7);
-  std.mem.copy(u8, repr, ".param.");
-  std.mem.copy(u8, repr[7..], name);
-  var locator = model.Locator.parse(repr) catch {
+  @memcpy(repr[0..7], ".param.");
+  @memcpy(repr[7..][0..name.len], name);
+  const locator = model.Locator.parse(repr) catch {
     self.loader.logger.InvalidLocator(callsite_pos);
     return;
   };

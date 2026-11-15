@@ -278,7 +278,7 @@ pub fn searchModule(
   pos    : model.Position,
   locator: model.Locator,
 ) std.mem.Allocator.Error!?usize {
-  const self = @fieldParentPtr(Module, "loader", loader);
+  const self: *Module = @fieldParentPtr("loader", loader);
   var resolver: *Resolver = undefined;
   var abs_locator: []const u8 = undefined;
   const data = self.loader.data;
@@ -304,10 +304,11 @@ pub fn searchModule(
     // try to resolve the locator relative to the current module.
     var fullpath = try data.storage.allocator().alloc(
       u8, self.source.locator_ctx.len + locator.path.len);
-    std.mem.copy(u8, fullpath, self.source.locator_ctx);
-    std.mem.copy(
-      u8, (fullpath.ptr + self.source.locator_ctx.len)[
-        0..locator.path.len], locator.path);
+    @memcpy(
+      fullpath[0..self.source.locator_ctx.len], self.source.locator_ctx);
+    @memcpy(
+      fullpath[self.source.locator_ctx.len..][0..locator.path.len],
+      locator.path);
     const rel_loc = model.Locator.parse(fullpath) catch unreachable;
     const rel_name = rel_loc.resolver.?;
     for (data.resolvers) |*re| if (std.mem.eql(u8, rel_name, re.name)) {
@@ -330,9 +331,10 @@ pub fn searchModule(
         fullpath = try data.storage.allocator().realloc(
           fullpath, 2 + re.name.len + locator.path.len);
         fullpath[0] = '.';
-        std.mem.copy(u8, fullpath[1..], re.name);
+        @memcpy(fullpath[1..][0..re.name.len], re.name);
         fullpath[1 + re.name.len] = '.';
-        std.mem.copy(u8, fullpath[2 + re.name.len..], locator.path);
+        @memcpy(
+          fullpath[2 + re.name.len..][0..locator.path.len], locator.path);
         abs_locator = fullpath;
         resolver = re.resolver;
         break :blk desc;
@@ -356,12 +358,12 @@ pub fn searchModule(
 }
 
 pub fn registerOptions(loader: *Loader) OptionRegistrar {
-  return .{.ml = @fieldParentPtr(Module, "loader", loader)};
+  return .{.ml = @as(*Module, @fieldParentPtr("loader", loader))};
 }
 
 pub fn enounteredOptions(loader: *Loader) bool {
-  return
-    @fieldParentPtr(Module, "loader", loader).state == .encountered_options;
+  const self: *Module = @fieldParentPtr("loader", loader);
+  return self.state == .encountered_options;
 }
 
 pub const OptionSetter = struct {
@@ -381,7 +383,7 @@ pub const OptionSetter = struct {
       const expr = (
         try intpr.associate(node, item.param.spec, .{.kind = .final})
       ) orelse break :blk try intpr.ctx.values.poison(node.pos);
-      break :blk try intpr.ctx.evaluator().evaluate(expr);
+      break :blk try intpr.ctx.evaluate(expr);
     };
     slot.* = .{.value = value};
     item.given = true;
@@ -392,7 +394,7 @@ pub fn getOption(
   self: *Module,
   name: []const u8,
 ) ?OptionSetter {
-  for (self.options) |*item, index| {
+  for (self.options, 0..) |*item, index| {
     if (std.mem.eql(u8, item.param.name, name)) {
       return OptionSetter{.ml = self, .index = index};
     }
@@ -415,7 +417,7 @@ pub fn tryPushOption(
 
 pub fn finalizeOptions(self: *Module, pos: model.Position) !void {
   std.debug.assert(self.state == .encountered_options);
-  for (self.options) |item, index| {
+  for (self.options, 0..) |item, index| {
     const slot = &self.option_container.cur_frame.?[1 + index];
     if (!item.given) {
       self.loader.logger.MissingParameterArgument(
@@ -433,7 +435,7 @@ pub const OptionRegistrar = struct {
   };
 
   ml  : *Module,
-  data: std.ArrayListUnmanaged(Item) = .{},
+  data: std.ArrayList(Item) = .empty,
 
   pub fn push(self: *OptionRegistrar, loc: *model.Value.Location) !void {
     if (loc.header) |header| {
@@ -468,9 +470,9 @@ pub const OptionRegistrar = struct {
     option_stack[0] = .{.frame_ref = null};
     const option_arr =
       try self.ml.loader.storage.allocator().alloc(Option, self.data.items.len);
-    self.ml.option_container.num_values = @intCast(u15, self.data.items.len);
+    self.ml.option_container.num_values = @intCast(self.data.items.len);
     self.ml.option_container.cur_frame = option_stack.ptr;
-    for (self.data.items) |item, index| {
+    for (self.data.items, 0..) |item, index| {
       option_arr[index] = .{.param = item.param, .given = false};
       const varsym =
         try self.ml.loader.storage.allocator().create(model.Symbol);
@@ -480,7 +482,7 @@ pub const OptionRegistrar = struct {
         .data       = .{.variable = .{
           .spec       = item.param.spec,
           .container  = &self.ml.option_container,
-          .offset     = @intCast(u15, index),
+          .offset     = @as(u15, @intCast(index)),
           .kind       = .static,
         }},
       };

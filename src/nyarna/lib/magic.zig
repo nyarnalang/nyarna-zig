@@ -66,7 +66,7 @@ const Impl = lib.Provider.Wrapper(struct {
         .builtingen => |*bg| {
           if (try intpr.tryInterpretBuiltin(bg, .{.kind = .intermediate})) {
             const ret_type = switch (
-              (try intpr.ctx.evaluator().evaluate(bg.returns.expr)).data
+              (try intpr.ctx.evaluate(bg.returns.expr)).data
             ) {
               .poison => continue,
               .@"type" => |tv| tv.t,

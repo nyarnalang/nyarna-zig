@@ -67,7 +67,7 @@ pub const Stage = struct {
 /// symbols will be looked up.
 pub const Namespace = struct {
   index: ?usize,
-  data : std.StringArrayHashMapUnmanaged(*model.Symbol) = .{},
+  data : std.array_hash_map.String(*model.Symbol) = .empty,
 
   pub fn tryRegister(
     self : *Namespace,
@@ -86,7 +86,7 @@ pub const Namespace = struct {
       res.value_ptr.* = sym;
       if (self.index) |index| {
         try intpr.symbols.append(intpr.allocator(), .{
-          .ns    = @intCast(u15, index),
+          .ns    = @as(u15, @intCast(index)),
           .sym   = sym,
           .alive = true,
         });
@@ -126,10 +126,10 @@ loader: *Loader,
 /// references. Lexer uses this to check whether a character is a command
 /// character; the namespace mapping is relevant later for the interpreter.
 /// The values are indexes into the namespaces field.
-command_characters: std.hash_map.AutoHashMapUnmanaged(u21, u15) = .{},
+command_characters: std.hash_map.AutoHashMapUnmanaged(u21, u15) = .empty,
 /// Used when disabling all command characters. Will be swapped with
 /// command_characters until the block disabling the command characters ends.
-stored_command_characters: std.hash_map.AutoHashMapUnmanaged(u21, u15) = .{},
+stored_command_characters: std.hash_map.AutoHashMapUnmanaged(u21, u15) = .empty,
 /// Internal namespaces in the source file [6.1].
 /// A namespace will not be deleted when it goes out of scope, so that we do
 /// not need to apply special care for delayed resolution of symrefs:
@@ -137,13 +137,13 @@ stored_command_characters: std.hash_map.AutoHashMapUnmanaged(u21, u15) = .{},
 /// with namespace index and target name. Since namespaces are never deleted,
 // it will still try to find its target symbol in the same namespace when
 /// delayed resolution is triggered.
-namespaces: std.ArrayListUnmanaged(Namespace) = .{},
+namespaces: std.ArrayList(Namespace) = .empty,
 /// Type namespaces [6.2].
 /// The namespace of a type is added to this hashmap when the first symbol in
 /// that namespace is established. This hashmap is used to lookup any
 /// references to symbols in a type's namespace in the current source file.
 type_namespaces: std.HashMapUnmanaged(model.Type, Namespace,
-  model.Type.HashContext, std.hash_map.default_max_load_percentage) = .{},
+  model.Type.HashContext, std.hash_map.default_max_load_percentage) = .empty,
 /// Array of alternative syntaxes known to the interpreter [7.12].
 /// TODO: make this user-extensible
 syntax_registry: [2]syntaxes.SpecialSyntax,
@@ -154,9 +154,9 @@ node_gen: model.NodeGenerator,
 /// list. This list is used to deregister symbols at the end of their
 /// lifetime, and for giving variable containers a list of contained symbols.
 /// This list never shrinks.
-symbols: std.ArrayListUnmanaged(model.Symbol.Definition) = .{},
+symbols: std.ArrayList(model.Symbol.Definition) = .empty,
 /// length equals the current list of open levels whose type is FrameRoot.
-var_containers: std.ArrayListUnmanaged(ActiveVarContainer) = .{},
+var_containers: std.ArrayList(ActiveVarContainer) = .empty,
 /// the implementation of builtin functions for this module, if any.
 builtin_provider: ?*const lib.Provider,
 /// the content of the current file, as specified by \library, \standalone or
@@ -213,9 +213,9 @@ pub fn addNamespace(self: *Interpreter, character: u21) !void {
   const index = self.namespaces.items.len;
   if (index > std.math.maxInt(u15)) return error.too_many_namespaces;
   try self.command_characters.put(
-    self.allocator(), character, @intCast(u15, index));
+    self.allocator(), character, @as(u15, @intCast(index)));
   try self.namespaces.append(self.allocator(), .{.index = index});
-  const ns = self.namespace(@intCast(u15, index));
+  const ns = self.namespace(@as(u15, @intCast(index)));
   // intrinsic symbols of every namespace.
   for (self.ctx.data.generic_symbols.items) |sym| {
     _ = try ns.tryRegister(self, sym);
@@ -330,7 +330,7 @@ fn tryInterpretRootDef(
         try self.associate(
           rdef.root.?, self.ctx.types().@"type"().predef(), .{.kind = .final})
       ) orelse break :blk self.ctx.types().poison();
-      break :blk switch ((try self.ctx.evaluator().evaluate(expr)).data) {
+      break :blk switch ((try self.ctx.evaluate(expr)).data) {
         .@"type" => |tv| tv.t,
         .poison  => self.ctx.types().poison(),
         else     => unreachable,
@@ -339,7 +339,7 @@ fn tryInterpretRootDef(
       if (rdef.root) |rnode| {
         const expr =
           try self.interpretAs(rnode, self.ctx.types().schema().predef());
-        switch ((try self.ctx.evaluator().evaluate(expr)).data) {
+        switch ((try self.ctx.evaluate(expr)).data) {
           .schema => |*sch| {
             schema = sch;
             for (sch.symbols) |sym| {
@@ -353,7 +353,7 @@ fn tryInterpretRootDef(
       } else break :blk self.ctx.types().text();
     };
 
-    var list = std.ArrayList(model.locations.Ref).init(self.allocator());
+    var list: std.ArrayList(model.locations.Ref) = .empty;
     if (rdef.params) |params| {
       if (try self.locationsCanGenVars(params, .{.kind = .final})) {
         try self.collectLocations(params, &list);
@@ -444,7 +444,7 @@ fn tryInterpretPath(
 
   const expr_path = try self.ctx.global().alloc(
     model.Expression.Access.PathItem, path.len);
-  for (path) |item, i| switch (item) {
+  for (path, 0..) |item, i| switch (item) {
     .field => |field| expr_path[i] = .{
       .field = .{.index = field.index, .t = field.t},
     },
@@ -622,7 +622,7 @@ fn tryInterpretCall(
   // document can be referenced in the current document is through
   // compile-time functions. Therefore, we always copy call nodes that
   // originate from calls of compile-time functions.
-  for (rc.args) |*arg, i| {
+  for (rc.args, 0..) |*arg, i| {
     if (arg.*.data != .expression) {
       arg.*.data = if (
         try self.associate(arg.*, rc.sig.parameters[i].spec, arg_stage)
@@ -642,7 +642,7 @@ fn tryInterpretCall(
   const args = try cur_allocator.alloc(
     *model.Expression, rc.sig.parameters.len);
   var seen_poison = false;
-  for (rc.args) |arg, i| {
+  for (rc.args, 0..) |arg, i| {
     args[i] = arg.data.expression;
     if (args[i].expected_type.isNamed(.poison)) seen_poison = true;
   }
@@ -696,8 +696,8 @@ fn tryInterpretLoc(
   stage: Stage,
 ) nyarna.Error!?*model.Expression {
   var incomplete = false;
-  var t = if (loc.@"type") |node| blk: {
-    var expr = (
+  const t = if (loc.@"type") |node| blk: {
+    const expr = (
       try self.associate(
         node, self.ctx.types().@"type"().predef(), stage)
     ) orelse {
@@ -839,9 +839,9 @@ fn tryInterpretDef(
   const expr = (
     try self.tryInterpret(def.content, stage)
   ) orelse return null;
-  const value = try self.ctx.evaluator().evaluate(expr);
+  const value = try self.ctx.evaluate(expr);
   const content:
-    std.meta.fieldInfo(model.Value.Definition, .content).field_type =
+    @FieldType(model.Value.Definition, "content") =
     switch (value.data) {
       .funcref => |f| .{.func = f.func},
       .@"type" => |tv| .{.@"type" = tv.t},
@@ -959,7 +959,7 @@ fn genMapRetType(
   collector: ?*model.Expression,
 ) !model.Type {
   const gen = if (collector) |expr| blk: {
-    const value = try self.ctx.evaluator().evaluate(expr);
+    const value = try self.ctx.evaluate(expr);
     expr.data = .{.value = value};
     switch (value.data) {
       .poison    => return self.ctx.types().poison(),
@@ -1014,7 +1014,7 @@ fn tryForBodyToFunc(
     f_node.body.data = .{.expression = expr};
 
     var builder = try Types.SigBuilder.init(
-      self.ctx, std.math.min(2, f_node.captures.len), expr.expected_type,
+      self.ctx, @min(2, f_node.captures.len), expr.expected_type,
       false);
     if (f_node.captures.len > 0) {
       try builder.pushUnwrapped(
@@ -1164,7 +1164,7 @@ fn tryInterpretOutput(
       try self.associate(
         schema_node, self.ctx.types().schema().predef(), stage)
     ) orelse return null;
-    switch ((try self.ctx.evaluator().evaluate(sexpr)).data) {
+    switch ((try self.ctx.evaluate(sexpr)).data) {
       .schema => |*sch| {
         sexpr.data = .{.value = sch.value()};
         schema_node.data = .{.expression = sexpr};
@@ -1282,16 +1282,17 @@ pub fn collectLocations(
   collector: *std.ArrayList(model.locations.Ref),
 ) nyarna.Error!void {
   switch (node.data) {
-    .location => |*loc| try collector.append(.{.node = loc}),
+    .location => |*loc| try collector.append(self.allocator(), .{.node = loc}),
     .concat => |*con|
       for (con.items) |item| try self.collectLocations(item, collector),
     .void, .poison => {},
     else => {
-      const value = try self.ctx.evaluator().evaluate(node.data.expression);
+      const value = try self.ctx.evaluate(node.data.expression);
       switch (value.data) {
         .concat => |*con| {
           for (con.content.items) |item|
-            try collector.append(.{.value = &item.data.location});
+            try collector.append(
+              self.allocator(), .{.value = &item.data.location});
         },
         .poison => {},
         else => unreachable,
@@ -1310,7 +1311,7 @@ pub fn tryInterpretLocationsList(
       if (!(try self.locationsCanGenVars(uc, stage))) {
         return false;
       }
-      var locs = std.ArrayList(model.locations.Ref).init(self.allocator());
+      var locs: std.ArrayList(model.locations.Ref) = .empty;
       try self.collectLocations(uc, &locs);
       list.* = .{.resolved = .{.locations = locs.items}};
     },
@@ -1326,14 +1327,14 @@ pub fn variablesFromLocations(
 ) ![]*model.Symbol.Variable {
   var variables = try self.allocator().alloc(*model.Symbol.Variable, locs.len);
   var next: usize = 0;
-  for (locs) |*loc, index| {
+  for (locs, 0..) |*loc, index| {
     var name: *model.Value.TextScalar = undefined;
     var loc_type: model.SpecType = undefined;
     var borrowed: bool = undefined;
     switch (loc.*) {
       .node => |nl| {
         switch (
-          (try self.ctx.evaluator().evaluate(nl.name.data.expression)).data
+          (try self.ctx.evaluate(nl.name.data.expression)).data
         ) {
           .text   => |*txt| name = txt,
           .poison => {
@@ -1344,7 +1345,7 @@ pub fn variablesFromLocations(
         }
         if (nl.@"type") |lt| {
           switch (
-            (try self.ctx.evaluator().evaluate(lt.data.expression)).data
+            (try self.ctx.evaluate(lt.data.expression)).data
           ) {
             .@"type" => |vt| loc_type = vt.t.at(lt.pos),
             .poison  => loc_type = self.ctx.types().poison().predef(),
@@ -1360,7 +1361,7 @@ pub fn variablesFromLocations(
       },
       .expr => |expr| switch (expr.data) {
         .location => |*lexpr| {
-          switch ((try self.ctx.evaluator().evaluate(lexpr.name)).data) {
+          switch ((try self.ctx.evaluate(lexpr.name)).data) {
             .text => |*txt| name = txt,
             .poison => {
               loc.* = .poison;
@@ -1369,7 +1370,7 @@ pub fn variablesFromLocations(
             else => unreachable,
           }
           if (lexpr.@"type") |texpr| switch (
-            (try self.ctx.evaluator().evaluate(texpr)).data
+            (try self.ctx.evaluate(texpr)).data
           ) {
             .@"type" => |tv| loc_type = tv.t.at(texpr.pos),
             .poison  => loc_type = self.ctx.types().poison().predef(),
@@ -1379,7 +1380,7 @@ pub fn variablesFromLocations(
           }
           borrowed = if (lexpr.additionals) |a| a.borrow != null else false;
         },
-        else => switch ((try self.ctx.evaluator().evaluate(expr)).data) {
+        else => switch ((try self.ctx.evaluate(expr)).data) {
           .location => |*lval| {
             loc.* = .{.value = lval};
             name     = lval.name;
@@ -1407,7 +1408,7 @@ pub fn variablesFromLocations(
       .data       = .{.variable = .{
         .spec       = loc_type,
         .container  = container,
-        .offset     = container.num_values + @intCast(u15, index),
+        .offset     = container.num_values + @as(u15, @intCast(index)),
         .kind       = if (borrowed) .mutable else .given,
       }},
       .parent_type = null,
@@ -1415,7 +1416,7 @@ pub fn variablesFromLocations(
     variables[next] = &sym.data.variable;
     next += 1;
   }
-  container.num_values += @intCast(u15, next);
+  container.num_values += @as(u15, @intCast(next));
   return variables[0..next];
 }
 
@@ -1433,7 +1434,7 @@ pub fn tryInterpretFuncParams(
   if (!(try self.locationsCanGenVars(func.params.unresolved, stage))) {
     return false;
   }
-  var locs = std.ArrayList(model.locations.Ref).init(self.allocator());
+  var locs: std.ArrayList(model.locations.Ref) = .empty;
   try self.collectLocations(func.params.unresolved, &locs);
   const variables =
     try self.variablesFromLocations(locs.items, func.variables);
@@ -1471,7 +1472,7 @@ pub fn processLocations(
         loc.* = .{.expr = expr};
       },
       .expr => |expr| switch (
-        (try self.ctx.evaluator().evaluate(expr)).data
+        (try self.ctx.evaluate(expr)).data
       ) {
         .location => |*locv| {
           loc.* = .{.value = locv};
@@ -1555,7 +1556,7 @@ pub fn tryInterpretFunc(
   stage: Stage,
 ) nyarna.Error!?*model.Function {
   if (func.returns) |rnode| {
-    const ret_val = try self.ctx.evaluator().evaluate(
+    const ret_val = try self.ctx.evaluate(
       (try self.associate(rnode, self.ctx.types().@"type"().predef(),
         .{.kind = .final, .resolve_ctx = stage.resolve_ctx})).?);
     const returns = if (ret_val.data == .poison) (
@@ -1622,7 +1623,7 @@ pub const HighlighterContext = struct {
     name: []const u8,
     _   : model.Position,
   ) nyarna.Error!Resolver.Context.Result {
-    const self = @fieldParentPtr(HighlighterContext, "ctx", ctx);
+    const self: *HighlighterContext = @fieldParentPtr("ctx", ctx);
     if (std.mem.eql(u8, name, self.vname)) {
       return Resolver.Context.Result{
         .unfinished_variable = self.cur_t,
@@ -1664,7 +1665,7 @@ pub fn tryInterpretHighlighter(
   var iter: usize = 0; while (
     iter == 0 or (iter == 1 and !seen_unfinished and !seen_poison)
   ) : (iter += 1) {
-    for (hl.renderers) |*renderer, i| {
+    for (hl.renderers, 0..) |*renderer, i| {
       const rt = (try self.probeRenderer(renderer, stage, res)) orelse {
         seen_unfinished = true;
         continue;
@@ -1719,7 +1720,7 @@ pub fn tryInterpretHighlighter(
     try self.associate(
       hl.syntax, self.ctx.types().system.identifier.predef(), stage)
   ) orelse return null;
-  const val = try self.ctx.evaluator().evaluate(expr);
+  const val = try self.ctx.evaluate(expr);
   const syntax = switch (val.data) {
     .text => |*txt| blk: {
       if (std.mem.eql(u8, txt.content, "nyarna")) {
@@ -1745,7 +1746,7 @@ pub fn tryInterpretHighlighter(
     *model.Expression, syntax.tokens.len);
 
   for (hl.renderers) |renderer| {
-    const index = for (syntax.tokens) |token, i| {
+    const index = for (syntax.tokens, 0..) |token, i| {
       if (std.mem.eql(u8, token, renderer.name.content)) break i;
     } else {
       self.ctx.logger.UnknownSyntaxToken(
@@ -1873,7 +1874,7 @@ pub fn interpretCallToChain(
           try sm.mapper.push(cursor, prefix);
         }
       }
-      for (uc.proto_args) |*arg, index| {
+      for (uc.proto_args, 0..) |*arg, index| {
         const flag: Parser.Mapper.ProtoArgFlag = flag: {
           if (index < uc.first_block_arg) break :flag .flow;
           if (arg.had_explicit_block_config) break :flag .block_with_config;
@@ -1914,7 +1915,7 @@ pub fn ensureMatchTypesPresent(
       try self.associate(case.t, self.ctx.types().@"type"().predef(), stage)
     ) |expr| blk: {
       case.t.data = .{.expression = expr};
-      const value = try self.ctx.evaluator().evaluate(expr);
+      const value = try self.ctx.evaluate(expr);
       expr.data = .{.value = value};
       expr.expected_type = try self.ctx.types().valueType(value);
       switch (value.data) {
@@ -2163,7 +2164,7 @@ fn tryInterpretVarargs(
   }
   const items = try self.ctx.global().alloc(
     model.Expression.Varargs.Item, va.content.items.len);
-  for (va.content.items) |item, index| {
+  for (va.content.items, 0..) |item, index| {
     items[index] =
       .{.direct = item.direct, .expr = item.node.data.expression};
   }
@@ -2225,7 +2226,7 @@ fn tryInterpretVarmap(
   }
   const items = try self.ctx.global().alloc(
     model.Expression.Varmap.Item, vm.content.items.len);
-  for (vm.content.items) |item, index| {
+  for (vm.content.items, 0..) |item, index| {
     items[index] = switch (item.key) {
       .node => |key_node| .{
         .key   = .{.expr = key_node.data.expression},
@@ -2368,12 +2369,12 @@ fn tryGenUnary(
   };
   const ret: *model.Value = if (input.generated) |target| blk: {
     target.* = @unionInit(model.Type.Structural, name, .{.inner = inner});
-    if (try @field(self.ctx.types(), register_name)(
+    if (try @field(nyarna.Types, register_name)(self.ctx.types(),
         &@field(target.*, name))) {
       const t = model.Type{.structural = target};
       break :blk (try self.ctx.values.@"type"(input.node().pos, t)).value();
     } else {
-      @field(self.ctx.logger, error_name)(
+      @field(errors.Handler, error_name)(self.ctx.logger,
         &[_]model.SpecType{inner.at(input.inner.pos)});
       break :blk try self.ctx.values.poison(input.node().pos);
     }
@@ -2424,7 +2425,7 @@ fn tryGenEnum(
         if (result.kind != .poison) result.kind = .failed;
         continue;
       };
-      const value = try self.ctx.evaluator().evaluate(expr);
+      const value = try self.ctx.evaluate(expr);
       switch (value.data) {
         .poison => result.kind = .poison,
         .text => |*text| try builder.add(text.content, value.origin),
@@ -2473,7 +2474,7 @@ fn tryProcessVarargs(
         failed_some = true;
         continue;
       };
-      const value = try self.ctx.evaluator().evaluate(expr);
+      const value = try self.ctx.evaluate(expr);
       switch (value.data) {
         .poison => poison = true,
         .list => |*list| count += list.content.items.len,
@@ -2523,7 +2524,7 @@ fn tryGenIntersection(
         .finished   => |t| t,
         .unfinished => |t| t,
         .expression => |expr| switch (
-          (try self.ctx.evaluator().evaluate(expr)).data
+          (try self.ctx.evaluate(expr)).data
         ) {
           .@"type" => |*tv| blk: {
             expr.data = .{.value = tv.value()};
@@ -2558,7 +2559,7 @@ fn tryGenIntersection(
     .failed  => return null,
     .success => {
       if (checker.scalar) |*found_scalar| {
-        builder.push(@ptrCast([*]const model.Type, &found_scalar.t)[0..1]);
+        builder.push(@as([*]const model.Type, @ptrCast(&found_scalar.t))[0..1]);
       }
       const t = try builder.finish(self.ctx.types());
       return try self.ctx.createValueExpr(
@@ -2586,7 +2587,7 @@ fn tryGenMap(
   var seen_poison = false;
   var seen_unfinished = false;
   var seen_expr = false;
-  for ([_]*model.Node{gm.key, gm.value}) |item, index| {
+  for ([_]*model.Node{gm.key, gm.value}, 0..) |item, index| {
     inner_t[index] = switch (try self.tryGetType(item, stage)) {
       .finished, .unfinished => |t| t.at(item.pos),
       .expression => |expr| blk: {
@@ -2622,7 +2623,7 @@ fn tryGenMap(
   } else if (seen_unfinished) return null;
 
   if (seen_expr) {
-    for (inner_e) |*target, index| {
+    for (&inner_e, 0..) |*target, index| {
       if (target.* == null) target.* = try self.ctx.createValueExpr((
           try self.ctx.values.@"type"(inner_t[index].pos, inner_t[index].t)
       ).value());
@@ -2679,7 +2680,7 @@ fn doGenNumeric(
           seen_unfinished = true;
           continue;
         };
-        const val = try self.ctx.evaluator().evaluate(expr);
+        const val = try self.ctx.evaluate(expr);
         entry.value_ptr.* = val;
         break :blk val;
       },
@@ -2706,13 +2707,13 @@ fn doGenNumeric(
       else => unreachable,
     }
   }
-  for ([_]?*model.Node{gn.min, gn.max}) |e, index| if (e) |item| {
+  for ([_]?*model.Node{gn.min, gn.max}, 0..) |e, index| if (e) |item| {
     if (
       try self.associate(
         item, self.ctx.types().literal().predef(), stage)
     ) |expr| {
       item.data = .{.expression = expr};
-      const value = try self.ctx.evaluator().evaluate(expr);
+      const value = try self.ctx.evaluate(expr);
       switch (value.data) {
         .poison => seen_poison = true,
         .text => |*txt| switch (Parser.LiteralNumber.from(txt.content)) {
@@ -2759,8 +2760,8 @@ fn tryGenNumeric(
   const needs_local_impl_enum =
     std.mem.eql(u8, ".std.system", gn.node().pos.source.locator.repr);
 
-  var is_int = if (needs_local_impl_enum) blk: {
-    const val = try self.ctx.evaluator().evaluate(
+  const is_int = if (needs_local_impl_enum) blk: {
+    const val = try self.ctx.evaluate(
       try self.interpret(gn.backend));
     switch (val.data) {
       .text => |*txt| {
@@ -2777,7 +2778,7 @@ fn tryGenNumeric(
   } else if (
     try self.associate(
       gn.backend, self.ctx.types().system.numeric_impl.predef(), stage)
-  ) |backend| switch ((try self.ctx.evaluator().evaluate(backend)).data) {
+  ) |backend| switch ((try self.ctx.evaluate(backend)).data) {
     .@"enum" => |*backend_val| switch (backend_val.index) {
       0 => true,
       1 => false,
@@ -2904,7 +2905,7 @@ fn tryGenSequence(
     var builder = Types.SequenceBuilder.init(
       self.ctx.types(), self.allocator(), true);
     if (gs.direct) |input| {
-      const value = try self.ctx.evaluator().evaluate(input.data.expression);
+      const value = try self.ctx.evaluate(input.data.expression);
       switch (value.data) {
         .poison  => {},
         .@"type" => |tv| {
@@ -2917,7 +2918,7 @@ fn tryGenSequence(
     }
     for (gs.inner) |item| {
       const value =
-        try self.ctx.evaluator().evaluate(item.node.data.expression);
+        try self.ctx.evaluate(item.node.data.expression);
       switch (value.data) {
         .poison => {},
         .list => |*lst| {
@@ -2938,7 +2939,7 @@ fn tryGenSequence(
       }
     }
     const auto_t: ?model.SpecType = if (gs.auto) |auto| blk: {
-      const value = try self.ctx.evaluator().evaluate(auto.data.expression);
+      const value = try self.ctx.evaluate(auto.data.expression);
       switch (value.data) {
         .poison  => break :blk null,
         .@"type" => |tv| break :blk tv.t.at(auto.pos),
@@ -2951,10 +2952,9 @@ fn tryGenSequence(
     return try self.ctx.createValueExpr(
       (try self.ctx.values.@"type"(gs.node().pos, res.t)).value());
   } else {
-    var inner = std.ArrayList(model.Expression.Varargs.Item).init(
-      self.ctx.global());
+    var inner: std.ArrayList(model.Expression.Varargs.Item) = .empty;
     for (gs.inner) |item| {
-      try inner.append(
+      try inner.append(self.ctx.global(),
         .{.direct = item.direct, .expr = item.node.data.expression});
     }
     const expr = try self.ctx.global().create(model.Expression);
@@ -2994,7 +2994,7 @@ fn addEmbeds(
   spec  : model.SpecType,
   offset: usize,
 ) std.mem.Allocator.Error!void {
-  var res = try embeds.getOrPut(self.allocator(), spec.t);
+  const res = try embeds.getOrPut(self.allocator(), spec.t);
   if (!res.found_existing) {
     if (spec.t.isNamed(.record)) {
       for (spec.t.named.data.record.embeds) |inner| {
@@ -3019,7 +3019,7 @@ fn tryGenRecord(
       anode, self.ctx.types().system.boolean.predef(), stage)
   ) |expr| {
     anode.data = .{.expression = expr};
-    const value = try self.ctx.evaluator().evaluate(expr);
+    const value = try self.ctx.evaluate(expr);
     expr.data = .{.value = value};
     switch (value.data) {
       .poison  => {},
@@ -3037,7 +3037,7 @@ fn tryGenRecord(
       if (
         try self.associate(item.node, list_type.predef(), stage)
       ) |expr| {
-        const value = try self.ctx.evaluator().evaluate(expr);
+        const value = try self.ctx.evaluate(expr);
         expr.data = .{.value = value};
         switch (value.data) {
           .list   => |*lst| for (lst.content.items) |v| {
@@ -3052,7 +3052,7 @@ fn tryGenRecord(
     const t: model.SpecType = switch (try self.tryGetType(item.node, stage)) {
       .finished, .unfinished => |t| t.at(item.node.pos),
       .expression  => |expr| blk: {
-        const value = try self.ctx.evaluator().evaluate(expr);
+        const value = try self.ctx.evaluate(expr);
         expr.data = .{.value = value};
         item.node.data = .{.expression = expr};
         switch (value.data) {
@@ -3155,7 +3155,7 @@ fn tryGenRecord(
       for (res.locations) |*loc| switch (loc.*) {
         .node => unreachable,
         .expr => |expr| switch (
-          (try self.ctx.evaluator().evaluate(expr)).data
+          (try self.ctx.evaluate(expr)).data
         ) {
           .location => |*lval| {
             loc.* = .{.value = lval};
@@ -3178,7 +3178,7 @@ fn tryGenRecord(
       const builder_res = b.finish();
       target.constructor =
         try builder_res.createCallable(self.ctx.global(), .@"type");
-      gr.fields = .pregen;
+      gr.fields = .{.pregen = undefined};
     },
     .pregen => {
       return try self.ctx.createValueExpr(
@@ -3287,7 +3287,7 @@ fn tryGenTextual(
         continue;
       };
       item.node.data = .{.expression = expr};
-      const val = try self.ctx.evaluator().evaluate(expr);
+      const val = try self.ctx.evaluate(expr);
       switch (val.data) {
         .list => |*list| for (list.content.items) |inner| {
           if (!putIntoCategories(inner, &categories)) seen_poison = true;
@@ -3303,24 +3303,24 @@ fn tryGenTextual(
         continue;
       };
       item.node.data = .{.expression = expr};
-      const val = try self.ctx.evaluator().evaluate(expr);
+      const val = try self.ctx.evaluate(expr);
       if (!putIntoCategories(val, &categories)) seen_poison = true;
     }
   }
 
-  var chars = [2]std.hash_map.AutoHashMapUnmanaged(u21, void){.{}, .{}};
-  for ([_]?*model.Node{gt.include_chars, gt.exclude_chars}) |item, index| {
+  var chars = [2]std.hash_map.AutoHashMapUnmanaged(u21, void){.empty, .empty};
+  for ([_]?*model.Node{gt.include_chars, gt.exclude_chars}, 0..) |item, index| {
     if (item) |node| {
       if (
         try self.associate(node, self.ctx.types().literal().predef(), stage)
       ) |expr| {
         node.data = .{.expression = expr};
-        const val = try self.ctx.evaluator().evaluate(expr);
+        const val = try self.ctx.evaluate(expr);
         switch (val.data) {
           .text => |*txt| {
             var iter = std.unicode.Utf8Iterator{.bytes = txt.content, .i = 0};
             while (iter.nextCodepoint()) |code_point| {
-              try chars[index].put(self.ctx.global(), code_point, .{});
+              try chars[index].put(self.ctx.global(), code_point, {});
             }
           },
           .poison => seen_poison = true,
@@ -3331,11 +3331,11 @@ fn tryGenTextual(
   }
 
   if (failed_some) {
-    for (chars) |*map| map.clearAndFree(self.ctx.global());
+    for (&chars) |*map| map.clearAndFree(self.ctx.global());
     return null;
   }
   if (seen_poison) {
-    for (chars) |*map| map.clearAndFree(self.ctx.global());
+    for (&chars) |*map| map.clearAndFree(self.ctx.global());
     return try self.ctx.createValueExpr(
       try self.ctx.values.poison(gt.node().pos));
   }
@@ -3509,7 +3509,7 @@ pub fn resolveSymbol(
   name      : []const u8,
 ) !*model.Node {
   var syms = &self.namespaces.items[ns].data;
-  var ret = try self.allocator().create(model.Node);
+  const ret = try self.allocator().create(model.Node);
   ret.* = .{
     .pos  = pos,
     .data = if (syms.get(name)) |sym| .{
@@ -3533,14 +3533,14 @@ pub fn resolveSymbol(
 /// If some substructure cannot be interpreted, null is returned.
 fn probeNodeList(
   self  : *Interpreter,
-  nodes : []*model.Node,
+  nodes : []const *model.Node,
   stage : Stage,
   sloppy: bool,
 ) !?model.Type {
   var sup: model.Type = self.ctx.types().every();
   var already_poison = false;
   var seen_unfinished = false;
-  for (nodes) |node, i| {
+  for (nodes, 0..) |node, i| {
     const t = (try self.probeType(node, stage, sloppy)) orelse {
       seen_unfinished = true;
       continue;
@@ -3770,7 +3770,7 @@ pub fn probeType(
     .map      => |*map| {
       // will be calculated when we need it first.
       var input_type: ?model.Type = null;
-      var calc_inner_type = if (map.func) |func| (
+      const calc_inner_type = if (map.func) |func| (
         switch (try Resolver.init(self, stage).resolveChain(func)) {
           .runtime => |rc| switch (rc.t) {
             .structural => |strct| switch (strct.*) {
@@ -3821,14 +3821,14 @@ pub fn probeType(
           .named => break :blk null,
         }
       };
-      var inner_type = calc_inner_type orelse {
+      const inner_type = calc_inner_type orelse {
         // something's not right. call interpret to log errors.
         _ = try self.tryInterpret(node, stage);
         return self.ctx.types().poison();
       };
       if (map.collector) |coll| {
         if (try self.tryInterpret(coll, stage)) |expr| {
-          const value = try self.ctx.evaluator().evaluate(expr);
+          const value = try self.ctx.evaluate(expr);
           expr.data = .{.value = value};
           coll.data = .{.expression = expr};
           switch (value.data) {
@@ -3893,7 +3893,7 @@ pub fn probeType(
         .success => {
           var ret = self.ctx.types().every();
           var seen_poison = false;
-          for (match.cases) |case, i| {
+          for (match.cases, 0..) |case, i| {
             if (try self.probeType(case.content.root, stage, sloppy)) |t| {
               if (t.isNamed(.poison)) {
                 seen_poison = true;
@@ -4241,7 +4241,7 @@ pub fn interpretWithTargetScalar(
       var inner_type = self.ctx.types().every();
       var seen_sequence = false;
       var seen_poison = false;
-      for (con.items) |item, i| {
+      for (con.items, 0..) |item, i| {
         const expr = item.data.expression;
         exprs[i] = expr;
         if (

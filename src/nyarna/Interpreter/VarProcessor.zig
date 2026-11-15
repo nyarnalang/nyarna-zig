@@ -46,7 +46,7 @@ pub fn node(self: @This(), n: *model.Node) nyarna.Error!*model.Node {
       ) orelse return try self.empty();
       loc.name.data = .{.expression = name_expr};
       const name = switch (
-        (try self.ip.ctx.evaluator().evaluate(name_expr)).data
+        (try self.ip.ctx.evaluate(name_expr)).data
       ) {
         .text   => |*txt| txt.content,
         .poison => return try self.empty(),
@@ -58,7 +58,7 @@ pub fn node(self: @This(), n: *model.Node) nyarna.Error!*model.Node {
           tnode, self.ip.ctx.types().@"type"().predef(),
           .{.kind = .keyword}
         )) orelse return self.empty();
-        const val = try self.ip.ctx.evaluator().evaluate(expr);
+        const val = try self.ip.ctx.evaluate(expr);
         switch (val.data) {
           .poison => return try self.empty(),
           .@"type" => |*tv| break :blk tv.t.at(val.origin),
@@ -78,7 +78,7 @@ pub fn node(self: @This(), n: *model.Node) nyarna.Error!*model.Node {
     .concat => |*con| {
       const items =
         try self.ip.allocator().alloc(*model.Node, con.items.len);
-      for (con.items) |item, index| items[index] = try self.node(item);
+      for (con.items, 0..) |item, index| items[index] = try self.node(item);
       return (try self.ip.node_gen.concat(self.keyword_pos, items)).node();
     },
     .expression => |expr| return self.expression(expr),
@@ -105,7 +105,7 @@ pub fn expression(
     return try self.empty();
   }
   expr.expected_type = self.concat_loc;
-  const val = try self.ip.ctx.evaluator().evaluate(expr);
+  const val = try self.ip.ctx.evaluate(expr);
   return try self.value(val);
 }
 
@@ -115,7 +115,7 @@ pub fn value(self: @This(), val: *model.Value) !*model.Node {
     .concat => |*con| {
       const items =
         try self.ip.allocator().alloc(*model.Node, con.content.items.len);
-      for (con.content.items) |item, index| {
+      for (con.content.items, 0..) |item, index| {
         const loc = &item.data.location;
         const initial = if (loc.default) |expr|
           try self.ip.node_gen.expression(expr)
@@ -143,7 +143,7 @@ fn variable(
   initial : *model.Node,
 ) !*model.Node {
   const sym = try self.ip.ctx.global().create(model.Symbol);
-  const offset = @intCast(u15, self.ip.symbols.items.len - self.ac.offset);
+  const offset: u15 = @intCast(self.ip.symbols.items.len - self.ac.offset);
   sym.* = .{
     .defined_at = name_pos,
     .name       = name,

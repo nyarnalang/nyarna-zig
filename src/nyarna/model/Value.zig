@@ -8,7 +8,6 @@ const Expression = model.Expression;
 const Node       = model.Node;
 const Type       = model.Type;
 
-const offset = @import("../helpers.zig").offset;
 
 const Value = @This();
 
@@ -46,7 +45,7 @@ pub const BlockHeader = struct {
 
   pub fn formatter(
     self: *const BlockHeader,
-  ) std.fmt.Formatter(fmt.formatBlockHeader) {
+  ) std.fmt.Alt(*const BlockHeader, fmt.formatBlockHeader) {
     return .{.data = self};
   }
 };
@@ -101,18 +100,18 @@ pub const FloatNum = struct {
     unit_index  : usize,
     max_decimals: usize,
     decimal_sep : u8,
-    writer      : anytype,
-  ) @TypeOf(writer).Error!void {
+    writer      : *std.Io.Writer,
+  ) std.Io.Writer.Error!void {
     const unit = self.t.suffixes[unit_index];
     var out = self.content * unit.factor;
-    try std.fmt.format(writer, "{}", .{std.math.trunc(out)});
-    out = @mod(std.math.fabs(out), 1);
+    try writer.print("{}", .{std.math.trunc(out)});
+    out = @mod(@abs(out), 1);
     if (max_decimals > 0 and out > 0) {
       try writer.writeByte(decimal_sep);
       var rem_decimals = max_decimals;
       while (rem_decimals > 0 and out > 0) : (rem_decimals -= 1) {
         out *= 10;
-        try std.fmt.format(writer, "{}", .{std.math.trunc(out)});
+        try writer.print("{}", .{std.math.trunc(out)});
         out = @mod(out, 1);
       }
     }
@@ -120,19 +119,17 @@ pub const FloatNum = struct {
   }
 
   fn format(
-    self      : @This(),
-    comptime _: []const u8,
-    _         : std.fmt.FormatOptions,
-    writer    : anytype,
-  ) @TypeOf(writer).Error!void {
+    self  : @This(),
+    writer: *std.Io.Writer,
+  ) std.Io.Writer.Error!void {
     if (self.t.suffixes.len > 0) {
       try self.formatWithUnit(self.cur_unit, 2, '.', writer);
     } else {
-      try std.fmt.format(writer, "{}", .{self.content});
+      try writer.print("{}", .{self.content});
     }
   }
 
-  pub fn formatter(self: @This()) std.fmt.Formatter(format) {
+  pub fn formatter(self: @This()) std.fmt.Alt(@This(), format) {
     return .{.data = self};
   }
 };
@@ -171,11 +168,11 @@ pub const IntNum = struct {
     unit_index  : usize,
     max_decimals: usize,
     decimal_sep : u8,
-    writer      : anytype,
-  ) @TypeOf(writer).Error!void {
+    writer      : *std.Io.Writer,
+  ) std.Io.Writer.Error!void {
     const unit = self.t.suffixes[unit_index];
     var trunc = @divTrunc(self.content, unit.factor);
-    try std.fmt.format(writer, "{}", .{trunc});
+    try writer.print("{}", .{trunc});
     var rem = @rem(self.content, unit.factor);
     if (max_decimals > 0 and rem != 0) {
       try writer.writeByte(decimal_sep);
@@ -184,26 +181,26 @@ pub const IntNum = struct {
         rem   = rem * 10;
         trunc = @mod(@divTrunc(rem, unit.factor), 10);
         rem   = @rem(rem, unit.factor);
-        try writer.writeByte('0' + @intCast(u8, trunc));
+        try writer.writeByte('0' + @as(u8, @intCast(trunc)));
       }
     }
     try writer.writeAll(unit.suffix);
   }
 
   fn format(
-             self  : *const @This(),
-    comptime _     : []const u8,
-             _     : std.fmt.FormatOptions,
-             writer: anytype,
-  ) @TypeOf(writer).Error!void {
+    self  : *const @This(),
+    writer: *std.Io.Writer,
+  ) std.Io.Writer.Error!void {
     if (self.t.suffixes.len > 0) {
       try self.formatWithUnit(self.cur_unit, 2, '.', writer);
     } else {
-      try std.fmt.format(writer, "{}", .{self.content});
+      try writer.print("{}", .{self.content});
     }
   }
 
-  pub fn formatter(self: *const @This()) std.fmt.Formatter(format) {
+  pub fn formatter(
+    self: *const @This(),
+  ) std.fmt.Alt(*const @This(), format) {
     return .{.data = self};
   }
 };
@@ -387,9 +384,9 @@ const HashContext = struct {
   pub fn hash(_: HashContext, v: *Value) u64 {
     return switch (v.data) {
       .text    => |ts|  std.hash_map.hashString(ts.content),
-      .int     => |int| @bitCast(u64, int.content),
-      .float   => |fl|  @bitCast(u64, fl.content),
-      .@"enum" => |ev|  @intCast(u64, ev.index),
+      .int     => |int| @as(u64, @bitCast(int.content)),
+      .float   => |fl|  @as(u64, @bitCast(fl.content)),
+      .@"enum" => |ev|  @as(u64, @intCast(ev.index)),
       .@"type" => |tv|  model.Type.HashContext.hash(undefined, tv.t),
       else => unreachable,
     };
@@ -412,29 +409,29 @@ origin: model.Position,
 data  : Data,
 
 fn parent(it: anytype) *Value {
-  const t = @typeInfo(@TypeOf(it)).Pointer.child;
-  const addr = @ptrToInt(it) - switch (t) {
-    Ast          => offset(Data, "ast"),
-    BlockHeader  => offset(Data, "block_header"),
-    Concat       => offset(Data, "concat"),
-    Definition   => offset(Data, "definition"),
-    Enum         => offset(Data, "enum"),
-    FloatNum     => offset(Data, "float"),
-    FuncRef      => offset(Data, "funcref"),
-    HashMap      => offset(Data, "hashmap"),
-    IntNum       => offset(Data, "int"),
-    List         => offset(Data, "list"),
-    Location     => offset(Data, "location"),
-    Output       => offset(Data, "output"),
-    PrototypeVal => offset(Data, "prototype"),
-    Record       => offset(Data, "record"),
-    Schema       => offset(Data, "schema"),
-    SchemaDef    => offset(Data, "schema_def"),
-    SchemaExt    => offset(Data, "schema_ext"),
-    Seq          => offset(Data, "seq"),
-    TextScalar   => offset(Data, "text"),
-    TypeVal      => offset(Data, "type"),
+  const t = @typeInfo(@TypeOf(it)).pointer.child;
+  const data: *Data = switch (t) {
+    Ast          => @alignCast(@fieldParentPtr("ast", it)),
+    BlockHeader  => @alignCast(@fieldParentPtr("block_header", it)),
+    Concat       => @alignCast(@fieldParentPtr("concat", it)),
+    Definition   => @alignCast(@fieldParentPtr("definition", it)),
+    Enum         => @alignCast(@fieldParentPtr("enum", it)),
+    FloatNum     => @alignCast(@fieldParentPtr("float", it)),
+    FuncRef      => @alignCast(@fieldParentPtr("funcref", it)),
+    HashMap      => @alignCast(@fieldParentPtr("hashmap", it)),
+    IntNum       => @alignCast(@fieldParentPtr("int", it)),
+    List         => @alignCast(@fieldParentPtr("list", it)),
+    Location     => @alignCast(@fieldParentPtr("location", it)),
+    Output       => @alignCast(@fieldParentPtr("output", it)),
+    PrototypeVal => @alignCast(@fieldParentPtr("prototype", it)),
+    Record       => @alignCast(@fieldParentPtr("record", it)),
+    Schema       => @alignCast(@fieldParentPtr("schema", it)),
+    SchemaDef    => @alignCast(@fieldParentPtr("schema_def", it)),
+    SchemaExt    => @alignCast(@fieldParentPtr("schema_ext", it)),
+    Seq          => @alignCast(@fieldParentPtr("seq", it)),
+    TextScalar   => @alignCast(@fieldParentPtr("text", it)),
+    TypeVal      => @alignCast(@fieldParentPtr("type", it)),
     else => unreachable,
   };
-  return @fieldParentPtr(Value, "data", @intToPtr(*Data, addr));
+  return @fieldParentPtr("data", data);
 }

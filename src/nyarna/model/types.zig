@@ -8,7 +8,6 @@ const Position   = model.Position;
 const Symbol     = model.Symbol;
 const Value      = model.Value;
 
-const offset = @import("../helpers.zig").offset;
 
 const local = @This();
 
@@ -61,7 +60,7 @@ pub const Enum = struct {
   /// retains the order of the enum values.
   /// must not be modified after creation.
   /// the map's value is the position where the enum value has been defined.
-  values: std.StringArrayHashMapUnmanaged(model.Position),
+  values: std.array_hash_map.String(model.Position),
 
   pub fn pos(self: *const @This()) Position {
     return Named.pos(self);
@@ -295,16 +294,16 @@ pub const Named = struct {
   data: Data,
 
   fn parent(it: anytype) *Named {
-    const t = @typeInfo(@TypeOf(it)).Pointer.child;
-    const addr = @ptrToInt(it) - switch (t) {
-      Textual  => offset(Data, "textual"),
-      Enum     => offset(Data, "enum"),
-      FloatNum => offset(Data, "float"),
-      IntNum   => offset(Data, "int"),
-      Record   => offset(Data, "record"),
+    const t = @typeInfo(@TypeOf(it)).pointer.child;
+    const data: *Data = switch (t) {
+      Textual  => @alignCast(@fieldParentPtr("textual", @constCast(it))),
+      Enum     => @alignCast(@fieldParentPtr("enum", @constCast(it))),
+      FloatNum => @alignCast(@fieldParentPtr("float", @constCast(it))),
+      IntNum   => @alignCast(@fieldParentPtr("int", @constCast(it))),
+      Record   => @alignCast(@fieldParentPtr("record", @constCast(it))),
       else => unreachable
     };
-    return @fieldParentPtr(Named, "data", @intToPtr(*Data, addr));
+    return @fieldParentPtr("data", data);
   }
 
   /// calculates the position of Textual, Numeric, Enum, or Record
@@ -332,18 +331,18 @@ pub const Structural = union(enum) {
   sequence    : Sequence,
 
   fn parent(it: anytype) *Structural {
-    const t = @typeInfo(@TypeOf(it)).Pointer.child;
-    const addr = @ptrToInt(it) - switch (t) {
-      Callable     => offset(Structural, "callable"),
-      Concat       => offset(Structural, "concat"),
-      HashMap      => offset(Structural, "hashmap"),
-      Intersection => offset(Structural, "intersection"),
-      List         => offset(Structural, "list"),
-      Optional     => offset(Structural, "optional"),
-      Sequence     => offset(Structural, "sequence"),
+    const t = @typeInfo(@TypeOf(it)).pointer.child;
+    return switch (t) {
+      Callable     => @alignCast(@fieldParentPtr("callable", @constCast(it))),
+      Concat       => @alignCast(@fieldParentPtr("concat", @constCast(it))),
+      HashMap      => @alignCast(@fieldParentPtr("hashmap", @constCast(it))),
+      Intersection =>
+        @alignCast(@fieldParentPtr("intersection", @constCast(it))),
+      List         => @alignCast(@fieldParentPtr("list", @constCast(it))),
+      Optional     => @alignCast(@fieldParentPtr("optional", @constCast(it))),
+      Sequence     => @alignCast(@fieldParentPtr("sequence", @constCast(it))),
       else => unreachable
     };
-    return @intToPtr(*Structural, addr);
   }
 
   /// calculates the position from a pointer to one of the inner types
@@ -386,8 +385,8 @@ pub const Type = union(enum) {
   pub const HashContext = struct {
     pub fn hash(_: HashContext, t: Type) u64 {
       return switch (t) {
-        .structural => |s| @intCast(u64, @ptrToInt(s)),
-        .named => |in| @intCast(u64, @ptrToInt(in)),
+        .structural => |s| @as(u64, @intCast(@intFromPtr(s))),
+        .named => |in| @as(u64, @intCast(@intFromPtr(in))),
       };
     }
 
@@ -430,30 +429,28 @@ pub const Type = union(enum) {
   }
 
   fn listTypes(
-    comptime fmt   : []const u8,
-             opt   : std.fmt.FormatOptions,
-             data  : anytype,
-             index : *usize,
-             writer: anytype
-  ) @TypeOf(writer).Error!void {
+    data  : anytype,
+    index : *usize,
+    writer: *std.Io.Writer
+  ) std.Io.Writer.Error!void {
     switch (comptime @typeInfo(@TypeOf(data))) {
-      .Optional => if (data) |value| {
-        try listTypes(fmt, opt, value, index, writer);
+      .optional => if (data) |value| {
+        try listTypes(value, index, writer);
       },
-      .Struct   => |strct| {
-        inline for (strct.fields) |field| {
-          try listTypes(fmt, opt, @field(data, field.name), index, writer);
+      .@"struct" => |strct| {
+        inline for (strct.field_names) |name| {
+          try listTypes(@field(data, name), index, writer);
         }
       },
-      .Union => { // Type
+      .@"union" => { // Type
         if (index.* > 0) try writer.writeAll(", ");
-        try data.format(fmt, opt, writer);
+        try data.format(writer);
         index.* += 1;
       },
-      .Pointer => |ptr| if (ptr.size == .One) {
-        try listTypes(fmt, opt, data.typedef(), index, writer);
+      .pointer => |ptr| if (ptr.size == .one) {
+        try listTypes(data.typedef(), index, writer);
       } else {
-        for (data) |item| try listTypes(fmt, opt, item, index, writer);
+        for (data) |item| try listTypes(item, index, writer);
       },
       else => std.debug.panic("Invalid input for listing types: {s}",
         .{@tagName(@typeInfo(@TypeOf(data)))}),
@@ -461,37 +458,33 @@ pub const Type = union(enum) {
   }
 
   fn formatParameterized(
-    comptime fmt   : []const u8,
-             opt   : std.fmt.FormatOptions,
-             name  : []const u8,
-             inners: anytype,
-             writer: anytype,
-  ) @TypeOf(writer).Error!void {
+    name  : []const u8,
+    inners: anytype,
+    writer: *std.Io.Writer,
+  ) std.Io.Writer.Error!void {
     try writer.writeAll(name);
     try writer.writeByte('<');
     var index: usize = 0;
-    try listTypes(fmt, opt, inners, &index, writer);
+    try listTypes(inners, &index, writer);
     try writer.writeByte('>');
   }
 
   pub fn format(
-             self  : Type,
-    comptime fmt   : []const u8,
-             opt   : std.fmt.FormatOptions,
-             writer: anytype
-  ) @TypeOf(writer).Error!void {
+    self  : Type,
+    writer: *std.Io.Writer
+  ) std.Io.Writer.Error!void {
     switch (self) {
       .structural => |struc| try switch (struc.*) {
         .optional => |op| formatParameterized(
-          fmt, opt, "Optional", op.inner, writer),
+          "Optional", op.inner, writer),
         .concat => |con| formatParameterized(
-          fmt, opt, "Concat", con.inner, writer),
+          "Concat", con.inner, writer),
         .sequence => |seq| formatParameterized(
-          fmt, opt, "Sequence", .{seq.direct, seq.inner}, writer),
+          "Sequence", .{seq.direct, seq.inner}, writer),
         .list => |list| formatParameterized(
-          fmt, opt, "List", list.inner, writer),
+          "List", list.inner, writer),
         .hashmap => |map| formatParameterized(
-          fmt, opt, "HashMap", .{map.key, map.value}, writer),
+          "HashMap", .{map.key, map.value}, writer),
         .callable => |clb| {
           try writer.writeAll(switch (clb.kind) {
             .function => @as([]const u8, "[function] "),
@@ -499,17 +492,17 @@ pub const Type = union(enum) {
             .prototype => "[prototype] ",
           });
           try writer.writeByte('(');
-          for (clb.sig.parameters) |param, i| {
+          for (clb.sig.parameters, 0..) |param, i| {
             if (i > 0) try writer.writeAll(", ");
-            try param.spec.t.format(fmt, opt, writer);
+            try param.spec.t.format(writer);
           }
           try writer.writeAll(") -> ");
-          try clb.sig.returns.format(fmt, opt, writer);
+          try clb.sig.returns.format(writer);
         },
         .intersection => |inter| {
           try writer.writeByte('{');
           var index: usize = 0;
-          try listTypes(fmt, opt, .{inter.scalar, inter.types}, &index, writer);
+          try listTypes(.{inter.scalar, inter.types}, &index, writer);
           try writer.writeByte('}');
           return;
         },
@@ -521,23 +514,21 @@ pub const Type = union(enum) {
   }
 
   pub fn formatAll(
-             types  : []const Type,
-    comptime fmt    : []const u8,
-             options: std.fmt.FormatOptions,
-             writer : anytype,
-  ) @TypeOf(writer).Error!void {
-    for (types) |t, i| {
+    types : []const Type,
+    writer: *std.Io.Writer,
+  ) std.Io.Writer.Error!void {
+    for (types, 0..) |t, i| {
       if (i > 0) try writer.writeAll(", ");
-      try t.format(fmt, options, writer);
+      try t.format(writer);
     }
   }
 
-  pub fn formatter(self: Type) std.fmt.Formatter(format) {
+  pub fn formatter(self: Type) std.fmt.Alt(Type, format) {
     return .{.data = self};
   }
 
   pub fn formatterAll(types: []const Type)
-      std.fmt.Formatter(formatAll) {
+      std.fmt.Alt([]const Type, formatAll) {
     return .{.data = types};
   }
 

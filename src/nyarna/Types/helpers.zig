@@ -8,12 +8,12 @@ const model = @import("../model.zig");
 /// The first argument exists so that this fn can be used for std.sort.sort.
 pub fn totalOrderLess(_: void, a: model.Type, b: model.Type) bool {
   const a_int = switch (a) {
-    .structural => |sa| @ptrToInt(sa),
-    .named      => |ia| @ptrToInt(ia),
+    .structural => |sa| @intFromPtr(sa),
+    .named      => |ia| @intFromPtr(ia),
   };
   const b_int = switch (b) {
-    .structural => |sb| @ptrToInt(sb),
-    .named      => |ib| @ptrToInt(ib),
+    .structural => |sb| @intFromPtr(sb),
+    .named      => |ib| @intFromPtr(ib),
   };
   return a_int < b_int;
 }
@@ -23,5 +23,5 @@ pub fn recTotalOrderLess(
   a: *model.Type.Record,
   b: *model.Type.Record,
 ) bool {
-  return @ptrToInt(a.named()) < @ptrToInt(b.named());
+  return @intFromPtr(a.named()) < @intFromPtr(b.named());
 }

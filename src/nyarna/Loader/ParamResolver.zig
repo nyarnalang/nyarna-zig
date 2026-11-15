@@ -43,11 +43,11 @@ fn getSource(
   descriptor: *const model.Source.Descriptor,
   _         : *errors.Handler,
 ) std.mem.Allocator.Error!?*model.Source {
-  var fc = @fieldParentPtr(Cursor, "api", cursor);
+  const fc: *Cursor = @fieldParentPtr("api", cursor);
   const content = try allocator.alloc(u8, fc.content.len + 4);
   errdefer allocator.free(content);
-  std.mem.copy(u8, content, fc.content);
-  std.mem.copy(u8, content[fc.content.len..], "\x04\x04\x04\x04");
+  @memcpy(content[0..fc.content.len], fc.content);
+  @memcpy(content[fc.content.len..][0..4], "\x04\x04\x04\x04");
   const ret = try allocator.create(model.Source);
   ret.* = .{
     .meta        = descriptor,

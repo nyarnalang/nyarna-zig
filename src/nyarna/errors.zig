@@ -1,7 +1,18 @@
 const ids   = @import("errors/ids.zig");
 const model = @import("model.zig");
 
-pub usingnamespace ids;
+pub const LexerError             = ids.LexerError;
+pub const GenericParserError     = ids.GenericParserError;
+pub const WrongItemError         = ids.WrongItemError;
+pub const ScalarError            = ids.ScalarError;
+pub const WrongIdError           = ids.WrongIdError;
+pub const PreviousOccurenceError = ids.PreviousOccurenceError;
+pub const PositionChainError     = ids.PositionChainError;
+pub const TypeError              = ids.TypeError;
+pub const ConstructionError      = ids.ConstructionError;
+pub const RuntimeError           = ids.RuntimeError;
+pub const SystemNyError          = ids.SystemNyError;
+pub const FileError              = ids.FileError;
 
 pub const Reporter = @import("errors/Reporter.zig");
 pub const Handler  = @import("errors/Handler.zig");
@@ -53,7 +64,7 @@ pub fn Terminal(comptime Writer: type, comptime do_style: bool) type {
     ) void {
       if (do_style) {
         inline for (styles) |s| {
-          self.writer.print("\x1b[{}m", .{@enumToInt(@as(Style, s))})
+          self.writer.print("\x1b[{}m", .{@intFromEnum(@as(Style, s))})
             catch unreachable;
         }
       }
@@ -86,8 +97,8 @@ pub fn Terminal(comptime Writer: type, comptime do_style: bool) type {
       id      : ids.LexerError,
       pos     : model.Position,
     ) void {
-      const self = @fieldParentPtr(@This(), "reporter", reporter);
-      self.style(.{.bold}, "{s}", .{pos});
+      const self: *@This() = @fieldParentPtr("reporter", reporter);
+      self.style(.{.bold}, "{f}", .{pos.startFormatter()});
       self.renderError("(lex) {s}", .{@tagName(id)});
     }
 
@@ -96,8 +107,8 @@ pub fn Terminal(comptime Writer: type, comptime do_style: bool) type {
       id      : ids.GenericParserError,
       pos     : model.Position,
     ) void {
-      const self = @fieldParentPtr(@This(), "reporter", reporter);
-      self.style(.{.bold}, "{s}", .{pos});
+      const self: *@This() = @fieldParentPtr("reporter", reporter);
+      self.style(.{.bold}, "{f}", .{pos.startFormatter()});
       self.renderError("(parse) {s}", .{@tagName(id)});
     }
 
@@ -108,21 +119,21 @@ pub fn Terminal(comptime Writer: type, comptime do_style: bool) type {
       expected: []const ids.WrongItemError.ItemDescr,
       got     : ids.WrongItemError.ItemDescr,
     ) void {
-      const self = @fieldParentPtr(@This(), "reporter", reporter);
-      self.style(.{.bold}, "{s}", .{pos});
-      const arr = ids.WrongItemError.ItemDescr.formatterAll(expected);
+      const self: *@This() = @fieldParentPtr("reporter", reporter);
+      self.style(.{.bold}, "{f}", .{pos.startFormatter()});
+      const arr = ids.WrongItemError.ItemDescr.formatterAllCollapsed(expected);
       const single = got.formatter();
       switch (id) {
         .ExpectedXGotY => self.renderError(
-          "syntax error: expected {?}, got {}", .{arr, single}),
+          "syntax error: expected {f}, got {f}", .{arr, single}),
         .MissingToken => {
           const missing = expected[0].formatter();
-          self.renderError("inserted missing item: {}", .{missing});
+          self.renderError("inserted missing item: {f}", .{missing});
         },
         .PrematureToken => self.renderError(
-          "missing token: {?}", .{arr}),
+          "missing token: {f}", .{arr}),
         .IllegalItem => self.renderError(
-          "token not allowed here: {} (expected {?})", .{single, arr}),
+          "token not allowed here: {f} (expected {f})", .{single, arr}),
       }
     }
 
@@ -132,8 +143,8 @@ pub fn Terminal(comptime Writer: type, comptime do_style: bool) type {
       pos     : model.Position,
       repr    : []const u8,
     ) void {
-      const self = @fieldParentPtr(@This(), "reporter", reporter);
-      self.style(.{.bold}, "{s}", .{pos});
+      const self: *@This() = @fieldParentPtr("reporter", reporter);
+      self.style(.{.bold}, "{f}", .{pos.startFormatter()});
       const entity: []const u8 = switch (id) {
         .UnknownFlag           => "unknown flag",
         .UnknownSyntax         => "unknown syntax",
@@ -168,14 +179,15 @@ pub fn Terminal(comptime Writer: type, comptime do_style: bool) type {
       got       : []const u8,
       defined_at: model.Position,
     ) void {
-      const self = @fieldParentPtr(@This(), "reporter", reporter);
-      self.style(.{.bold}, "{s}", .{pos});
+      const self: *@This() = @fieldParentPtr("reporter", reporter);
+      self.style(.{.bold}, "{f}", .{pos.startFormatter()});
       const kind: []const u8 = switch (id) {
         .WrongCallId => "wrong",
         .SkippingCallId => "skipping"
       };
       self.renderError("{s} id: expected '{s}', got '{s}'", .{kind, expected, got});
-      self.writer.print("  {s} command started here\n", .{defined_at})
+      self.writer.print(
+        "  {f} command started here\n", .{defined_at.startFormatter()})
         catch unreachable;
     }
 
@@ -186,8 +198,8 @@ pub fn Terminal(comptime Writer: type, comptime do_style: bool) type {
       pos     : model.Position,
       previous: model.Position,
     ) void {
-      const self = @fieldParentPtr(@This(), "reporter", reporter);
-      self.style(.{.bold}, "{s}", .{pos});
+      const self: *@This() = @fieldParentPtr("reporter", reporter);
+      self.style(.{.bold}, "{f}", .{pos.startFormatter()});
 
       const msg: []const u8 = switch (id) {
         .IsNotANamespaceCharacter   => " is not a namespace character",
@@ -252,7 +264,8 @@ pub fn Terminal(comptime Writer: type, comptime do_style: bool) type {
       };
 
       self.renderError("{s} '{s}'{s}", .{entity_name, repr, msg});
-      self.writer.print("  {s} {s} here\n", .{previous, prev_kind})
+      self.writer.print(
+        "  {f} {s} here\n", .{previous.startFormatter(), prev_kind})
         catch unreachable;
     }
 
@@ -262,11 +275,13 @@ pub fn Terminal(comptime Writer: type, comptime do_style: bool) type {
       pos       : model.Position,
       referenced: []model.Position,
     ) void {
-      const self = @fieldParentPtr(@This(), "reporter", reporter);
-      self.style(.{.bold}, "{s}", .{pos});
+      const self: *@This() = @fieldParentPtr("reporter", reporter);
+      self.style(.{.bold}, "{f}", .{pos.startFormatter()});
       self.renderError("{s}", .{@tagName(id)});
       for (referenced) |ref| {
-        self.writer.print("  {s} referenced here\n", .{ref}) catch unreachable;
+        self.writer.print(
+          "  {f} referenced here\n", .{ref.startFormatter()}
+        ) catch unreachable;
       }
     }
 
@@ -275,130 +290,136 @@ pub fn Terminal(comptime Writer: type, comptime do_style: bool) type {
       id      : ids.TypeError,
       types   : []const model.SpecType,
     ) void {
-      const self = @fieldParentPtr(@This(), "reporter", reporter);
-      self.style(.{.bold}, "{s}", .{types[0].pos});
+      const self: *@This() = @fieldParentPtr("reporter", reporter);
+      self.style(.{.bold}, "{f}", .{types[0].pos.startFormatter()});
       const main = types[0].t.formatter();
       switch (id) {
         .ExpectedExprOfTypeXGotY => {
-          self.renderError("incompatible type: {}", .{main});
+          self.renderError("incompatible type: {f}", .{main});
           const spec = types[1].t.formatter();
           self.writer.print(
-            "  {s} specified type: {}\n", .{types[1].pos, spec}
+            "  {f} specified type: {f}\n",
+            .{types[1].pos.startFormatter(), spec}
           ) catch unreachable;
         },
         .ScalarTypesMismatch => {
-          self.renderError("incompatible scalar type: {}", .{main});
+          self.renderError("incompatible scalar type: {f}", .{main});
           const spec = types[1].t.formatter();
           self.writer.print(
-            "  {s} specified scalar type: {}\n", .{types[1].pos, spec}
+            "  {f} specified scalar type: {f}\n",
+            .{types[1].pos.startFormatter(), spec}
           ) catch unreachable;
         },
         .IncompatibleTypes => {
-          self.renderError("type not compatible with previous types: {}", .{main});
+          self.renderError("type not compatible with previous types: {f}", .{main});
           for (types[1..]) |item| {
             const prev = item.t.formatter();
             self.writer.print(
-              "  {s} previous type: {}\n", .{item.pos, prev}
+              "  {f} previous type: {f}\n", .{item.pos.startFormatter(), prev}
             ) catch unreachable;
           }
         },
         .InvalidInnerConcatType => {
-          self.renderError("invalid inner type for Concat: '{}'", .{main});
+          self.renderError("invalid inner type for Concat: '{f}'", .{main});
         },
         .InvalidInnerOptionalType => {
-          self.renderError("invalid inner type for Optional: '{}'", .{main});
+          self.renderError("invalid inner type for Optional: '{f}'", .{main});
         },
         .InvalidInnerIntersectionType => {
-          self.renderError("invalid inner type for Intersection: '{}'", .{main});
+          self.renderError("invalid inner type for Intersection: '{f}'", .{main});
         },
         .InvalidInnerListType => {
-          self.renderError("invalid inner type for List: '{}'", .{main});
+          self.renderError("invalid inner type for List: '{f}'", .{main});
         },
         .InvalidInnerSequenceType => {
           self.renderError(
-            "invalid inner type for Sequence (must be record): '{}'", .{main});
+            "invalid inner type for Sequence (must be record): '{f}'", .{main});
         },
         .InvalidDirectSequenceType => {
-          self.renderError("invalid direct type for Sequence: '{}'", .{main});
+          self.renderError("invalid direct type for Sequence: '{f}'", .{main});
         },
         .AutoTypeNeedsPrimary => {
           self.renderError(
-            "Sequence auto type needs a primary parameter: '{}'", .{main});
+            "Sequence auto type needs a primary parameter: '{f}'", .{main});
         },
         .AutoTypeParamNotOptional => {
           self.renderError(
-            "Sequence auto type has non-primary field that is not optional: '{}'",
+            "Sequence auto type has non-primary field that is not optional: '{f}'",
             .{main});
           const field = types[1].t.formatter();
           self.writer.print(
-            "  {s} field defined here with type '{}'\n",
-            .{types[1].pos, field}) catch unreachable;
+            "  {f} field defined here with type '{f}'\n",
+            .{types[1].pos.startFormatter(), field}) catch unreachable;
         },
         .InvalidMappingKeyType => {
-          self.renderError("cannot use type as mapping key: '{}'", .{main});
+          self.renderError("cannot use type as mapping key: '{f}'", .{main});
         },
         .NonEmptyAfterNonSequentiable => {
           self.renderError("expression would force a sequence", .{});
           const prev = types[1].t.formatter();
           self.writer.print(
-            "  {s} previous expression of type '{}' cannot be part of a sequence\n",
-            .{types[1].pos, prev}) catch unreachable;
+            "  {f} previous expression of type '{f}' cannot be part of a sequence\n",
+            .{types[1].pos.startFormatter(), prev}) catch unreachable;
         },
         .InvalidDefinitionValue => {
           self.renderError(
-            "given value for symbol definition is a {} " ++
+            "given value for symbol definition is a {f} " ++
             "which cannot be made into a symbol", .{main});
         },
         .InvalidIfCondType => {
           self.renderError(
-            "invalid type for `if` condition (expected optional or bool): '{}'",
+            "invalid type for `if` condition " ++
+            "(expected optional or bool): '{f}'",
             .{main});
         },
         .VarmapRequiresMap => {
-          self.renderError("`varmap` requires mapping type, got '{}'", .{main});
+          self.renderError(
+            "`varmap` requires mapping type, got '{f}'", .{main});
         },
         .VarargsRequiresList => {
-          self.renderError("`varargs` requires list type, got '{}'", .{main});
+          self.renderError("`varargs` requires list type, got '{f}'", .{main});
         },
         .BorrowRequiresRef => {
           self.renderError(
             "`borrow` requires ref type " ++
-            "(callable, concat, list, map, record), got '{}'", .{main});
+            "(callable, concat, list, map, record), got '{f}'", .{main});
         },
         .TypesNotDisjoint => {
-          self.renderError("type is not disjoint: {}", .{main});
+          self.renderError("type is not disjoint: {f}", .{main});
           const prev = types[1].t.formatter();
           self.writer.print(
-            "  {s} with type: {}\n", .{types[1].pos, prev}
+            "  {f} with type: {f}\n", .{types[1].pos.startFormatter(), prev}
           ) catch unreachable;
         },
         .MultipleScalarTypes => {
-          self.renderError("multiple scalar types: {}", .{main});
+          self.renderError("multiple scalar types: {f}", .{main});
           const prev = types[1].t.formatter();
           self.writer.print(
-            "  {s} previous scalar type: {}\n", .{types[1].pos, prev}
+            "  {f} previous scalar type: {f}\n",
+            .{types[1].pos.startFormatter(), prev}
           ) catch unreachable;
         },
         .InvalidMatchType => {
-          self.renderError("invalid match type: {}", .{main});
+          self.renderError("invalid match type: {f}", .{main});
         },
         .NotCallable => {
-          self.renderError("expression of type {} is not callable", .{main});
+          self.renderError("expression of type {f} is not callable", .{main});
         },
         .UnfitForMapFunction => {
           self.renderError(
             "expected callable that takes either a single argument or " ++
-            "two arguments with the second one taking a Positive value. Got {}",
+            "two arguments with the second one taking a Positive value. " ++
+            "Got {f}",
             .{main});
         },
         .NotIterable => {
-          self.renderError("expression of type {} is not iterable", .{main});
+          self.renderError("expression of type {f} is not iterable", .{main});
         },
         .InvalidEmbed => {
-          self.renderError("invalid embedded type (must be Record): {}", .{main});
+          self.renderError("invalid embedded type (must be Record): {f}", .{main});
         },
         .HasNoParameters => {
-          self.renderError("this type has no parameters: {}", .{main});
+          self.renderError("this type has no parameters: {f}", .{main});
         },
       }
     }
@@ -410,28 +431,28 @@ pub fn Terminal(comptime Writer: type, comptime do_style: bool) type {
       t       : model.Type,
       repr    : []const u8,
     ) void {
-      const self = @fieldParentPtr(@This(), "reporter", reporter);
-      self.style(.{.bold}, "{s}", .{pos});
+      const self: *@This() = @fieldParentPtr("reporter", reporter);
+      self.style(.{.bold}, "{f}", .{pos.startFormatter()});
       const t_fmt = t.formatter();
       switch (id) {
         .NotInEnum => self.renderError(
-          "given value '{s}' is not part of enum {}", .{repr, t_fmt}),
+          "given value '{s}' is not part of enum {f}", .{repr, t_fmt}),
         .OutOfRange => self.renderError(
-          "given value '{s}' is outside of the range of type {}", .{repr, t_fmt}),
+          "given value '{s}' is outside of the range of type {f}", .{repr, t_fmt}),
         .TooManyDecimalsForType => self.renderError(
-          "given value '{s}' has too many decimal digits for type {}",
+          "given value '{s}' has too many decimal digits for type {f}",
           .{repr, t_fmt}),
         .CharacterNotAllowed => self.renderError(
-          "character '{s}' is not allowed in type {}", .{repr, t_fmt}),
+          "character '{s}' is not allowed in type {f}", .{repr, t_fmt}),
         .InvalidFloat => self.renderError(
-          "cannot parse as {}: '{s}'", .{t_fmt, repr}),
+          "cannot parse as {f}: '{s}'", .{t_fmt, repr}),
         .MissingSuffix => self.renderError(
-          "'{s}' has no suffix, must have one of the suffixes of type {}",
+          "'{s}' has no suffix, must have one of the suffixes of type {f}",
           .{repr, t_fmt}),
         .UnknownSuffix => self.renderError(
-          "'{s}' is not a known suffix for type {}", .{repr, t_fmt}),
+          "'{s}' is not a known suffix for type {f}", .{repr, t_fmt}),
         .DecimalsNotRepresentable => self.renderError(
-          "decimal digits given in '{s}' are not representable by type {}",
+          "decimal digits given in '{s}' are not representable by type {f}",
           .{repr, t_fmt}),
       }
     }
@@ -442,8 +463,8 @@ pub fn Terminal(comptime Writer: type, comptime do_style: bool) type {
       pos     : model.Position,
       msg     : []const u8,
     ) void {
-      const self = @fieldParentPtr(@This(), "reporter", reporter);
-      self.style(.{.bold}, "{s}", .{pos});
+      const self: *@This() = @fieldParentPtr("reporter", reporter);
+      self.style(.{.bold}, "{f}", .{pos.startFormatter()});
       switch (id) {
         .IndexError => self.renderError("index error: {s}", .{msg}),
         .NodePrematurelyProcessed =>
@@ -459,8 +480,8 @@ pub fn Terminal(comptime Writer: type, comptime do_style: bool) type {
       pos     : model.Position,
       msg     : []const u8,
     ) void {
-      const self = @fieldParentPtr(@This(), "reporter", reporter);
-      self.style(.{.bold}, "{s}", .{pos});
+      const self: *@This() = @fieldParentPtr("reporter", reporter);
+      self.style(.{.bold}, "{f}", .{pos.startFormatter()});
       self.renderError("(system.ny) {s}: {s}", .{@tagName(id), msg});
     }
 
@@ -471,8 +492,8 @@ pub fn Terminal(comptime Writer: type, comptime do_style: bool) type {
       path    : []const u8,
       message : []const u8,
     ) void {
-      const self = @fieldParentPtr(@This(), "reporter", reporter);
-      self.style(.{.bold}, "{s}", .{pos});
+      const self: *@This() = @fieldParentPtr("reporter", reporter);
+      self.style(.{.bold}, "{f}", .{pos.startFormatter()});
       switch (id) {
         .FailedToOpen =>
           self.renderError("cannot open {s}: {s}", .{path, message}),

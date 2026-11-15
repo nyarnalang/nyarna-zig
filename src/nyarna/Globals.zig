@@ -53,11 +53,11 @@ types: Types,
 storage: std.heap.ArenaAllocator,
 /// list of known keyword implementations. They bear no name since they are
 /// referenced via their index.
-keyword_registry: std.ArrayListUnmanaged(lib.Provider.KeywordWrapper) = .{},
+keyword_registry: std.ArrayList(lib.Provider.KeywordWrapper) = .empty,
 /// list of known builtin implementations, analoguous to keyword_registry.
-builtin_registry: std.ArrayListUnmanaged(lib.Provider.BuiltinWrapper) = .{},
+builtin_registry: std.ArrayList(lib.Provider.BuiltinWrapper) = .empty,
 /// list of symbols available in any namespace (\declare, \var, \import etc).
-generic_symbols: std.ArrayListUnmanaged(*model.Symbol) = .{},
+generic_symbols: std.ArrayList(*model.Symbol) = .empty,
 /// stack for evaluation. Size can be set during initialization.
 stack: []model.StackItem,
 /// current top of the stack, where new stack allocations happen.
@@ -68,10 +68,10 @@ stack_ptr: [*]model.StackItem,
 ///  until all modules have been loaded.
 ///
 /// This list is also used to catch cyclic references.
-known_modules: std.StringArrayHashMapUnmanaged(ModuleEntry) = .{},
+known_modules: std.array_hash_map.String(ModuleEntry) = .empty,
 /// known providers of keyword and builtin functions.
 /// keys are absolute locators.
-known_providers: std.StringArrayHashMapUnmanaged(*const lib.Provider) = .{},
+known_providers: std.array_hash_map.String(*const lib.Provider) = .empty,
 /// known resolvers.
 resolvers: []ResolverEntry,
 /// set to true if any module encountered errors
@@ -109,7 +109,7 @@ pub fn create(
   errdefer backing_allocator.free(ret.stack);
 
   var logger = errors.Handler{.reporter = reporter};
-  var init_ctx = nyarna.Context{.data = ret, .logger = &logger};
+  const init_ctx = nyarna.Context{.data = ret, .logger = &logger};
   ret.types = try Types.init(init_ctx);
   errdefer ret.types.deinit();
   if (logger.count > 0) {

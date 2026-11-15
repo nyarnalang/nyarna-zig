@@ -18,22 +18,25 @@ pub const TestDataResolver = struct {
   source: tml.File,
 
   pub fn init(path: []const u8) !TestDataResolver {
-    const abs_path =
-      try std.fs.cwd().realpathAlloc(std.testing.allocator, "lib");
+    const abs_path = try std.Io.Dir.cwd().realPathFileAlloc(
+      std.testing.io, "lib", std.testing.allocator);
     errdefer std.testing.allocator.free(abs_path);
     return TestDataResolver{
       .api = .{
         .resolveFn   = resolve,
         .getSourceFn = getSource,
       },
-      .stdlib = Loader.FileSystemResolver.init(abs_path),
-      .source = try tml.File.loadPath(std.testing.allocator, path),
+      .stdlib = Loader.FileSystemResolver.init(std.testing.io, abs_path),
+      .source = try tml.File.loadPath(
+        std.testing.allocator, std.testing.io, path),
     };
   }
 
   pub fn deinit(self: *TestDataResolver) void {
     self.source.deinit();
-    std.testing.allocator.free(self.stdlib.base);
+    // the path has been allocated with a sentinel.
+    std.testing.allocator.free(
+      self.stdlib.base.ptr[0..self.stdlib.base.len + 1]);
   }
 
   fn resolve(
@@ -43,7 +46,7 @@ pub const TestDataResolver = struct {
     _        : model.Position,
     _        : *errors.Handler,
   ) std.mem.Allocator.Error!?*Loader.Resolver.Cursor {
-    const self = @fieldParentPtr(TestDataResolver, "api", res);
+    const self: *TestDataResolver = @fieldParentPtr("api", res);
     const name = if (std.mem.eql(u8, "input", path)) "" else path;
     const item = self.source.params.input.getPtr(name) orelse return null;
     const ret = try allocator.create(Cursor);
@@ -61,8 +64,8 @@ pub const TestDataResolver = struct {
     descriptor: *const model.Source.Descriptor,
     _: *errors.Handler,
   ) std.mem.Allocator.Error!?*model.Source {
-    const self = @fieldParentPtr(TestDataResolver, "api", res);
-    const test_cursor = @fieldParentPtr(Cursor, "api", cursor);
+    const self: *TestDataResolver = @fieldParentPtr("api", res);
+    const test_cursor: *Cursor = @fieldParentPtr("api", cursor);
     try test_cursor.value.content.appendSlice(
       self.source.allocator(), "\x04\x04\x04\x04");
     const ret = try allocator.create(model.Source);
@@ -81,16 +84,17 @@ pub const TestDataResolver = struct {
   pub fn valueLines(
     self: *TestDataResolver,
     name: []const u8,
-  ) std.mem.SplitIterator(u8) {
-    return std.mem.split(u8, self.source.items.get(name).?.content.items, "\n");
+  ) std.mem.SplitIterator(u8, .scalar) {
+    return std.mem.splitScalar(
+      u8, self.source.items.get(name).?.content.items, '\n');
   }
 
   pub fn paramLines(
              self : *TestDataResolver,
     comptime param: []const u8,
              name : []const u8,
-  ) std.mem.SplitIterator(u8) {
-    return std.mem.split(
-      u8, @field(self.source.params, param).get(name).?.content.items, "\n");
+  ) std.mem.SplitIterator(u8, .scalar) {
+    return std.mem.splitScalar(
+      u8, @field(self.source.params, param).get(name).?.content.items, '\n');
   }
 };

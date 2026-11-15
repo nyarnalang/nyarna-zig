@@ -35,7 +35,7 @@ pub fn newNode(self: Self, pos: Position, content: Node.Data) !*Node {
 fn copyVarDefs(self: Self, defs: []Value.Ast.VarDef) ![]Value.Ast.VarDef {
   const ret = try self.allocator.alloc(Value.Ast.VarDef, defs.len);
   // no need to copy name, it's allocated in global storage.
-  for (defs) |def, i| ret[i] = def;
+  for (defs, 0..) |def, i| ret[i] = def;
   return ret;
 }
 
@@ -46,7 +46,7 @@ fn copyArr(
            arr : []*T,
 ) ![]*T {
   const items = try self.allocator.alloc(*T, arr.len);
-  for (arr) |item, index| {
+  for (arr, 0..) |item, index| {
     items[index] = &@field((try self.copy(item.node())).data, fld);
   }
   return items;
@@ -57,7 +57,7 @@ fn copyPath(
   path: []const Node.Assign.PathItem,
 ) ![]Node.Assign.PathItem {
   const items = try self.allocator.alloc(Node.Assign.PathItem, path.len);
-  for (path) |item, i| switch (item) {
+  for (path, 0..) |item, i| switch (item) {
     .field     => |index| items[i] = .{.field = index},
     .subscript => |node|  items[i] = .{.subscript = try self.copy(node)},
   };
@@ -69,7 +69,7 @@ fn copySymDefs(
   defs: []const Symbol.Definition,
 ) ![]Symbol.Definition {
   const ret = try self.allocator.alloc(Symbol.Definition, defs.len);
-  for (defs) |def, inner_index| {
+  for (defs, 0..) |def, inner_index| {
     ret[inner_index] = .{
       .ns    = def.ns,
       .sym   = def.sym,
@@ -119,7 +119,7 @@ pub fn copy(self: Self, node: *Node) std.mem.Allocator.Error!*Node {
     ).node(),
     .concat => |*con| {
       const items = try self.allocator.alloc(*Node, con.items.len);
-      for (con.items) |item, index| items[index] = try self.copy(item);
+      for (con.items, 0..) |item, index| items[index] = try self.copy(item);
       return (try self.concat(node.pos, items)).node();
     },
     .definition => |*def| (
@@ -136,7 +136,7 @@ pub fn copy(self: Self, node: *Node) std.mem.Allocator.Error!*Node {
           .ast => |*ast| {
             const syms = try self.allocator.alloc(
               model.Symbol.Definition, ast.inner_syms.len);
-            for (ast.inner_syms) |sym, index| syms[index] = sym;
+            for (ast.inner_syms, 0..) |sym, index| syms[index] = sym;
             const cap = try self.copyVarDefs(ast.capture);
             const copied_ast = try self.ctx.values.ast(
               try self.copy(ast.root), ast.container, syms, cap);
@@ -167,7 +167,7 @@ pub fn copy(self: Self, node: *Node) std.mem.Allocator.Error!*Node {
     .highlighter => |*hl| {
       const renderers = try self.allocator.alloc(
         Node.Highlighter.Renderer, hl.renderers.len);
-      for (hl.renderers) |renderer, index| {
+      for (hl.renderers, 0..) |renderer, index| {
         renderers[index] = .{
           .name    = try self.literal(renderer.name.node().pos,
             renderer.name.kind, renderer.name.content),
@@ -220,7 +220,7 @@ pub fn copy(self: Self, node: *Node) std.mem.Allocator.Error!*Node {
     ).node(),
     .match => |*mat| {
       const cases = try self.allocator.alloc(Node.Match.Case, mat.cases.len);
-      for (mat.cases) |case, index| {
+      for (mat.cases, 0..) |case, index| {
         const inner_syms = try self.copySymDefs(case.content.inner_syms);
         const cpt = try self.copyVarDefs(case.content.capture);
         cases[index] = .{
@@ -258,7 +258,7 @@ pub fn copy(self: Self, node: *Node) std.mem.Allocator.Error!*Node {
     ).node(),
     .resolved_call => |*rc| {
       const args = try self.allocator.alloc(*Node, rc.args.len);
-      for (rc.args) |arg, index|  args[index] = try self.copy(arg);
+      for (rc.args, 0..) |arg, index|  args[index] = try self.copy(arg);
       return (
         try self.rcall(node.pos, .{
           .target = try self.copy(rc.target),
@@ -277,7 +277,7 @@ pub fn copy(self: Self, node: *Node) std.mem.Allocator.Error!*Node {
     ).node(),
     .seq => |*s| {
       var items = try self.allocator.alloc(Node.Seq.Item, s.items.len);
-      for (s.items) |item, index| items[index] = .{
+      for (s.items, 0..) |item, index| items[index] = .{
         .content  = try self.copy(item.content),
         .lf_after = item.lf_after,
       };
@@ -290,7 +290,7 @@ pub fn copy(self: Self, node: *Node) std.mem.Allocator.Error!*Node {
     .unresolved_call => |*uc| {
       const proto_args = try self.allocator.alloc(
         Node.UnresolvedCall.ProtoArg, uc.proto_args.len);
-      for (uc.proto_args) |arg, index| {
+      for (uc.proto_args, 0..) |arg, index| {
         proto_args[index] = .{
           .kind = switch (arg.kind) {
             .named     => |name| .{.named  = try self.allocator.dupe(u8, name)},
@@ -351,7 +351,7 @@ pub fn copy(self: Self, node: *Node) std.mem.Allocator.Error!*Node {
     ).node(),
     .gen_enum => |*tge| {
       var values = try self.allocator.alloc(Node.Varargs.Item, tge.values.len);
-      for (tge.values) |val, index| {
+      for (tge.values, 0..) |val, index| {
         values[index] = .{
           .direct = val.direct,
           .node   = try self.copy(val.node),
@@ -361,7 +361,7 @@ pub fn copy(self: Self, node: *Node) std.mem.Allocator.Error!*Node {
     },
     .gen_intersection => |*tgi| {
       var types = try self.allocator.alloc(Node.Varargs.Item, tgi.types.len);
-      for (tgi.types) |t, i| {
+      for (tgi.types, 0..) |t, i| {
         types[i] = .{
           .direct = t.direct,
           .node   = try self.copy(t.node),
@@ -386,7 +386,7 @@ pub fn copy(self: Self, node: *Node) std.mem.Allocator.Error!*Node {
     ).node(),
     .gen_sequence => |*tgs| {
       var inner = try self.allocator.alloc(Node.Varargs.Item, tgs.inner.len);
-      for (tgs.inner) |item, index| {
+      for (tgs.inner, 0..) |item, index| {
         inner[index] = .{
           .direct = item.direct,
           .node   = try self.copy(item.node),
@@ -401,7 +401,7 @@ pub fn copy(self: Self, node: *Node) std.mem.Allocator.Error!*Node {
     .gen_prototype => unreachable, // occurs only in system.ny
     .gen_record => |*tgr| {
       var embed = try self.allocator.alloc(Node.Varargs.Item, tgr.embed.len);
-      for (tgr.embed) |item, index| {
+      for (tgr.embed, 0..) |item, index| {
         embed[index] = .{
           .direct = item.direct,
           .node   = try self.copy(item.node),
@@ -417,7 +417,7 @@ pub fn copy(self: Self, node: *Node) std.mem.Allocator.Error!*Node {
     .gen_textual => |*tgt| {
       var categories = try self.allocator.alloc(
         Node.Varargs.Item, tgt.categories.len);
-      for (tgt.categories) |cat, index| {
+      for (tgt.categories, 0..) |cat, index| {
         categories[index] = .{
           .direct = cat.direct,
           .node   = try self.copy(cat.node),
@@ -459,7 +459,7 @@ pub fn builtinGen(
   self   : Self,
   pos    : Position,
   params : *Node,
-  returns: std.meta.fieldInfo(Node.BuiltinGen, .returns).field_type,
+  returns: @FieldType(Node.BuiltinGen, "returns"),
 ) !*Node.BuiltinGen {
   return &(try self.newNode(pos, .{.builtingen = .{
     .params  = .{.unresolved = params},
@@ -721,7 +721,7 @@ pub fn rsymref(
 pub fn rootDef(
   self  : Self,
   pos   : Position,
-  kind  : std.meta.fieldInfo(Node.RootDef, .kind).field_type,
+  kind  : @FieldType(Node.RootDef, "kind"),
   root  : ?*Node,
   params: ?*Node,
 ) !*Node.RootDef {
@@ -959,7 +959,7 @@ pub fn toVarargsItemList(
     .varargs => |*va| {
       const arr =
         try self.allocator.alloc(model.Node.Varargs.Item, va.content.items.len);
-      for (va.content.items) |item, index| {
+      for (va.content.items, 0..) |item, index| {
         arr[index] = .{
           .direct = item.direct,
           .node   = item.node.data.expression.data.value.data.ast.root,

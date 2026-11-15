@@ -37,7 +37,7 @@ fn resolve(
   logger   : *errors.Handler,
 ) std.mem.Allocator.Error!?*Resolver.Cursor {
   _ = allocator; _ = pos; _ = logger;
-  const self = @fieldParentPtr(@This(), "api", res);
+  const self: *@This() = @fieldParentPtr("api", res);
   return if (path.len == 0) &self.cursor else null;
 }
 
@@ -48,7 +48,7 @@ fn getSource(
   descriptor: *const model.Source.Descriptor,
   _         : *errors.Handler,
 ) std.mem.Allocator.Error!?*model.Source {
-  const self = @fieldParentPtr(@This(), "cursor", cursor);
+  const self: *@This() = @fieldParentPtr("cursor", cursor);
   const ret = try allocator.create(model.Source);
   ret.* = .{
     .meta        = descriptor,

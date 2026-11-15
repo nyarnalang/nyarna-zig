@@ -23,7 +23,7 @@ pub const Types = lib.Provider.Wrapper(struct {
   ) nyarna.Error!*model.Node {
     const expr = try intpr.interpret(node.root);
     var eval = intpr.ctx.evaluator();
-    var val = try eval.evaluate(expr);
+    const val = try eval.evaluate(expr);
     switch (val.data) {
       .@"type", .funcref => {},
       .poison => return intpr.node_gen.poison(pos),
@@ -168,10 +168,10 @@ pub const Types = lib.Provider.Wrapper(struct {
     try collector.allocate(intpr.ctx.global());
     if (public)  |pnode| try collector.append(pnode, intpr, true, gen);
     if (private) |pnode| try collector.append(pnode, intpr, false, gen);
-    var defs = collector.finish();
+    const defs = collector.finish();
 
     var doc_var: ?model.Value.Ast.VarDef = null;
-    var backend_defs: []*model.Node.Definition = if (backends) |bval| blk: {
+    const backend_defs: []*model.Node.Definition = if (backends) |bval| blk: {
       lib.reportCaptures(intpr, bval, 1);
       if (bval.capture.len > 0) doc_var = bval.capture[0];
 
@@ -205,10 +205,10 @@ pub const Types = lib.Provider.Wrapper(struct {
     try collector.allocate(intpr.ctx.global());
     if (public)  |pnode| try collector.append(pnode, intpr, true, gen);
     if (private) |pnode| try collector.append(pnode, intpr, false, gen);
-    var defs = collector.finish();
+    const defs = collector.finish();
 
     var doc_var: ?model.Value.Ast.VarDef = null;
-    var backend_defs: []*model.Node.Definition = if (backends) |bval| blk: {
+    const backend_defs: []*model.Node.Definition = if (backends) |bval| blk: {
       lib.reportCaptures(intpr, bval, 1);
       if (bval.capture.len > 0) doc_var = bval.capture[0];
 
@@ -335,7 +335,7 @@ pub const Prototypes = lib.Provider.Wrapper(struct {
     suffixes: *model.Node,
   ) nyarna.Error!*model.Node {
     const expr = try intpr.interpret(suffixes);
-    const value = try intpr.ctx.evaluator().evaluate(expr);
+    const value = try intpr.ctx.evaluate(expr);
     switch (value.data) {
       .hashmap => |*m| {
         return (

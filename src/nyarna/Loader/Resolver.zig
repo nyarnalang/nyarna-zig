@@ -11,7 +11,7 @@ pub const Cursor = struct {
   name: []const u8,
 };
 
-resolveFn: fn(
+resolveFn: *const fn(
   self     : *@This(),
   allocator: std.mem.Allocator,
   path     : []const u8,
@@ -19,7 +19,7 @@ resolveFn: fn(
   logger   : *errors.Handler,
 ) std.mem.Allocator.Error!?*Cursor,
 
-getSourceFn: fn(
+getSourceFn: *const fn(
   self      : *@This(),
   allocator : std.mem.Allocator,
   cursor    : *Cursor,
