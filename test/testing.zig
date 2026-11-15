@@ -1,22 +1,52 @@
 const nyarna = @import("nyarna");
 const std    = @import("std");
 
-const EncodedCharacter = @import("../src/nyarna/unicode.zig").EncodedCharacter;
-const Globals          = @import("../src/nyarna/Globals.zig");
-
-const errors = nyarna.errors;
-const model  = nyarna.model;
+const errors           = nyarna.errors;
+const EncodedCharacter = nyarna.unicode.EncodedCharacter;
+const Globals          = nyarna.Globals;
+const model            = nyarna.model;
 
 pub const TestDataResolver = @import("resolve.zig").TestDataResolver;
+
+/// escapes the given string like Zig 0.10's std.zig.fmtEscapes did: Every
+/// byte outside of printable ASCII is hex-escaped.
+fn formatEscapes(
+  bytes : []const u8,
+  writer: *std.Io.Writer,
+) std.Io.Writer.Error!void {
+  for (bytes) |byte| switch (byte) {
+    '\n' => try writer.writeAll("\\n"),
+    '\r' => try writer.writeAll("\\r"),
+    '\t' => try writer.writeAll("\\t"),
+    '\\' => try writer.writeAll("\\\\"),
+    '"'  => try writer.writeAll("\\\""),
+    '\'' => try writer.writeAll("\\'"),
+    ' ', '!', '#'...'&', '('...'[', ']'...'~' => try writer.writeByte(byte),
+    else => try writer.print("\\x{x:0>2}", .{byte}),
+  };
+}
+
+fn fmtEscapes(bytes: []const u8) std.fmt.Alt([]const u8, formatEscapes) {
+  return .{.data = bytes};
+}
 
 const Error = error {
   no_match,
 };
 
-const FileTerm = errors.Terminal(std.fs.File.Writer, true);
+const FileTerm = errors.Terminal(*std.Io.Writer, true);
+
+/// unbuffered writer to stderr. stdout is not used since the test runner uses
+/// it to communicate with the build system.
+var stderr_writer: std.Io.File.Writer = undefined;
+
+fn stderrTerm() FileTerm {
+  stderr_writer = std.Io.File.stderr().writerStreaming(std.testing.io, &.{});
+  return FileTerm.init(&stderr_writer.interface);
+}
 
 pub fn lexTest(data: *TestDataResolver) !void {
-  var r = FileTerm.init(std.io.getStdOut().writer());
+  var r = stderrTerm();
   var proc = try nyarna.Processor.init(
     std.testing.allocator, nyarna.default_stack_size, &r.reporter,
     &data.stdlib.api);
@@ -31,14 +61,13 @@ pub fn lexTest(data: *TestDataResolver) !void {
   var t = try lexer.next();
   while(true) : (t = try lexer.next()) {
     const actual =
-      try if (@enumToInt(t) >= @enumToInt(model.Token.skipping_call_id))
-        std.fmt.allocPrint(
-          std.testing.allocator, "{}:{}[{}] skipping_call_id({})", .{
+      try if (@intFromEnum(t) >= @intFromEnum(model.Token.skipping_call_id))
+        std.testing.allocator.print("{}:{}[{}] skipping_call_id({})", .{
             startpos.at_line, startpos.before_column, startpos.byte_offset,
-            @enumToInt(t) - @enumToInt(model.Token.skipping_call_id) + 1
+            @intFromEnum(t) - @intFromEnum(model.Token.skipping_call_id) + 1
           })
       else
-        std.fmt.allocPrint(std.testing.allocator, "{}:{}[{}] {s}", .{
+        std.testing.allocator.print("{}:{}[{}] {s}", .{
             startpos.at_line, startpos.before_column, startpos.byte_offset,
             @tagName(t)
           });
@@ -66,10 +95,8 @@ const AdditionalsWithGlobal = struct {
   data : *Globals,
 
   fn format(
-             self   : AdditionalsWithGlobal,
-    comptime fmt    : []const u8,
-             options: std.fmt.FormatOptions,
-             writer : anytype,
+    self  : AdditionalsWithGlobal,
+    writer: *std.Io.Writer,
   ) !void {
     try writer.writeByte('{');
     var first = true;
@@ -82,10 +109,12 @@ const AdditionalsWithGlobal = struct {
     try writer.writeAll("}");
     if (self.value.header) |h|
       try (HeaderWithGlobal{.header = h, .data = self.data,}).format(
-        fmt, options, writer);
+        writer);
   }
 
-  fn formatter(self: AdditionalsWithGlobal) std.fmt.Formatter(format) {
+  fn formatter(
+    self: AdditionalsWithGlobal,
+  ) std.fmt.Alt(AdditionalsWithGlobal, format) {
     return .{.data = self};
   }
 };
@@ -95,10 +124,8 @@ const HeaderWithGlobal = struct {
   data  : *Globals,
 
   fn format(
-             self  : HeaderWithGlobal,
-    comptime _     : []const u8,
-             _     : std.fmt.FormatOptions,
-             writer: anytype,
+    self  : HeaderWithGlobal,
+    writer: *std.Io.Writer,
   ) !void {
     if (self.header.config) |config| {
       try writer.writeAll(":<");
@@ -145,7 +172,7 @@ const HeaderWithGlobal = struct {
     } else if (self.header.config == null) try writer.writeAll("null");
   }
 
-  fn formatter(self: HeaderWithGlobal) std.fmt.Formatter(format) {
+  fn formatter(self: HeaderWithGlobal) std.fmt.Alt(HeaderWithGlobal, format) {
     return .{.data = self};
   }
 };
@@ -178,7 +205,7 @@ const AstEmitter = struct {
       comptime fmt : []const u8,
                args: anytype,
     ) !void {
-      const ret = try std.fmt.bufPrint(self.buffer[self.i..], fmt, args);
+      const ret = try std.mem.print(self.buffer[self.i..], fmt, args);
       self.i += ret.len;
     }
 
@@ -225,7 +252,7 @@ const AstEmitter = struct {
              t   : model.Type,
   ) !Popper {
     const t_fmt = t.formatter();
-    try self.emitLine("+{s} {}", .{name, t_fmt});
+    try self.emitLine("+{s} {f}", .{name, t_fmt});
     self.depth += 1;
     return Popper{.e = self, .name = name};
   }
@@ -383,8 +410,8 @@ const AstEmitter = struct {
           self.data.known_modules.keys()[i.module_index]});
       },
       .literal => |a| {
-        try self.emitLine("=LIT {s} \"{}\"",
-          .{@tagName(a.kind), std.zig.fmtEscapes(a.content)});
+        try self.emitLine("=LIT {s} \"{f}\"",
+          .{@tagName(a.kind), fmtEscapes(a.content)});
       },
       .location => |loc| {
         const l = try self.push("LOC");
@@ -399,7 +426,7 @@ const AstEmitter = struct {
             const fmt = (
               AdditionalsWithGlobal{.value = a, .data = self.data}
             ).formatter();
-            try self.emitLine("=FLAGS {}", .{fmt});
+            try self.emitLine("=FLAGS {f}", .{fmt});
           }
         }
         if (loc.default) |d| {
@@ -422,12 +449,12 @@ const AstEmitter = struct {
         }
         try lvl.pop();
       },
-      .match => |_| {
+      .match => {
         const m = try self.push("MATCH");
         // TODO
         try m.pop();
       },
-      .matcher => |_| {
+      .matcher => {
         const m = try self.push("MATCHER");
         // TODO
         try m.pop();
@@ -471,7 +498,7 @@ const AstEmitter = struct {
       .resolved_call => |rc| {
         const rcall = try self.push("RCALL");
         try self.process(rc.target);
-        for (rc.args) |a, i| {
+        for (rc.args, 0..) |a, i| {
           try self.emitLine(">ARG {s}", .{rc.sig.parameters[i].name});
           try self.process(a);
         }
@@ -711,7 +738,7 @@ const AstEmitter = struct {
       .branches => |b| {
         const branches = try self.push("BRANCHES");
         try self.processExpr(b.condition);
-        for (b.branches) |branch, i| {
+        for (b.branches, 0..) |branch, i| {
           try self.emitLine(">BRANCH {}", .{i});
           try self.processExpr(branch);
         }
@@ -721,7 +748,7 @@ const AstEmitter = struct {
         const c = try self.push("CALL");
         try self.processExpr(call.target);
         const sig = call.target.expected_type.structural.callable.sig;
-        for (call.exprs) |expr, i| {
+        for (call.exprs, 0..) |expr, i| {
           try self.emitLine(">ARG {s}", .{sig.parameters[i].name});
           try self.processExpr(expr);
         }
@@ -762,7 +789,7 @@ const AstEmitter = struct {
             const fmt = (
               AdditionalsWithGlobal{.value = a, .data = self.data}
             ).formatter();
-            try self.emitLine("=FLAGS {}", .{fmt});
+            try self.emitLine("=FLAGS {f}", .{fmt});
           }
         }
         if (loc.default) |d| {
@@ -884,7 +911,7 @@ const AstEmitter = struct {
       .structural => |struc| switch (struc.*) {
         .callable => {
           const t_fmt = t.formatter();
-          try self.emitLine("=TYPE {s}", .{t_fmt});
+          try self.emitLine("=TYPE {f}", .{t_fmt});
         },
         .concat => |*con| {
           const c = try self.pushWithKey("TYPE", "Concat", null);
@@ -926,11 +953,11 @@ const AstEmitter = struct {
         else {
           const tc = try self.pushWithKey("TYPE", @tagName(i.data), null);
           switch (i.data) {
-            .textual => |_| unreachable,
-            .int     => |_| unreachable,
-            .float   => |_| unreachable,
+            .textual => unreachable,
+            .int     => unreachable,
+            .float   => unreachable,
             .@"enum" => |en| {
-              for (en.values.entries.items(.key)) |*key| {
+              for (en.values.entries.items(.key)) |key| {
                 try self.emitLine("=ITEM {s}", .{key});
               }
             },
@@ -960,7 +987,7 @@ const AstEmitter = struct {
       .block_header => |*h| {
         const hf =
           (HeaderWithGlobal{.header = h, .data = self.data}).formatter();
-        try self.emitLine("=HEADER {}", .{hf});
+        try self.emitLine("=HEADER {f}", .{hf});
       },
       .concat => |*con| {
         const lvl = try self.pushWithType("CONCAT", con.t.typedef());
@@ -977,19 +1004,19 @@ const AstEmitter = struct {
       },
       .@"enum" => |ev| {
         const t_fmt = ev.t.typedef().formatter();
-        try self.emitLine("=ENUM {} \"{s}\"",
+        try self.emitLine("=ENUM {f} \"{s}\"",
           .{t_fmt, ev.t.values.entries.items(.key)[ev.index]});
       },
       .float => |fl| {
         const t_fmt = fl.t.typedef().formatter();
-        try self.emitLine("=FLOAT {} {}", .{t_fmt, fl.formatter()});
+        try self.emitLine("=FLOAT {f} {f}", .{t_fmt, fl.formatter()});
       },
       .funcref => |fr| try self.emitLine("=FUNCREF {s}.{s}",
         .{fr.func.defined_at.source.locator.repr, if (fr.func.name) |sym|
           sym.name else "<anonymous>"}),
       .int => |int| {
         const t_fmt = int.t.typedef().formatter();
-        try self.emitLine("=INT {} {}", .{t_fmt, int.formatter()});
+        try self.emitLine("=INT {f} {f}", .{t_fmt, int.formatter()});
       },
       .list => |lst| {
         const l = try self.push("LIST");
@@ -1016,7 +1043,7 @@ const AstEmitter = struct {
         }
         try wrap.pop();
       },
-      .hashmap => |_| {
+      .hashmap => {
         unreachable;
       },
       .output => |out| {
@@ -1028,7 +1055,7 @@ const AstEmitter = struct {
       .prototype => |pv| try self.emitLine("=PROTO {s}", .{@tagName(pv.pt)}),
       .record => |rec| {
         const lvl = try self.pushWithType("RECORD", rec.t.typedef());
-        for (rec.fields) |val, index| {
+        for (rec.fields, 0..) |val, index| {
           try self.emitLine(
             ">FIELD {s}", .{rec.t.constructor.sig.parameters[index].name});
           try self.processValue(val);
@@ -1062,7 +1089,7 @@ const AstEmitter = struct {
       },
       .seq => |seq| {
         const lvl = try self.push("SEQUENCE");
-        for (seq.content.items) |item, index| {
+        for (seq.content.items, 0..) |item, index| {
           try self.processValue(item.content);
           if (index < seq.content.items.len - 1) {
             try self.emitLine("=SEP {}", .{item.lf_after});
@@ -1072,8 +1099,8 @@ const AstEmitter = struct {
       },
       .text => |txt| {
         const t_fmt = txt.t.formatter();
-        try self.emitLine("=TEXT {} \"{}\"",
-          .{t_fmt, std.zig.fmtEscapes(txt.content)});
+        try self.emitLine("=TEXT {f} \"{f}\"",
+          .{t_fmt, fmtEscapes(txt.content)});
       },
       .@"type" => |tv| try self.processType(tv.t),
       .void    => try self.emitLine("=VOID", .{}),
@@ -1130,7 +1157,7 @@ const ErrorEmitter = struct {
     id  : anytype,
     pos : model.Position,
   ) void {
-    const line = std.fmt.bufPrint(&self.buffer, "{} - {} {s}",
+    const line = std.mem.print(&self.buffer, "{f} - {f} {s}",
       .{pos.start.formatter(), pos.end.formatter(), @tagName(id)})
       catch unreachable;
     self.handler.handle(line) catch unreachable;
@@ -1142,7 +1169,7 @@ const ErrorEmitter = struct {
     comptime fmt  : []const u8,
              value: anytype,
   ) void {
-    const line = std.fmt.bufPrint(
+    const line = std.mem.print(
       &self.buffer, "  {s} = " ++ fmt, .{name, value}) catch unreachable;
     self.handler.handle(line) catch unreachable;
   }
@@ -1155,13 +1182,14 @@ const ErrorEmitter = struct {
              value: anytype,
   ) void {
     var line = (if (std.mem.eql(u8, pos.source.locator.resolver.?, "doc")) (
-      std.fmt.bufPrint(&self.buffer, "  {s} = {s}", .{name, pos})
-    ) else std.fmt.bufPrint(
+      std.mem.print(
+        &self.buffer, "  {s} = {f}", .{name, pos.startFormatter()})
+    ) else std.mem.print(
       &self.buffer, "  {s} = {s}", .{name, pos.source.locator.repr})
     ) catch unreachable;
     if (fmt.len == 0) self.handler.handle(line) catch unreachable
     else {
-      var a = std.fmt.bufPrint(self.buffer[line.len..], " " ++ fmt, .{value})
+      const a = std.mem.print(self.buffer[line.len..], " " ++ fmt, .{value})
         catch unreachable;
       line.len += a.len;
       self.handler.handle(line) catch unreachable;
@@ -1173,7 +1201,7 @@ const ErrorEmitter = struct {
     id      : errors.LexerError,
     pos     : model.Position,
   ) void {
-    @fieldParentPtr(ErrorEmitter, "api", reporter).forwardError(id, pos);
+    @as(*ErrorEmitter, @fieldParentPtr("api", reporter)).forwardError(id, pos);
   }
 
   fn parserError(
@@ -1181,7 +1209,7 @@ const ErrorEmitter = struct {
     id      : errors.GenericParserError,
     pos     : model.Position,
   ) void {
-    @fieldParentPtr(ErrorEmitter, "api", reporter).forwardError(id, pos);
+    @as(*ErrorEmitter, @fieldParentPtr("api", reporter)).forwardError(id, pos);
   }
 
   fn wrongItemError(
@@ -1191,11 +1219,11 @@ const ErrorEmitter = struct {
     expected: []const errors.WrongItemError.ItemDescr,
     got     : errors.WrongItemError.ItemDescr,
   ) void {
-    const self = @fieldParentPtr(ErrorEmitter, "api", reporter);
+    const self: *ErrorEmitter = @fieldParentPtr("api", reporter);
     self.forwardError(id, pos);
     const expected_fmt = errors.WrongItemError.ItemDescr.formatterAll(expected);
-    self.forwardArg("expected", "{}", expected_fmt);
-    self.forwardArg("got", "{}", got.formatter());
+    self.forwardArg("expected", "{f}", expected_fmt);
+    self.forwardArg("got", "{f}", got.formatter());
   }
 
   fn scalarError(
@@ -1204,7 +1232,7 @@ const ErrorEmitter = struct {
     pos     : model.Position,
     repr    : []const u8,
   ) void {
-    const self = @fieldParentPtr(ErrorEmitter, "api", reporter);
+    const self: *ErrorEmitter = @fieldParentPtr("api", reporter);
     self.forwardError(id, pos);
     self.forwardArg("repr", "{s}", repr);
   }
@@ -1217,7 +1245,7 @@ const ErrorEmitter = struct {
     got       : []const u8,
     defined_at: model.Position,
   ) void {
-    const self = @fieldParentPtr(ErrorEmitter, "api", reporter);
+    const self: *ErrorEmitter = @fieldParentPtr("api", reporter);
     self.forwardError(id, pos);
     self.forwardArg("expected", "'{s}'", expected);
     self.forwardArg("got", "'{s}'", got);
@@ -1231,7 +1259,7 @@ const ErrorEmitter = struct {
     pos     : model.Position,
     previous: model.Position,
   ) void {
-    const self = @fieldParentPtr(ErrorEmitter, "api", reporter);
+    const self: *ErrorEmitter = @fieldParentPtr("api", reporter);
     self.forwardError(id, pos);
     self.forwardArg("repr", "{s}", repr);
     self.forwardArgAt("previous", previous, "", void);
@@ -1243,7 +1271,7 @@ const ErrorEmitter = struct {
     pos       : model.Position,
     referenced: []model.Position,
   ) void {
-    const self = @fieldParentPtr(ErrorEmitter, "api", reporter);
+    const self: *ErrorEmitter = @fieldParentPtr("api", reporter);
     self.forwardError(id, pos);
     for (referenced) |ref| self.forwardArgAt("referenced", ref, "", void);
   }
@@ -1253,13 +1281,13 @@ const ErrorEmitter = struct {
     id      : errors.TypeError,
     types   : []const model.SpecType,
   ) void {
-    const self = @fieldParentPtr(ErrorEmitter, "api", reporter);
+    const self: *ErrorEmitter = @fieldParentPtr("api", reporter);
     self.forwardError(id, types[0].pos);
     const t1_format = types[0].t.formatter();
-    self.forwardArg("main", "{}", t1_format);
+    self.forwardArg("main", "{f}", t1_format);
     if (types.len == 2) {
       const t2_format = types[1].t.formatter();
-      self.forwardArgAt("other", types[1].pos, "{}", t2_format);
+      self.forwardArgAt("other", types[1].pos, "{f}", t2_format);
     }
   }
 
@@ -1270,10 +1298,10 @@ const ErrorEmitter = struct {
     t       : model.Type,
     repr: []const u8
   ) void {
-    const self = @fieldParentPtr(ErrorEmitter, "api", reporter);
+    const self: *ErrorEmitter = @fieldParentPtr("api", reporter);
     self.forwardError(id, pos);
     const t_fmt = t.formatter();
-    self.forwardArg("t", "{}", t_fmt);
+    self.forwardArg("t", "{f}", t_fmt);
     self.forwardArg("repr", "{s}", repr);
   }
 
@@ -1283,7 +1311,7 @@ const ErrorEmitter = struct {
     pos     : model.Position,
     msg     : []const u8,
   ) void {
-    const self = @fieldParentPtr(ErrorEmitter, "api", reporter);
+    const self: *ErrorEmitter = @fieldParentPtr("api", reporter);
     self.forwardError(id, pos);
     self.forwardArg("msg", "{s}", msg);
   }
@@ -1294,7 +1322,7 @@ const ErrorEmitter = struct {
     pos     : model.Position,
     msg     : []const u8,
   ) void {
-    const self = @fieldParentPtr(ErrorEmitter, "api", reporter);
+    const self: *ErrorEmitter = @fieldParentPtr("api", reporter);
     self.forwardError(id, pos);
     self.forwardArg("msg", "{s}", msg);
   }
@@ -1306,7 +1334,7 @@ const ErrorEmitter = struct {
     path    : []const u8,
     message : []const u8
   ) void {
-    const self = @fieldParentPtr(ErrorEmitter, "api", reporter);
+    const self: *ErrorEmitter = @fieldParentPtr("api", reporter);
     self.forwardError(id, pos);
     self.forwardArg("path", "{s}", path);
     self.forwardArg("message", "{s}", message);
@@ -1314,9 +1342,9 @@ const ErrorEmitter = struct {
 };
 
 const Checker = struct {
-  expected_iter: std.mem.SplitIterator(u8),
+  expected_iter: std.mem.SplitIterator(u8, .scalar),
   line         : usize,
-  full_output  : std.ArrayListUnmanaged(u8),
+  full_output  : std.ArrayList(u8),
   failed       : bool,
   data         : *TestDataResolver,
 
@@ -1324,7 +1352,7 @@ const Checker = struct {
     return Checker{
       .expected_iter = data.valueLines(name_in_input),
       .line = data.source.items.get(name_in_input).?.line_offset + 1,
-      .full_output = .{}, .failed = false,
+      .full_output = .empty, .failed = false,
       .data = data,
     };
   }
@@ -1337,7 +1365,7 @@ const Checker = struct {
       .expected_iter = data.paramLines("errors", name_in_errors),
       .line          =
         data.source.params.errors.get(name_in_errors).?.line_offset + 1,
-      .full_output = .{},
+      .full_output = .empty,
       .failed      = false,
       .data        = data,
     };
@@ -1405,7 +1433,7 @@ const Checker = struct {
 pub fn parseTest(data: *TestDataResolver) !void {
   var checker = Checker.init(data, "rawast");
   defer checker.deinit();
-  var r = FileTerm.init(std.io.getStdOut().writer());
+  var r = stderrTerm();
   var proc = try nyarna.Processor.init(
     std.testing.allocator, nyarna.default_stack_size, &r.reporter,
     &data.stdlib.api);
@@ -1439,7 +1467,7 @@ pub fn parseErrorTest(data: *TestDataResolver) !void {
 pub fn interpretTest(data: *TestDataResolver) !void {
   var checker = Checker.init(data, "expr");
   defer checker.deinit();
-  var r = FileTerm.init(std.io.getStdOut().writer());
+  var r = stderrTerm();
   var proc = try nyarna.Processor.init(
     std.testing.allocator, nyarna.default_stack_size, &r.reporter,
     &data.stdlib.api);
@@ -1473,7 +1501,7 @@ pub fn interpretErrorTest(data: *TestDataResolver) !void {
 pub fn loadTest(data: *TestDataResolver) !void {
   var checker = Checker.init(data, "document");
   defer checker.deinit();
-  var r = FileTerm.init(std.io.getStdOut().writer());
+  var r = stderrTerm();
   var proc = try nyarna.Processor.init(
     std.testing.allocator, nyarna.default_stack_size, &r.reporter,
     &data.stdlib.api);
@@ -1513,7 +1541,7 @@ pub fn loadErrorTest(data: *TestDataResolver) !void {
 }
 
 pub fn outputTest(data: *TestDataResolver) !void {
-  var r = FileTerm.init(std.io.getStdErr().writer());
+  var r = stderrTerm();
   var proc = try nyarna.Processor.init(
     std.testing.allocator, nyarna.default_stack_size, &r.reporter,
     &data.stdlib.api);

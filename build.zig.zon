@@ -1,0 +1,22 @@
+.{
+  .name                = .nyarna,
+  .version             = "0.1.0",
+  .minimum_zig_version = "0.17.1",
+  .fingerprint         = 0x62da7688d2c5fb96,
+  .dependencies        = .{
+    .clap = .{
+      .url  = "https://github.com/Hejsil/zig-clap/archive/05faf3905e8548f5cc269a8836e154065e70128d.tar.gz",
+      .hash = "clap-0.12.0-oBajB4XpAQCF1WRKnD5KOKPsnwwT_NNdAJ7Ww3irYJac",
+    },
+  },
+  .paths = .{
+    "build",
+    "build.zig",
+    "build.zig.zon",
+    "lib",
+    "src",
+    "test",
+    "License.md",
+    "Readme.md",
+  },
+}

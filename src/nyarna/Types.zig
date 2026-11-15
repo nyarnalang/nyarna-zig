@@ -38,9 +38,16 @@ const stringOrder       = @import("helpers.zig").stringOrder;
 const totalOrderLess    = @import("Types/helpers.zig").totalOrderLess;
 const recTotalOrderLess = @import("Types/helpers.zig").recTotalOrderLess;
 
-pub usingnamespace builders;
-pub usingnamespace funcs;
-pub usingnamespace sigs;
+pub const EnumBuilder         = builders.EnumBuilder;
+pub const IntersectionBuilder = builders.IntersectionBuilder;
+pub const IntNumBuilder       = builders.IntNumBuilder;
+pub const FloatNumBuilder     = builders.FloatNumBuilder;
+pub const SequenceBuilder     = builders.SequenceBuilder;
+pub const PrototypeFuncs      = funcs.PrototypeFuncs;
+pub const InstanceFuncs       = funcs.InstanceFuncs;
+pub const CallableReprFinder  = sigs.CallableReprFinder;
+pub const SigBuilderResult    = sigs.SigBuilderResult;
+pub const SigBuilder          = sigs.SigBuilder;
 
 /// a type or prototype constructor.
 pub const Constructor = struct {
@@ -151,7 +158,7 @@ pub fn TreeNode(comptime Flag: type) type {
         const hit =
           if (next.*) |succ| if (t.eql(succ.key)) succ else null else null;
         self.cur = hit orelse blk: {
-          var new = try self.types.allocator.create(TreeNode(Flag));
+          const new = try self.types.allocator.create(TreeNode(Flag));
           new.* = .{
             .key      = t,
             .value    = null,
@@ -191,10 +198,10 @@ const EntryHashMap = std.HashMapUnmanaged(
 
 /// allocator used for data of structural types
 allocator: std.mem.Allocator,
-optionals: StructuralHashMap = .{},
-concats  : StructuralHashMap = .{},
-lists    : StructuralHashMap = .{},
-hashmaps : EntryHashMap      = .{},
+optionals: StructuralHashMap = .empty,
+concats  : StructuralHashMap = .empty,
+lists    : StructuralHashMap = .empty,
+hashmaps : EntryHashMap      = .empty,
 /// this is the list type that contains itself. This is a special case and the
 /// only pure structural self-referential type structure (i.e. the only
 /// recursive type that is composed of nothing but structural types).
@@ -341,12 +348,14 @@ pub fn init(ctx: nyarna.Context) !Self {
     .predefined    = undefined,
     .system        = undefined,
   };
-  inline for (@typeInfo(@TypeOf(ret.predefined)).Struct.fields) |field| {
-    const val = &@field(ret.predefined, field.name);
+  inline for (@typeInfo(@TypeOf(ret.predefined)).@"struct".field_names) |name| {
+    const val = &@field(ret.predefined, name);
     val.* = .{
       .at   = model.Position.intrinsic(),
       .name = null,
-      .data = @unionInit(@TypeOf(val.data), field.name, .{}),
+      .data = @unionInit(
+        @TypeOf(val.data), name,
+        if (@FieldType(@TypeOf(val.data), name) == void) {} else .{}),
     };
   }
 
@@ -513,12 +522,12 @@ pub fn sup(
   if (t1.eql(t2)) return t1;
   // defer structural and intrinsic cases to their respective functions
   const types = [_]model.Type{t1, t2};
-  for (types) |t, i| switch (t) {
+  for (types, 0..) |t, i| switch (t) {
     .structural => |struc|
       return try self.supWithStructure(struc, types[(i + 1) % 2]),
     else => {},
   };
-  for (types) |t, i| switch (t) {
+  for (types, 0..) |t, i| switch (t) {
     .named => |named| switch (named.data) {
       .textual, .int, .float, .@"enum", .record => {},
       else => return try self.supWithIntrinsic(named, types[(i + 1) % 2]),
@@ -531,7 +540,7 @@ pub fn sup(
       builders.IntersectionBuilder.calcFrom(self, .{&t1, &t2}),
     else => {},
   };
-  for (named_types) |t, i| switch (t.data) {
+  for (named_types, 0..) |t, i| switch (t.data) {
     .int => |in1| {
       const other = named_types[(i + 1) % 2];
       switch (other.data) {
@@ -549,8 +558,8 @@ pub fn sup(
               .at   = model.Position.intrinsic(),
               .name = null,
               .data = .{.int = .{
-                .min      = std.math.min(in1.min, in2.min),
-                .max      = std.math.max(in1.max, in2.max),
+                .min      = @min(in1.min, in2.min),
+                .max      = @max(in1.max, in2.max),
                 .suffixes = &.{},
               }},
             };
@@ -577,8 +586,8 @@ pub fn sup(
               .at   = model.Position.intrinsic(),
               .name = null,
               .data = .{.float = .{
-                .min      = std.math.min(fl1.min, fl2.min),
-                .max      = std.math.max(fl1.max, fl2.max),
+                .min      = @min(fl1.min, fl2.min),
+                .max      = @max(fl1.max, fl2.max),
                 .suffixes = &.{},
               }},
             };
@@ -590,7 +599,7 @@ pub fn sup(
     },
     else => {},
   };
-  for (named_types) |*t, i| switch (t.*.data) {
+  for (&named_types, 0..) |*t, i| switch (t.*.data) {
     .@"enum" => {
       const other = named_types[(i + 1) % 2];
       switch (other.data) {
@@ -609,7 +618,7 @@ pub fn sup(
     var order = HalfOrder.eq;
     var categories = unicode.CategorySet.empty();
     var ci: u5 = 0; while (ci <= 29) : (ci += 1) {
-      const cat = @intToEnum(unicode.Category, ci);
+      const cat: unicode.Category = @enumFromInt(ci);
       if (named_types[0].data.textual.include.categories.contains(cat)) {
         if (!named_types[1].data.textual.include.categories.contains(cat)) {
           order.push(.gt);
@@ -622,7 +631,7 @@ pub fn sup(
         categories.include(cat);
       }
     }
-    if (order != .dj) for (named_types) |t, i| {
+    if (order != .dj) for (named_types, 0..) |t, i| {
       const cur = &t.data.textual;
       const other = &named_types[(i + 1) % 2].data.textual;
       var iter = cur.include.chars.keyIterator();
@@ -682,7 +691,7 @@ pub fn registerSequence(
   inner : []*model.Type.Record,
   t     : *model.Type.Sequence,
 ) !void {
-  std.sort.sort(*model.Type.Record, inner, {}, recTotalOrderLess);
+  std.mem.sort(*model.Type.Record, inner, {}, recTotalOrderLess);
   var iter = TreeNode(void).Iter{
     .cur = &self.prefix_trees.sequence, .types = self,
   };
@@ -702,7 +711,7 @@ pub fn calcSequence(
   direct: ?model.Type,
   inner : []*model.Type.Record,
 ) !model.Type {
-  std.sort.sort(*model.Type.Record, inner, {}, recTotalOrderLess);
+  std.mem.sort(*model.Type.Record, inner, {}, recTotalOrderLess);
   var iter = TreeNode(void).Iter{
     .cur = &self.prefix_trees.sequence, .types = self,
   };
@@ -710,7 +719,7 @@ pub fn calcSequence(
   try iter.descend(if (direct) |d| d else self.every(), {});
   for (inner) |t| try iter.descend(t.typedef(), {});
   return model.Type{.structural = iter.cur.value orelse blk: {
-    var new = try self.allocator.create(model.Type.Structural);
+    const new = try self.allocator.create(model.Type.Structural);
     new.* = .{.sequence = .{
       .direct = direct,
       .inner  = inner,
@@ -870,7 +879,7 @@ fn supWithStructure(
           } else if (other_s.direct != null) order.push(.lt);
           switch (order) {
             .eq, .lt => for (s.inner) |inner| {
-              var found = for (other_s.inner) |other_inner| {
+              const found = for (other_s.inner) |other_inner| {
                 if (inner == other_inner) break true;
               } else false;
               if (!found) {
@@ -885,7 +894,7 @@ fn supWithStructure(
               }
             },
             .gt => for (other_s.inner) |other_inner| {
-              var found = for (s.inner) |inner| {
+              const found = for (s.inner) |inner| {
                 if (inner == other_inner) break true;
               } else false;
               if (!found) {
@@ -1011,7 +1020,7 @@ fn supWithIntrinsic(
 
 pub fn supAll(self: *Self, types: anytype) !model.Type {
   var res: model.Type = .every;
-  if (@typeInfo(@TypeOf(types)) == .Slice) {
+  if (@typeInfo(@TypeOf(types)) == .pointer) {
     for (types) |t| {
       res = try self.sup(&res, t);
     }
@@ -1232,9 +1241,9 @@ fn valForType(self: Self, t: model.Type) !*model.Value.TypeVal {
   return &ret.data.@"type";
 }
 
-fn typeArr(self: Self, types: []model.Type) ![]*model.Value.TypeVal {
+fn typeArr(self: Self, types: []const model.Type) ![]*model.Value.TypeVal {
   const ret = try self.allocator.alloc(*model.Value.TypeVal, types.len);
-  for (types) |t, i| {
+  for (types, 0..) |t, i| {
     ret[i] = try self.valForType(t);
   }
   return ret;

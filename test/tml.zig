@@ -4,7 +4,7 @@ pub const Value = struct {
   line_offset: usize,
   /// uses the arena allocator of the containing File. given like this so that
   /// end markers ("\x04") can be appended as required by the lexer.
-  content: std.ArrayListUnmanaged(u8),
+  content: std.ArrayList(u8),
 };
 
 pub const Values = std.StringHashMap(Value);
@@ -44,23 +44,21 @@ pub const File = struct {
     return f.arena.allocator();
   }
 
-  pub fn loadPath(alloc: std.mem.Allocator, path: []const u8) !File {
-    const file = try std.fs.cwd().openFile(path, .{});
-    defer file.close();
-    const file_contents = try std.fs.cwd().readFileAlloc(
-      alloc, path, (try file.stat()).size + 1);
-    defer alloc.free(file_contents);
-    return load(alloc, path, file_contents);
+  pub fn loadPath(
+    alloc: std.mem.Allocator,
+    io   : std.Io,
+    path : []const u8,
+  ) !File {
+    return loadFile(alloc, io, std.Io.Dir.cwd(), path);
   }
 
   pub fn loadFile(
     alloc: std.mem.Allocator,
-    dir  : *std.fs.Dir,
+    io   : std.Io,
+    dir  : std.Io.Dir,
     path : []const u8,
-    file : *std.fs.File,
   ) !File {
-    const file_contents = try dir.readFileAlloc(
-      alloc, path, (try file.stat()).size + 1);
+    const file_contents = try dir.readFileAlloc(io, path, alloc, .unlimited);
     defer alloc.free(file_contents);
     return load(alloc, path, file_contents);
   }
@@ -70,7 +68,7 @@ pub const File = struct {
     name : []const u8,
     input: []const u8,
   ) !File {
-    var lines = std.mem.split(u8, input, "\n");
+    var lines = std.mem.splitSequence(u8, input, "\n");
 
     var line = lines.next() orelse {
       return failWith(name, "missing header", .{});
@@ -101,8 +99,8 @@ pub const File = struct {
     while (line_available) {
       const start = line_index;
       const header = line[4..];
-      const name_end = std.mem.indexOfScalar(u8, header, ':');
-      const tag_start = std.mem.indexOfScalar(u8, header, '{');
+      const name_end = std.mem.findScalar(u8, header, ':');
+      const tag_start = std.mem.findScalar(u8, header, '{');
       var sub_name: []const u8 = "";
       const item_name = std.mem.trim(u8, try ret.allocator().dupe(u8, blk: {
         if (name_end) |val| {
@@ -122,18 +120,18 @@ pub const File = struct {
       }), " \t");
       var tags = Tags{};
       if (tag_start) |tval| {
-        const tag_end = std.mem.lastIndexOfScalar(u8, header, '}') orelse {
+        const tag_end = std.mem.findScalarLast(u8, header, '}') orelse {
           return failWith(name, "header misses `}}`", .{});
         };
-        if (tag_end != std.mem.trimRight(u8, header, " \t").len - 1) {
+        if (tag_end != std.mem.trimEnd(u8, header, " \t").len - 1) {
           return failWith(name, "content after `}}`", .{});
         }
-        var tags_str = std.mem.trimRight(u8, header[tval..tag_end], " \t");
+        var tags_str = std.mem.trimEnd(u8, header[tval..tag_end], " \t");
         var sep: ?usize = 0;
         while (sep) |b| {
-          tags_str = std.mem.trimLeft(u8, tags_str[b + 1..], " \t");
+          tags_str = std.mem.trimStart(u8, tags_str[b + 1..], " \t");
           if (tags_str.len == 0) break;
-          sep = std.mem.indexOfScalar(u8, tags_str, ',');
+          sep = std.mem.findScalar(u8, tags_str, ',');
           const tag = std.mem.trim(
             u8, if (sep) |e| tags_str[0..e] else tags_str, " \t");
           if (std.mem.eql(u8, tag, "strip")) {
@@ -150,7 +148,7 @@ pub const File = struct {
 
       const newline = if (tags.crlf) "\r\n" else "\n";
 
-      var content: std.ArrayListUnmanaged(u8) = .{};
+      var content: std.ArrayList(u8) = .empty;
       while (true) {
         line = lines.next() orelse {
           line_available = false;
@@ -161,7 +159,7 @@ pub const File = struct {
         if (tags.chars) {
           var cur = line;
           while (cur.len > 0) {
-            const esc = std.mem.indexOfScalar(u8, cur, '%') orelse {
+            const esc = std.mem.findScalar(u8, cur, '%') orelse {
               try content.appendSlice(ret.allocator(), cur);
               break;
             };
@@ -176,7 +174,7 @@ pub const File = struct {
         try content.appendSlice(ret.allocator(), newline);
       }
       if (tags.strip) {
-        if (std.mem.lastIndexOfAny(u8, content.items, "\r\n\t ")) |e| {
+        if (std.mem.findLastAny(u8, content.items, "\r\n\t ")) |e| {
           content.shrinkRetainingCapacity(e);
           try content.append(ret.allocator(), '\n');
         }
@@ -218,7 +216,7 @@ pub const File = struct {
 };
 
 test "simple file" {
-  var f = try File.load("test file",
+  var f = try File.load(std.testing.allocator, "test file",
     \\=== Titel
     \\--- input
     \\a b c
@@ -247,7 +245,7 @@ test "simple file" {
 }
 
 test "chars" {
-  var f = try File.load("test file",
+  var f = try File.load(std.testing.allocator, "test file",
     \\=== Chars test
     \\--- input {chars}
     \\a b %0A

@@ -5,7 +5,6 @@ const model = @import("../model.zig");
 const Type  = model.Type;
 const Value = model.Value;
 
-const offset = @import("../helpers.zig").offset;
 
 const Symbol = @This();
 
@@ -59,15 +58,15 @@ data: Data,
 parent_type: ?Type = null,
 
 fn parent(it: anytype) *Symbol {
-  const t = @typeInfo(@TypeOf(it)).Pointer.child;
-  const addr = @ptrToInt(it) - switch (t) {
-    *model.Function => offset(Data, "func"),
-    Variable => offset(Data, "variable"),
-    Type => offset(Data, "type"),
-    model.Prototype => offset(Data, "prototype"),
+  const t = @typeInfo(@TypeOf(it)).pointer.child;
+  const data: *Data = switch (t) {
+    *model.Function => @alignCast(@fieldParentPtr("func", it)),
+    Variable => @alignCast(@fieldParentPtr("variable", it)),
+    Type => @alignCast(@fieldParentPtr("type", it)),
+    model.Prototype => @alignCast(@fieldParentPtr("prototype", it)),
     else => unreachable
   };
-  return @fieldParentPtr(Symbol, "data", @intToPtr(*Data, addr));
+  return @fieldParentPtr("data", data);
 }
 
 /// definition of a symbol in the currently parsed module

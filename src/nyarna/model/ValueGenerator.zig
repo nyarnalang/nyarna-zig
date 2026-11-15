@@ -12,12 +12,16 @@ const Self = @This();
 
 dummy: u8 = 0, // needed for @fieldParentPtr to work
 
+fn context(self: *const Self) *const nyarna.Context {
+  return @alignCast(@fieldParentPtr("values", self));
+}
+
 fn allocator(self: *const Self) std.mem.Allocator {
-  return @fieldParentPtr(nyarna.Context, "values", self).global();
+  return self.context().global();
 }
 
 fn types(self: *const Self) *nyarna.Types {
-  return @fieldParentPtr(nyarna.Context, "values", self).types();
+  return self.context().types();
 }
 
 fn create(self: *const Self) !*Value {
@@ -58,7 +62,7 @@ pub fn concat(
   return &(try self.value(pos, .{
     .concat = .{
       .t = t,
-      .content = std.ArrayList(*Value).init(self.allocator()),
+      .content = .empty,
     },
   })).data.concat;
 }
@@ -67,7 +71,7 @@ pub fn definition(
   self       : *const Self,
   pos        : Position,
   name       : *Value.TextScalar,
-  content    : std.meta.fieldInfo(Value.Definition, .content).field_type,
+  content    : @FieldType(Value.Definition, "content"),
   content_pos: Position,
 ) !*Value.Definition {
   return &(try self.value(pos, .{.definition = .{
@@ -145,7 +149,7 @@ pub fn list(
   t   : *const Type.List,
 ) !*Value.List {
   return &(try self.value(pos, .{
-    .list = .{.t = t, .content = std.ArrayList(*Value).init(self.allocator())},
+    .list = .{.t = t, .content = .empty},
   })).data.list;
 }
 
@@ -176,7 +180,7 @@ pub fn output(
 }
 
 pub fn poison(self: *const Self, pos: Position) !*Value {
-  //std.debug.panic("{}: gen poison", .{pos.formatter()});
+  //std.debug.panic("{f}: gen poison", .{pos.formatter()});
   return self.value(pos, .poison);
 }
 
@@ -258,7 +262,7 @@ pub fn seq(
 ) !*Value.Seq {
   return &(try self.value(pos, .{
     .seq = .{
-      .t = t, .content = std.ArrayList(Value.Seq.Item).init(self.allocator()),
+      .t = t, .content = .empty,
     },
   })).data.seq;
 }
@@ -278,7 +282,7 @@ pub fn @"type"(
   pos : Position,
   t   : Type,
 ) !*Value.TypeVal {
-  const ctx = @fieldParentPtr(nyarna.Context, "values", self);
+  const ctx = self.context();
   if (try ctx.types().instanceFuncsOf(t)) |instf| {
     try instf.genConstructor(ctx.*);
   }

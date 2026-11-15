@@ -46,7 +46,7 @@ pub const PrototypeFuncs = struct {
 
   /// given list will be consumed.
   pub fn set(self: *PrototypeFuncs, defs: []Item) void {
-    std.sort.sort(Item, defs, @as(u0, 0), lessThan);
+    std.mem.sort(Item, defs, @as(u0, 0), lessThan);
     self.defs = defs;
   }
 
@@ -81,7 +81,7 @@ pub const InstanceFuncs = struct {
     allocator: std.mem.Allocator,
     arguments: []*model.Value.TypeVal,
   ) !*InstanceFuncs {
-    var ret = try allocator.create(InstanceFuncs);
+    const ret = try allocator.create(InstanceFuncs);
     errdefer allocator.destroy(ret);
     ret.* = .{
       .pt          = pt,
@@ -89,7 +89,7 @@ pub const InstanceFuncs = struct {
       .arguments   = arguments,
       .constructor = null,
     };
-    std.mem.set(?*model.Symbol, ret.syms, null);
+    @memset(ret.syms, null);
     return ret;
   }
 
@@ -112,7 +112,7 @@ pub const InstanceFuncs = struct {
     defer eval.resetStackFrame(
       &self.pt.var_container.cur_frame, self.pt.var_container.num_values, false
     );
-    for (self.arguments) |arg, i| frame[i] = .{.value = arg.value()};
+    for (self.arguments, 0..) |arg, i| frame[i] = .{.value = arg.value()};
 
     const ret_type = if (@TypeOf(ret) == *model.Expression) switch (
       (try eval.evaluate(ret)).data
@@ -127,7 +127,7 @@ pub const InstanceFuncs = struct {
     var locs: [10]?*model.Value.Location = undefined;
 
     var finder = Types.CallableReprFinder.init(ctx.types());
-    for (params) |param, i| switch ((try eval.evaluate(param)).data) {
+    for (params, 0..) |param, i| switch ((try eval.evaluate(param)).data) {
       .location => |*loc| {
         try finder.push(loc);
         locs[i] = loc;
@@ -140,7 +140,7 @@ pub const InstanceFuncs = struct {
     var builder = try Types.SigBuilder.init(
       ctx, params.len, ret_type, finder_res.needs_different_repr
     );
-    for (params) |_, i| if (locs[i]) |loc| try builder.push(loc);
+    for (params, 0..) |_, i| if (locs[i]) |loc| try builder.push(loc);
     return builder.finish();
   }
 
@@ -171,7 +171,7 @@ pub const InstanceFuncs = struct {
 
     const container = try ctx.global().create(model.VariableContainer);
     container.* =
-      .{.num_values = @intCast(u15, builder_res.sig.parameters.len)};
+      .{.num_values = @as(u15, @intCast(builder_res.sig.parameters.len))};
     const func = try ctx.global().create(model.Function);
     func.* = .{
       .callable   = try builder_res.createCallable(ctx.global(), .function),

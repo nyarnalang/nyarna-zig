@@ -31,7 +31,7 @@ pub const CallableReprFinder = struct {
   fn checkParamName(self: *Self, name: []const u8) void {
     if (name.len > 0 and name[0] == 'p') {
       var buf: [16]u8 = undefined;
-      const num = std.fmt.bufPrint(&buf, "{}", .{self.count}) catch unreachable;
+      const num = std.mem.print(&buf, "{}", .{self.count}) catch unreachable;
       if (!std.mem.eql(u8, num, name[1..])) {
         self.needs_different_repr = true;
       }
@@ -127,7 +127,7 @@ pub const SigBuilder = struct {
     returns   : model.Type,
     build_repr: bool,
   ) !Self {
-    var ret = Self{
+    const ret = Self{
       .val  = try ctx.global().create(model.Signature),
       .repr = if (build_repr) (
           try ctx.global().create(model.Signature)
@@ -187,8 +187,8 @@ pub const SigBuilder = struct {
     };
     try self.addParamLoc(param.*);
     if (self.repr) |sig| {
-      const repr_name = try std.fmt.allocPrint(
-        self.ctx.global(), "p{}", .{self.next_param + 1});
+      const repr_name =
+        try self.ctx.global().print("p{}", .{self.next_param + 1});
       sig.parameters[self.next_param] = .{
         .pos     = pos,
         .name    = repr_name,
@@ -208,8 +208,8 @@ pub const SigBuilder = struct {
     self.val.parameters[self.next_param] = param;
     try self.addParamLoc(param);
     if (self.repr) |sig| {
-      const repr_name = try std.fmt.allocPrint(
-        self.ctx.global(), "p{}", .{self.next_param + 1});
+      const repr_name =
+        try self.ctx.global().print("p{}", .{self.next_param + 1});
       sig.parameters[self.next_param] = .{
         .pos     = param.pos,
         .name    = repr_name,
@@ -261,9 +261,9 @@ pub const SigBuilder = struct {
           var buf: [4]u8 = undefined;
           // inlining this into the errorMsg call leads to a compiler bug :)
           const repr = if (as.depth == 0) blk: {
-            std.mem.copy(u8, &buf, ":>");
+            @memcpy(buf[0..2], ":>");
             break :blk @as([]const u8, buf[0..2]);
-          } else std.fmt.bufPrint(&buf, ":{}>", .{as.depth})
+          } else std.mem.print(&buf, ":{}>", .{as.depth})
             catch unreachable;
           self.ctx.logger.DuplicateAutoSwallow(
             repr, bh.value().origin, self.val.parameters[as.param_index].pos);
@@ -276,8 +276,8 @@ pub const SigBuilder = struct {
       }
     }
     if (self.repr) |sig| {
-      const repr_name = try std.fmt.allocPrint(
-        self.ctx.global(), "p{}", .{self.next_param + 1});
+      const repr_name =
+        try self.ctx.global().print("p{}", .{self.next_param + 1});
       sig.parameters[self.next_param] = .{
         .pos     = loc.value().origin,
         .name    = repr_name,

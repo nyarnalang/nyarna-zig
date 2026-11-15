@@ -47,10 +47,10 @@ pub const Walker = struct {
     };
     defer w.cur += w.recent_length;
     switch (w.recent_length) {
-      1    => return @intCast(u21, w.cur[0]),
-      2    => return std.unicode.utf8Decode2(w.cur[0..2]),
-      3    => return std.unicode.utf8Decode3(w.cur[0..3]),
-      4    => return std.unicode.utf8Decode4(w.cur[0..4]),
+      1    => return @as(u21, @intCast(w.cur[0])),
+      2    => return std.unicode.utf8Decode2(w.cur[0..2].*),
+      3    => return std.unicode.utf8Decode3(w.cur[0..3].*),
+      4    => return std.unicode.utf8Decode4(w.cur[0..4].*),
       else => unreachable,
     }
   }
@@ -231,7 +231,7 @@ pub const Lexer = @This();
 const newline = @as([]const u8, "\n");
 
 intpr: *Interpreter,
-cur_stored: (@typeInfo(@TypeOf(Walker.next)).Fn.return_type.?),
+cur_stored: (@typeInfo(@TypeOf(Walker.next)).@"fn".return_type.?),
 state: State,
 walker: Walker,
 paren_depth: u16,
@@ -264,7 +264,7 @@ line_start: model.Cursor,
 indent_char_seen: struct {
   space: bool, tab: bool,
 },
-levels: std.ArrayListUnmanaged(Level),
+levels: std.ArrayList(Level),
 level: Level,
 newline_count: u16,
 
@@ -278,7 +278,7 @@ pub fn init(intpr: *Interpreter, source: *model.Source) !Lexer {
     .colons_disabled_at   = null,
     .comments_disabled_at = null,
     .levels =
-      try std.ArrayListUnmanaged(Level).initCapacity(intpr.allocator(), 32),
+      try std.ArrayList(Level).initCapacity(intpr.allocator(), 32),
     .level = .{
       .indentation = 0,
       .id          = "<root>",
@@ -290,7 +290,7 @@ pub fn init(intpr: *Interpreter, source: *model.Source) !Lexer {
     .recent_id          = undefined,
     .recent_expected_id = undefined,
     .line_start         = undefined,
-    .indent_char_seen   = undefined,
+    .indent_char_seen   = .{.space = false, .tab = false},
     .code_point         = undefined,
     .ns                 = undefined,
   };
@@ -426,8 +426,9 @@ fn transition(
   comptime base_from: State,
            base_to  : State,
 ) void {
-  self.state = @intToEnum(State,
-    @enumToInt(self.state) + (@enumToInt(base_to) - @enumToInt(base_from)));
+  self.state = @enumFromInt(
+    @intFromEnum(self.state) +
+    (@intFromEnum(base_to) - @intFromEnum(base_from)));
 }
 
 fn procIndentCapture(self: *Lexer, cur: *u21) ?Token {
@@ -448,7 +449,7 @@ fn procIndentCapture(self: *Lexer, cur: *u21) ?Token {
       self.level.indentation = std.math.maxInt(u16);
       self.newline_count += self.emptyLines(cur);
       self.level.indentation = @intCast(
-          u16, self.walker.before.byte_offset - self.line_start.byte_offset);
+        self.walker.before.byte_offset - self.line_start.byte_offset);
       self.transition(.indent_capture, .check_indent);
       if (self.newline_count > 0) {
         self.recent_end = self.line_start;
@@ -606,7 +607,7 @@ fn procAfterAssign(self: *Lexer, cur: *u21) !?Token {
     return t;
   }
   self.state = self.curBaseState();
-  if (self.cur_stored) return null else |e| {
+  if (self.cur_stored) |_| return null else |e| {
     self.cur_stored = self.walker.nextInline();
     return e;
   }
@@ -640,7 +641,7 @@ fn procAfterArgs(self: *Lexer, cur: *u21) !?Token {
     self.recent_end = self.walker.before;
     return t;
   } else {
-    self.level = self.levels.pop();
+    self.level = self.levels.pop().?;
     self.state = self.curBaseState();
     return null;
   }
@@ -800,7 +801,7 @@ fn enterSwallow(self: *Lexer) void {
         ms.swallow_count = last(self.levels.items).num_swallow + 1;
       }
     };
-    self.level = self.levels.pop();
+    self.level = self.levels.pop().?;
     self.level.num_swallow += 1;
   }
 }
@@ -819,15 +820,15 @@ fn procAfterDepth(self: *Lexer, cur: *u21) ?Token {
 fn procBeforeEndId(self: *Lexer) Token {
   var res = self.matchEndCommand(true);
   if (res == .call_id) {
-    self.level = self.levels.pop();
+    self.level = self.levels.pop().?;
   } else {
     self.recent_expected_id = self.level.id;
     if (res == .wrong_call_id and self.levels.items.len == 0) {
       res = .no_block_call_id;
     }  else {
-      var i = @enumToInt(res) + 1;
-      while (i >= @enumToInt(Token.skipping_call_id)) : (i = i - 1) {
-        self.level = self.levels.pop();
+      var i = @intFromEnum(res) + 1;
+      while (i >= @intFromEnum(Token.skipping_call_id)) : (i = i - 1) {
+        self.level = self.levels.pop().?;
       }
     }
   }
@@ -1017,7 +1018,7 @@ fn processContent(
     ')' => if (ctx == .args) {
       self.paren_depth -= 1;
       if (self.level.end_char == ':') {
-        self.level = self.levels.pop();
+        self.level = self.levels.pop().?;
         if (self.walker.nextInline()) |next_char| {
           if (next_char == ':') {
             self.state = .after_blocks_colon;
@@ -1373,7 +1374,7 @@ fn matchEndCommand(self: *Lexer, search_skipped: bool) Token {
           found = true;
           break;
         }
-        ret = @intToEnum(Token, @enumToInt(ret) + 1);
+        ret = @as(Token, @enumFromInt(@intFromEnum(ret) + 1));
       }
     }
     if (!found) return .wrong_call_id;
@@ -1412,19 +1413,19 @@ fn exprContinuation(self: *Lexer, cur: *u21, after_arglist: bool) !?Token {
       };
       switch (cur.*) {
         ':' => {
-          if (after_arglist) self.level = self.levels.pop();
+          if (after_arglist) self.level = self.levels.pop().?;
           self.cur_stored = self.walker.nextInline();
           self.state = .after_access_colons;
           return .access;
         },
         ',' => {
-          if (after_arglist) self.level = self.levels.pop();
+          if (after_arglist) self.level = self.levels.pop().?;
           self.cur_stored = self.walker.nextInline();
           self.state = self.curBaseState();
           return .closer;
         },
         '=' => {
-          if (after_arglist) self.level = self.levels.pop();
+          if (after_arglist) self.level = self.levels.pop().?;
           self.cur_stored = self.walker.nextInline();
           self.state = .after_assign;
           return .assign;

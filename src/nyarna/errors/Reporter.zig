@@ -3,19 +3,19 @@ const std = @import("std");
 const errors = @import("../errors.zig");
 const model  = @import("../model.zig");
 
-lexerErrorFn: fn(
+lexerErrorFn: *const fn(
   reporter: *@This(),
   id      : errors.LexerError,
   pos     : model.Position,
 ) void,
 
-parserErrorFn: fn(
+parserErrorFn: *const fn(
   reporter: *@This(),
   id      : errors.GenericParserError,
   pos     : model.Position,
 ) void,
 
-wrongItemErrorFn: fn(
+wrongItemErrorFn: *const fn(
   reporter: *@This(),
   id      : errors.WrongItemError,
   pos     : model.Position,
@@ -23,14 +23,14 @@ wrongItemErrorFn: fn(
   got     : errors.WrongItemError.ItemDescr,
 ) void,
 
-scalarErrorFn: fn(
+scalarErrorFn: *const fn(
   reporter: *@This(),
   id      : errors.ScalarError,
   pos     : model.Position,
   repr    : []const u8,
 ) void,
 
-wrongIdErrorFn: fn(
+wrongIdErrorFn: *const fn(
   reporter  : *@This(),
   id        : errors.WrongIdError,
   pos       : model.Position,
@@ -39,7 +39,7 @@ wrongIdErrorFn: fn(
   defined_at: model.Position,
 ) void,
 
-previousOccurenceFn: fn(
+previousOccurenceFn: *const fn(
   reporter: *@This(),
   id      : errors.PreviousOccurenceError,
   repr    : []const u8,
@@ -47,20 +47,20 @@ previousOccurenceFn: fn(
   previous: model.Position,
 ) void,
 
-posChainFn: fn(
+posChainFn: *const fn(
   reporter  : *@This(),
   id        : errors.PositionChainError,
   pos       : model.Position,
   references: []model.Position,
 ) void,
 
-typeErrorFn: fn(
+typeErrorFn: *const fn(
   reporter: *@This(),
   id      : errors.TypeError,
   types   : []const model.SpecType,
 ) void,
 
-constructionErrorFn: fn(
+constructionErrorFn: *const fn(
   reporter: *@This(),
   id      : errors.ConstructionError,
   pos     : model.Position,
@@ -68,21 +68,21 @@ constructionErrorFn: fn(
   repr    : []const u8,
 ) void,
 
-runtimeErrorFn: fn(
+runtimeErrorFn: *const fn(
   reporter: *@This(),
   id      : errors.RuntimeError,
   pos     : model.Position,
   msg     : []const u8,
 ) void,
 
-systemNyErrorFn: fn (
+systemNyErrorFn: *const fn(
   reporter: *@This(),
   id      : errors.SystemNyError,
   pos     : model.Position,
   msg     : []const u8,
 ) void,
 
-fileErrorFn: fn(
+fileErrorFn: *const fn(
   reporter: *@This(),
   id      : errors.FileError,
   pos     : model.Position,

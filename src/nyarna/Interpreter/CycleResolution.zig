@@ -42,7 +42,7 @@ fn subjectIsType(uacc: *model.Node.UnresolvedAccess, t: model.Type) bool {
 const TypeResolver = struct {
   ctx     : Resolver.Context,
   dres    : *CycleResolution,
-  worklist: std.ArrayListUnmanaged(*model.Node) = .{},
+  worklist: std.ArrayList(*model.Node) = .empty,
   ns_data : *Interpreter.Namespace,
 
   fn init(dres: *CycleResolution, ns: *Interpreter.Namespace) TypeResolver {
@@ -65,7 +65,7 @@ const TypeResolver = struct {
     name    : []const u8,
     name_pos: model.Position,
   ) nyarna.Error!Resolver.Context.Result {
-    const self = @fieldParentPtr(TypeResolver, "ctx", ctx);
+    const self: *TypeResolver = @fieldParentPtr("ctx", ctx);
     for (self.dres.defs) |def| {
       if (std.mem.eql(u8, def.name.content, name)) {
         try self.process(def);
@@ -79,7 +79,7 @@ const TypeResolver = struct {
           .gen_record       => |*gr| return Resolver.Context.Result{
             .unfinished_type = .{
               .named = gr.generated orelse std.debug.panic(
-                "{}: reference to type '{s}' " ++
+                "{f}: reference to type '{s}' " ++
                 "that should have been allocated but wasn't",
                 .{name_pos.formatter(), name}),
             },
@@ -123,14 +123,14 @@ const TypeResolver = struct {
       .gen_concat, .gen_intersection, .gen_list, .gen_map, .gen_optional,
       .gen_sequence, .gen_prototype => {},
       else => std.debug.panic(
-        "{}: unexpected definition content: {s}", .{
+        "{f}: unexpected definition content: {s}", .{
           def.content.pos.formatter(), @tagName(def.content.data)
         }),
     }
-    for (self.worklist.items) |wli, index| if (wli == def.content) {
+    for (self.worklist.items, 0..) |wli, index| if (wli == def.content) {
       const pos_list = try self.dres.intpr.allocator().alloc(
         model.Position, self.worklist.items.len - index - 1);
-      for (pos_list) |*item, pindex| {
+      for (pos_list, 0..) |*item, pindex| {
         item.* = self.worklist.items[self.worklist.items.len - 1 - pindex].pos;
       }
       self.dres.intpr.ctx.logger.CircularType(def.content.pos, pos_list);
@@ -142,7 +142,7 @@ const TypeResolver = struct {
 
     const sym = if (try self.dres.intpr.tryInterpret(def.content,
         .{.kind = .final, .resolve_ctx = &self.ctx})) |expr| blk: {
-      const value = try self.dres.intpr.ctx.evaluator().evaluate(expr);
+      const value = try self.dres.intpr.ctx.evaluate(expr);
       switch (value.data) {
         .poison => {
           def.content.data = .poison;
@@ -188,7 +188,7 @@ const FixpointContext = struct {
     name    : []const u8,
     name_pos: model.Position,
   ) nyarna.Error!Resolver.Context.Result {
-    const self = @fieldParentPtr(TypeResolver, "ctx", ctx);
+    const self: *TypeResolver = @fieldParentPtr("ctx", ctx);
     for (self.dres.defs) |def| {
       if (std.mem.eql(u8, def.name.content, name)) {
         switch (def.content.data) {
@@ -215,7 +215,7 @@ const FixpointContext = struct {
   fn probeFunc(fc: *FixpointContext, fgen: *model.Node.Funcgen) !bool {
     const new_type = if (fgen.returns) |returns| blk: {
       const expr = try fc.dres.intpr.interpret(returns);
-      const val = try fc.dres.intpr.ctx.evaluator().evaluate(expr);
+      const val = try fc.dres.intpr.ctx.evaluate(expr);
       switch (val.data) {
         .poison => break :blk fc.dres.intpr.ctx.types().poison(),
         .@"type" => |*tval| break :blk tval.t,
@@ -471,7 +471,7 @@ fn definePrototype(
     .concat, .list, .optional => &.{"This", "Inner"},
     .hashmap => &.{"This", "Key", "Value"},
   };
-  for (var_names) |var_name, i| {
+  for (var_names, 0..) |var_name, i| {
     const vsym = try self.intpr.ctx.global().create(model.Symbol);
     vsym.* = .{
       .defined_at = model.Position.intrinsic(),
@@ -479,11 +479,11 @@ fn definePrototype(
       .data       = .{.variable = .{
         .spec       = types.type().predef(),
         .container  = container,
-        .offset     = @intCast(u15, i),
+        .offset     = @as(u15, @intCast(i)),
         .kind       = .given,
       }},
     };
-    var success = try ns_data.tryRegister(self.intpr, vsym);
+    const success = try ns_data.tryRegister(self.intpr, vsym);
     std.debug.assert(success);
   }
 
@@ -566,10 +566,11 @@ fn definePrototype(
           const impl_name = try self.intpr.allocator().alloc(
             u8, def.name.content.len + 2 + fdef.name.content.len
           );
-          std.mem.copy(u8, impl_name, def.name.content);
-          std.mem.copy(u8, impl_name[def.name.content.len..], "::");
-          std.mem.copy(
-            u8, impl_name[def.name.content.len + 2..], fdef.name.content);
+          @memcpy(impl_name[0..def.name.content.len], def.name.content);
+          @memcpy(impl_name[def.name.content.len..][0..2], "::");
+          @memcpy(
+            impl_name[def.name.content.len + 2..][0..fdef.name.content.len],
+            fdef.name.content);
           const impl_index = (
             try lib.registerExtImpl(self.intpr.ctx,
               self.intpr.builtin_provider.?, impl_name, false)
@@ -635,7 +636,7 @@ pub fn execute(self: *CycleResolution) !void {
   try self.processor.secondStep(self.intpr.allocator());
   // third step: process components in reverse topological order.
 
-  for (self.processor.components) |first_index, cmpt_index| {
+  for (self.processor.components, 0..) |first_index, cmpt_index| {
     const num_nodes = if (cmpt_index == self.processor.components.len - 1)
       self.defs.len - first_index
     else
@@ -752,7 +753,7 @@ pub fn execute(self: *CycleResolution) !void {
             continue :alloc_types;
           },
           else => {
-            const value = try self.intpr.ctx.evaluator().evaluate(expr);
+            const value = try self.intpr.ctx.evaluate(expr);
             expr.data = .{.value = value};
           },
         },
@@ -919,7 +920,7 @@ pub fn execute(self: *CycleResolution) !void {
           ) {
             if (self.intpr.builtin_provider) |provider| blk: {
               const ret_type = switch (
-                (try self.intpr.ctx.evaluator().evaluate(
+                (try self.intpr.ctx.evaluate(
                   bgen.returns.expr)).data
               ) {
                 .@"type" => |tv| tv.t,
@@ -949,10 +950,11 @@ pub fn execute(self: *CycleResolution) !void {
                   };
                   const buffer = try self.intpr.allocator().alloc(
                     u8, t_name.len + 2 + def.name.content.len);
-                  std.mem.copy(u8, buffer, t_name);
-                  std.mem.copy(u8, buffer[t_name.len..], "::");
-                  std.mem.copy(
-                    u8, buffer[t_name.len + 2..], def.name.content);
+                  @memcpy(buffer[0..t_name.len], t_name);
+                  @memcpy(buffer[t_name.len..][0..2], "::");
+                  @memcpy(
+                    buffer[t_name.len + 2..][0..def.name.content.len],
+                    def.name.content);
                   break :tblk buffer;
                 }
               };
@@ -1015,7 +1017,7 @@ pub fn execute(self: *CycleResolution) !void {
       switch (def.content.data) {
         .gen_record => {
           const expr = try self.intpr.interpret(def.content);
-          const value = try self.intpr.ctx.evaluator().evaluate(expr);
+          const value = try self.intpr.ctx.evaluate(expr);
           _ = try ns_data.tryRegister(self.intpr,
             try self.genSymFromValue(def.name, value, def.public));
         },
@@ -1074,7 +1076,7 @@ pub fn collectDeps(
   index: usize,
   edges: *[]usize,
 ) !void {
-  self.dep_discovery_ctx.dependencies = .{};
+  self.dep_discovery_ctx.dependencies = .empty;
   const stage = Interpreter.Stage{
     .kind = .intermediate, .resolve_ctx = &self.dep_discovery_ctx};
   try Resolver.init(self.intpr, stage).resolve(self.defs[index].content);
@@ -1100,9 +1102,9 @@ fn discoverDependencies(
   name: []const u8,
   _   : model.Position,
 ) nyarna.Error!Resolver.Context.Result {
-  const self = @fieldParentPtr(CycleResolution, "dep_discovery_ctx", ctx);
-  for (self.defs) |def, i| if (std.mem.eql(u8, def.name.content, name)) {
-    return Resolver.Context.Result{.known = @intCast(u21, i)};
+  const self: *CycleResolution = @fieldParentPtr("dep_discovery_ctx", ctx);
+  for (self.defs, 0..) |def, i| if (std.mem.eql(u8, def.name.content, name)) {
+    return Resolver.Context.Result{.known = @as(u21, @intCast(i))};
   };
   // we don't know whether this is actually known but it would be a
   // function variable, so we'll leave reporting a potential error to later

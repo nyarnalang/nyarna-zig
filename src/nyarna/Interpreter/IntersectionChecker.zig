@@ -47,7 +47,7 @@ pub fn push(
         return false;
       } else Result{.scalar = self.intpr.ctx.types().text()},
       .record =>
-        Result{.append = @ptrCast([*]const model.Type, t)[0..1]},
+        Result{.append = @as([*]const model.Type, @ptrCast(t))[0..1]},
       else => Result{.failed = true},
     },
   };
@@ -67,7 +67,7 @@ pub fn push(
       } else if (self.unique) {
         const t_fmt = s.formatter();
         const repr =
-          try std.fmt.allocPrint(self.intpr.allocator(), "{}", .{t_fmt});
+          try self.intpr.allocator().print("{f}", .{t_fmt});
         defer self.intpr.allocator().free(repr);
         self.intpr.ctx.logger.DuplicateMatchType(repr, pos, prev.pos);
         result.failed = true;
@@ -82,7 +82,7 @@ pub fn push(
       if (builder.pushUnique(&append[0], pos)) |prev| {
         const t_fmt = append[0].formatter();
         const repr =
-          try std.fmt.allocPrint(self.intpr.allocator(), "{}", .{t_fmt});
+          try self.intpr.allocator().print("{f}", .{t_fmt});
         defer self.intpr.allocator().free(repr);
         self.intpr.ctx.logger.DuplicateMatchType(repr, pos, prev);
         result.failed = true;
@@ -99,7 +99,7 @@ pub fn finish(
   builder: *Types.IntersectionBuilder,
 ) !model.Type {
   if (self.scalar) |*found_scalar| {
-    builder.push(@ptrCast([*]const model.Type, &found_scalar.t)[0..1]);
+    builder.push(@as([*]const model.Type, @ptrCast(&found_scalar.t))[0..1]);
   }
   return try builder.finish(self.intpr.ctx.types());
 }

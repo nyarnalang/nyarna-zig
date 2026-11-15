@@ -2,7 +2,7 @@ const std = @import("std");
 
 const clap = @import("clap");
 
-const generated = @import("generated.zig");
+const generated = @import("generated");
 const nyarna    = @import("nyarna.zig");
 
 const Input = union(enum) {
@@ -12,11 +12,16 @@ const Input = union(enum) {
   },
   stdin: nyarna.Loader.SingleResolver,
 
-  fn fromName(input: []const u8, alloc: std.mem.Allocator) !Input {
+  fn fromName(
+    io   : std.Io,
+    input: []const u8,
+    alloc: std.mem.Allocator,
+  ) !Input {
     if (std.mem.eql(u8, input, "-")) {
-      var list = std.ArrayList(u8).init(alloc);
-      try std.io.getStdIn().reader().readAllArrayList(&list, 65535);
-      try list.appendSlice("\x04\x04\x04\x04");
+      var list: std.ArrayList(u8) = .empty;
+      var reader = std.Io.File.stdin().readerStreaming(io, &.{});
+      try reader.interface.appendRemaining(alloc, &list, .limited(65535));
+      try list.appendSlice(alloc, "\x04\x04\x04\x04");
       return Input{
         .stdin = nyarna.Loader.SingleResolver.init(list.items),
       };
@@ -25,7 +30,7 @@ const Input = union(enum) {
       // strip ".ny" from file name
       const filename = std.fs.path.basename(input);
       return Input{.file = .{
-        .fs_res = nyarna.Loader.FileSystemResolver.init(dirname),
+        .fs_res = nyarna.Loader.FileSystemResolver.init(io, dirname),
         .name   = filename[0..filename.len - 3],
       }};
     }
@@ -46,9 +51,26 @@ const Input = union(enum) {
   }
 };
 
-pub fn main() !void {
-  var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-  defer arena.deinit();
+/// the stdlib is searched at ../share/lib relative to the executable unless
+/// a path has been given at compile time.
+fn defaultStdlibPath(
+  io   : std.Io,
+  alloc: std.mem.Allocator,
+) ![]const u8 {
+  if (generated.stdlib_path) |path| return path;
+  const exe_dir = try std.process.executableDirPathAlloc(io, alloc);
+  return try std.fs.path.resolve(alloc, &.{exe_dir, "..", "share", "lib"});
+}
+
+pub fn main(init: std.process.Init) !void {
+  const io    = init.io;
+  const arena = init.arena;
+
+  var stdout_buffer: [4096]u8 = undefined;
+  var stdout_impl = std.Io.File.stdout().writer(io, &stdout_buffer);
+  const stdout    = &stdout_impl.interface;
+  var stderr_impl = std.Io.File.stderr().writerStreaming(io, &.{});
+  const stderr    = &stderr_impl.interface;
 
   const params = comptime clap.parseParamsComptime(
     \\-h, --help           Display this help and exit.
@@ -59,34 +81,29 @@ pub fn main() !void {
     \\<ARG>...             Nyarna arguments for interpreting <FILE>.
   ++ "");
 
-  var iter = try std.process.ArgIterator.initWithAllocator(arena.allocator());
+  var iter = try init.minimal.args.iterateAllocator(arena.allocator());
   defer iter.deinit();
   _ = iter.next();
 
   var diag = clap.Diagnostic{};
-  var parser = clap.streaming.Clap(clap.Help, std.process.ArgIterator){
+  var parser = clap.streaming.Clap(clap.Help, std.process.Args.Iterator){
     .params     = &params,
     .iter       = &iter,
     .diagnostic = &diag,
   };
 
-  const stdlib_path = std.process.getEnvVarOwned(
-    arena.allocator(), "NYARNA_STDLIB_PATH"
-  ) catch |err| switch (err) {
-    error.EnvironmentVariableNotFound => generated.stdlib_path,
-    else => return err,
-  };
-  var stdlib_resolver = nyarna.Loader.FileSystemResolver.init(stdlib_path);
-  var terminal = nyarna.errors.Terminal(std.fs.File.Writer, true).init(
-    std.io.getStdErr().writer());
+  const stdlib_path = init.environ_map.get("NYARNA_STDLIB_PATH") orelse
+    try defaultStdlibPath(io, arena.allocator());
+  var stdlib_resolver = nyarna.Loader.FileSystemResolver.init(io, stdlib_path);
+  var terminal = nyarna.errors.Terminal(*std.Io.Writer, true).init(stderr);
 
   var proc = try nyarna.Processor.init(
     std.heap.page_allocator, nyarna.default_stack_size, &terminal.reporter,
     &stdlib_resolver.api);
   defer proc.deinit();
 
-  var target_dir: ?std.fs.Dir = null;
-  defer if (target_dir) |*dir| dir.close();
+  var target_dir: ?std.Io.Dir = null;
+  defer if (target_dir) |dir| dir.close(io);
 
   var print_ast = false;
 
@@ -94,18 +111,17 @@ pub fn main() !void {
     var cur_loader: ?*nyarna.Loader.Main = null;
     var cur_name: ?[]const u8 = null;
     while (parser.next() catch |err| {
-      diag.report(std.io.getStdErr().writer(), err) catch unreachable;
-      std.os.exit(1);
+      diag.report(stderr, err) catch unreachable;
+      std.process.exit(1);
     }) |arg| {
       if (arg.param == &params[0]) {
-        try std.io.getStdOut().writer().writeAll(
+        try stdout.writeAll(
           \\nyarna [<option>...] <file> [<arg>...]
           \\Reference Nyarna interpreter.
           \\
         ++ "\n");
-        const hr =
-          clap.help(std.io.getStdOut().writer(), clap.Help, &params, .{});
-        try std.io.getStdOut().writer().writeAll(
+        try clap.help(stdout, clap.Help, &params, .{});
+        try stdout.writeAll(
           \\
           \\<arg>... must be an alternating list of `--<name> <value>`.
           \\Unnamed values are not allowed.
@@ -113,40 +129,40 @@ pub fn main() !void {
           \\Argument values are parsed as Nyarna code with the types in
           \\the Schema of <file> implicitly imported.
         ++ "\n");
-        return hr;
+        return stdout.flush();
       } else if (arg.param == &params[1]) {
-        try std.io.getStdOut().writer().print(
+        try stdout.print(
           \\ nyarna-zig, reference Nyarna implementation
           \\ Version: {s}
           \\ Stdlib : {s}
-        ++ "\n", .{generated.version, generated.stdlib_path});
-        return;
+        ++ "\n", .{generated.version, stdlib_path});
+        return stdout.flush();
       } else if (arg.param == &params[2]) {
         if (target_dir != null) {
-          std.io.getStdErr().writer().print(
+          stderr.print(
             "only one --output directory allowed\n", .{}) catch unreachable;
-            std.os.exit(1);
+            std.process.exit(1);
         }
-        const dir_opts = std.fs.Dir.OpenDirOptions{
-          .access_sub_paths = false, .no_follow = false,
+        const dir_opts = std.Io.Dir.OpenOptions{
+          .access_sub_paths = true, .follow_symlinks = true,
         };
         target_dir = (
           if (std.fs.path.isAbsolute(arg.value.?)) (
-            std.fs.openDirAbsolute(arg.value.?, dir_opts)
-          ) else std.fs.cwd().openDir(arg.value.?, dir_opts)
+            std.Io.Dir.openDirAbsolute(io, arg.value.?, dir_opts)
+          ) else std.Io.Dir.cwd().openDir(io, arg.value.?, dir_opts)
         ) catch |err| {
-          std.io.getStdErr().writer().print(
+          stderr.print(
             "cannot access output directory '{s}':\n  {s}\n",
             .{arg.value.?, @errorName(err)}) catch unreachable;
-          std.os.exit(1);
+          std.process.exit(1);
         };
       } else if (arg.param == &params[3]) {
         print_ast = true;
       } else if (arg.param == &params[4] and cur_loader == null) {
         const main_path = if (std.mem.eql(u8, arg.value.?, "-")) "-" else (
-          std.fs.realpathAlloc(arena.allocator(), arg.value.?)
+          std.Io.Dir.cwd().realPathFileAlloc(io, arg.value.?, arena.allocator())
         ) catch |err| {
-          const writer = std.io.getStdErr().writer();
+          const writer = stderr;
           switch (err) {
             error.FileNotFound => try writer.print(
               "unknown file: {s}\n", .{arg.value.?}),
@@ -158,9 +174,9 @@ pub fn main() !void {
               "given path is a directory: {s}\n", .{arg.value.?}),
             else => return err,
           }
-          std.os.exit(1);
+          std.process.exit(1);
         };
-        var input = try Input.fromName(main_path, arena.allocator());
+        var input = try Input.fromName(io, main_path, arena.allocator());
         cur_loader = if (print_ast) load: {
           const loader =
             try proc.initMainModule(input.resolver(), input.name(), .out);
@@ -175,18 +191,18 @@ pub fn main() !void {
         } else {
           const content = arg.value.?;
           if (content.len < 3 or !std.mem.eql(u8, "--", content[0..2])) {
-            const writer = std.io.getStdErr().writer();
+            const writer = stderr;
             try writer.print(
               \\invalid param name: '{s}' (must start with '--' and have non-empty name)
             ++ "\n", .{content});
-            std.os.exit(1);
+            std.process.exit(1);
           }
           cur_name = content[2..];
         }
       }
     }
     break :blk cur_loader orelse {
-      var input = try Input.fromName("-", arena.allocator());
+      var input = try Input.fromName(io, "-", arena.allocator());
       break :blk try proc.startLoading(input.resolver(), input.name());
     };
   };
@@ -196,45 +212,49 @@ pub fn main() !void {
     const ml = try loader.finishMainAst();
     defer ml.destroy();
     const node = try ml.finalizeNode();
-    try std.io.getStdOut().writer().print(
-      "{}\n", .{node.formatter(loader.loader.data)});
+    try stdout.print("{f}\n", .{node.formatter(loader.loader.data)});
+    try stdout.flush();
   } else if (try loader.finalize()) |container| {
     defer container.destroy();
     if (try container.process()) {
-      const base_dir = target_dir orelse std.fs.cwd();
+      const base_dir = target_dir orelse std.Io.Dir.cwd();
       for (container.documents.items) |output| {
         if (
           if (output.schema) |schema| schema.backend != null else false
         ) continue;
-        var file: ?std.fs.File = null;
-        defer if (file) |f| f.close();
-        var writer = if (std.mem.eql(u8, output.name.content, "")) (
-          std.io.getStdOut().writer()
+        var file: ?std.Io.File = null;
+        defer if (file) |f| f.close(io);
+        var file_buffer: [4096]u8 = undefined;
+        var file_writer: std.Io.File.Writer = undefined;
+        const writer = if (std.mem.eql(u8, output.name.content, "")) (
+          stdout
         ) else blk: {
           if (std.fs.path.dirname(output.name.content)) |dir_path| {
-            base_dir.makePath(dir_path) catch |err| {
-              std.io.getStdErr().writer().print(
+            base_dir.createDirPath(io, dir_path) catch |err| {
+              stderr.print(
                 "unable to create output path: '{s}'\n  {s}\n",
                 .{output.name.content, @errorName(err)}) catch unreachable;
-              std.os.exit(1);
+              std.process.exit(1);
             };
           }
           const f = base_dir.createFile(
-            output.name.content, .{.truncate = true}
+            io, output.name.content, .{.truncate = true}
           ) catch |err| {
-            std.io.getStdErr().writer().print(
+            stderr.print(
               "unable to create output file: '{s}'\n  {s}\n",
               .{output.name.content, @errorName(err)}) catch unreachable;
-            std.os.exit(1);
+            std.process.exit(1);
           };
           file = f;
-          break :blk f.writer();
+          file_writer = f.writer(io, &file_buffer);
+          break :blk &file_writer.interface;
         };
         switch (output.body.data) {
           .text => |*txt| {
             try writer.writeAll(txt.content);
             // unix requirement: all text files are to end with a line break.
             try writer.writeByte('\n');
+            try writer.flush();
           },
           else => {
             std.debug.panic("unsupported non-text output: {s}",
@@ -242,6 +262,6 @@ pub fn main() !void {
           },
         }
       }
-    } else std.os.exit(1);
-  } else std.os.exit(1);
+    } else std.process.exit(1);
+  } else std.process.exit(1);
 }

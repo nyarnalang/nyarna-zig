@@ -48,17 +48,24 @@ pub const PrimarySpec = struct {
   ast_node: bool,
 };
 
-mapFn: fn(
+mapFn: *const fn(
   self : *Self,
   pos  : model.Position,
   input: ArgKind,
   flag : ProtoArgFlag,
 ) nyarna.Error!?Cursor,
-spyFn   : ?fn(self: *Self) PrimarySpec,
-pushFn  : fn(self: *Self, at: Cursor, content: *model.Node) nyarna.Error!void,
-configFn: fn(self: *Self, at: Cursor) ?*model.BlockConfig,
-paramTypeFn: fn(self: *Self, at: Cursor) ?model.Type,
-finalizeFn : fn(self: *Self, pos: model.Position) nyarna.Error!*model.Node,
+spyFn      : ?*const fn(self: *Self) PrimarySpec,
+pushFn     : *const fn(
+  self   : *Self,
+  at     : Cursor,
+  content: *model.Node,
+) nyarna.Error!void,
+configFn   : *const fn(self: *Self, at: Cursor) ?*model.BlockConfig,
+paramTypeFn: *const fn(self: *Self, at: Cursor) ?model.Type,
+finalizeFn : *const fn(
+  self: *Self,
+  pos : model.Position,
+) nyarna.Error!*model.Node,
 
 subject_pos: model.Position,
 
@@ -111,7 +118,7 @@ pub const ToSignature = struct {
     ns     : u15,
     sig    : *const model.Signature,
   ) !@This() {
-    var res = @This(){
+    const res = @This(){
       .mapper = .{
         .spyFn       = @This().spy,
         .mapFn       = @This().map,
@@ -151,7 +158,7 @@ pub const ToSignature = struct {
   }
 
   fn spy(mapper: *Self) PrimarySpec {
-    const self = @fieldParentPtr(@This(), "mapper", mapper);
+    const self: *@This() = @fieldParentPtr("mapper", mapper);
     if (self.signature.primary) |index| {
       const param = &self.signature.parameters[index];
       return .{
@@ -167,13 +174,13 @@ pub const ToSignature = struct {
     input : ArgKind,
     flag  : ProtoArgFlag,
   ) nyarna.Error!?Cursor {
-    const self = @fieldParentPtr(@This(), "mapper", mapper);
+    const self: *@This() = @fieldParentPtr("mapper", mapper);
 
     switch (input) {
       .named, .direct => |name| {
         self.cur_pos = null;
-        for (self.signature.parameters) |p, i| {
-          const index = @intCast(u21, i);
+        for (self.signature.parameters, 0..) |p, i| {
+          const index: u21 = @intCast(i);
           if (std.mem.eql(u8, name, p.name)) {
             const t = if (p.capture == .varargs) blk: {
               self.cur_pos = index;
@@ -258,7 +265,7 @@ pub const ToSignature = struct {
   }
 
   fn config(mapper: *Self, at: Cursor) ?*model.BlockConfig {
-    const self = @fieldParentPtr(@This(), "mapper", mapper);
+    const self: *@This() = @fieldParentPtr("mapper", mapper);
     return switch (at.param) {
       .index  => |index|
         if (self.signature.parameters[index].config) |*bc| bc else null,
@@ -267,7 +274,7 @@ pub const ToSignature = struct {
   }
 
   fn paramType(mapper: *Self, at: Cursor) ?model.Type {
-    const self = @fieldParentPtr(@This(), "mapper", mapper);
+    const self: *@This() = @fieldParentPtr("mapper", mapper);
     switch (at.param) {
       .index  => |index| {
         const p = &self.signature.parameters[index];
@@ -350,7 +357,7 @@ pub const ToSignature = struct {
     at     : Cursor,
     content: *model.Node,
   ) nyarna.Error!void {
-    const self = @fieldParentPtr(@This(), "mapper", mapper);
+    const self: *@This() = @fieldParentPtr("mapper", mapper);
     const param = &self.signature.parameters[at.param.index];
     const target_spec =
       if (at.direct) param.spec
@@ -376,7 +383,7 @@ pub const ToSignature = struct {
         .ast_node => break :blk try self.intpr.genValueNode(
           (try self.intpr.ctx.values.ast(inner, null, &.{}, capture)).value()),
         .frame_root => {
-          const ac = self.intpr.var_containers.pop();
+          const ac = self.intpr.var_containers.pop().?;
           break :blk try self.intpr.genValueNode((
             try self.intpr.ctx.values.ast(
               inner, ac.container,
@@ -416,9 +423,9 @@ pub const ToSignature = struct {
   }
 
   fn finalize(mapper: *Self, pos: model.Position) nyarna.Error!*model.Node {
-    const self = @fieldParentPtr(@This(), "mapper", mapper);
+    const self: *@This() = @fieldParentPtr("mapper", mapper);
     var missing_param = false;
-    for (self.signature.parameters) |param, i| {
+    for (self.signature.parameters, 0..) |param, i| {
       if (!self.filled[i]) {
         self.args[i] = if (param.default) |dexpr|
           try self.intpr.node_gen.expression(dexpr)
@@ -501,7 +508,7 @@ pub const ToImport = struct {
   mapper     : Self,
   target     : *model.Node.Import,
   intpr      : *Interpreter,
-  items      : std.ArrayListUnmanaged(model.Node.UnresolvedCall.ProtoArg) = .{},
+  items      : std.ArrayList(model.Node.UnresolvedCall.ProtoArg) = .empty,
   first_block: ?usize = null,
   /// whether positional arguments are currently accepted.
   positional : bool = true,
@@ -538,7 +545,7 @@ pub const ToImport = struct {
     input : ArgKind,
     flag  : ProtoArgFlag,
   ) nyarna.Error!?Cursor {
-    const self = @fieldParentPtr(@This(), "mapper", mapper);
+    const self: *@This() = @fieldParentPtr("mapper", mapper);
     if (input == .position and !self.positional) {
       self.intpr.ctx.logger.InvalidPositionalArgument(pos);
       return null;
@@ -562,7 +569,7 @@ pub const ToImport = struct {
   }
 
   fn push(mapper : *Self, at: Cursor, content: *model.Node) nyarna.Error!void {
-    const self = @fieldParentPtr(@This(), "mapper", mapper);
+    const self: *@This() = @fieldParentPtr("mapper", mapper);
     switch (at.param.kind) {
       .direct, .named => |name| {
         if (self.loader) |ml| if (try ml.tryPushOption(name, content)) {
@@ -579,7 +586,7 @@ pub const ToImport = struct {
   }
 
   fn finalize(mapper: *Self, pos: model.Position) nyarna.Error!*model.Node {
-    const self = @fieldParentPtr(@This(), "mapper", mapper);
+    const self: *@This() = @fieldParentPtr("mapper", mapper);
     if (self.loader) |loader| try loader.finalizeOptions(pos);
     return (try self.intpr.node_gen.uCall(pos, .{
       .target = self.target.node(),
@@ -592,7 +599,7 @@ pub const ToImport = struct {
 pub const Collect = struct {
   mapper     : Self,
   target     : *model.Node,
-  items      : std.ArrayListUnmanaged(model.Node.UnresolvedCall.ProtoArg) = .{},
+  items      : std.ArrayList(model.Node.UnresolvedCall.ProtoArg) = .empty,
   first_block: ?usize = null,
   intpr      : *Interpreter,
 
@@ -621,7 +628,7 @@ pub const Collect = struct {
     input : ArgKind,
     flag  : ProtoArgFlag,
   ) nyarna.Error!?Cursor {
-    const self = @fieldParentPtr(@This(), "mapper", mapper);
+    const self: *@This() = @fieldParentPtr("mapper", mapper);
     if (flag != .flow and self.first_block == null) {
       self.first_block = self.items.items.len;
     }
@@ -640,7 +647,7 @@ pub const Collect = struct {
   }
 
   fn push(mapper : *Self, at: Cursor, content: *model.Node) nyarna.Error!void {
-    const self = @fieldParentPtr(@This(), "mapper", mapper);
+    const self: *@This() = @fieldParentPtr("mapper", mapper);
     try self.items.append(self.intpr.allocator(), .{
         .kind = at.param.kind, .content = content,
         .had_explicit_block_config = at.config
@@ -648,7 +655,7 @@ pub const Collect = struct {
   }
 
   fn finalize(mapper: *Self, pos: model.Position) nyarna.Error!*model.Node {
-    const self = @fieldParentPtr(@This(), "mapper", mapper);
+    const self: *@This() = @fieldParentPtr("mapper", mapper);
     return (try self.intpr.node_gen.uCall(pos, .{
       .target = self.target,
       .proto_args = self.items.items,
@@ -688,7 +695,7 @@ pub const ToAssignment = struct {
     input : ArgKind,
     flag  : ProtoArgFlag,
   ) nyarna.Error!?Cursor {
-    const self = @fieldParentPtr(@This(), "mapper", mapper);
+    const self: *@This() = @fieldParentPtr("mapper", mapper);
     if (input == .named or input == .direct) {
       self.intpr.ctx.logger.InvalidNamedArg(pos);
       return null;
@@ -704,7 +711,7 @@ pub const ToAssignment = struct {
   }
 
   fn push(mapper: *Self, _: Cursor, content: *model.Node) !void {
-    const self = @fieldParentPtr(@This(), "mapper", mapper);
+    const self: *@This() = @fieldParentPtr("mapper", mapper);
     self.pushed = content;
   }
 
@@ -719,7 +726,7 @@ pub const ToAssignment = struct {
   }
 
   fn finalize(mapper: *Self, pos: model.Position) !*model.Node {
-    const self = @fieldParentPtr(@This(), "mapper", mapper);
+    const self: *@This() = @fieldParentPtr("mapper", mapper);
     return (try self.intpr.node_gen.assign(pos, .{
       .target = .{.unresolved = self.subject},
       .replacement = self.pushed orelse (

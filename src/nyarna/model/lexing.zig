@@ -120,10 +120,10 @@ pub const Token = enum(u16) {
   _,
 
   pub fn isError(t: Token) bool {
-    return @enumToInt(t) >= @enumToInt(Token.illegal_code_point);
+    return @intFromEnum(t) >= @intFromEnum(Token.illegal_code_point);
   }
 
   pub fn numSkippedEnds(t: Token) u32 {
-    return @enumToInt(t) - @enumToInt(Token.skipping_call_id) + 1;
+    return @intFromEnum(t) - @intFromEnum(Token.skipping_call_id) + 1;
   }
 };

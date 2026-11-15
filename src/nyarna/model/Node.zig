@@ -18,7 +18,6 @@ const Symbol     = model.Symbol;
 const Type       = model.Type;
 const Value      = model.Value;
 
-const offset = @import("../helpers.zig").offset;
 
 const Node = @This();
 
@@ -223,7 +222,7 @@ pub const Location = struct {
 
     pub fn formatter(
       self: *const Additionals,
-    ) std.fmt.Formatter(fmt.formatAdditionals) {
+    ) std.fmt.Alt(*const Additionals, fmt.formatAdditionals) {
       return .{.data = self};
     }
   };
@@ -425,7 +424,7 @@ pub const Varargs = struct {
   /// position at which the type for this varargs node has been specified.
   spec_pos: model.Position,
   t       : *Type.List,
-  content : std.ArrayListUnmanaged(Item) = .{},
+  content : std.ArrayList(Item) = .empty,
 
   pub fn node(self: *@This()) *Node {
     return Node.parent(self);
@@ -444,7 +443,7 @@ pub const Varmap = struct {
   /// position at which the type for this varmap node has been specified.
   spec_pos: model.Position,
   t       : *Type.HashMap,
-  content : std.ArrayListUnmanaged(Item) = .{},
+  content : std.ArrayList(Item) = .empty,
 
   pub fn node(self: *@This()) *Node {
     return Node.parent(self);
@@ -602,52 +601,52 @@ pos: model.Position,
 data: Data,
 
 fn parent(it: anytype) *Node {
-  const t = @typeInfo(@TypeOf(it)).Pointer.child;
-  const addr = @ptrToInt(it) - switch (t) {
-    Assign           => offset(Data, "assign"),
-    Backend          => offset(Data, "backend"),
-    BuiltinGen       => offset(Data, "builtingen"),
-    Capture          => offset(Data, "capture"),
-    Concat           => offset(Data, "concat"),
-    Definition       => offset(Data, "definition"),
-    *Expression      => offset(Data, "expression"),
-    For              => offset(Data, "for"),
-    Funcgen          => offset(Data, "funcgen"),
-    Highlighter      => offset(Data, "highlighter"),
-    If               => offset(Data, "if"),
-    Import           => offset(Data, "import"),
-    Literal          => offset(Data, "literal"),
-    Location         => offset(Data, "location"),
-    Map              => offset(Data, "map"),
-    Match            => offset(Data, "match"),
-    Matcher          => offset(Data, "matcher"),
-    Output           => offset(Data, "output"),
-    ResolvedAccess   => offset(Data, "resolved_access"),
-    ResolvedCall     => offset(Data, "resolved_call"),
-    ResolvedSymref   => offset(Data, "resolved_symref"),
-    RootDef          => offset(Data, "root_def"),
-    Seq              => offset(Data, "seq"),
-    tg.Concat        => offset(Data, "gen_concat"),
-    tg.Enum          => offset(Data, "gen_enum"),
-    tg.Intersection  => offset(Data, "gen_intersection"),
-    tg.List          => offset(Data, "gen_list"),
-    tg.HashMap       => offset(Data, "gen_map"),
-    tg.Numeric       => offset(Data, "gen_numeric"),
-    tg.Optional      => offset(Data, "gen_optional"),
-    tg.Sequence      => offset(Data, "gen_sequence"),
-    tg.Prototype     => offset(Data, "gen_prototype"),
-    tg.Record        => offset(Data, "gen_record"),
-    tg.Textual       => offset(Data, "gen_textual"),
-    tg.Unique        => offset(Data, "gen_unique"),
-    UnresolvedAccess => offset(Data, "unresolved_access"),
-    UnresolvedCall   => offset(Data, "unresolved_call"),
-    UnresolvedSymref => offset(Data, "unresolved_symref"),
-    Varargs          => offset(Data, "varargs"),
-    Varmap           => offset(Data, "varmap"),
-    VarTypeSetter    => offset(Data, "vt_setter"),
+  const t = @typeInfo(@TypeOf(it)).pointer.child;
+  const data: *Data = switch (t) {
+    Assign           => @alignCast(@fieldParentPtr("assign", it)),
+    Backend          => @alignCast(@fieldParentPtr("backend", it)),
+    BuiltinGen       => @alignCast(@fieldParentPtr("builtingen", it)),
+    Capture          => @alignCast(@fieldParentPtr("capture", it)),
+    Concat           => @alignCast(@fieldParentPtr("concat", it)),
+    Definition       => @alignCast(@fieldParentPtr("definition", it)),
+    *Expression      => @alignCast(@fieldParentPtr("expression", it)),
+    For              => @alignCast(@fieldParentPtr("for", it)),
+    Funcgen          => @alignCast(@fieldParentPtr("funcgen", it)),
+    Highlighter      => @alignCast(@fieldParentPtr("highlighter", it)),
+    If               => @alignCast(@fieldParentPtr("if", it)),
+    Import           => @alignCast(@fieldParentPtr("import", it)),
+    Literal          => @alignCast(@fieldParentPtr("literal", it)),
+    Location         => @alignCast(@fieldParentPtr("location", it)),
+    Map              => @alignCast(@fieldParentPtr("map", it)),
+    Match            => @alignCast(@fieldParentPtr("match", it)),
+    Matcher          => @alignCast(@fieldParentPtr("matcher", it)),
+    Output           => @alignCast(@fieldParentPtr("output", it)),
+    ResolvedAccess   => @alignCast(@fieldParentPtr("resolved_access", it)),
+    ResolvedCall     => @alignCast(@fieldParentPtr("resolved_call", it)),
+    ResolvedSymref   => @alignCast(@fieldParentPtr("resolved_symref", it)),
+    RootDef          => @alignCast(@fieldParentPtr("root_def", it)),
+    Seq              => @alignCast(@fieldParentPtr("seq", it)),
+    tg.Concat        => @alignCast(@fieldParentPtr("gen_concat", it)),
+    tg.Enum          => @alignCast(@fieldParentPtr("gen_enum", it)),
+    tg.Intersection  => @alignCast(@fieldParentPtr("gen_intersection", it)),
+    tg.List          => @alignCast(@fieldParentPtr("gen_list", it)),
+    tg.HashMap       => @alignCast(@fieldParentPtr("gen_map", it)),
+    tg.Numeric       => @alignCast(@fieldParentPtr("gen_numeric", it)),
+    tg.Optional      => @alignCast(@fieldParentPtr("gen_optional", it)),
+    tg.Sequence      => @alignCast(@fieldParentPtr("gen_sequence", it)),
+    tg.Prototype     => @alignCast(@fieldParentPtr("gen_prototype", it)),
+    tg.Record        => @alignCast(@fieldParentPtr("gen_record", it)),
+    tg.Textual       => @alignCast(@fieldParentPtr("gen_textual", it)),
+    tg.Unique        => @alignCast(@fieldParentPtr("gen_unique", it)),
+    UnresolvedAccess => @alignCast(@fieldParentPtr("unresolved_access", it)),
+    UnresolvedCall   => @alignCast(@fieldParentPtr("unresolved_call", it)),
+    UnresolvedSymref => @alignCast(@fieldParentPtr("unresolved_symref", it)),
+    Varargs          => @alignCast(@fieldParentPtr("varargs", it)),
+    Varmap           => @alignCast(@fieldParentPtr("varmap", it)),
+    VarTypeSetter    => @alignCast(@fieldParentPtr("vt_setter", it)),
     else => unreachable
   };
-  return @fieldParentPtr(Node, "data", @intToPtr(*Data, addr));
+  return @fieldParentPtr("data", data);
 }
 
 pub fn lastIdPos(self: *Node) model.Position {
@@ -667,6 +666,6 @@ pub fn lastIdPos(self: *Node) model.Position {
 pub fn formatter(
   self: *Node,
   data: *Globals,
-) std.fmt.Formatter(fmt.IndentingFormatter(*Node).format) {
-  return .{.data = .{.payload = self, .depth = 0, .data = data}};
+) fmt.IndentingFormatter(*Node) {
+  return .init(self, 0, data);
 }

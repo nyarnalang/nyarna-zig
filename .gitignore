@@ -1,11 +1,11 @@
 *.o
 *.a
 *.exe
+.zig-cache
 zig-cache
 zig-out
-testgen
+zig-pkg
 src/nyarna/errors/Handler.zig
-src/generated.zig
 parseTest
 lexTest
 typeTest
@@ -13,5 +13,4 @@ interpretTest
 loadTest
 outputTest
 result
-build.zig
 .vscode

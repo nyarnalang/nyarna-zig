@@ -49,8 +49,8 @@ stored: ?model.TokenAt = null,
 pub fn init() @This() {
   return @This(){.impl = .{
     .block_header     = undefined,
-    .levels           = .{},
-    .ns_mapping_stack = .{},
+    .levels           = .empty,
+    .ns_mapping_stack = .empty,
     .lexer            = undefined,
     .state            = .start,
     .text             = undefined,
@@ -161,12 +161,14 @@ pub fn next(self: *@This(), from: usize) !?SyntaxItem {
   }
 }
 
+const LexerErrorFn = *const fn(*errors.Handler, model.Position) void;
+
 /// retrieves the next valid token from the lexer.
 /// emits errors for any invalid token along the way.
 fn advance(impl: *Impl) model.TokenAt {
   while (true) {
     const at = impl.lexer.recent_end;
-    (switch (impl.lexer.next() catch blk: {
+    @as(LexerErrorFn, switch (impl.lexer.next() catch blk: {
       const first = at;
       const token = while (true) {
         break impl.lexer.next() catch continue;
@@ -221,7 +223,7 @@ pub fn getNext(self: *@This()) bool {
     .wrong_call_id    => unreachable,
     .skipping_call_id => unreachable,
     else => |t| {
-      if (@enumToInt(t) > @enumToInt(model.Token.skipping_call_id))
+      if (@intFromEnum(t) > @intFromEnum(model.Token.skipping_call_id))
         unreachable;
       self.cur = t;
       return true;

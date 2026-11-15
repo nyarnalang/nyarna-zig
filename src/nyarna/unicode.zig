@@ -304,13 +304,13 @@ pub const CategorySet = struct {
   content: u30,
 
   pub fn contains(s: CategorySet, c: Category) bool {
-    return (s.content & (@as(u30, 1) << @enumToInt(c))) != 0;
+    return (s.content & (@as(u30, 1) << @intFromEnum(c))) != 0;
   }
 
   pub fn create(included: anytype) CategorySet {
     var ret = empty();
     inline for (included) |c| {
-      ret.content |= @as(u30, 1) << @enumToInt(@as(Category, c));
+      ret.content |= @as(u30, 1) << @intFromEnum(@as(Category, c));
     }
     return ret;
   }
@@ -324,7 +324,7 @@ pub const CategorySet = struct {
   }
 
   pub fn include(s: *CategorySet, c: Category) void {
-    s.content |= @as(u30, 1) << @enumToInt(c);
+    s.content |= @as(u30, 1) << @intFromEnum(c);
   }
 
   pub fn includeSet(s: *CategorySet, other: CategorySet) void {

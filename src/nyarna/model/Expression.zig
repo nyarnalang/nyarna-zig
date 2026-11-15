@@ -7,7 +7,6 @@ const Symbol = model.Symbol;
 const Type   = model.Type;
 const Value  = model.Value;
 
-const offset = @import("../helpers.zig").offset;
 
 const Expression = @This();
 
@@ -277,28 +276,28 @@ data: Data,
 expected_type: Type,
 
 fn parent(it: anytype) *Expression {
-  const t = @typeInfo(@TypeOf(it)).Pointer.child;
-  const addr = @ptrToInt(it) - switch (t) {
-    Access        => offset(Data, "access"),
-    Assignment    => offset(Data, "assignment"),
-    Branches      => offset(Data, "branches"),
-    Call          => offset(Data, "call"),
-    Concatenation => offset(Data, "concatenation"),
-    IfOpt         => offset(Data, "ifopt"),
-    Location      => offset(Data, "location"),
-    Map           => offset(Data, "map"),
-    Match         => offset(Data, "match"),
-    Output        => offset(Data, "output"),
-    Sequence      => offset(Data, "sequence"),
-    tg.Concat     => offset(Data, "tg_concat"),
-    tg.HashMap    => offset(Data, "tg_map"),
-    tg.List       => offset(Data, "tg_list"),
-    tg.Optional   => offset(Data, "tg_optional"),
-    tg.Sequence   => offset(Data, "sequence"),
-    VarRetrieval  => offset(Data, "var_retrieval"),
-    Varargs       => offset(Data, "varargs"),
-    Varmap        => offset(Data, "varmap"),
+  const t = @typeInfo(@TypeOf(it)).pointer.child;
+  const data: *Data = switch (t) {
+    Access        => @alignCast(@fieldParentPtr("access", it)),
+    Assignment    => @alignCast(@fieldParentPtr("assignment", it)),
+    Branches      => @alignCast(@fieldParentPtr("branches", it)),
+    Call          => @alignCast(@fieldParentPtr("call", it)),
+    Concatenation => @alignCast(@fieldParentPtr("concatenation", it)),
+    IfOpt         => @alignCast(@fieldParentPtr("ifopt", it)),
+    Location      => @alignCast(@fieldParentPtr("location", it)),
+    Map           => @alignCast(@fieldParentPtr("map", it)),
+    Match         => @alignCast(@fieldParentPtr("match", it)),
+    Output        => @alignCast(@fieldParentPtr("output", it)),
+    Sequence      => @alignCast(@fieldParentPtr("sequence", it)),
+    tg.Concat     => @alignCast(@fieldParentPtr("tg_concat", it)),
+    tg.HashMap    => @alignCast(@fieldParentPtr("tg_map", it)),
+    tg.List       => @alignCast(@fieldParentPtr("tg_list", it)),
+    tg.Optional   => @alignCast(@fieldParentPtr("tg_optional", it)),
+    tg.Sequence   => @alignCast(@fieldParentPtr("tg_sequence", it)),
+    VarRetrieval  => @alignCast(@fieldParentPtr("var_retrieval", it)),
+    Varargs       => @alignCast(@fieldParentPtr("varargs", it)),
+    Varmap        => @alignCast(@fieldParentPtr("varmap", it)),
     else => unreachable
   };
-  return @fieldParentPtr(Expression, "data", @intToPtr(*Data, addr));
+  return @fieldParentPtr("data", data);
 }

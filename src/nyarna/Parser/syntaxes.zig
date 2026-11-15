@@ -22,19 +22,19 @@ pub const SpecialSyntax = struct {
   pub const Processor = struct {
     pub const Action = enum {none, read_block_header};
 
-    push: fn(
+    push: *const fn(
       self: *@This(),
       pos : model.Position,
       item: Item,
     ) nyarna.Error!Action,
-    finish: fn(
+    finish: *const fn(
       self  : *@This(),
       source: *const model.Source,
       start : model.Cursor,
     ) nyarna.Error!*model.Node,
   };
 
-  init: fn(
+  init: *const fn(
     intpr: *Interpreter,
     source: *const model.Source,
   ) std.mem.Allocator.Error!*Processor,
@@ -42,7 +42,7 @@ pub const SpecialSyntax = struct {
 };
 
 pub const SymbolDefs = struct {
-  const State = fn(
+  const State = *const fn(
     self: *SymbolDefs,
     pos : model.Position,
     item: SpecialSyntax.Item,
@@ -55,12 +55,12 @@ pub const SymbolDefs = struct {
   source   : *const model.Source,
   proc     : Processor,
   state    : State,
-  produced : std.ArrayListUnmanaged(*model.Node),
+  produced : std.ArrayList(*model.Node),
   variant  : Variant,
   last_item: model.Position,
   // ----- current line ------
   start  : model.Cursor,
-  names  : std.ArrayListUnmanaged(*model.Node.Literal) = .{},
+  names  : std.ArrayList(*model.Node.Literal) = .empty,
   merge  : ?model.Position = null,
   primary: ?model.Position = null,
   varargs: ?model.Position = null,
@@ -114,8 +114,8 @@ pub const SymbolDefs = struct {
         .finish = finish,
       },
       .state     = initial,
-      .names     = .{},
-      .produced  = .{},
+      .names     = .empty,
+      .produced  = .empty,
       .variant   = variant,
       .last_item = model.Position.intrinsic(),
       .start     = undefined,
@@ -174,13 +174,13 @@ pub const SymbolDefs = struct {
       },
       else => {
         self.start = pos.start;
-        self.state = names;
+        self.state = atNames;
         return null;
       },
     }
   }
 
-  fn names(
+  fn atNames(
     self: *SymbolDefs,
     pos : model.Position,
     item: SpecialSyntax.Item,
@@ -263,7 +263,7 @@ pub const SymbolDefs = struct {
           pos.before(),
           &[_]errors.WrongItemError.ItemDescr{.{.character = ','}},
           .{.token = .identifier});
-        self.state = names;
+        self.state = atNames;
         return null;
       },
       .escaped => {
@@ -273,7 +273,7 @@ pub const SymbolDefs = struct {
       },
       .special_char => |c| switch (c) {
         ',' => {
-          self.state = names;
+          self.state = atNames;
           return .none;
         },
         ':' => {
@@ -791,7 +791,7 @@ pub const SymbolDefs = struct {
     pos : model.Position,
     item: SpecialSyntax.Item,
   ) nyarna.Error!Processor.Action {
-    const self = @fieldParentPtr(SymbolDefs, "proc", p);
+    const self: *SymbolDefs = @fieldParentPtr("proc", p);
     self.last_item = pos;
     while (true) if (try self.state(self, pos, item)) |action| return action;
   }
@@ -801,7 +801,7 @@ pub const SymbolDefs = struct {
     source: *const model.Source,
     start : model.Cursor,
   ) nyarna.Error!*model.Node {
-    const self = @fieldParentPtr(SymbolDefs, "proc", p);
+    const self: *SymbolDefs = @fieldParentPtr("proc", p);
     if (self.state != initial) {
       _ = try p.push(
         p, self.last_item.after(), SpecialSyntax.Item{.newlines = 1});
@@ -826,13 +826,15 @@ pub const SymbolDefs = struct {
     ret.pos = pos;
     ret.data = @unionInit(@TypeOf(ret.data), kind, undefined);
     const val = &@field(ret.data, kind);
+    // Definition.public is initially false (see its documentation).
+    if (comptime @hasField(@TypeOf(val.*), "public")) val.public = false;
     if (@TypeOf(val.name) == *model.Node) val.name = name.node()
     else val.name = name;
     const pos_into = if (additionals_field) |a| blk: {
       const af = try self.intpr.ctx.global().create(
         @typeInfo(
-          @typeInfo(@TypeOf(@field(val, a))).Optional.child
-        ).Pointer.child);
+          @typeInfo(@TypeOf(@field(val, a))).optional.child
+        ).pointer.child);
       @field(val, a) = af;
       break :blk af;
     } else val;
@@ -842,7 +844,7 @@ pub const SymbolDefs = struct {
     inline for (optional_node_fields) |f| {
       @field(val, f) = @field(self, f);
     }
-    if (@typeInfo(@TypeOf(@field(val, content_field))) == .Optional)
+    if (@typeInfo(@TypeOf(@field(val, content_field))) == .optional)
       @field(val, content_field) = self.expr
     else
       @field(val, content_field) = self.expr.?;

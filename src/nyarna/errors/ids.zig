@@ -38,45 +38,55 @@ pub const WrongItemError = enum {
     node,
 
     pub fn format(
-               self   : ItemDescr,
-      comptime _      : []const u8,
-               options: std.fmt.FormatOptions,
-               writer : anytype,
-    ) @TypeOf(writer).Error!void {
+      self  : ItemDescr,
+      writer: *std.Io.Writer,
+    ) std.Io.Writer.Error!void {
       switch (self) {
         .token     => |t| try writer.writeAll(@tagName(t)),
         .character => |c| {
           try writer.writeByte('\'');
-          try std.fmt.formatUnicodeCodepoint(c, options, writer);
+          try writer.printUnicodeCodepoint(c);
           try writer.writeByte('\'');
         },
         .node => try writer.writeAll("<node>"),
       }
     }
 
+    /// formats a list of items in braces.
     pub fn formatAll(
-               data     : []const ItemDescr,
-      comptime specifier: []const u8,
-               options  : std.fmt.FormatOptions,
-               writer   : anytype,
-    ) @TypeOf(writer).Error!void {
-      if ((comptime std.mem.eql(u8, specifier, "?")) and data.len == 1) {
-        try data[0].format("", options, writer);
-      } else {
-        for (data) |cur, index| {
-          try if (index == 0) writer.writeByte('{')
-          else writer.writeAll(", ");
-          try cur.format(specifier, options, writer);
-        }
-        try writer.writeByte('}');
+      data  : []const ItemDescr,
+      writer: *std.Io.Writer,
+    ) std.Io.Writer.Error!void {
+      for (data, 0..) |cur, index| {
+        try if (index == 0) writer.writeByte('{')
+        else writer.writeAll(", ");
+        try cur.format(writer);
       }
+      try writer.writeByte('}');
     }
 
-    pub fn formatter(self: ItemDescr) std.fmt.Formatter(format) {
+    /// like formatAll, but a single item is formatted without braces.
+    pub fn formatAllCollapsed(
+      data  : []const ItemDescr,
+      writer: *std.Io.Writer,
+    ) std.Io.Writer.Error!void {
+      if (data.len == 1) try data[0].format(writer)
+      else try formatAll(data, writer);
+    }
+
+    pub fn formatter(self: ItemDescr) std.fmt.Alt(ItemDescr, format) {
       return .{.data = self};
     }
 
-    pub fn formatterAll(data: []const ItemDescr) std.fmt.Formatter(formatAll) {
+    pub fn formatterAll(
+      data: []const ItemDescr,
+    ) std.fmt.Alt([]const ItemDescr, formatAll) {
+      return .{.data = data};
+    }
+
+    pub fn formatterAllCollapsed(
+      data: []const ItemDescr,
+    ) std.fmt.Alt([]const ItemDescr, formatAllCollapsed) {
       return .{.data = data};
     }
   };

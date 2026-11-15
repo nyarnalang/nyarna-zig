@@ -1,12 +1,17 @@
 const std = @import("std");
-const ids = @import("../src/nyarna/errors/ids.zig");
+const ids = @import("ids").ids;
 
 const Writer = struct {
-  output: std.fs.File,
-  fn init(path: []const u8) !Writer {
-    return Writer{
-      .output = try std.fs.cwd().createFile(path, .{}),
-    };
+  file  : std.Io.File,
+  io    : std.Io,
+  impl  : std.Io.File.Writer,
+  output: *std.Io.Writer,
+
+  fn init(self: *Writer, io: std.Io, path: []const u8, buffer: []u8) !void {
+    self.file   = try std.Io.Dir.cwd().createFile(io, path, .{});
+    self.io     = io;
+    self.impl   = self.file.writer(io, buffer);
+    self.output = &self.impl.interface;
   }
 
   fn writeHandlerFns(
@@ -15,9 +20,9 @@ const Writer = struct {
     comptime params: anytype,
     comptime backend: []const u8,
   ) !void {
-    inline for (@typeInfo(error_type).Enum.fields) |field| {
+    inline for (@typeInfo(error_type).@"enum".field_names) |name| {
       try self.output.writeAll("pub fn ");
-      try self.output.writeAll(field.name);
+      try self.output.writeAll(name);
       try self.output.writeAll("(self: *@This()");
       inline for (params) |param| {
         try self.output.writeAll(", " ++ param[0] ++ ": " ++ param[1]);
@@ -25,7 +30,7 @@ const Writer = struct {
       try self.output.writeAll(\\) void {
         \\  self.count += 1;
         \\  self.reporter.
-        ++ backend ++ "(self.reporter, ." ++ field.name);
+        ++ backend ++ "(self.reporter, ." ++ name);
       inline for (params) |param| try self.output.writeAll(", " ++ param[0]);
       try self.output.writeAll(\\);
         \\}
@@ -38,14 +43,21 @@ const Writer = struct {
     try self.output.writeAll(content);
   }
 
-  fn close(self: *Writer) void {
-    self.output.close();
+  fn close(self: *Writer) !void {
+    try self.output.flush();
+    self.file.close(self.io);
   }
 };
 
-pub fn main() !void {
-  var handler = try Writer.init("src/nyarna/errors/Handler.zig");
-  defer handler.close();
+pub fn main(init: std.process.Init) !void {
+  const args = try init.minimal.args.toSlice(init.arena.allocator());
+  if (args.len != 2) {
+    std.debug.print("usage: {s} <path to Handler.zig>\n", .{args[0]});
+    std.process.exit(1);
+  }
+  var buffer: [4096]u8 = undefined;
+  var handler: Writer = undefined;
+  try handler.init(init.io, args[1], &buffer);
   try handler.header(
     \\const std = @import("std");
     \\
@@ -113,4 +125,5 @@ pub fn main() !void {
       .{"path", "[]const u8"},
       .{"message", "[]const u8"},
     }, "fileErrorFn");
+  try handler.close();
 }

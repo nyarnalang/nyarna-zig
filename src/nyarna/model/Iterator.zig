@@ -19,7 +19,7 @@ pub fn init(subject: **model.Value) Iterator {
       .list   => |*lst| .{.values = lst.content.items},
       .seq    => |*seq| .{.items  = seq.content.items},
       .poison, .void => .{.values = &.{}},
-      else    => .{.values = @ptrCast(*[1]*model.Value,subject)[0..1]},
+      else    => .{.values = @as(*[1]*model.Value, @ptrCast(subject))[0..1]},
     }
   };
 }

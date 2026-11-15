@@ -1,5 +1,8 @@
 const std = @import("std");
 
+const addOverflow = @import("../helpers.zig").addOverflow;
+const mulOverflow = @import("../helpers.zig").mulOverflow;
+
 const LiteralNumber = @This();
 
 value: i64,
@@ -30,32 +33,32 @@ pub fn from(text: []const u8) Result {
   while (true) : (cur += 1) {
     if (cur[0] == '.') {
       if (decimal_start != null or cur == end) return Result.invalid;
-      decimal_start = @ptrToInt(cur);
+      decimal_start = @intFromPtr(cur);
     } else if (cur[0] < '0' or cur[0] > '9') {
       cur -= 1;
       break;
     } else {
       if (
-        @mulWithOverflow(i64, val, 10, &val) or
-        @addWithOverflow(i64, val, cur[0] - '0', &val)
+        mulOverflow(val, 10, &val) or
+        addOverflow(val, cur[0] - '0', &val)
       ) {
         return Result.too_large;
       }
     }
     if (cur == end) break;
   }
-  if (@ptrToInt(cur) < @ptrToInt(rest.ptr)) return Result.invalid;
+  if (@intFromPtr(cur) < @intFromPtr(rest.ptr)) return Result.invalid;
   if (neg) {
-    if (@mulWithOverflow(i64, val, -1, &val)) return Result.too_large;
+    if (mulOverflow(val, -1, &val)) return Result.too_large;
   }
   return Result{
     .success = .{
       .value = val,
       .decimals = if (decimal_start) |start| (
-        @intCast(i64, @ptrToInt(cur) - start)
+        @as(i64, @intCast(@intFromPtr(cur) - start))
       ) else 0,
       .repr = text,
-      .suffix = rest[@ptrToInt(cur) - @ptrToInt(rest.ptr) + 1 ..],
+      .suffix = rest[@intFromPtr(cur) - @intFromPtr(rest.ptr) + 1 ..],
     },
   };
 }

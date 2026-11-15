@@ -113,13 +113,13 @@ const ns_mapping_no_from   = ns_mapping_succeeded;
 
 /// stack of current levels. must have at least size of 1, with the first
 /// level being the current source's root.
-levels: std.ArrayListUnmanaged(ContentLevel),
+levels: std.ArrayList(ContentLevel),
 /// stack of currently active namespace mapping statuses.
 /// namespace mappings create a new namespace, disable a namespace, or map a
 /// namespace from one character to another.
 /// if a namespace is disabled, its index is pushed onto the stack.
 /// other operations push either ns_mapping_failed or ns_mapping_succeeded.
-ns_mapping_stack: std.ArrayListUnmanaged(u16),
+ns_mapping_stack: std.ArrayList(u16),
 
 lexer    : Lexer,
 state    : State,
@@ -137,7 +137,7 @@ block_name: union(enum) {
 } = .none,
 /// collects textual content in textual state
 text: struct {
-  content           : std.ArrayListUnmanaged(u8) = .{},
+  content           : std.ArrayList(u8) = .empty,
   non_space_len     : usize = 0,
   non_space_line_len: usize = 0,
   non_space_end     : model.Cursor = undefined,
@@ -169,11 +169,11 @@ block_header: struct {
   config: ?*model.BlockConfig,
   config_parser: struct {
     into    : *model.BlockConfig,
-    map_list: std.ArrayListUnmanaged(model.BlockConfig.Map),
+    map_list: std.ArrayList(model.BlockConfig.Map),
     map_from: u21,
   },
   /// capture variables
-  captures: std.ArrayListUnmanaged(model.Value.Ast.VarDef),
+  captures: std.ArrayList(model.Value.Ast.VarDef),
 } = undefined,
 
 pub fn allocator(self: *@This()) std.mem.Allocator {
@@ -214,7 +214,7 @@ fn leaveLevel(self: *@This()) !void {
   const parent = &self.levels.items[self.levels.items.len - 2];
   const lvl_node = try lvl.finalize(self);
   try parent.command.pushArg(lvl_node);
-  _ = self.levels.pop();
+  _ = self.levels.pop().?;
 }
 
 pub fn curLevel(self: *@This()) *ContentLevel {
@@ -414,8 +414,8 @@ fn procEndCommand(self: *@This(), cur: model.TokenAt) !void {
       self.state = .expect_end_command_end_stop;
     },
     else => {
-      std.debug.assert(@enumToInt(cur.token) >=
-        @enumToInt(model.Token.skipping_call_id));
+      std.debug.assert(@intFromEnum(cur.token) >=
+        @intFromEnum(model.Token.skipping_call_id));
       const cmd_start =
         self.levels.items[self.levels.items.len - 2].command.start;
       self.logger().SkippingCallId(
@@ -741,7 +741,7 @@ fn endList(self: *@This()) !bool {
     .default => self.state = .after_flow_list,
     .discarded_block_name => {
       self.logger().BlockNameAtTopLevel(self.lexer.walker.posFrom(lvl.start));
-      _ = self.levels.pop();
+      _ = self.levels.pop().?;
       self.startBlockHeader(.ignored);
     },
     .block_name => {
@@ -750,7 +750,7 @@ fn endList(self: *@This()) !bool {
       ) orelse (
         try self.intpr().node_gen.@"void"(self.source().at(lvl.command.start))
       )};
-      _ = self.levels.pop();
+      _ = self.levels.pop().?;
       self.state = .after_block_name;
       return false;
     },
@@ -777,13 +777,16 @@ fn procAfterBlockName(self: *@This(), cur: model.TokenAt) !void {
   self.startBlockHeader(.named);
 }
 
-fn startBlockHeader(self: *@This(), context: anytype) void {
+fn startBlockHeader(
+  self   : *@This(),
+  context: @FieldType(@FieldType(@This(), "block_header"), "context"),
+) void {
   self.state = .block_header_start;
   self.block_header = .{
     .context       = context,
     .config        = null,
     .config_parser = undefined,
-    .captures      = .{},
+    .captures      = .empty,
   };
 }
 
@@ -826,7 +829,7 @@ fn procPossiblePrimary(self: *@This(), cur: model.TokenAt) !bool {
   switch (cur.token) {
     .space, .indent => return true,
     .block_name_sep, .list_start => {
-      const lvl = self.levels.pop();
+      const lvl = self.levels.pop().?;
       if (lvl.block_config) |c| try self.revertBlockConfig(c.*);
       if (cur.token == .block_name_sep) {
         self.state = .first_block_name_start;
@@ -897,17 +900,17 @@ fn procAfterId(self: *@This(), cur: model.TokenAt) !bool {
     .space, .comment => return true,
     .comma           => {
       self.state = .start;
-      _ = self.levels.pop();
+      _ = self.levels.pop().?;
       try self.pushLevel(self.curLevel().fullast);
       return true;
     },
     .list_end => {
-      _ = self.levels.pop();
+      _ = self.levels.pop().?;
       return try self.endList();
     },
     .list_end_missing_colon => {
       self.logger().MissingColon(self.source().at(cur.start));
-      _ = self.levels.pop();
+      _ = self.levels.pop().?;
       return try self.endList();
     },
     .end_source => {
@@ -956,7 +959,7 @@ fn procSpecial(self: *@This(), cur: model.TokenAt) !bool {
       self.state = .default;
       return false;
     },
-    else => std.debug.panic("{}: unexpected token in special: {s}\n",
+    else => std.debug.panic("{f}: unexpected token in special: {s}\n",
       .{self.source().at(cur.start).formatter(), @tagName(cur.token)}),
   };
   switch (result) {
@@ -1101,7 +1104,7 @@ pub fn push(
         return false;
       },
       else => std.debug.panic(
-        "unexpected token in default: {s} at {}\n",
+        "unexpected token in default: {s} at {f}\n",
         .{@tagName(cur.token), cur.start.formatter()}),
     },
     .textual            => if (try self.procTextual(cur)) return false,
@@ -1180,7 +1183,7 @@ fn procBlockHeaderStart(self: *@This(), cur: model.TokenAt) !bool {
           },
           else => try self.allocator().create(model.BlockConfig),
         },
-        .map_list = .{},
+        .map_list = .empty,
         .map_from = undefined,
       };
       self.block_header.config_parser.into.* = .{};
@@ -1696,8 +1699,9 @@ fn applyBlockConfig(
   pos   : model.Position,
   config: *const model.BlockConfig,
 ) !void {
-  var sf = std.heap.stackFallback(128, self.allocator());
-  var alloc = sf.get();
+  var sf_buffer: [128]u8 = undefined;
+  var sf = std.heap.BufferFirstAllocator.init(&sf_buffer, self.allocator());
+  const alloc = sf.allocator();
   const lvl = self.curLevel();
 
   if (config.syntax) |s| {
@@ -1712,11 +1716,11 @@ fn applyBlockConfig(
     try self.ns_mapping_stack.ensureUnusedCapacity(
       self.allocator(), config.map.len);
     // resolve all given `from` characters.
-    for (config.map) |mapping, i| {
+    for (config.map, 0..) |mapping, i| {
       resolved_indexes[i] =
         if (mapping.from == 0) ns_mapping_no_from
         else if (self.intpr().command_characters.get(mapping.from))
-          |from_index| @intCast(u16, from_index)
+          |from_index| @as(u16, @intCast(from_index))
         else blk: {
           const ec = unicode.EncodedCharacter.init(mapping.from);
           self.logger().IsNotANamespaceCharacter(ec.repr(), pos, mapping.pos);
@@ -1724,7 +1728,7 @@ fn applyBlockConfig(
         };
     }
     // disable all command characters that need disabling.
-    for (config.map) |mapping, i| {
+    for (config.map, 0..) |mapping, i| {
       if (mapping.to == 0) {
         const from_index = resolved_indexes[i];
         if (from_index != ns_mapping_failed) {
@@ -1734,7 +1738,7 @@ fn applyBlockConfig(
       }
     }
     // execute all namespace remappings
-    for (config.map) |mapping, i| {
+    for (config.map, 0..) |mapping, i| {
       const from_index = resolved_indexes[i];
       if (mapping.to != 0 and from_index != ns_mapping_no_from) {
         try self.ns_mapping_stack.append(self.allocator(), blk: {
@@ -1757,7 +1761,7 @@ fn applyBlockConfig(
             }
           }
           try self.intpr().command_characters.put(
-            self.allocator(), mapping.to, @intCast(u15, from_index));
+            self.allocator(), mapping.to, @as(u15, @intCast(from_index)));
           // only remove old command character if it has not previously been
           // remapped.
           if (self.intpr().command_characters.get(mapping.from))
@@ -1771,7 +1775,7 @@ fn applyBlockConfig(
       }
     }
     // establish all new namespaces
-    for (config.map) |mapping, i| {
+    for (config.map, 0..) |mapping, i| {
       if (resolved_indexes[i] == ns_mapping_no_from) {
         if (mapping.to == 0) {
           std.mem.swap(std.hash_map.AutoHashMapUnmanaged(u21, u15),
@@ -1805,15 +1809,16 @@ pub fn revertBlockConfig(self  : *@This(), config: model.BlockConfig) !void {
   // leaving the level.
 
   if (config.map.len > 0) {
-    var sf = std.heap.stackFallback(128, self.allocator());
-    var alloc = sf.get();
+    var sf_buffer: [128]u8 = undefined;
+    var sf = std.heap.BufferFirstAllocator.init(&sf_buffer, self.allocator());
+    const alloc = sf.allocator();
 
     // reverse establishment of new namespaces
     var i = config.map.len - 1;
     while (true) : (i = i - 1) {
       const mapping = &config.map[i];
       if (mapping.from == 0) {
-        if (self.ns_mapping_stack.pop() == ns_mapping_succeeded) {
+        if (self.ns_mapping_stack.pop().? == ns_mapping_succeeded) {
           if (mapping.to == 0) {
             std.mem.swap(std.hash_map.AutoHashMapUnmanaged(u21, u15),
               &self.intpr().command_characters,
@@ -1827,7 +1832,7 @@ pub fn revertBlockConfig(self  : *@This(), config: model.BlockConfig) !void {
     // get the indexes of namespaces that have been remapped.
     var ns_indexes = try alloc.alloc(u15, config.map.len);
     defer alloc.free(ns_indexes);
-    for (config.map) |mapping, j| {
+    for (config.map, 0..) |mapping, j| {
       if (mapping.from != 0 and mapping.to != 0) {
         // command_characters may not have the .to character in case of
         // failure. we assign undefined here because this will be checked in
@@ -1842,7 +1847,7 @@ pub fn revertBlockConfig(self  : *@This(), config: model.BlockConfig) !void {
     while (true) : (i = i - 1) {
       const mapping = &config.map[i];
       if (mapping.from != 0 and mapping.to != 0) {
-        if (self.ns_mapping_stack.pop() == ns_mapping_succeeded) {
+        if (self.ns_mapping_stack.pop().? == ns_mapping_succeeded) {
           const ns_index = ns_indexes[i];
           // only remove command character if it has not already been reset
           // to another namespace.
@@ -1865,11 +1870,11 @@ pub fn revertBlockConfig(self  : *@This(), config: model.BlockConfig) !void {
     while (true) : (i = i - 1) {
       const mapping = &config.map[i];
       if (mapping.from != 0 and mapping.to == 0) {
-        const ns_index = self.ns_mapping_stack.pop();
+        const ns_index = self.ns_mapping_stack.pop().?;
         if (ns_index != ns_mapping_failed) {
           // like above
           self.intpr().command_characters.put(
-            self.allocator(), mapping.from, @intCast(u15, ns_index))
+            self.allocator(), mapping.from, @as(u15, @intCast(ns_index)))
             catch unreachable;
         }
       }

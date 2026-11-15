@@ -23,8 +23,8 @@ pub const Syntax = struct {
 
   pub const Processor = struct {
     syntax   : *Syntax,
-    nextFn   : fn(self: *Processor) Error!?Item,
-    destroyFn: fn(self: *Processor) void,
+    nextFn   : *const fn(self: *Processor) Error!?Item,
+    destroyFn: *const fn(self: *Processor) void,
     from     : usize,
 
     pub fn create(
@@ -50,7 +50,7 @@ pub const Syntax = struct {
   /// tokens that make up the structure of this syntax
   tokens: []const []const u8,
 
-  createProcFn: fn(
+  createProcFn: *const fn(
     allocator: std.mem.Allocator,
     syntax   : *Syntax,
     before   : ?[]const u8,
@@ -66,7 +66,7 @@ pub const NyarnaSyntax = struct {
   pub fn init(stdlib: *Loader.Resolver) NyarnaSyntax {
     return .{
       .syntax = .{
-        .tokens = std.meta.fieldNames(Parser.SyntaxItem.Kind),
+        .tokens = @typeInfo(Parser.SyntaxItem.Kind).@"enum".field_names,
         .createProcFn = createProc,
       },
       .stdlib = stdlib,
@@ -79,7 +79,7 @@ pub const NyarnaSyntax = struct {
     before   : ?[]const u8,
     code     : []const u8,
   ) Error!*Syntax.Processor {
-    const self = @fieldParentPtr(NyarnaSyntax, "syntax", syntax);
+    const self: *NyarnaSyntax = @fieldParentPtr("syntax", syntax);
     const ret = try allocator.create(NyarnaProcessor);
     errdefer allocator.destroy(ret);
     ret.* = .{
@@ -102,10 +102,10 @@ pub const NyarnaSyntax = struct {
     var code_starts: usize = 0;
     if (before) |pre| {
       code_starts += pre.len;
-      std.mem.copy(u8, content, pre);
+      @memcpy(content[0..pre.len], pre);
     }
-    std.mem.copy(u8, content[code_starts..], code);
-    std.mem.copy(u8, content[code_starts + code.len..], "\x04\x04\x04\x04");
+    @memcpy(content[code_starts..][0..code.len], code);
+    @memcpy(content[code_starts + code.len..][0..4], "\x04\x04\x04\x04");
 
     ret.doc_res = Loader.SingleResolver.init(content);
     ret.nyarna = try nyarna.Processor.init(
@@ -131,7 +131,7 @@ const NyarnaProcessor = struct {
   doc_res  : Loader.SingleResolver,
 
   fn next(obj: *Syntax.Processor) Error!?Syntax.Item {
-    const self = @fieldParentPtr(NyarnaProcessor, "proc", obj);
+    const self: *NyarnaProcessor = @fieldParentPtr("proc", obj);
     const globals = self.main.loader.data;
     while (true) {
       const main_loader = while (globals.lastLoadingModule()) |index| {
@@ -170,7 +170,7 @@ const NyarnaProcessor = struct {
             }
           ) orelse return null;
           return Syntax.Item{
-            .token_index = @enumToInt(item.kind),
+            .token_index = @intFromEnum(item.kind),
             .length      = item.length,
           };
         },
@@ -180,7 +180,7 @@ const NyarnaProcessor = struct {
   }
 
   fn destroy(obj: *Syntax.Processor) void {
-    const self = @fieldParentPtr(NyarnaProcessor, "proc", obj);
+    const self: *NyarnaProcessor = @fieldParentPtr("proc", obj);
     const allocator = self.main.loader.data.backing_allocator;
     allocator.free(self.doc_res.content);
     self.main.destroy();
