@@ -173,4 +173,14 @@ pub fn build(b: *std.Build) void {
     kind_step.dependOn(&run.step);
     test_step.dependOn(&run.step);
   }
+
+  const tml_test_step =
+    b.step("testTml", "Test the TML module loading the test specifications");
+  const t = b.addTest(.{
+    .name        = "TML",
+    .root_module = tml_host,
+  });
+  if (emit_bin) b.installArtifact(t);
+  const run = b.addRunArtifact(t);
+  tml_test_step.dependOn(&run.step);
 }

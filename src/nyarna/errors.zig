@@ -471,6 +471,8 @@ pub fn Terminal(comptime Writer: type, comptime do_style: bool) type {
           self.renderError(
             "Node of kind {s} is either not a valid definition subject at all or" ++
             " was given without :<fullast>", .{msg}),
+        .MismatchedListLengths, .InvalidEmptyArg =>
+          self.renderError("{s}", .{msg}),
       }
     }
 

@@ -19,6 +19,41 @@ const Tags = struct {
   chars: bool = false,
 };
 
+/// A file describing a test case. Test cases usually describe input and
+/// expected output or errors. They have a format that aims to be readable to
+/// the user, so that they can understand what the test is supposed to do,
+/// and also machine-readable, so that it can be executed.
+///
+/// Quick overview of the format:
+///
+///  * title must be given on first line and prefixed with `=== `.
+///  * after title, multiple sections can be given, each starting with a
+///    section heading.
+///  * a section heading has the form `--- <kind>[:name] [{flag,...}]`.
+///    `kind` can be:
+///    * `input`, for input data. input without a name is the primary input,
+///      additional inputs (which can then be included) can be given with name.
+///    * `tokens`, will run a tokenization test that checks whether the input
+///      tokenizes into the given stream of tokens.
+///    * `rawast`, will run an AST generation test without evaluating even
+///      static expressions, and compare the resulting AST.
+///    * `expr`, will run an AST generation test by evaluating static
+///      expressions in the input, and then compare the resulting AST.
+///    * `document`, will run a document generation test and checks the
+///      generated document against the given document.
+///    * `output`, will fully execute the input, transform it into text, and
+///      check the generated output against the given output.
+///    * `end-marker`, does nothing but can be used to safeguard preceding
+///      empty lines from overzealous text editors that remove them at the
+///      end of a file.
+///    * `errors`, expect the input to yield errors. `name` must always be
+///      given and identifies the stage at which errors are expected (`rawast`,
+///      `expr`, `document`, `output`).
+///  * the flags at the end of a section heading can be used to transform the
+///    input before processing:
+///    * `crlf` will replace POSIX line endings with Windows line endings.
+///    * `strip` will strip trailing whitespace from the content
+///    * `chars` will process e.g. `%0A` into a linefeed.
 pub const File = struct {
   arena : std.heap.ArenaAllocator,
   name  : []const u8,
@@ -68,7 +103,11 @@ pub const File = struct {
     name : []const u8,
     input: []const u8,
   ) !File {
-    var lines = std.mem.splitSequence(u8, input, "\n");
+    // if input ends with newline, do not treat this as an additional empty
+    // line. In accordance to POSIX, a final newline ends the previous line,
+    // but doesn't start a new one.
+    const body = std.mem.cutSuffix(u8, input, "\n") orelse input;
+    var lines = std.mem.splitSequence(u8, body, "\n");
 
     var line = lines.next() orelse {
       return failWith(name, "missing header", .{});
@@ -228,13 +267,13 @@ test "simple file" {
   defer f.deinit();
   try std.testing.expectEqualStrings("Titel", f.name);
 
-  try std.testing.expectEqual(@as(u32, 1), f.items.count());
-  const input = f.items.get("input").?;
+  try std.testing.expectEqual(@as(u32, 1), f.params.input.count());
+  const input = f.params.input.get("").?;
   try std.testing.expectEqual(@as(usize, 2), input.line_offset);
   try std.testing.expectEqualStrings("a b c\n", input.content.items);
 
   try std.testing.expectEqual(@as(u32, 1), f.params.errors.count());
-  const ast = f.params.errors.get("ast").?;
+  const ast = f.params.errors.get("expr").?;
   try std.testing.expectEqual(@as(usize, 4), ast.line_offset);
   try std.testing.expectEqualStrings("foo\n", ast.content.items);
 
@@ -253,8 +292,26 @@ test "chars" {
   defer f.deinit();
   try std.testing.expectEqualStrings("Chars test", f.name);
 
-  try std.testing.expectEqual(@as(u32, 1), f.items.count());
-  const input = f.items.get("input").?;
+  try std.testing.expectEqual(@as(u32, 1), f.params.input.count());
+  const input = f.params.input.get("").?;
   try std.testing.expectEqual(@as(usize, 2), input.line_offset);
   try std.testing.expectEqualStrings("a b \n\n", input.content.items);
+}
+
+test "trailing newline" {
+  var f = try File.load(std.testing.allocator, "trailing newline",
+    \\=== Trailing newline
+    \\--- input
+    \\wurbl
+    \\--- output
+    \\wurbl
+    \\
+  );
+  defer f.deinit();
+  try std.testing.expectEqualStrings("Trailing newline", f.name);
+
+  try std.testing.expectEqual(@as(u32, 1), f.params.input.count());
+  try std.testing.expectEqual(@as(u32, 1), f.params.output.count());
+  const output = f.params.output.get("").?;
+  try std.testing.expectEqualStrings("wurbl\n", output.content.items);
 }

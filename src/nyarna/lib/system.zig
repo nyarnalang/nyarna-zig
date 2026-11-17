@@ -594,6 +594,61 @@ pub const Impl = lib.Provider.Wrapper(struct {
     ).value();
   }
 
+  pub fn @"Textual::replace"(
+    eval: *nyarna.Evaluator,
+    pos : model.Position,
+    self: *model.Value.TextScalar,
+    old : *model.Value.List,
+    new : *model.Value.List,
+  ) nyarna.Error!*model.Value {
+    const alloc = eval.ctx.global();
+    if (old.content.items.len != new.content.items.len) {
+      const msg = try alloc.print(
+        "mismatched list lengths: old({}), new({})",
+        .{old.content.items.len, new.content.items.len}
+      );
+      eval.ctx.logger.MismatchedListLengths(pos, msg);
+      return try eval.ctx.values.poison(pos);
+    }
+    var expected_content_mult: usize = 1;
+    for (old.content.items, new.content.items) |old_item, new_item| {
+      if (old_item.data.text.content.len == 0) {
+        eval.ctx.logger.InvalidEmptyArg(
+          old_item.origin, "invalid empty value in old"
+        );
+        return try eval.ctx.values.poison(pos);
+      }
+      if (old_item.data.text.content.len < new_item.data.text.content.len) {
+        expected_content_mult = 2;
+      }
+    }
+    var res: std.ArrayList(u8) = .empty;
+    errdefer res.deinit(alloc);
+    try res.ensureTotalCapacity(
+      alloc, self.content.len * expected_content_mult
+    );
+    var i: usize = 0;
+    var last_match: usize = 0;
+    outer: while (i < self.content.len) {
+      for (old.content.items, new.content.items) |old_item, new_item| {
+        const old_content = old_item.data.text.content;
+        const new_content = new_item.data.text.content;
+        if (std.mem.startsWith(u8, self.content[i..], old_content)) {
+          try res.appendSlice(alloc, self.content[last_match..i]);
+          try res.appendSlice(alloc, new_content);
+          i += old_content.len;
+          last_match = i;
+          continue :outer;
+        }
+      }
+      i += 1;
+    }
+    try res.appendSlice(alloc, self.content[last_match..]);
+    return (try eval.ctx.values.textScalar(
+      pos, self.t, try res.toOwnedSlice(alloc)
+    )).value();
+  }
+
   pub fn @"Numeric::add"(
     eval: *nyarna.Evaluator,
     pos : model.Position,

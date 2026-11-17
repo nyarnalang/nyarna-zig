@@ -183,7 +183,7 @@ pub const ConstructionError = enum {
 };
 
 pub const RuntimeError = enum {
-  IndexError, NodePrematurelyProcessed,
+  IndexError, NodePrematurelyProcessed, MismatchedListLengths, InvalidEmptyArg,
 };
 
 pub const SystemNyError = enum {

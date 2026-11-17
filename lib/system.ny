@@ -219,6 +219,17 @@
       self: \This
       start, end: \Optional(\Positive)
     \end(builtin)
+    # replaces every occurrence of an item in `old` with the item at the same
+    # position in `new`. `old` is ordered by precedence, meaning that later
+    # items are only checked after earlier items failed to match. the value
+    # on which this is called is processed left-to-right. replacements will
+    # not be done on the result of other replacements.
+    replace = \builtin(return=\This):
+      self: \This
+      # these two lists must have the same size, and `old` must not contain
+      # empty values.
+      old, new: \List(\This) {varargs}
+    \end(builtin)
   \end(prototype)
 
   library    = \keyword:

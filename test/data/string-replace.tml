@@ -1,0 +1,11 @@
+=== String replace
+--- input
+\Text(hello world)::replace(old=hello, new=goodbye)
+\Text(Eyjafjallajökull)::replace(old=ja, ll, new=a,l)
+\Text(Lorem ipsum orem)::replace(old=Lorem, orem, new=First, Second)
+\Text(Spanish Inquisition)::replace(old=i, it, new=ati, atati)
+--- output
+goodbye world
+Eyafalajökul
+First ipsum Second
+Spanatish Inquatisatitation

@@ -522,6 +522,7 @@ fn procTextual(self: *@This(), cur: model.TokenAt) !bool {
               pos, self.text.content.items,
               self.lexer.walker.before.byte_offset - cur.start.byte_offset
                 == 2, .flow);
+            lvl.start = self.lexer.recent_end;
             self.state = .start;
           }
           return true;
